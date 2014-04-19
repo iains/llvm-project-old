@@ -1,0 +1,523 @@
+//===- lib/ReaderWriter/ELF/Mips/MipsRelocationPass.cpp -------------------===//
+//
+//                             The LLVM Linker
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
+#include "MipsLinkingContext.h"
+#include "MipsRelocationPass.h"
+
+#include "Atoms.h"
+#include "MipsELFFile.h"
+
+using namespace lld;
+using namespace lld::elf;
+using namespace llvm::ELF;
+
+// Lazy resolver
+static const uint8_t mipsGot0AtomContent[] = { 0x00, 0x00, 0x00, 0x00 };
+
+// Module pointer
+static const uint8_t mipsGotModulePointerAtomContent[] = { 0x00, 0x00, 0x00, 0x80 };
+
+// PLT0 entry
+static const uint8_t mipsPlt0AtomContent[] = {
+  0x00, 0x00, 0x1c, 0x3c, // lui   $28, %hi(&GOTPLT[0])
+  0x00, 0x00, 0x99, 0x8f, // lw    $25, %lo(&GOTPLT[0])($28)
+  0x00, 0x00, 0x9c, 0x27, // addiu $28, $28, %lo(&GOTPLT[0])
+  0x23, 0xc0, 0x1c, 0x03, // subu  $24, $24, $28
+  0x21, 0x78, 0xe0, 0x03, // move  $15, $31
+  0x82, 0xc0, 0x18, 0x00, // srl   $24, $24, 2
+  0x09, 0xf8, 0x20, 0x03, // jalr  $25
+  0xfe, 0xff, 0x18, 0x27  // subu  $24, $24, 2
+};
+
+// Regular PLT entry
+static const uint8_t mipsPltAAtomContent[] = {
+  0x00, 0x00, 0x0f, 0x3c, // lui   $15, %hi(.got.plt entry)
+  0x00, 0x00, 0xf9, 0x8d, // l[wd] $25, %lo(.got.plt entry)($15)
+  0x08, 0x00, 0x20, 0x03, // jr    $25
+  0x00, 0x00, 0xf8, 0x25  // addiu $24, $15, %lo(.got.plt entry)
+};
+
+// LA25 stub entry
+static const uint8_t mipsLA25AtomContent[] = {
+  0x00, 0x00, 0x19, 0x3c, // lui   $25, %hi(func)
+  0x00, 0x00, 0x00, 0x08, // j     func
+  0x00, 0x00, 0x39, 0x27, // addiu $25, $25, %lo(func)
+  0x00, 0x00, 0x00, 0x00  // nop
+};
+
+namespace {
+
+/// \brief Abstract base class represent MIPS GOT entries.
+class MipsGOTAtom : public GOTAtom {
+public:
+  MipsGOTAtom(const File &f) : GOTAtom(f, ".got") {}
+
+  Alignment alignment() const override { return Alignment(2); }
+};
+
+/// \brief MIPS GOT entry initialized by zero.
+class GOT0Atom : public MipsGOTAtom {
+public:
+  GOT0Atom(const File &f) : MipsGOTAtom(f) {}
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsGot0AtomContent);
+  }
+};
+
+/// \brief MIPS GOT entry initialized by zero.
+class GOTModulePointerAtom : public MipsGOTAtom {
+public:
+  GOTModulePointerAtom(const File &f) : MipsGOTAtom(f) {}
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsGotModulePointerAtomContent);
+  }
+};
+
+class PLT0Atom : public PLTAtom {
+public:
+  PLT0Atom(const File &f) : PLTAtom(f, ".plt") {}
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsPlt0AtomContent);
+  }
+};
+
+class PLTAAtom : public PLTAtom {
+public:
+  PLTAAtom(const File &f) : PLTAtom(f, ".plt") {}
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsPltAAtomContent);
+  }
+};
+
+/// \brief MIPS GOT PLT entry
+class GOTPLTAtom : public GOTAtom {
+public:
+  GOTPLTAtom(const File &f) : GOTAtom(f, ".got.plt") {}
+
+  Alignment alignment() const override { return Alignment(2); }
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsGot0AtomContent);
+  }
+};
+
+/// \brief LA25 stub atom
+class LA25Atom : public PLTAtom {
+public:
+  LA25Atom(const File &f) : PLTAtom(f, ".text") {}
+
+  ArrayRef<uint8_t> rawContent() const override {
+    return llvm::makeArrayRef(mipsLA25AtomContent);
+  }
+};
+
+class RelocationPassFile : public SimpleFile {
+public:
+  RelocationPassFile(const ELFLinkingContext &ctx)
+      : SimpleFile("RelocationPassFile") {
+    setOrdinal(ctx.getNextOrdinalAndIncrement());
+  }
+
+  llvm::BumpPtrAllocator _alloc;
+};
+
+template <typename ELFT> class RelocationPass : public Pass {
+public:
+  RelocationPass(MipsLinkingContext &context);
+
+  void perform(std::unique_ptr<MutableFile> &mf) override;
+
+private:
+  /// \brief Reference to the linking context.
+  const MipsLinkingContext &_context;
+
+  /// \brief Owner of all the Atoms created by this pass.
+  RelocationPassFile _file;
+
+  /// \brief Map Atoms and addend to local GOT entries.
+  typedef std::pair<const Atom *, int64_t> LocalGotMapKeyT;
+  llvm::DenseMap<LocalGotMapKeyT, GOTAtom *> _gotLocalMap;
+
+  /// \brief Map Atoms to global GOT entries.
+  llvm::DenseMap<const Atom *, GOTAtom *> _gotGlobalMap;
+
+  /// \brief the list of local GOT atoms.
+  std::vector<GOTAtom *> _localGotVector;
+
+  /// \brief the list of global GOT atoms.
+  std::vector<GOTAtom *> _globalGotVector;
+
+  /// \brief Map Atoms to their PLT entries.
+  llvm::DenseMap<const Atom *, PLTAtom *> _pltMap;
+
+  /// \brief Map Atoms to their Object entries.
+  llvm::DenseMap<const Atom *, ObjectAtom *> _objectMap;
+
+  /// \brief Map Atoms to their LA25 entries.
+  llvm::DenseMap<const Atom *, LA25Atom *> _la25Map;
+
+  /// \brief the list of PLT atoms.
+  std::vector<PLTAtom *> _pltVector;
+
+  /// \brief the list of GOTPLT atoms.
+  std::vector<GOTAtom *> _gotpltVector;
+
+  /// \brief the list of Object entries.
+  std::vector<ObjectAtom *> _objectVector;
+
+  /// \brief the list of LA25 entries.
+  std::vector<LA25Atom *> _la25Vector;
+
+  /// \brief Handle a specific reference.
+  void handleReference(Reference &ref);
+
+  void handlePlain(Reference &ref);
+  void handle26(Reference &ref);
+  void handleGOT(Reference &ref);
+
+  const GOTAtom *getLocalGOTEntry(const Reference &ref);
+  const GOTAtom *getGlobalGOTEntry(const Atom *a);
+  const PLTAtom *getPLTEntry(const Atom *a);
+  const LA25Atom *getLA25Entry(const Atom *a);
+  const ObjectAtom *getObjectEntry(const SharedLibraryAtom *a);
+
+  bool isLocal(const Atom *a) const;
+  bool requireLocalGOT(const Atom *a);
+  bool requireLA25Stub(const Atom *a);
+  void createPLTHeader();
+};
+
+template <typename ELFT>
+RelocationPass<ELFT>::RelocationPass(MipsLinkingContext &context)
+    : _context(context), _file(context) {
+  _localGotVector.push_back(new (_file._alloc) GOT0Atom(_file));
+  _localGotVector.push_back(new (_file._alloc) GOTModulePointerAtom(_file));
+}
+
+template <typename ELFT>
+void RelocationPass<ELFT>::perform(std::unique_ptr<MutableFile> &mf) {
+  // Process all references.
+  for (const auto &atom : mf->defined())
+    for (const auto &ref : *atom)
+      handleReference(const_cast<Reference &>(*ref));
+
+  uint64_t ordinal = 0;
+
+  for (auto &got : _localGotVector) {
+    DEBUG_WITH_TYPE("MipsGOT", llvm::dbgs() << "[ GOT ] Adding L "
+                                            << got->name() << "\n");
+    got->setOrdinal(ordinal++);
+    mf->addAtom(*got);
+  }
+
+  for (auto &got : _globalGotVector) {
+    DEBUG_WITH_TYPE("MipsGOT", llvm::dbgs() << "[ GOT ] Adding G "
+                                            << got->name() << "\n");
+    got->setOrdinal(ordinal++);
+    mf->addAtom(*got);
+  }
+
+  for (auto &plt : _pltVector) {
+    DEBUG_WITH_TYPE("MipsGOT", llvm::dbgs() << "[ PLT ] Adding " << plt->name()
+                                            << "\n");
+    plt->setOrdinal(ordinal++);
+    mf->addAtom(*plt);
+  }
+
+  for (auto &gotplt : _gotpltVector) {
+    DEBUG_WITH_TYPE("MipsGOT", llvm::dbgs() << "[ GOTPLT ] Adding "
+                                            << gotplt->name() << "\n");
+    gotplt->setOrdinal(ordinal++);
+    mf->addAtom(*gotplt);
+  }
+
+  for (auto obj : _objectVector) {
+    obj->setOrdinal(ordinal++);
+    mf->addAtom(*obj);
+  }
+
+  for (auto la25 : _la25Vector) {
+    la25->setOrdinal(ordinal++);
+    mf->addAtom(*la25);
+  }
+}
+
+template <typename ELFT>
+void RelocationPass<ELFT>::handleReference(Reference &ref) {
+  if (ref.kindNamespace() != lld::Reference::KindNamespace::ELF)
+    return;
+  assert(ref.kindArch() == Reference::KindArch::Mips);
+  switch (ref.kindValue()) {
+  case R_MIPS_32:
+  case R_MIPS_PC32:
+  case R_MIPS_HI16:
+  case R_MIPS_LO16:
+    // FIXME (simon): Handle dynamic/static linking differently.
+    handlePlain(ref);
+    break;
+  case R_MIPS_26:
+    handle26(ref);
+    break;
+  case R_MIPS_GOT16:
+  case R_MIPS_CALL16:
+    handleGOT(ref);
+    break;
+  }
+}
+
+template <typename ELFT>
+bool RelocationPass<ELFT>::isLocal(const Atom *a) const {
+  if (auto *da = dyn_cast<DefinedAtom>(a))
+    return da->scope() == Atom::scopeTranslationUnit;
+  return false;
+}
+
+template <typename ELFT>
+void RelocationPass<ELFT>::handlePlain(Reference &ref) {
+  if (!ref.target())
+    return;
+  auto sla = dyn_cast<SharedLibraryAtom>(ref.target());
+  if (!sla)
+    return;
+  switch (sla->type()) {
+  case SharedLibraryAtom::Type::Data:
+    ref.setTarget(getObjectEntry(sla));
+    break;
+  case SharedLibraryAtom::Type::Code:
+    ref.setTarget(getPLTEntry(sla));
+    break;
+  default:
+    // Nothing to do.
+    break;
+  }
+}
+
+template <typename ELFT> void RelocationPass<ELFT>::handle26(Reference &ref) {
+  if (ref.kindValue() == R_MIPS_26 && !isLocal(ref.target())) {
+    ref.setKindValue(LLD_R_MIPS_GLOBAL_26);
+
+    if (requireLA25Stub(ref.target()))
+      const_cast<Reference &>(ref).setTarget(getLA25Entry(ref.target()));
+  }
+
+  const auto *sla = dyn_cast<SharedLibraryAtom>(ref.target());
+  if (sla && sla->type() == SharedLibraryAtom::Type::Code)
+    ref.setTarget(getPLTEntry(sla));
+}
+
+template <typename ELFT> void RelocationPass<ELFT>::handleGOT(Reference &ref) {
+  if (requireLocalGOT(ref.target()))
+    ref.setTarget(getLocalGOTEntry(ref));
+  else
+    ref.setTarget(getGlobalGOTEntry(ref.target()));
+}
+
+template <typename ELFT>
+bool RelocationPass<ELFT>::requireLocalGOT(const Atom *a) {
+  Atom::Scope scope;
+  if (auto *da = dyn_cast<DefinedAtom>(a))
+    scope = da->scope();
+  else if (auto *aa = dyn_cast<AbsoluteAtom>(a))
+    scope = aa->scope();
+  else
+    return false;
+
+  // Local and hidden symbols must be local.
+  if (scope == Atom::scopeTranslationUnit || scope == Atom::scopeLinkageUnit)
+    return true;
+
+  // External symbol defined in an executable file requires a local GOT entry.
+  if (_context.getOutputELFType() == llvm::ELF::ET_EXEC)
+    return true;
+
+  return false;
+}
+
+template <typename ELFT>
+bool RelocationPass<ELFT>::requireLA25Stub(const Atom *a) {
+  if (auto *da = dyn_cast<DefinedAtom>(a))
+    return static_cast<const MipsELFDefinedAtom<ELFT> *>(da)->file().isPIC();
+  return false;
+}
+
+template <typename ELFT>
+const GOTAtom *RelocationPass<ELFT>::getLocalGOTEntry(const Reference &ref) {
+  const Atom *a = ref.target();
+  LocalGotMapKeyT key(a, ref.addend());
+
+  auto got = _gotLocalMap.find(key);
+  if (got != _gotLocalMap.end())
+    return got->second;
+
+  auto ga = new (_file._alloc) GOT0Atom(_file);
+  _gotLocalMap[key] = ga;
+
+  _localGotVector.push_back(ga);
+
+  if (isLocal(a))
+    ga->addReferenceELF_Mips(LLD_R_MIPS_32_HI16, 0, a, ref.addend());
+  else
+    ga->addReferenceELF_Mips(R_MIPS_32, 0, a, 0);
+
+  DEBUG_WITH_TYPE("MipsGOT", {
+    ga->_name = "__got_";
+    ga->_name += a->name();
+    llvm::dbgs() << "[ GOT ] Create L " << a->name() << "\n";
+  });
+
+  return ga;
+}
+
+template <typename ELFT>
+const GOTAtom *RelocationPass<ELFT>::getGlobalGOTEntry(const Atom *a) {
+  auto got = _gotGlobalMap.find(a);
+  if (got != _gotGlobalMap.end())
+    return got->second;
+
+  auto ga = new (_file._alloc) GOT0Atom(_file);
+  _gotGlobalMap[a] = ga;
+
+  _globalGotVector.push_back(ga);
+  ga->addReferenceELF_Mips(LLD_R_MIPS_GLOBAL_GOT, 0, a, 0);
+
+  if (const DefinedAtom *da = dyn_cast<DefinedAtom>(a))
+    ga->addReferenceELF_Mips(R_MIPS_32, 0, da, 0);
+
+  DEBUG_WITH_TYPE("MipsGOT", {
+    ga->_name = "__got_";
+    ga->_name += a->name();
+    llvm::dbgs() << "[ GOT ] Create G " << a->name() << "\n";
+  });
+
+  return ga;
+}
+
+template <typename ELFT> void RelocationPass<ELFT>::createPLTHeader() {
+  assert(_pltVector.empty() && _gotpltVector.empty());
+
+  auto pa = new (_file._alloc) PLT0Atom(_file);
+  _pltVector.push_back(pa);
+
+  auto ga0 = new (_file._alloc) GOTPLTAtom(_file);
+  _gotpltVector.push_back(ga0);
+  auto ga1 = new (_file._alloc) GOTPLTAtom(_file);
+  _gotpltVector.push_back(ga1);
+
+  // Setup reference to fixup the PLT0 entry.
+  pa->addReferenceELF_Mips(LLD_R_MIPS_HI16, 0, ga0, 0);
+  pa->addReferenceELF_Mips(LLD_R_MIPS_LO16, 4, ga0, 0);
+  pa->addReferenceELF_Mips(LLD_R_MIPS_LO16, 8, ga0, 0);
+
+  DEBUG_WITH_TYPE("MipsGOT", {
+    pa->_name = "__plt0";
+    llvm::dbgs() << "[ PLT ] Create PLT0\n";
+    ga0->_name = "__gotplt0";
+    llvm::dbgs() << "[ GOTPLT ] Create GOTPLT0\n";
+    ga1->_name = "__gotplt1";
+    llvm::dbgs() << "[ GOTPLT ] Create GOTPLT1\n";
+  });
+}
+
+template <typename ELFT>
+const PLTAtom *RelocationPass<ELFT>::getPLTEntry(const Atom *a) {
+  auto plt = _pltMap.find(a);
+  if (plt != _pltMap.end())
+    return plt->second;
+
+  if (_pltVector.empty())
+    createPLTHeader();
+
+  auto pa = new (_file._alloc) PLTAAtom(_file);
+  _pltMap[a] = pa;
+  _pltVector.push_back(pa);
+
+  auto ga = new (_file._alloc) GOTPLTAtom(_file);
+  _gotpltVector.push_back(ga);
+
+  // Setup reference to fixup the PLT entry.
+  pa->addReferenceELF_Mips(LLD_R_MIPS_HI16, 0, ga, 0);
+  pa->addReferenceELF_Mips(LLD_R_MIPS_LO16, 4, ga, 0);
+  pa->addReferenceELF_Mips(LLD_R_MIPS_LO16, 12, ga, 0);
+
+  // Setup reference to assign initial value to the .got.plt entry.
+  ga->addReferenceELF_Mips(R_MIPS_32, 0, _pltVector.front(), 0);
+  // Create dynamic relocation to adjust the .got.plt entry at runtime.
+  ga->addReferenceELF_Mips(R_MIPS_JUMP_SLOT, 0, a, 0);
+
+  DEBUG_WITH_TYPE("MipsGOT", {
+    pa->_name = "__plt_";
+    pa->_name += a->name();
+    llvm::dbgs() << "[ PLT ] Create " << a->name() << "\n";
+    ga->_name = "__got_plt_";
+    ga->_name += a->name();
+    llvm::dbgs() << "[ GOTPLT ] Create " << a->name() << "\n";
+  });
+
+  return pa;
+}
+
+template <typename ELFT>
+const LA25Atom *RelocationPass<ELFT>::getLA25Entry(const Atom *a) {
+  auto la25 = _la25Map.find(a);
+  if (la25 != _la25Map.end())
+    return la25->second;
+
+  auto sa = new (_file._alloc) LA25Atom(_file);
+  _la25Map[a] = sa;
+  _la25Vector.push_back(sa);
+
+  // Setup reference to fixup the LA25 stub entry.
+  sa->addReferenceELF_Mips(R_MIPS_HI16, 0, a, 0);
+  sa->addReferenceELF_Mips(R_MIPS_26, 4, a, 0);
+  sa->addReferenceELF_Mips(R_MIPS_LO16, 8, a, 0);
+
+  DEBUG_WITH_TYPE("MipsGOT", {
+    sa->_name = ".pic.";
+    sa->_name += a->name();
+  });
+
+  return sa;
+}
+
+template <typename ELFT>
+const ObjectAtom *
+RelocationPass<ELFT>::getObjectEntry(const SharedLibraryAtom *a) {
+  auto obj = _objectMap.find(a);
+  if (obj != _objectMap.end())
+    return obj->second;
+
+  auto oa = new (_file._alloc) ObjectAtom(_file);
+  oa->addReferenceELF_Mips(R_MIPS_COPY, 0, oa, 0);
+  oa->_name = a->name();
+  oa->_size = a->size();
+
+  _objectMap[a] = oa;
+  _objectVector.push_back(oa);
+
+  return oa;
+}
+
+} // end anon namespace
+
+std::unique_ptr<Pass>
+lld::elf::createMipsRelocationPass(MipsLinkingContext &ctx) {
+  switch (ctx.getOutputELFType()) {
+  case llvm::ELF::ET_EXEC:
+  case llvm::ELF::ET_DYN:
+    return std::unique_ptr<Pass>(new RelocationPass<Mips32ElELFType>(ctx));
+  case llvm::ELF::ET_REL:
+    return std::unique_ptr<Pass>();
+  default:
+    llvm_unreachable("Unhandled output file type");
+  }
+}

@@ -1,0 +1,15 @@
+.svn
+
+llvm/projects/libcxx
+llvm/projects/libcxxabi
+llvm/projects/compiler-rt
+llvm/projects/llvm-test-suite
+
+llvm/tools/clang
+llvm/tools/lld
+llvm/tools/lldb
+llvm/tools/extra
+
+
+
+
