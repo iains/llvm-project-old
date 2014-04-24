@@ -2066,6 +2066,7 @@ void MachOObjectFile::getRelocationTypeName(
         res = Table[RType];
       break;
     }
+    case Triple::ppc64: // PPC64 and PPC share relocations.
     case Triple::ppc: {
       static const char *const Table[] =  {
         "PPC_RELOC_VANILLA",
