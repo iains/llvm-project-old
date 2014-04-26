@@ -13,7 +13,6 @@
 #include "MCTargetDesc/ARMArchName.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
 #include "MCTargetDesc/ARMMCExpr.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -345,7 +344,8 @@ public:
   };
 
   ARMAsmParser(MCSubtargetInfo &_STI, MCAsmParser &_Parser,
-               const MCInstrInfo &MII)
+               const MCInstrInfo &MII,
+               const MCTargetOptions &Options)
       : MCTargetAsmParser(), STI(_STI), Parser(_Parser), MII(MII), UC(_Parser) {
     MCAsmParserExtension::Initialize(_Parser);
 
@@ -1099,7 +1099,7 @@ public:
     if (!isMem())
       return false;
     // No offset of any kind.
-    return Memory.OffsetRegNum == 0 && Memory.OffsetImm == 0 &&
+    return Memory.OffsetRegNum == 0 && Memory.OffsetImm == nullptr &&
      (alignOK || Memory.Alignment == Alignment);
   }
   bool isMemPCRelImm12() const {
@@ -1610,7 +1610,10 @@ public:
   }
 
   bool isNEONi16splat() const {
-    if (!isImm()) return false;
+    if (isNEONByteReplicate(2))
+      return false; // Leave that for bytes replication and forbid by default.
+    if (!isImm())
+      return false;
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
     // Must be a constant.
     if (!CE) return false;
@@ -1620,7 +1623,10 @@ public:
   }
 
   bool isNEONi32splat() const {
-    if (!isImm()) return false;
+    if (isNEONByteReplicate(4))
+      return false; // Leave that for bytes replication and forbid by default.
+    if (!isImm())
+      return false;
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
     // Must be a constant.
     if (!CE) return false;
@@ -1632,11 +1638,36 @@ public:
       (Value >= 0x01000000 && Value <= 0xff000000);
   }
 
-  bool isNEONi32vmov() const {
-    if (!isImm()) return false;
+  bool isNEONByteReplicate(unsigned NumBytes) const {
+    if (!isImm())
+      return false;
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
     // Must be a constant.
-    if (!CE) return false;
+    if (!CE)
+      return false;
+    int64_t Value = CE->getValue();
+    if (!Value)
+      return false; // Don't bother with zero.
+
+    unsigned char B = Value & 0xff;
+    for (unsigned i = 1; i < NumBytes; ++i) {
+      Value >>= 8;
+      if ((Value & 0xff) != B)
+        return false;
+    }
+    return true;
+  }
+  bool isNEONi16ByteReplicate() const { return isNEONByteReplicate(2); }
+  bool isNEONi32ByteReplicate() const { return isNEONByteReplicate(4); }
+  bool isNEONi32vmov() const {
+    if (isNEONByteReplicate(4))
+      return false; // Let it to be classified as byte-replicate case.
+    if (!isImm())
+      return false;
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    // Must be a constant.
+    if (!CE)
+      return false;
     int64_t Value = CE->getValue();
     // i32 value with set bits only in one byte X000, 0X00, 00X0, or 000X,
     // for VMOV/VMVN only, 00Xf or 0Xff are also accepted.
@@ -1677,7 +1708,7 @@ public:
 
   void addExpr(MCInst &Inst, const MCExpr *Expr) const {
     // Add as immediates when possible.  Null MCExpr = 0.
-    if (Expr == 0)
+    if (!Expr)
       Inst.addOperand(MCOperand::CreateImm(0));
     else if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Expr))
       Inst.addOperand(MCOperand::CreateImm(CE->getValue()));
@@ -2384,6 +2415,19 @@ public:
     Inst.addOperand(MCOperand::CreateImm(Value));
   }
 
+  void addNEONinvByteReplicateOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    // The immediate encodes the type of constant as well as the value.
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    unsigned Value = CE->getValue();
+    assert((Inst.getOpcode() == ARM::VMOVv8i8 ||
+            Inst.getOpcode() == ARM::VMOVv16i8) &&
+           "All vmvn instructions that wants to replicate non-zero byte "
+           "always must be replaced with VMOVv8i8 or VMOVv16i8.");
+    unsigned B = ((~Value) & 0xff);
+    B |= 0xe00; // cmode = 0b1110
+    Inst.addOperand(MCOperand::CreateImm(B));
+  }
   void addNEONi32vmovOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     // The immediate encodes the type of constant as well as the value.
@@ -2398,6 +2442,19 @@ public:
     Inst.addOperand(MCOperand::CreateImm(Value));
   }
 
+  void addNEONvmovByteReplicateOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    // The immediate encodes the type of constant as well as the value.
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    unsigned Value = CE->getValue();
+    assert((Inst.getOpcode() == ARM::VMOVv8i8 ||
+            Inst.getOpcode() == ARM::VMOVv16i8) &&
+           "All instructions that wants to replicate non-zero byte "
+           "always must be replaced with VMOVv8i8 or VMOVv16i8.");
+    unsigned B = Value & 0xff;
+    B |= 0xe00; // cmode = 0b1110
+    Inst.addOperand(MCOperand::CreateImm(B));
+  }
   void addNEONi32vmovNegOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     // The immediate encodes the type of constant as well as the value.
@@ -2917,7 +2974,7 @@ int ARMAsmParser::tryParseShiftRegister(
   // The source register for the shift has already been added to the
   // operand list, so we need to pop it off and combine it into the shifted
   // register operand instead.
-  OwningPtr<ARMOperand> PrevOp((ARMOperand*)Operands.pop_back_val());
+  std::unique_ptr<ARMOperand> PrevOp((ARMOperand*)Operands.pop_back_val());
   if (!PrevOp->isReg())
     return Error(PrevOp->getStartLoc(), "shift must be of a register");
   int SrcReg = PrevOp->getReg();
@@ -2936,7 +2993,7 @@ int ARMAsmParser::tryParseShiftRegister(
         Parser.getTok().is(AsmToken::Dollar)) {
       Parser.Lex(); // Eat hash.
       SMLoc ImmLoc = Parser.getTok().getLoc();
-      const MCExpr *ShiftExpr = 0;
+      const MCExpr *ShiftExpr = nullptr;
       if (getParser().parseExpression(ShiftExpr, EndLoc)) {
         Error(ImmLoc, "invalid immediate shift value");
         return -1;
@@ -4434,8 +4491,9 @@ parseMemory(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
     E = Tok.getEndLoc();
     Parser.Lex(); // Eat right bracket token.
 
-    Operands.push_back(ARMOperand::CreateMem(BaseRegNum, 0, 0, ARM_AM::no_shift,
-                                             0, 0, false, S, E));
+    Operands.push_back(ARMOperand::CreateMem(BaseRegNum, nullptr, 0,
+                                             ARM_AM::no_shift, 0, 0, false,
+                                             S, E));
 
     // If there's a pre-indexing writeback marker, '!', just add it as a token
     // operand. It's rather odd, but syntactically valid.
@@ -4490,7 +4548,7 @@ parseMemory(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
 
     // Don't worry about range checking the value here. That's handled by
     // the is*() predicates.
-    Operands.push_back(ARMOperand::CreateMem(BaseRegNum, 0, 0,
+    Operands.push_back(ARMOperand::CreateMem(BaseRegNum, nullptr, 0,
                                              ARM_AM::no_shift, 0, Align,
                                              false, S, E, AlignmentLoc));
 
@@ -4583,7 +4641,7 @@ parseMemory(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   E = Parser.getTok().getEndLoc();
   Parser.Lex(); // Eat right bracket token.
 
-  Operands.push_back(ARMOperand::CreateMem(BaseRegNum, 0, OffsetRegNum,
+  Operands.push_back(ARMOperand::CreateMem(BaseRegNum, nullptr, OffsetRegNum,
                                            ShiftType, ShiftImm, 0, isNegative,
                                            S, E));
 
@@ -5863,6 +5921,30 @@ validateInstruction(MCInst &Inst,
       return Error(Operands[Op]->getStartLoc(), "branch target out of range");
     break;
   }
+  case ARM::MOVi16:
+  case ARM::t2MOVi16:
+  case ARM::t2MOVTi16:
+    {
+    // We want to avoid misleadingly allowing something like "mov r0, <symbol>"
+    // especially when we turn it into a movw and the expression <symbol> does
+    // not have a :lower16: or :upper16 as part of the expression.  We don't
+    // want the behavior of silently truncating, which can be unexpected and
+    // lead to bugs that are difficult to find since this is an easy mistake
+    // to make.
+    int i = (Operands[3]->isImm()) ? 3 : 4;
+    ARMOperand *Op = static_cast<ARMOperand*>(Operands[i]);
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Op->getImm());
+    if (CE) break;
+    const MCExpr *E = dyn_cast<MCExpr>(Op->getImm());
+    if (!E) break;
+    const ARMMCExpr *ARM16Expr = dyn_cast<ARMMCExpr>(E);
+    if (!ARM16Expr || (ARM16Expr->getKind() != ARMMCExpr::VK_ARM_HI16 &&
+                       ARM16Expr->getKind() != ARMMCExpr::VK_ARM_LO16)) {
+      return Error(Op->getStartLoc(),
+	     "immediate expression for mov requires :lower16: or :upper16");
+      break;
+    }
+    }
   }
 
   return false;

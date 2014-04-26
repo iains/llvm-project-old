@@ -4066,7 +4066,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Finally add the compile command to the compilation.
   if (Args.hasArg(options::OPT__SLASH_fallback) &&
-      Output.getType() == types::TY_Object) {
+      Output.getType() == types::TY_Object &&
+      (InputType == types::TY_C || InputType == types::TY_CXX)) {
     tools::visualstudio::Compile CL(getToolChain());
     Command *CLCommand = CL.GetCommand(C, JA, Output, Inputs, Args,
                                        LinkingOutput);
@@ -7434,6 +7435,10 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   CmdArgs.push_back("-nologo");
+
+  if (Args.hasArg(options::OPT_g_Group)) {
+    CmdArgs.push_back("-debug");
+  }
 
   bool DLL = Args.hasArg(options::OPT__SLASH_LD, options::OPT__SLASH_LDd);
 

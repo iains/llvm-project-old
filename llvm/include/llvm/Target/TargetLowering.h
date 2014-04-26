@@ -182,6 +182,9 @@ public:
     return HasMultipleConditionRegisters;
   }
 
+  /// Return true if the target has BitExtract instructions.
+  bool hasExtractBitsInsn() const { return HasExtractBitsInsn; }
+
   /// Return true if a vector of the given type should be split
   /// (TypeSplitVector) instead of promoted (TypePromoteInteger) during type
   /// legalization.
@@ -1006,6 +1009,14 @@ protected:
     HasMultipleConditionRegisters = hasManyRegs;
   }
 
+  /// Tells the code generator that the target has BitExtract instructions.
+  /// The code generator will aggressively sink "shift"s into the blocks of
+  /// their users if the users will generate "and" instructions which can be
+  /// combined with "shift" to BitExtract instructions.
+  void setHasExtractBitsInsn(bool hasExtractInsn = true) {
+    HasExtractBitsInsn = hasExtractInsn;
+  }
+
   /// Tells the code generator not to expand sequence of operations into a
   /// separate sequences that increases the amount of flow control.
   void setJumpIsExpensive(bool isExpensive = true) {
@@ -1424,6 +1435,12 @@ private:
   /// registers, the code generator will not aggressively sink comparisons into
   /// the blocks of their users.
   bool HasMultipleConditionRegisters;
+
+  /// Tells the code generator that the target has BitExtract instructions.
+  /// The code generator will aggressively sink "shift"s into the blocks of
+  /// their users if the users will generate "and" instructions which can be
+  /// combined with "shift" to BitExtract instructions.
+  bool HasExtractBitsInsn;
 
   /// Tells the code generator not to expand integer divides by constants into a
   /// sequence of muls, adds, and shifts.  This is a hack until a real cost
@@ -2400,10 +2417,12 @@ public:
   //
   SDValue BuildExactSDIV(SDValue Op1, SDValue Op2, SDLoc dl,
                          SelectionDAG &DAG) const;
-  SDValue BuildSDIV(SDNode *N, SelectionDAG &DAG, bool IsAfterLegalization,
-                      std::vector<SDNode*> *Created) const;
-  SDValue BuildUDIV(SDNode *N, SelectionDAG &DAG, bool IsAfterLegalization,
-                      std::vector<SDNode*> *Created) const;
+  SDValue BuildSDIV(SDNode *N, const APInt &Divisor, SelectionDAG &DAG,
+                    bool IsAfterLegalization,
+                    std::vector<SDNode *> *Created) const;
+  SDValue BuildUDIV(SDNode *N, const APInt &Divisor, SelectionDAG &DAG,
+                    bool IsAfterLegalization,
+                    std::vector<SDNode *> *Created) const;
 
   //===--------------------------------------------------------------------===//
   // Legalization utility functions

@@ -143,12 +143,22 @@ int main(int argc, char **argv) {
   for (unsigned i = 0; i < KeptDSOSyms.size(); ++i)
     CodeGen.addMustPreserveSymbol(KeptDSOSyms[i].c_str());
 
+  std::string attrs;
+  for (unsigned i = 0; i < MAttrs.size(); ++i) {
+    if (i > 0)
+      attrs.append(",");
+    attrs.append(MAttrs[i]);
+  }
+
+  if (!attrs.empty())
+    CodeGen.setAttr(attrs.c_str());
+
   if (!OutputFilename.empty()) {
     size_t len = 0;
     std::string ErrorInfo;
     const void *Code = CodeGen.compile(&len, DisableOpt, DisableInline,
                                        DisableGVNLoadPRE, ErrorInfo);
-    if (Code == NULL) {
+    if (!Code) {
       errs() << argv[0]
              << ": error compiling the code: " << ErrorInfo << "\n";
       return 1;
@@ -165,7 +175,7 @@ int main(int argc, char **argv) {
     FileStream.write(reinterpret_cast<const char *>(Code), len);
   } else {
     std::string ErrorInfo;
-    const char *OutputName = NULL;
+    const char *OutputName = nullptr;
     if (!CodeGen.compile_to_file(&OutputName, DisableOpt, DisableInline,
                                  DisableGVNLoadPRE, ErrorInfo)) {
       errs() << argv[0]

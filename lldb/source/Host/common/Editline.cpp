@@ -20,17 +20,146 @@
 using namespace lldb;
 using namespace lldb_private;
 
+namespace lldb_private {
+    typedef std::weak_ptr<EditlineHistory> EditlineHistoryWP;
+    
+    
+    // EditlineHistory objects are sometimes shared between multiple
+    // Editline instances with the same program name. This class allows
+    // multiple editline instances to
+    //
+    
+    class EditlineHistory
+    {
+    private:
+        // Use static GetHistory() function to get a EditlineHistorySP to one of these objects
+        EditlineHistory(const std::string &prefix, uint32_t size, bool unique_entries) :
+            m_history (NULL),
+            m_event (),
+            m_prefix (prefix),
+            m_path ()
+        {
+            m_history = ::history_init();
+            ::history (m_history, &m_event, H_SETSIZE, size);
+            if (unique_entries)
+                ::history (m_history, &m_event, H_SETUNIQUE, 1);
+        }
+        
+        const char *
+        GetHistoryFilePath()
+        {
+            if (m_path.empty() && m_history && !m_prefix.empty())
+            {
+                char history_path[PATH_MAX];
+                ::snprintf (history_path, sizeof(history_path), "~/.%s-history", m_prefix.c_str());
+                m_path = std::move(FileSpec(history_path, true).GetPath());
+            }
+            if (m_path.empty())
+                return NULL;
+            return m_path.c_str();
+        }
+        
+    public:
+        
+        ~EditlineHistory()
+        {
+            Save ();
+            
+            if (m_history)
+            {
+                ::history_end (m_history);
+                m_history = NULL;
+            }
+        }
+
+        static EditlineHistorySP
+        GetHistory (const std::string &prefix)
+        {
+            typedef std::map<std::string, EditlineHistoryWP> WeakHistoryMap;
+            static Mutex g_mutex(Mutex::eMutexTypeRecursive);
+            static WeakHistoryMap g_weak_map;
+            Mutex::Locker locker (g_mutex);
+            WeakHistoryMap::const_iterator pos = g_weak_map.find (prefix);
+            EditlineHistorySP history_sp;
+            if (pos != g_weak_map.end())
+            {
+                history_sp = pos->second.lock();
+                if (history_sp)
+                    return history_sp;
+                g_weak_map.erase(pos);
+            }
+            history_sp.reset(new EditlineHistory(prefix, 800, true));
+            g_weak_map[prefix] = history_sp;
+            return history_sp;
+        }
+        
+        bool IsValid() const
+        {
+            return m_history != NULL;
+        }
+        
+        ::History *
+        GetHistoryPtr ()
+        {
+            return m_history;
+        }
+        
+        void
+        Enter (const char *line_cstr)
+        {
+            if (m_history)
+                ::history (m_history, &m_event, H_ENTER, line_cstr);
+        }
+        
+        bool
+        Load ()
+        {
+            if (m_history)
+            {
+                const char *path = GetHistoryFilePath();
+                if (path)
+                {
+                    ::history (m_history, &m_event, H_LOAD, path);
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        bool
+        Save ()
+        {
+            if (m_history)
+            {
+                const char *path = GetHistoryFilePath();
+                if (path)
+                {
+                    ::history (m_history, &m_event, H_SAVE, path);
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+    protected:
+        ::History *m_history;       // The history object
+        ::HistEvent m_event;// The history event needed to contain all history events
+        std::string m_prefix;       // The prefix name (usually the editline program name) to use when loading/saving history
+        std::string m_path;         // Path to the history file
+    };
+}
+
+
 static const char k_prompt_escape_char = '\1';
 
 Editline::Editline (const char *prog,       // prog can't be NULL
                     const char *prompt,     // can be NULL for no prompt
+                    bool configure_for_multiline,
                     FILE *fin,
                     FILE *fout,
                     FILE *ferr) :
     m_editline (NULL),
-    m_history (NULL),
-    m_history_event (),
-    m_program (),
+    m_history_sp (),
     m_prompt (),
     m_lines_prompt (),
     m_getc_buffer (),
@@ -52,9 +181,10 @@ Editline::Editline (const char *prog,       // prog can't be NULL
 {
     if (prog && prog[0])
     {
-        m_program = prog;
         m_editline = ::el_init(prog, fin, fout, ferr);
-        m_history = ::history_init();
+        
+        // Get a shared history instance
+        m_history_sp = EditlineHistory::GetHistory(prog);
     }
     else
     {
@@ -77,12 +207,15 @@ Editline::Editline (const char *prog,       // prog can't be NULL
     ::el_set (m_editline, EL_PROMPT, GetPromptCallback);
 #endif
     ::el_set (m_editline, EL_EDITOR, "emacs");
-    if (m_history)
+    if (m_history_sp && m_history_sp->IsValid())
     {
-        ::el_set (m_editline, EL_HIST, history, m_history);
+        ::el_set (m_editline, EL_HIST, history, m_history_sp->GetHistoryPtr());
     }
     ::el_set (m_editline, EL_ADDFN, "lldb-complete", "Editline completion function", Editline::CallbackComplete);
-    ::el_set (m_editline, EL_ADDFN, "lldb_complete", "Editline completion function", Editline::CallbackComplete); // Keep old "lldb_complete" mapping for older clients that used this in their .editrc
+    // Keep old "lldb_complete" mapping for older clients that used this in their .editrc. editline also
+    // has a bad bug where if you have a bind command that tries to bind to a function name that doesn't
+    // exist, it will corrupt the heap and probably crash your process later.
+    ::el_set (m_editline, EL_ADDFN, "lldb_complete", "Editline completion function", Editline::CallbackComplete);
     ::el_set (m_editline, EL_ADDFN, "lldb-edit-prev-line", "Editline edit prev line", Editline::CallbackEditPrevLine);
     ::el_set (m_editline, EL_ADDFN, "lldb-edit-next-line", "Editline edit next line", Editline::CallbackEditNextLine);
 
@@ -91,15 +224,27 @@ Editline::Editline (const char *prog,       // prog can't be NULL
     ::el_set (m_editline, EL_BIND, "\033[3~", "ed-delete-next-char", NULL); // Fix the delete key.
     ::el_set (m_editline, EL_BIND, "\t", "lldb-complete", NULL); // Bind TAB to be auto complete
     
+    if (configure_for_multiline)
+    {
+        // Use escape sequences for control characters due to bugs in editline
+        // where "-k up" and "-k down" don't always work.
+        ::el_set (m_editline, EL_BIND, "^[[A", "lldb-edit-prev-line", NULL); // Map up arrow
+        ::el_set (m_editline, EL_BIND, "^[[B", "lldb-edit-next-line", NULL); // Map down arrow
+        // Bindings for next/prev history
+        ::el_set (m_editline, EL_BIND, "^P", "ed-prev-history", NULL); // Map up arrow
+        ::el_set (m_editline, EL_BIND, "^N", "ed-next-history", NULL); // Map down arrow
+    }
+    else
+    {
+        // Use escape sequences for control characters due to bugs in editline
+        // where "-k up" and "-k down" don't always work.
+        ::el_set (m_editline, EL_BIND, "^[[A", "ed-prev-history", NULL); // Map up arrow
+        ::el_set (m_editline, EL_BIND, "^[[B", "ed-next-history", NULL); // Map down arrow
+    }
+    
     // Source $PWD/.editrc then $HOME/.editrc
     ::el_source (m_editline, NULL);
  
-    if (m_history)
-    {
-        ::history (m_history, &m_history_event, H_SETSIZE, 800);
-        ::history (m_history, &m_history_event, H_SETUNIQUE, 1);
-    }
-
     // Always read through our callback function so we don't read
     // stuff we aren't supposed to. This also stops the extra echoing
     // that can happen when you have more input than editline can handle
@@ -111,14 +256,12 @@ Editline::Editline (const char *prog,       // prog can't be NULL
 
 Editline::~Editline()
 {
-    SaveHistory();
-
-    if (m_history)
-    {
-        ::history_end (m_history);
-        m_history = NULL;
-    }
-
+    // EditlineHistory objects are sometimes shared between multiple
+    // Editline instances with the same program name. So just release
+    // our shared pointer and if we are the last owner, it will save the
+    // history to the history save file automatically.
+    m_history_sp.reset();
+    
     // Disable edit mode to stop the terminal from flushing all input
     // during the call to el_end() since we expect to have multiple editline
     // instances in this program.
@@ -134,36 +277,19 @@ Editline::SetGetCharCallback (GetCharCallbackType callback)
     ::el_set (m_editline, EL_GETCFN, callback);
 }
 
-FileSpec
-Editline::GetHistoryFile()
-{
-    char history_path[PATH_MAX];
-    ::snprintf (history_path, sizeof(history_path), "~/.%s-history", m_program.c_str());
-    return FileSpec(history_path, true);
-}
-
 bool
 Editline::LoadHistory ()
 {
-    if (m_history)
-    {
-        FileSpec history_file(GetHistoryFile());
-        if (history_file.Exists())
-            ::history (m_history, &m_history_event, H_LOAD, history_file.GetPath().c_str());
-        return true;
-    }
+    if (m_history_sp)
+        return m_history_sp->Load();
     return false;
 }
 
 bool
 Editline::SaveHistory ()
 {
-    if (m_history)
-    {
-        std::string history_path = GetHistoryFile().GetPath();
-        ::history (m_history, &m_history_event, H_SAVE, history_path.c_str());
-        return true;
-    }
+    if (m_history_sp)
+        return m_history_sp->Save();
     return false;
 }
 
@@ -182,13 +308,8 @@ Editline::PrivateGetLine(std::string &line)
     if (m_editline != NULL)
     {
         int line_len = 0;
-        const char *line_cstr = NULL;
         // Call el_gets to prompt the user and read the user's input.
-//        {
-//            // Make sure we know when we are in el_gets() by using a mutex
-//            Mutex::Locker locker (m_gets_mutex);
-            line_cstr = ::el_gets (m_editline, &line_len);
-//        }
+        const char *line_cstr = ::el_gets (m_editline, &line_len);
         
         static int save_errno = (line_len < 0) ? errno : 0;
         
@@ -200,20 +321,18 @@ Editline::PrivateGetLine(std::string &line)
         {
             // Decrement the length so we don't have newline characters in "line" for when
             // we assign the cstr into the std::string
-            while (line_len > 0 &&
-                   (line_cstr[line_len - 1] == '\n' ||
-                    line_cstr[line_len - 1] == '\r'))
-                --line_len;
+            llvm::StringRef line_ref (line_cstr);
+            line_ref = line_ref.rtrim("\n\r");
             
-            if (line_len > 0)
+            if (!line_ref.empty())
             {
                 // We didn't strip the newlines, we just adjusted the length, and
                 // we want to add the history item with the newlines
-                if (m_history)
-                    ::history (m_history, &m_history_event, H_ENTER, line_cstr);
+                if (m_history_sp)
+                    m_history_sp->Enter(line_cstr);
                 
                 // Copy the part of the c string that we want (removing the newline chars)
-                line.assign(line_cstr, line_len);
+                line = std::move(line_ref.str());
             }
         }
     }
@@ -233,8 +352,6 @@ Editline::GetLine(std::string &line)
 
     // Set arrow key bindings for up and down arrows for single line
     // mode where up and down arrows do prev/next history
-    ::el_set (m_editline, EL_BIND, "^[[A", "ed-prev-history", NULL); // Map up arrow
-    ::el_set (m_editline, EL_BIND, "^[[B", "ed-next-history", NULL); // Map down arrow
     m_interrupted = false;
 
     if (!m_got_eof)
@@ -296,10 +413,6 @@ Editline::GetLines(const std::string &end_line, StringList &lines)
     
     // Set arrow key bindings for up and down arrows for multiple line
     // mode where up and down arrows do edit prev/next line
-    ::el_set (m_editline, EL_BIND, "^[[A", "lldb-edit-prev-line", NULL); // Map up arrow
-    ::el_set (m_editline, EL_BIND, "^[[B", "lldb-edit-next-line", NULL); // Map down arrow
-    ::el_set (m_editline, EL_BIND, "^b", "ed-prev-history", NULL);
-    ::el_set (m_editline, EL_BIND, "^n", "ed-next-history", NULL);
     m_interrupted = false;
 
     LineStatus line_status = LineStatus::Success;

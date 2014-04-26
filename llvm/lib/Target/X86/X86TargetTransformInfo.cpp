@@ -14,7 +14,6 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "x86tti"
 #include "X86.h"
 #include "X86TargetMachine.h"
 #include "llvm/ADT/DepthFirstIterator.h"
@@ -26,6 +25,8 @@
 #include "llvm/Target/CostTable.h"
 #include "llvm/Target/TargetLowering.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "x86tti"
 
 // Declare the pass initialization routine locally as target-specific passes
 // don't havve a target-wide initialization entry point, and so we rely on the
@@ -56,7 +57,7 @@ class X86TTI final : public ImmutablePass, public TargetTransformInfo {
   unsigned getScalarizationOverhead(Type *Ty, bool Insert, bool Extract) const;
 
 public:
-  X86TTI() : ImmutablePass(ID), ST(0), TLI(0) {
+  X86TTI() : ImmutablePass(ID), ST(nullptr), TLI(nullptr) {
     llvm_unreachable("This pass cannot be directly constructed");
   }
 

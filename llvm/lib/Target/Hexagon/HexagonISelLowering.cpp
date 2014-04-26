@@ -39,6 +39,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "hexagon-lowering"
+
 static cl::opt<bool>
 EmitJumpTables("hexagon-emit-jump-tables", cl::init(true), cl::Hidden,
                cl::desc("Control jump table emission on Hexagon target"));
@@ -410,7 +412,7 @@ HexagonTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   int NumNamedVarArgParams = -1;
   if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(Callee))
   {
-    const Function* CalleeFn = NULL;
+    const Function* CalleeFn = nullptr;
     Callee = DAG.getTargetGlobalAddress(GA->getGlobal(), dl, MVT::i32);
     if ((CalleeFn = dyn_cast<Function>(GA->getGlobal())))
     {
@@ -1480,7 +1482,7 @@ HexagonTargetLowering::HexagonTargetLowering(HexagonTargetMachine
 const char*
 HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
-    default: return 0;
+    default: return nullptr;
     case HexagonISD::CONST32:     return "HexagonISD::CONST32";
     case HexagonISD::CONST32_GP: return "HexagonISD::CONST32_GP";
     case HexagonISD::CONST32_Int_Real: return "HexagonISD::CONST32_Int_Real";

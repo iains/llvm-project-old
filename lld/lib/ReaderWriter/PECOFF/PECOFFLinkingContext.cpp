@@ -206,7 +206,8 @@ StringRef PECOFFLinkingContext::decorateSymbol(StringRef name) const {
 StringRef PECOFFLinkingContext::undecorateSymbol(StringRef name) const {
   if (_machineType != llvm::COFF::IMAGE_FILE_MACHINE_I386)
     return name;
-  assert(name.startswith("_"));
+  if (!name.startswith("_"))
+    return name;
   return name.substr(1);
 }
 
@@ -265,6 +266,14 @@ void PECOFFLinkingContext::addDllExport(ExportDesc &desc) {
   }
   llvm::errs() << "Export symbol '" << desc.name
                << "' specified more than once.\n";
+}
+
+std::string PECOFFLinkingContext::getOutputImportLibraryPath() const {
+  if (!_implib.empty())
+    return _implib;
+  SmallString<128> path = outputPath();
+  llvm::sys::path::replace_extension(path, ".lib");
+  return path.str();
 }
 
 void PECOFFLinkingContext::addPasses(PassManager &pm) {

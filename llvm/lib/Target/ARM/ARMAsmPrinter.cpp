@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "asm-printer"
 #include "ARMAsmPrinter.h"
 #include "ARM.h"
 #include "ARMConstantPoolValue.h"
@@ -54,6 +53,8 @@
 #include "llvm/Target/TargetMachine.h"
 #include <cctype>
 using namespace llvm;
+
+#define DEBUG_TYPE "asm-printer"
 
 void ARMAsmPrinter::EmitFunctionBodyEnd() {
   // Make sure to terminate any constant pools that were at the end
@@ -239,7 +240,7 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
       if (ARM::GPRPairRegClass.contains(RegBegin)) {
         const TargetRegisterInfo *TRI = MF->getTarget().getRegisterInfo();
         unsigned Reg0 = TRI->getSubReg(RegBegin, ARM::gsub_0);
-        O << ARMInstPrinter::getRegisterName(Reg0) << ", ";;
+        O << ARMInstPrinter::getRegisterName(Reg0) << ", ";
         RegBegin = TRI->getSubReg(RegBegin, ARM::gsub_1);
       }
       O << ARMInstPrinter::getRegisterName(RegBegin);
@@ -383,7 +384,7 @@ void ARMAsmPrinter::emitInlineAsmEnd(const MCSubtargetInfo &StartInfo,
   // If either end mode is unknown (EndInfo == NULL) or different than
   // the start mode, then restore the start mode.
   const bool WasThumb = isThumb(StartInfo);
-  if (EndInfo == NULL || WasThumb != isThumb(*EndInfo)) {
+  if (!EndInfo || WasThumb != isThumb(*EndInfo)) {
     OutStreamer.EmitAssemblerFlag(WasThumb ? MCAF_Code16 : MCAF_Code32);
   }
 }
@@ -723,7 +724,7 @@ MCSymbol *ARMAsmPrinter::GetARMGVSymbol(const GlobalValue *GV,
   MachineModuleInfoImpl::StubValueTy &StubSym =
     GV->hasHiddenVisibility() ? MMIMachO.getHiddenGVStubEntry(MCSym) :
     MMIMachO.getGVStubEntry(MCSym);
-  if (StubSym.getPointer() == 0)
+  if (!StubSym.getPointer())
     StubSym = MachineModuleInfoImpl::
       StubValueTy(getSymbol(GV), !GV->hasInternalLinkage());
   return MCSym;

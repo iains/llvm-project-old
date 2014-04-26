@@ -11,11 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "x86-selectiondag-info"
 #include "X86TargetMachine.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/IR/DerivedTypes.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "x86-selectiondag-info"
 
 X86SelectionDAGInfo::X86SelectionDAGInfo(const X86TargetMachine &TM) :
   TargetSelectionDAGInfo(TM),
@@ -50,7 +51,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, SDLoc dl,
     ConstantSDNode *V = dyn_cast<ConstantSDNode>(Src);
 
     if (const char *bzeroEntry =  V &&
-        V->isNullValue() ? Subtarget->getBZeroEntry() : 0) {
+        V->isNullValue() ? Subtarget->getBZeroEntry() : nullptr) {
       EVT IntPtr = TLI.getPointerTy();
       Type *IntPtrTy = getDataLayout()->getIntPtrType(*DAG.getContext());
       TargetLowering::ArgListTy Args;
@@ -77,7 +78,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, SDLoc dl,
   }
 
   uint64_t SizeVal = ConstantSize->getZExtValue();
-  SDValue InFlag(0, 0);
+  SDValue InFlag;
   EVT AVT;
   SDValue Count;
   ConstantSDNode *ValC = dyn_cast<ConstantSDNode>(Src);
@@ -225,7 +226,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
   SDValue Count = DAG.getIntPtrConstant(CountVal);
   unsigned BytesLeft = SizeVal % UBytes;
 
-  SDValue InFlag(0, 0);
+  SDValue InFlag;
   Chain  = DAG.getCopyToReg(Chain, dl, Subtarget->is64Bit() ? X86::RCX :
                                                               X86::ECX,
                             Count, InFlag);

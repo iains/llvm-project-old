@@ -39,6 +39,7 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -160,8 +161,8 @@ bool runToolOnCodeWithArgs(clang::FrontendAction *ToolAction, const Twine &Code,
 /// \param FileName The file name which 'Code' will be mapped as.
 ///
 /// \return The resulting AST or null if an error occurred.
-ASTUnit *buildASTFromCode(const Twine &Code,
-                          const Twine &FileName = "input.cc");
+std::unique_ptr<ASTUnit> buildASTFromCode(const Twine &Code,
+                                          const Twine &FileName = "input.cc");
 
 /// \brief Builds an AST for 'Code' with additional flags.
 ///
@@ -170,9 +171,10 @@ ASTUnit *buildASTFromCode(const Twine &Code,
 /// \param FileName The file name which 'Code' will be mapped as.
 ///
 /// \return The resulting AST or null if an error occurred.
-ASTUnit *buildASTFromCodeWithArgs(const Twine &Code,
-                                  const std::vector<std::string> &Args,
-                                  const Twine &FileName = "input.cc");
+std::unique_ptr<ASTUnit>
+buildASTFromCodeWithArgs(const Twine &Code,
+                         const std::vector<std::string> &Args,
+                         const Twine &FileName = "input.cc");
 
 /// \brief Utility to run a FrontendAction in a single clang invocation.
 class ToolInvocation {
@@ -282,7 +284,7 @@ class ClangTool {
 
   /// \brief Create an AST for each file specified in the command line and
   /// append them to ASTs.
-  int buildASTs(std::vector<ASTUnit *> &ASTs);
+  int buildASTs(std::vector<std::unique_ptr<ASTUnit>> &ASTs);
 
   /// \brief Returns the file manager used in the tool.
   ///

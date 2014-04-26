@@ -11,9 +11,28 @@
 
 #include "lld/ReaderWriter/PECOFFLinkingContext.h"
 #include "lld/ReaderWriter/Simple.h"
+#include "llvm/Support/Allocator.h"
 
 namespace lld {
 namespace pecoff {
+
+/// The defined atom for dllexported symbols with __imp_ prefix.
+class ImpPointerAtom : public COFFLinkerInternalAtom {
+public:
+  ImpPointerAtom(const File &file, StringRef symbolName, uint64_t ordinal)
+      : COFFLinkerInternalAtom(file, /*oridnal*/ 0, std::vector<uint8_t>(4),
+                               symbolName),
+        _ordinal(ordinal) {}
+
+  uint64_t ordinal() const override { return _ordinal; }
+  Scope scope() const override { return scopeGlobal; }
+  ContentType contentType() const override { return typeData; }
+  Alignment alignment() const override { return Alignment(4); }
+  ContentPermissions permissions() const override { return permR__; }
+
+private:
+  uint64_t _ordinal;
+};
 
 // A virtual file containing absolute symbol __ImageBase. __ImageBase (or
 // ___ImageBase on x86) is a linker-generated symbol whose address is the same
@@ -25,10 +44,31 @@ public:
         _imageBaseAtom(*this, ctx.decorateSymbol("__ImageBase"),
                        Atom::scopeGlobal, ctx.getBaseAddress()) {
     addAtom(_imageBaseAtom);
+    _ordinal = 1;
+
+    // Create implciit symbols for exported symbols.
+    for (const PECOFFLinkingContext::ExportDesc &exp : ctx.getDllExports()) {
+      UndefinedAtom *target = new (_alloc) SimpleUndefinedAtom(*this, exp.name);
+      COFFLinkerInternalAtom *imp = createImpPointerAtom(ctx, exp.name);
+      imp->addReference(std::unique_ptr<COFFReference>(
+          new COFFReference(target, 0, llvm::COFF::IMAGE_REL_I386_DIR32)));
+      addAtom(*target);
+      addAtom(*imp);
+    }
   };
 
 private:
+  COFFLinkerInternalAtom *createImpPointerAtom(const PECOFFLinkingContext &ctx,
+                                               StringRef name) {
+    std::string sym = "_imp_";
+    sym.append(name);
+    sym = ctx.decorateSymbol(sym);
+    return new (_alloc) ImpPointerAtom(*this, ctx.allocate(sym), _ordinal++);
+  }
+
   COFFAbsoluteAtom _imageBaseAtom;
+  uint64_t _ordinal;
+  llvm::BumpPtrAllocator _alloc;
 };
 
 } // end namespace pecoff

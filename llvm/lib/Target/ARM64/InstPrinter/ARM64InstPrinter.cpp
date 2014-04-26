@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "asm-printer"
 #include "ARM64InstPrinter.h"
 #include "MCTargetDesc/ARM64AddressingModes.h"
 #include "Utils/ARM64BaseInfo.h"
@@ -23,6 +22,8 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "asm-printer"
 
 #define GET_INSTRUCTION_NAME
 #define PRINT_ALIAS_INSTR
@@ -82,23 +83,30 @@ void ARM64InstPrinter::printInst(const MCInst *MI, raw_ostream &O,
     const MCOperand &Op2 = MI->getOperand(2);
     const MCOperand &Op3 = MI->getOperand(3);
 
+    bool IsSigned = (Opcode == ARM64::SBFMXri || Opcode == ARM64::SBFMWri);
+    bool Is64Bit = (Opcode == ARM64::SBFMXri || Opcode == ARM64::UBFMXri);
     if (Op2.isImm() && Op2.getImm() == 0 && Op3.isImm()) {
-      bool IsSigned = (Opcode == ARM64::SBFMXri || Opcode == ARM64::SBFMWri);
-      const char *AsmMnemonic = 0;
+      const char *AsmMnemonic = nullptr;
 
       switch (Op3.getImm()) {
       default:
         break;
       case 7:
-        AsmMnemonic = IsSigned ? "sxtb" : "uxtb";
+        if (IsSigned)
+          AsmMnemonic = "sxtb";
+        else if (!Is64Bit)
+          AsmMnemonic = "uxtb";
         break;
       case 15:
-        AsmMnemonic = IsSigned ? "sxth" : "uxth";
+        if (IsSigned)
+          AsmMnemonic = "sxth";
+        else if (!Is64Bit)
+          AsmMnemonic = "uxth";
         break;
       case 31:
-        // *xtw is only valid for 64-bit operations.
-        if (Opcode == ARM64::SBFMXri || Opcode == ARM64::UBFMXri)
-          AsmMnemonic = IsSigned ? "sxtw" : "uxtw";
+        // *xtw is only valid for signed 64-bit operations.
+        if (Is64Bit && IsSigned)
+          AsmMnemonic = "sxtw";
         break;
       }
 
@@ -114,7 +122,7 @@ void ARM64InstPrinter::printInst(const MCInst *MI, raw_ostream &O,
     // instruction. In all cases the immediate shift amount shift must be in
     // the range 0 to (reg.size -1).
     if (Op2.isImm() && Op3.isImm()) {
-      const char *AsmMnemonic = 0;
+      const char *AsmMnemonic = nullptr;
       int shift = 0;
       int64_t immr = Op2.getImm();
       int64_t imms = Op3.getImm();
@@ -145,6 +153,22 @@ void ARM64InstPrinter::printInst(const MCInst *MI, raw_ostream &O,
         return;
       }
     }
+
+    // SBFIZ/UBFIZ aliases
+    if (Op2.getImm() > Op3.getImm()) {
+      O << '\t' << (IsSigned ? "sbfiz" : "ubfiz") << '\t'
+        << getRegisterName(Op0.getReg()) << ", " << getRegisterName(Op1.getReg())
+        << ", #" << (Is64Bit ? 64 : 32) - Op2.getImm() << ", #" << Op3.getImm() + 1;
+      printAnnotation(O, Annot);
+      return;
+    }
+
+    // Otherwise SBFX/UBFX is the prefered form
+    O << '\t' << (IsSigned ? "sbfx" : "ubfx") << '\t'
+      << getRegisterName(Op0.getReg()) << ", " << getRegisterName(Op1.getReg())
+      << ", #" << Op2.getImm() << ", #" << Op3.getImm() - Op2.getImm() + 1;
+    printAnnotation(O, Annot);
+    return;
   }
 
   // Symbolic operands for MOVZ, MOVN and MOVK already imply a shift
@@ -692,7 +716,7 @@ static LdStNInstrDesc *getLdStNInstrDesc(unsigned Opcode) {
     if (LdStNInstInfo[Idx].Opcode == Opcode)
       return &LdStNInstInfo[Idx];
 
-  return 0;
+  return nullptr;
 }
 
 void ARM64AppleInstPrinter::printInst(const MCInst *MI, raw_ostream &O,
@@ -753,7 +777,7 @@ bool ARM64InstPrinter::printSysAlias(const MCInst *MI, raw_ostream &O) {
   assert(Opcode == ARM64::SYSxt && "Invalid opcode for SYS alias!");
 #endif
 
-  const char *Asm = 0;
+  const char *Asm = nullptr;
   const MCOperand &Op1 = MI->getOperand(0);
   const MCOperand &Cn = MI->getOperand(1);
   const MCOperand &Cm = MI->getOperand(2);
@@ -967,7 +991,7 @@ bool ARM64InstPrinter::printSysAlias(const MCInst *MI, raw_ostream &O) {
       O << ", " << getRegisterName(Reg);
   }
 
-  return Asm != 0;
+  return Asm != nullptr;
 }
 
 void ARM64InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
@@ -1421,9 +1445,8 @@ void ARM64InstPrinter::printVectorIndex(const MCInst *MI, unsigned OpNum,
   O << "[" << MI->getOperand(OpNum).getImm() << "]";
 }
 
-void ARM64InstPrinter::printAlignedBranchTarget(const MCInst *MI,
-                                                unsigned OpNum,
-                                                raw_ostream &O) {
+void ARM64InstPrinter::printAlignedLabel(const MCInst *MI, unsigned OpNum,
+                                         raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNum);
 
   // If the label has already been resolved to an immediate offset (say, when

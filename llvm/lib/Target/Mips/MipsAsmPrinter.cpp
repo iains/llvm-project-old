@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "mips-asm-printer"
 #include "InstPrinter/MipsInstPrinter.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "MCTargetDesc/MipsMCNaCl.h"
@@ -51,6 +50,8 @@
 #include <string>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "mips-asm-printer"
 
 MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() {
   return static_cast<MipsTargetStreamer &>(*OutStreamer.getTargetStreamer());
@@ -836,7 +837,7 @@ void MipsAsmPrinter::EmitFPCallStub(
   const MCSectionELF *M = OutContext.getELFSection(
       ".mips16.call.fp." + std::string(Symbol), ELF::SHT_PROGBITS,
       ELF::SHF_ALLOC | ELF::SHF_EXECINSTR, SectionKind::getText());
-  OutStreamer.SwitchSection(M, 0);
+  OutStreamer.SwitchSection(M, nullptr);
   //
   // .align 2
   //

@@ -47,8 +47,9 @@ public:
         _swapRunFromNet(false), _baseRelocationEnabled(true),
         _terminalServerAware(true), _dynamicBaseEnabled(true),
         _createManifest(true), _embedManifest(false), _manifestId(1),
-        _manifestLevel("'asInvoker'"), _manifestUiAccess("'false'"),
-        _isDll(false), _requireSEH(false), _noSEH(false),
+        _manifestUAC(true), _manifestLevel("'asInvoker'"),
+        _manifestUiAccess("'false'"), _isDll(false), _requireSEH(false),
+        _noSEH(false), _implib(""),
         _dosStub(llvm::makeArrayRef(DEFAULT_DOS_STUB)) {
     setDeadStripping(true);
   }
@@ -183,6 +184,9 @@ public:
   void setManifestId(int val) { _manifestId = val; }
   int getManifestId() const { return _manifestId; }
 
+  void setManifestUAC(bool val) { _manifestUAC = val; }
+  bool getManifestUAC() const { return _manifestUAC; }
+
   void setManifestLevel(std::string val) { _manifestLevel = std::move(val); }
   const std::string &getManifestLevel() const { return _manifestLevel; }
 
@@ -205,6 +209,9 @@ public:
   }
   bool requireSEH() const { return _requireSEH; }
   bool noSEH() const { return _noSEH; }
+
+  void setOutputImportLibraryPath(const std::string &val) { _implib = val; }
+  std::string getOutputImportLibraryPath() const;
 
   StringRef getOutputSectionName(StringRef sectionName) const;
   bool addSectionRenaming(raw_ostream &diagnostics,
@@ -311,6 +318,7 @@ private:
   std::string _manifestOutputPath;
   bool _embedManifest;
   int _manifestId;
+  bool _manifestUAC;
   std::string _manifestLevel;
   std::string _manifestUiAccess;
   std::string _manifestDependency;
@@ -325,6 +333,9 @@ private:
   // will not produce an image with SEH table even if all input object files are
   // compatible with SEH.
   bool _noSEH;
+
+  // /IMPLIB command line option.
+  std::string _implib;
 
   // The set to store /nodefaultlib arguments.
   std::set<std::string> _noDefaultLibs;

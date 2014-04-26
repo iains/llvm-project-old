@@ -11,8 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "xcore-lower"
-
 #include "XCoreISelLowering.h"
 #include "XCore.h"
 #include "XCoreMachineFunctionInfo.h"
@@ -41,6 +39,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "xcore-lower"
+
 const char *XCoreTargetLowering::
 getTargetNodeName(unsigned Opcode) const
 {
@@ -64,7 +64,7 @@ getTargetNodeName(unsigned Opcode) const
     case XCoreISD::FRAME_TO_ARGS_OFFSET : return "XCoreISD::FRAME_TO_ARGS_OFFSET";
     case XCoreISD::EH_RETURN         : return "XCoreISD::EH_RETURN";
     case XCoreISD::MEMBARRIER        : return "XCoreISD::MEMBARRIER";
-    default                          : return NULL;
+    default                          : return nullptr;
   }
 }
 
@@ -741,7 +741,7 @@ ExpandADDSUB(SDNode *N, SelectionDAG &DAG) const
 
   if (N->getOpcode() == ISD::ADD) {
     SDValue Result = TryExpandADDWithMul(N, DAG);
-    if (Result.getNode() != 0)
+    if (Result.getNode())
       return Result;
   }
 

@@ -10,7 +10,6 @@
 // Subclass of MipsTargetLowering specialized for mips32/64.
 //
 //===----------------------------------------------------------------------===//
-#define DEBUG_TYPE "mips-isel"
 #include "MipsSEISelLowering.h"
 #include "MipsRegisterInfo.h"
 #include "MipsTargetMachine.h"
@@ -23,6 +22,8 @@
 #include "llvm/Target/TargetInstrInfo.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "mips-isel"
 
 static cl::opt<bool>
 EnableMipsTailCalls("enable-mips-tail-calls", cl::Hidden,
@@ -507,7 +508,7 @@ static SDValue performANDCombine(SDNode *N, SelectionDAG &DAG,
 static bool isVSplat(SDValue N, APInt &Imm, bool IsLittleEndian) {
   BuildVectorSDNode *Node = dyn_cast<BuildVectorSDNode>(N.getNode());
 
-  if (Node == NULL)
+  if (!Node)
     return false;
 
   APInt SplatValue, SplatUndef;
@@ -1355,7 +1356,7 @@ static SDValue lowerMSABinaryBitImmIntr(SDValue Op, SelectionDAG &DAG,
     }
   }
 
-  if (Exp2Imm.getNode() == NULL) {
+  if (!Exp2Imm.getNode()) {
     // We couldnt constant fold, do a vector shift instead
 
     // Extend i32 to i64 if necessary. Sign or zero extend doesn't matter since

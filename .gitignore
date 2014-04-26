@@ -8,8 +8,9 @@ llvm/projects/llvm-test-suite
 llvm/tools/clang
 llvm/tools/lld
 llvm/tools/lldb
-llvm/tools/extra
+llvm/tools/clang/tools/extra
 
+clang/tools/extra
 
 
 

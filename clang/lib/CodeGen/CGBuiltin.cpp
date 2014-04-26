@@ -4326,6 +4326,11 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
 
 Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
                                            const CallExpr *E) {
+  if (BuiltinID == ARM::BI__yield) {
+    Function *F = CGM.getIntrinsic(Intrinsic::arm_hint);
+    return Builder.CreateCall(F, llvm::ConstantInt::get(Int32Ty, 1));
+  }
+
   if (BuiltinID == ARM::BI__clear_cache) {
     assert(E->getNumArgs() == 2 && "__clear_cache takes 2 arguments");
     const FunctionDecl *FD = E->getDirectCallee();
@@ -4423,8 +4428,8 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
   }
 
   if (BuiltinID == ARM::BI__builtin_arm_sevl) {
-    Function *F = CGM.getIntrinsic(Intrinsic::arm_sevl);
-    return Builder.CreateCall(F);
+    Function *F = CGM.getIntrinsic(Intrinsic::arm_hint);
+    return Builder.CreateCall(F, llvm::ConstantInt::get(Int32Ty, 5));
   }
 
   // CRC32

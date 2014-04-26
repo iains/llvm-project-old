@@ -16,7 +16,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "dagcombine"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
@@ -39,6 +38,8 @@
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <algorithm>
 using namespace llvm;
+
+#define DEBUG_TYPE "dagcombine"
 
 STATISTIC(NodesCombined   , "Number of dag nodes combined");
 STATISTIC(PreIndexedNodes , "Number of pre-indexed nodes created");
@@ -1984,27 +1985,39 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
       return DAG.getNode(ISD::UDIV, SDLoc(N), N1.getValueType(),
                          N0, N1);
   }
+
+  const APInt *Divisor = nullptr;
+  if (N1C) {
+    Divisor = &N1C->getAPIntValue();
+  } else if (N1.getValueType().isVector() &&
+             N1->getOpcode() == ISD::BUILD_VECTOR) {
+    BuildVectorSDNode *BV = cast<BuildVectorSDNode>(N->getOperand(1));
+    if (ConstantSDNode *C = BV->getConstantSplatValue())
+      Divisor = &C->getAPIntValue();
+  }
+
   // fold (sdiv X, pow2) -> simple ops after legalize
-  if (N1C && !N1C->isNullValue() &&
-      (N1C->getAPIntValue().isPowerOf2() ||
-       (-N1C->getAPIntValue()).isPowerOf2())) {
+  if (Divisor && !!*Divisor &&
+      (Divisor->isPowerOf2() || (-*Divisor).isPowerOf2())) {
     // If dividing by powers of two is cheap, then don't perform the following
     // fold.
     if (TLI.isPow2DivCheap())
       return SDValue();
 
-    unsigned lg2 = N1C->getAPIntValue().countTrailingZeros();
+    unsigned lg2 = Divisor->countTrailingZeros();
 
     // Splat the sign bit into the register
-    SDValue SGN = DAG.getNode(ISD::SRA, SDLoc(N), VT, N0,
-                              DAG.getConstant(VT.getSizeInBits()-1,
-                                       getShiftAmountTy(N0.getValueType())));
+    SDValue SGN =
+        DAG.getNode(ISD::SRA, SDLoc(N), VT, N0,
+                    DAG.getConstant(VT.getScalarSizeInBits() - 1,
+                                    getShiftAmountTy(N0.getValueType())));
     AddToWorkList(SGN.getNode());
 
     // Add (N0 < 0) ? abs2 - 1 : 0;
-    SDValue SRL = DAG.getNode(ISD::SRL, SDLoc(N), VT, SGN,
-                              DAG.getConstant(VT.getSizeInBits() - lg2,
-                                       getShiftAmountTy(SGN.getValueType())));
+    SDValue SRL =
+        DAG.getNode(ISD::SRL, SDLoc(N), VT, SGN,
+                    DAG.getConstant(VT.getScalarSizeInBits() - lg2,
+                                    getShiftAmountTy(SGN.getValueType())));
     SDValue ADD = DAG.getNode(ISD::ADD, SDLoc(N), VT, N0, SRL);
     AddToWorkList(SRL.getNode());
     AddToWorkList(ADD.getNode());    // Divide by pow2
@@ -2013,17 +2026,16 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
 
     // If we're dividing by a positive value, we're done.  Otherwise, we must
     // negate the result.
-    if (N1C->getAPIntValue().isNonNegative())
+    if (Divisor->isNonNegative())
       return SRA;
 
     AddToWorkList(SRA.getNode());
-    return DAG.getNode(ISD::SUB, SDLoc(N), VT,
-                       DAG.getConstant(0, VT), SRA);
+    return DAG.getNode(ISD::SUB, SDLoc(N), VT, DAG.getConstant(0, VT), SRA);
   }
 
   // if integer divide is expensive and we satisfy the requirements, emit an
   // alternate sequence.
-  if (N1C && !N1C->isNullValue() && !TLI.isIntDivCheap()) {
+  if ((N1C || N1->getOpcode() == ISD::BUILD_VECTOR) && !TLI.isIntDivCheap()) {
     SDValue Op = BuildSDIV(N);
     if (Op.getNode()) return Op;
   }
@@ -2075,7 +2087,7 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
     }
   }
   // fold (udiv x, c) -> alternate
-  if (N1C && !N1C->isNullValue() && !TLI.isIntDivCheap()) {
+  if ((N1C || N1->getOpcode() == ISD::BUILD_VECTOR) && !TLI.isIntDivCheap()) {
     SDValue Op = BuildUDIV(N);
     if (Op.getNode()) return Op;
   }
@@ -5478,7 +5490,10 @@ SDValue DAGCombiner::visitANY_EXTEND(SDNode *N) {
   }
 
   if (N0.getOpcode() == ISD::SETCC) {
-    // aext(setcc) -> sext_in_reg(vsetcc) for vectors.
+    // For vectors:
+    // aext(setcc) -> vsetcc
+    // aext(setcc) -> truncate(vsetcc)
+    // aext(setcc) -> aext(vsetcc)
     // Only do this before legalize for now.
     if (VT.isVector() && !LegalOperations) {
       EVT N0VT = N0.getOperand(0).getValueType();
@@ -5493,19 +5508,14 @@ SDValue DAGCombiner::visitANY_EXTEND(SDNode *N) {
                              cast<CondCodeSDNode>(N0.getOperand(2))->get());
       // If the desired elements are smaller or larger than the source
       // elements we can use a matching integer vector type and then
-      // truncate/sign extend
+      // truncate/any extend
       else {
-        EVT MatchingElementType =
-          EVT::getIntegerVT(*DAG.getContext(),
-                            N0VT.getScalarType().getSizeInBits());
-        EVT MatchingVectorType =
-          EVT::getVectorVT(*DAG.getContext(), MatchingElementType,
-                           N0VT.getVectorNumElements());
+        EVT MatchingVectorType = N0VT.changeVectorElementTypeToInteger();
         SDValue VsetCC =
           DAG.getSetCC(SDLoc(N), MatchingVectorType, N0.getOperand(0),
                         N0.getOperand(1),
                         cast<CondCodeSDNode>(N0.getOperand(2))->get());
-        return DAG.getSExtOrTrunc(VsetCC, SDLoc(N), VT);
+        return DAG.getAnyExtOrTrunc(VsetCC, SDLoc(N), VT);
       }
     }
 
@@ -11192,8 +11202,24 @@ SDValue DAGCombiner::SimplifySetCC(EVT VT, SDValue N0,
 /// multiplying by a magic number.  See:
 /// <http://the.wall.riscom.net/books/proc/ppc/cwg/code2.html>
 SDValue DAGCombiner::BuildSDIV(SDNode *N) {
+  const APInt *Divisor;
+  if (N->getValueType(0).isVector()) {
+    // Handle splat vectors.
+    BuildVectorSDNode *BV = cast<BuildVectorSDNode>(N->getOperand(1));
+    if (ConstantSDNode *C = BV->getConstantSplatValue())
+      Divisor = &C->getAPIntValue();
+    else
+      return SDValue();
+  } else {
+    Divisor = &cast<ConstantSDNode>(N->getOperand(1))->getAPIntValue();
+  }
+
+  // Avoid division by zero.
+  if (!*Divisor)
+    return SDValue();
+
   std::vector<SDNode*> Built;
-  SDValue S = TLI.BuildSDIV(N, DAG, LegalOperations, &Built);
+  SDValue S = TLI.BuildSDIV(N, *Divisor, DAG, LegalOperations, &Built);
 
   for (std::vector<SDNode*>::iterator ii = Built.begin(), ee = Built.end();
        ii != ee; ++ii)
@@ -11201,13 +11227,29 @@ SDValue DAGCombiner::BuildSDIV(SDNode *N) {
   return S;
 }
 
-/// BuildUDIVSequence - Given an ISD::UDIV node expressing a divide by constant,
+/// BuildUDIV - Given an ISD::UDIV node expressing a divide by constant,
 /// return a DAG expression to select that will generate the same value by
 /// multiplying by a magic number.  See:
 /// <http://the.wall.riscom.net/books/proc/ppc/cwg/code2.html>
 SDValue DAGCombiner::BuildUDIV(SDNode *N) {
+  const APInt *Divisor;
+  if (N->getValueType(0).isVector()) {
+    // Handle splat vectors.
+    BuildVectorSDNode *BV = cast<BuildVectorSDNode>(N->getOperand(1));
+    if (ConstantSDNode *C = BV->getConstantSplatValue())
+      Divisor = &C->getAPIntValue();
+    else
+      return SDValue();
+  } else {
+    Divisor = &cast<ConstantSDNode>(N->getOperand(1))->getAPIntValue();
+  }
+
+  // Avoid division by zero.
+  if (!*Divisor)
+    return SDValue();
+
   std::vector<SDNode*> Built;
-  SDValue S = TLI.BuildUDIV(N, DAG, LegalOperations, &Built);
+  SDValue S = TLI.BuildUDIV(N, *Divisor, DAG, LegalOperations, &Built);
 
   for (std::vector<SDNode*>::iterator ii = Built.begin(), ee = Built.end();
        ii != ee; ++ii)

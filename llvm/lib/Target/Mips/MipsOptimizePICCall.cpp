@@ -12,8 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "optimize-mips-pic-call"
-
 #include "Mips.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
 #include "MipsMachineFunction.h"
@@ -24,6 +22,8 @@
 #include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "optimize-mips-pic-call"
 
 static cl::opt<bool> LoadTargetFromGOT("mips-load-target-from-got",
                                        cl::init(true),
@@ -103,13 +103,13 @@ char OptimizePICCall::ID = 0;
 /// Return the first MachineOperand of MI if it is a used virtual register.
 static MachineOperand *getCallTargetRegOpnd(MachineInstr &MI) {
   if (MI.getNumOperands() == 0)
-    return 0;
+    return nullptr;
 
   MachineOperand &MO = MI.getOperand(0);
 
   if (!MO.isReg() || !MO.isUse() ||
       !TargetRegisterInfo::isVirtualRegister(MO.getReg()))
-    return 0;
+    return nullptr;
 
   return &MO;
 }
@@ -158,7 +158,7 @@ static void eraseGPOpnd(MachineInstr &MI) {
   llvm_unreachable(0);
 }
 
-MBBInfo::MBBInfo(MachineDomTreeNode *N) : Node(N), HTScope(0) {}
+MBBInfo::MBBInfo(MachineDomTreeNode *N) : Node(N), HTScope(nullptr) {}
 
 const MachineDomTreeNode *MBBInfo::getNode() const { return Node; }
 
@@ -256,7 +256,7 @@ bool OptimizePICCall::isCallViaRegister(MachineInstr &MI, unsigned &Reg,
 
   // Get the instruction that loads the function address from the GOT.
   Reg = MO->getReg();
-  Val = (Value*)0;
+  Val = (Value*)nullptr;
   MachineRegisterInfo &MRI = MI.getParent()->getParent()->getRegInfo();
   MachineInstr *DefMI = MRI.getVRegDef(Reg);
 

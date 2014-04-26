@@ -27,6 +27,7 @@
 #include "clang/Analysis/AnalysisContext.h"
 #include "clang/Basic/OperatorKinds.h"
 
+#include <memory>
 #include <vector>
 
 
@@ -117,8 +118,9 @@ public:
 
       V.enterCFGBlock(CurrBlock);
 
-      // Process predecessors
+      // Process predecessors, handling back edges last
       if (V.visitPredecessors()) {
+        SmallVector<CFGBlock*, 4> BackEdges;
         // Process successors
         for (CFGBlock::const_pred_iterator SI = CurrBlock->pred_begin(),
                                            SE = CurrBlock->pred_end();
@@ -127,11 +129,14 @@ public:
             continue;
 
           if (!VisitedBlocks.alreadySet(*SI)) {
-            V.handlePredecessorBackEdge(*SI);
+            BackEdges.push_back(*SI);
             continue;
           }
           V.handlePredecessor(*SI);
         }
+
+        for (auto *Blk : BackEdges)
+          V.handlePredecessorBackEdge(Blk);
       }
 
       V.enterCFGBlockBody(CurrBlock);
@@ -158,8 +163,10 @@ public:
 
       V.exitCFGBlockBody(CurrBlock);
 
-      // Process successors
+      // Process successors, handling back edges first.
       if (V.visitSuccessors()) {
+        SmallVector<CFGBlock*, 8> ForwardEdges;
+
         // Process successors
         for (CFGBlock::const_succ_iterator SI = CurrBlock->succ_begin(),
                                            SE = CurrBlock->succ_end();
@@ -167,12 +174,15 @@ public:
           if (*SI == nullptr)
             continue;
 
-          if (VisitedBlocks.alreadySet(*SI)) {
-            V.handleSuccessorBackEdge(*SI);
+          if (!VisitedBlocks.alreadySet(*SI)) {
+            ForwardEdges.push_back(*SI);
             continue;
           }
-          V.handleSuccessor(*SI);
+          V.handleSuccessorBackEdge(*SI);
         }
+
+        for (auto *Blk : ForwardEdges)
+          V.handleSuccessor(Blk);
       }
 
       V.exitCFGBlock(CurrBlock);
@@ -183,7 +193,9 @@ public:
   const CFG *getGraph() const { return CFGraph; }
   CFG *getGraph() { return CFGraph; }
 
-  const NamedDecl *getDecl() const { return cast<NamedDecl>(ACtx->getDecl()); }
+  const FunctionDecl *getDecl() const {
+    return dyn_cast<FunctionDecl>(ACtx->getDecl());
+  }
 
   const PostOrderCFGView *getSortedGraph() const { return SortedGraph; }
 
@@ -197,8 +209,6 @@ private:
 // Translate clang::Expr to til::SExpr.
 class SExprBuilder {
 public:
-  typedef llvm::DenseMap<const Stmt*, til::Variable*> StatementMap;
-
   /// \brief Encapsulates the lexical context of a function call.  The lexical
   /// context includes the arguments to the call, including the implicit object
   /// argument.  When an attribute containing a mutex expression is attached to
@@ -225,11 +235,10 @@ public:
   };
 
   SExprBuilder(til::MemRegionRef A)
-    : Arena(A), SelfVar(nullptr), Scfg(nullptr), CallCtx(nullptr),
-    CurrentBB(nullptr), CurrentBlockID(0), CurrentVarID(0),
-    CurrentArgIndex(0) {
+      : Arena(A), SelfVar(nullptr), Scfg(nullptr), CurrentBB(nullptr),
+        CurrentBlockInfo(nullptr) {
     // FIXME: we don't always have a self-variable.
-    SelfVar = new (Arena)til::Variable(til::Variable::VK_SFun);
+    SelfVar = new (Arena) til::Variable(til::Variable::VK_SFun);
   }
 
   // Translate a clang statement or expression to a TIL expression.
@@ -239,8 +248,13 @@ public:
   til::SCFG  *buildCFG(CFGWalker &Walker);
 
   til::SExpr *lookupStmt(const Stmt *S);
+
+  til::BasicBlock *lookupBlock(const CFGBlock *B) {
+    return BlockMap[B->getBlockID()];
+  }
+
   const til::SCFG *getCFG() const { return Scfg; }
-  til::SCFG *getCFF() { return Scfg; }
+  til::SCFG *getCFG() { return Scfg; }
 
 private:
   til::SExpr *translateDeclRefExpr(const DeclRefExpr *DRE,
@@ -254,6 +268,9 @@ private:
                                            CallingContext *Ctx);
   til::SExpr *translateUnaryOperator(const UnaryOperator *UO,
                                      CallingContext *Ctx);
+  til::SExpr *translateBinAssign(til::TIL_BinaryOpcode Op,
+                                 const BinaryOperator *BO,
+                                 CallingContext *Ctx);
   til::SExpr *translateBinaryOperator(const BinaryOperator *BO,
                                       CallingContext *Ctx);
   til::SExpr *translateCastExpr(const CastExpr *CE, CallingContext *Ctx);
@@ -266,30 +283,41 @@ private:
 
   til::SExpr *translateDeclStmt(const DeclStmt *S, CallingContext *Ctx);
 
-  // Used for looking the index of a name.
-  typedef llvm::DenseMap<const ValueDecl *, unsigned> NameIndexMap;
+  // Map from statements in the clang CFG to SExprs in the til::SCFG.
+  typedef llvm::DenseMap<const Stmt*, til::SExpr*> StatementMap;
 
-  // Used for looking up the current SSA variable for a name, by index.
-  typedef CopyOnWriteVector<std::pair<const ValueDecl *, til::SExpr *>>
-    NameVarMap;
+  // Map from clang local variables to indices in a LVarDefinitionMap.
+  typedef llvm::DenseMap<const ValueDecl *, unsigned> LVarIndexMap;
+
+  // Map from local variable indices to SSA variables (or constants).
+  typedef std::pair<const ValueDecl *, til::SExpr *> NameVarPair;
+  typedef CopyOnWriteVector<NameVarPair> LVarDefinitionMap;
 
   struct BlockInfo {
-    NameVarMap ExitMap;
+    LVarDefinitionMap ExitMap;
     bool HasBackEdges;
-    unsigned SuccessorsToProcess;
-    BlockInfo() : HasBackEdges(false), SuccessorsToProcess(0) {}
+    unsigned UnprocessedSuccessors;   // Successors yet to be processed
+    unsigned ProcessedPredecessors;   // Predecessors already processed
+
+    BlockInfo()
+        : HasBackEdges(false), UnprocessedSuccessors(0),
+          ProcessedPredecessors(0) {}
     BlockInfo(BlockInfo &&RHS)
-        : ExitMap(std::move(RHS.ExitMap)), HasBackEdges(RHS.HasBackEdges),
-          SuccessorsToProcess(RHS.SuccessorsToProcess) {}
+        : ExitMap(std::move(RHS.ExitMap)),
+          HasBackEdges(RHS.HasBackEdges),
+          UnprocessedSuccessors(RHS.UnprocessedSuccessors),
+          ProcessedPredecessors(RHS.ProcessedPredecessors) {}
 
     BlockInfo &operator=(BlockInfo &&RHS) {
       if (this != &RHS) {
         ExitMap = std::move(RHS.ExitMap);
         HasBackEdges = RHS.HasBackEdges;
-        SuccessorsToProcess = RHS.SuccessorsToProcess;
+        UnprocessedSuccessors = RHS.UnprocessedSuccessors;
+        ProcessedPredecessors = RHS.ProcessedPredecessors;
       }
       return *this;
     }
+
   private:
     BlockInfo(const BlockInfo &) LLVM_DELETED_FUNCTION;
     void operator=(const BlockInfo &) LLVM_DELETED_FUNCTION;
@@ -298,7 +326,7 @@ private:
   // We implement the CFGVisitor API
   friend class CFGWalker;
 
-  void enterCFG(CFG *Cfg, const NamedDecl *D, const CFGBlock *First);
+  void enterCFG(CFG *Cfg, const FunctionDecl *D, const CFGBlock *First);
   void enterCFGBlock(const CFGBlock *B);
   bool visitPredecessors() { return true; }
   void handlePredecessor(const CFGBlock *Pred);
@@ -313,31 +341,39 @@ private:
   void exitCFGBlock(const CFGBlock *B);
   void exitCFG(const CFGBlock *Last);
 
-  void insertStmt(const Stmt *S, til::Variable *V);
+  void insertStmt(const Stmt *S, til::SExpr *E) {
+    SMap.insert(std::make_pair(S, E));
+  }
+  til::SExpr *getCurrentLVarDefinition(const ValueDecl *VD);
+
   til::SExpr *addStatement(til::SExpr *E, const Stmt *S, const ValueDecl *VD=0);
   til::SExpr *lookupVarDecl(const ValueDecl *VD);
   til::SExpr *addVarDecl(const ValueDecl *VD, til::SExpr *E);
   til::SExpr *updateVarDecl(const ValueDecl *VD, til::SExpr *E);
 
-  void mergeEntryMap(NameVarMap Map);
+  void makePhiNodeVar(unsigned i, unsigned NPreds, til::SExpr *E);
+  void mergeEntryMap(LVarDefinitionMap Map);
+  void mergeEntryMapBackEdge();
+  void mergePhiNodesBackEdge(const CFGBlock *Blk);
 
+private:
   til::MemRegionRef Arena;
   til::Variable *SelfVar;       // Variable to use for 'this'.  May be null.
   til::SCFG *Scfg;
 
   StatementMap SMap;                       // Map from Stmt to TIL Variables
-  NameIndexMap IdxMap;                     // Indices of clang local vars.
+  LVarIndexMap LVarIdxMap;                 // Indices of clang local vars.
   std::vector<til::BasicBlock *> BlockMap; // Map from clang to til BBs.
   std::vector<BlockInfo> BBInfo;           // Extra information per BB.
                                            // Indexed by clang BlockID.
-  SExprBuilder::CallingContext *CallCtx;   // Root calling context
+  std::unique_ptr<SExprBuilder::CallingContext> CallCtx; // Root calling context
 
-  NameVarMap CurrentNameMap;
+  LVarDefinitionMap CurrentLVarMap;
+  std::vector<til::Variable*> CurrentArguments;
+  std::vector<til::Variable*> CurrentInstructions;
+  std::vector<til::Variable*> IncompleteArgs;
   til::BasicBlock *CurrentBB;
   BlockInfo *CurrentBlockInfo;
-  unsigned CurrentBlockID;
-  unsigned CurrentVarID;
-  unsigned CurrentArgIndex;
 };
 
 

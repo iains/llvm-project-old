@@ -86,7 +86,7 @@ def DADDu  : ArithLogicR<"daddu", GPR64Opnd, 1, II_DADDU, add>,
                               ADD_FM<0, 0x2d>;
 def DSUBu  : ArithLogicR<"dsubu", GPR64Opnd, 0, II_DSUBU, sub>,
                               ADD_FM<0, 0x2f>;
-def DSUB   : ArithLogicR<"dsub", GPR64Opnd, 0, II_DSUB, sub>, ADD_FM<0, 0x2e>;
+def DSUB   : ArithLogicR<"dsub", GPR64Opnd, 0, II_DSUB>, ADD_FM<0, 0x2e>;
 
 let isCodeGenOnly = 1 in {
 def SLT64  : SetCC_R<"slt", setlt, GPR64Opnd>, ADD_FM<0, 0x2a>;
@@ -307,7 +307,7 @@ def SEQi  : SetCC64_I<"seqi", seteq>, SEQI_FM<0x2e>;
 def SNE   : SetCC64_R<"sne", setne>, SEQ_FM<0x2b>;
 def SNEi  : SetCC64_I<"snei", setne>, SEQI_FM<0x2f>;
 
-// 192-bit × 64-bit Unsigned Multiply and Add
+// 192-bit x 64-bit Unsigned Multiply and Add
 let Defs = [P0, P1, P2] in
 def V3MULU: ArithLogicR<"v3mulu", GPR64Opnd, 0, II_DMUL>,
                                   ADD_FM<0x1c, 0x11>;

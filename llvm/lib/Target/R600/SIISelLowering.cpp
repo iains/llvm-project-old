@@ -115,15 +115,15 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::SIGN_EXTEND, MVT::i64, Custom);
   setOperationAction(ISD::ZERO_EXTEND, MVT::i64, Custom);
 
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Custom);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v2i1, Custom);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i1, Custom);
 
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Custom);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v2i8, Custom);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i8, Custom);
 
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Custom);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Legal);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v2i16, Custom);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i16, Custom);
 
@@ -164,9 +164,6 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setTruncStoreAction(MVT::v16i32, MVT::v16i16, Expand);
 
   setOperationAction(ISD::LOAD, MVT::i1, Custom);
-
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Legal);
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Legal);
 
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
   setOperationAction(ISD::GlobalAddress, MVT::i64, Custom);
@@ -226,10 +223,40 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
 bool SITargetLowering::allowsUnalignedMemoryAccesses(EVT  VT,
                                                      unsigned AddrSpace,
                                                      bool *IsFast) const {
+  if (IsFast)
+    *IsFast = false;
+
   // XXX: This depends on the address space and also we may want to revist
   // the alignment values we specify in the DataLayout.
+
+  // TODO: I think v3i32 should allow unaligned accesses on CI with DS_READ_B96,
+  // which isn't a simple VT.
   if (!VT.isSimple() || VT == MVT::Other)
     return false;
+
+  // XXX - CI changes say "Support for unaligned memory accesses" but I don't
+  // see what for specifically. The wording everywhere else seems to be the
+  // same.
+
+  // 3.6.4 - Operations using pairs of VGPRs (for example: double-floats) have
+  // no alignment restrictions.
+  if (AddrSpace == AMDGPUAS::PRIVATE_ADDRESS) {
+    // Using any pair of GPRs should be the same as any other pair.
+    if (IsFast)
+      *IsFast = true;
+    return VT.bitsGE(MVT::i64);
+  }
+
+  // XXX - The only mention I see of this in the ISA manual is for LDS direct
+  // reads the "byte address and must be dword aligned". Is it also true for the
+  // normal loads and stores?
+  if (AddrSpace == AMDGPUAS::LOCAL_ADDRESS)
+    return false;
+
+  // 8.1.6 - For Dword or larger reads or writes, the two LSBs of the
+  // byte-address are ignored, thus forcing Dword alignment.
+  if (IsFast)
+    *IsFast = true;
   return VT.bitsGT(MVT::i32);
 }
 
@@ -673,7 +700,7 @@ static SDNode *findUser(SDValue Value, unsigned Opcode) {
     if (I->getOpcode() == Opcode)
       return *I;
   }
-  return 0;
+  return nullptr;
 }
 
 /// This transforms the control flow intrinsics to get the branch destination as
@@ -685,7 +712,7 @@ SDValue SITargetLowering::LowerBRCOND(SDValue BRCOND,
 
   SDNode *Intr = BRCOND.getOperand(1).getNode();
   SDValue Target = BRCOND.getOperand(2);
-  SDNode *BR = 0;
+  SDNode *BR = nullptr;
 
   if (Intr->getOpcode() == ISD::SETCC) {
     // As long as we negate the condition everything is fine
@@ -995,7 +1022,7 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
       SDValue Arg0 = N->getOperand(0);
       SDValue Arg1 = N->getOperand(1);
       SDValue CC = N->getOperand(2);
-      ConstantSDNode * C = NULL;
+      ConstantSDNode * C = nullptr;
       ISD::CondCode CCOp = dyn_cast<CondCodeSDNode>(CC)->get();
 
       // i1 setcc (sext(i1), 0, setne) -> i1 setcc(i1, 0, setne)
@@ -1066,7 +1093,7 @@ bool SITargetLowering::foldImm(SDValue &Operand, int32_t &Immediate,
   MachineSDNode *Mov = dyn_cast<MachineSDNode>(Operand);
   const SIInstrInfo *TII =
     static_cast<const SIInstrInfo*>(getTargetMachine().getInstrInfo());
-  if (Mov == 0 || !TII->isMov(Mov->getMachineOpcode()))
+  if (!Mov || !TII->isMov(Mov->getMachineOpcode()))
     return false;
 
   const SDValue &Op = Mov->getOperand(0);
@@ -1113,7 +1140,7 @@ const TargetRegisterClass *SITargetLowering::getRegClassForNode(
       }
       return TRI.getPhysRegClass(Reg);
     }
-    default:  return NULL;
+    default:  return nullptr;
     }
   }
   const MCInstrDesc &Desc = TII->get(Op->getMachineOpcode());
@@ -1217,14 +1244,14 @@ SDNode *SITargetLowering::foldOperands(MachineSDNode *Node,
 
   // Commuted opcode if available
   int OpcodeRev = Desc->isCommutable() ? TII->commuteOpcode(Opcode) : -1;
-  const MCInstrDesc *DescRev = OpcodeRev == -1 ? 0 : &TII->get(OpcodeRev);
+  const MCInstrDesc *DescRev = OpcodeRev == -1 ? nullptr : &TII->get(OpcodeRev);
 
   assert(!DescRev || DescRev->getNumDefs() == NumDefs);
   assert(!DescRev || DescRev->getNumOperands() == NumOps);
 
   // e64 version if available, -1 otherwise
   int OpcodeE64 = AMDGPU::getVOPe64(Opcode);
-  const MCInstrDesc *DescE64 = OpcodeE64 == -1 ? 0 : &TII->get(OpcodeE64);
+  const MCInstrDesc *DescE64 = OpcodeE64 == -1 ? nullptr : &TII->get(OpcodeE64);
 
   assert(!DescE64 || DescE64->getNumDefs() == NumDefs);
   assert(!DescE64 || DescE64->getNumOperands() == (NumOps + 4));
@@ -1297,7 +1324,7 @@ SDNode *SITargetLowering::foldOperands(MachineSDNode *Node,
         std::swap(Ops[0], Ops[1]);
 
         Desc = DescRev;
-        DescRev = 0;
+        DescRev = nullptr;
         continue;
       }
     }
@@ -1318,7 +1345,7 @@ SDNode *SITargetLowering::foldOperands(MachineSDNode *Node,
         Immediate = -1;
         Promote2e64 = true;
         Desc = DescE64;
-        DescE64 = 0;
+        DescE64 = nullptr;
       }
     }
   }

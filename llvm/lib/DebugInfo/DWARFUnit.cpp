@@ -17,12 +17,12 @@
 using namespace llvm;
 using namespace dwarf;
 
-DWARFUnit::DWARFUnit(const DWARFDebugAbbrev *DA, StringRef IS, StringRef AS,
-                     StringRef RS, StringRef SS, StringRef SOS, StringRef AOS,
+DWARFUnit::DWARFUnit(const DWARFDebugAbbrev *DA, StringRef IS, StringRef RS,
+                     StringRef SS, StringRef SOS, StringRef AOS,
                      const RelocAddrMap *M, bool LE)
-    : Abbrev(DA), InfoSection(IS), AbbrevSection(AS), RangeSection(RS),
-      StringSection(SS), StringOffsetSection(SOS), AddrOffsetSection(AOS),
-      RelocMap(M), isLittleEndian(LE) {
+    : Abbrev(DA), InfoSection(IS), RangeSection(RS), StringSection(SS),
+      StringOffsetSection(SOS), AddrOffsetSection(AOS), RelocMap(M),
+      isLittleEndian(LE) {
   clear();
 }
 
@@ -54,18 +54,20 @@ bool DWARFUnit::getStringOffsetSectionItem(uint32_t Index,
 bool DWARFUnit::extractImpl(DataExtractor debug_info, uint32_t *offset_ptr) {
   Length = debug_info.getU32(offset_ptr);
   Version = debug_info.getU16(offset_ptr);
-  uint64_t abbrOffset = debug_info.getU32(offset_ptr);
+  uint64_t AbbrOffset = debug_info.getU32(offset_ptr);
   AddrSize = debug_info.getU8(offset_ptr);
 
-  bool lengthOK = debug_info.isValidOffset(getNextUnitOffset() - 1);
-  bool versionOK = DWARFContext::isSupportedVersion(Version);
-  bool abbrOffsetOK = AbbrevSection.size() > abbrOffset;
-  bool addrSizeOK = AddrSize == 4 || AddrSize == 8;
+  bool LengthOK = debug_info.isValidOffset(getNextUnitOffset() - 1);
+  bool VersionOK = DWARFContext::isSupportedVersion(Version);
+  bool AddrSizeOK = AddrSize == 4 || AddrSize == 8;
 
-  if (!lengthOK || !versionOK || !addrSizeOK || !abbrOffsetOK)
+  if (!LengthOK || !VersionOK || !AddrSizeOK)
     return false;
 
-  Abbrevs = Abbrev->getAbbreviationDeclarationSet(abbrOffset);
+  Abbrevs = Abbrev->getAbbreviationDeclarationSet(AbbrOffset);
+  if (Abbrevs == nullptr)
+    return false;
+
   return true;
 }
 
@@ -166,13 +168,13 @@ void DWARFUnit::extractDIEsToVector(
 
   // Set the offset to that of the first DIE and calculate the start of the
   // next compilation unit header.
-  uint32_t Offset = getFirstDIEOffset();
+  uint32_t DIEOffset = Offset + getHeaderSize();
   uint32_t NextCUOffset = getNextUnitOffset();
   DWARFDebugInfoEntryMinimal DIE;
   uint32_t Depth = 0;
   bool IsCUDie = true;
 
-  while (Offset < NextCUOffset && DIE.extractFast(this, &Offset)) {
+  while (DIEOffset < NextCUOffset && DIE.extractFast(this, &DIEOffset)) {
     if (IsCUDie) {
       if (AppendCUDie)
         Dies.push_back(DIE);
@@ -205,9 +207,9 @@ void DWARFUnit::extractDIEsToVector(
   // Give a little bit of info if we encounter corrupt DWARF (our offset
   // should always terminate at or before the start of the next compilation
   // unit header).
-  if (Offset > NextCUOffset)
+  if (DIEOffset > NextCUOffset)
     fprintf(stderr, "warning: DWARF compile unit extends beyond its "
-                    "bounds cu 0x%8.8x at 0x%8.8x'\n", getOffset(), Offset);
+                    "bounds cu 0x%8.8x at 0x%8.8x'\n", getOffset(), DIEOffset);
 }
 
 size_t DWARFUnit::extractDIEsIfNeeded(bool CUDieOnly) {
@@ -298,33 +300,33 @@ void DWARFUnit::clearDIEs(bool KeepCUDie) {
   }
 }
 
-void
-DWARFUnit::buildAddressRangeTable(DWARFDebugAranges *debug_aranges,
-                                         bool clear_dies_if_already_not_parsed,
-                                         uint32_t CUOffsetInAranges) {
+void DWARFUnit::collectAddressRanges(DWARFAddressRangesVector &CURanges) {
+  // First, check if CU DIE describes address ranges for the unit.
+  const auto &CUDIERanges = getCompileUnitDIE()->getAddressRanges(this);
+  if (!CUDIERanges.empty()) {
+    CURanges.insert(CURanges.end(), CUDIERanges.begin(), CUDIERanges.end());
+    return;
+  }
+
   // This function is usually called if there in no .debug_aranges section
   // in order to produce a compile unit level set of address ranges that
   // is accurate. If the DIEs weren't parsed, then we don't want all dies for
   // all compile units to stay loaded when they weren't needed. So we can end
   // up parsing the DWARF and then throwing them all away to keep memory usage
   // down.
-  const bool clear_dies = extractDIEsIfNeeded(false) > 1 &&
-                          clear_dies_if_already_not_parsed;
-  DieArray[0].buildAddressRangeTable(this, debug_aranges, CUOffsetInAranges);
+  const bool ClearDIEs = extractDIEsIfNeeded(false) > 1;
+  DieArray[0].collectChildrenAddressRanges(this, CURanges);
+
+  // Collect address ranges from DIEs in .dwo if necessary.
   bool DWOCreated = parseDWO();
-  if (DWO.get()) {
-    // If there is a .dwo file for this compile unit, then skeleton CU DIE
-    // doesn't have children, and we should instead build address range table
-    // from DIEs in the .debug_info.dwo section of .dwo file.
-    DWO->getUnit()->buildAddressRangeTable(
-        debug_aranges, clear_dies_if_already_not_parsed, CUOffsetInAranges);
-  }
-  if (DWOCreated && clear_dies_if_already_not_parsed)
+  if (DWO.get())
+    DWO->getUnit()->collectAddressRanges(CURanges);
+  if (DWOCreated)
     DWO.reset();
 
   // Keep memory down by clearing DIEs if this generate function
   // caused them to be parsed.
-  if (clear_dies)
+  if (ClearDIEs)
     clearDIEs(true);
 }
 

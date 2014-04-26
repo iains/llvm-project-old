@@ -16,7 +16,6 @@
 #include "NVPTX.h"
 #include "NVPTXAllocaHoisting.h"
 #include "NVPTXLowerAggrCopies.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
@@ -176,7 +175,7 @@ bool NVPTXPassConfig::addPostRegAlloc() {
 }
 
 FunctionPass *NVPTXPassConfig::createTargetRegisterAllocator(bool) {
-  return 0; // No reg alloc
+  return nullptr; // No reg alloc
 }
 
 void NVPTXPassConfig::addFastRegAlloc(FunctionPass *RegAllocPass) {

@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "asm-printer"
 #include "ARM64.h"
 #include "ARM64MachineFunctionInfo.h"
 #include "ARM64MCInstLower.h"
@@ -39,6 +38,8 @@
 #include "llvm/Support/TargetRegistry.h"
 using namespace llvm;
 
+#define DEBUG_TYPE "asm-printer"
+
 namespace {
 
 class ARM64AsmPrinter : public AsmPrinter {
@@ -52,7 +53,7 @@ class ARM64AsmPrinter : public AsmPrinter {
 public:
   ARM64AsmPrinter(TargetMachine &TM, MCStreamer &Streamer)
       : AsmPrinter(TM, Streamer), Subtarget(&TM.getSubtarget<ARM64Subtarget>()),
-        MCInstLowering(OutContext, *Mang, *this), SM(*this), ARM64FI(NULL),
+        MCInstLowering(OutContext, *Mang, *this), SM(*this), ARM64FI(nullptr),
         LOHLabelCounter(0) {}
 
   virtual const char *getPassName() const { return "ARM64 Assembly Printer"; }
@@ -592,5 +593,6 @@ void ARM64AsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
 // Force static initialization.
 extern "C" void LLVMInitializeARM64AsmPrinter() {
-  RegisterAsmPrinter<ARM64AsmPrinter> X(TheARM64Target);
+  RegisterAsmPrinter<ARM64AsmPrinter> X(TheARM64leTarget);
+  RegisterAsmPrinter<ARM64AsmPrinter> Y(TheARM64beTarget);
 }
