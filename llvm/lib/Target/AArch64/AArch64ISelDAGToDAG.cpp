@@ -46,7 +46,7 @@ public:
       Subtarget(&TM.getSubtarget<AArch64Subtarget>()) {
   }
 
-  virtual const char *getPassName() const {
+  const char *getPassName() const override {
     return "AArch64 Instruction Selection";
   }
 
@@ -86,7 +86,7 @@ public:
 
   bool SelectInlineAsmMemoryOperand(const SDValue &Op,
                                     char ConstraintCode,
-                                    std::vector<SDValue> &OutOps);
+                                    std::vector<SDValue> &OutOps) override;
 
   bool SelectLogicalImm(SDValue N, SDValue &Imm);
 
@@ -108,7 +108,7 @@ public:
   SDNode *LowerToFPLitPool(SDNode *Node);
   SDNode *SelectToLitPool(SDNode *N);
 
-  SDNode* Select(SDNode*);
+  SDNode* Select(SDNode*) override;
 private:
   /// Get the opcode for table lookup instruction
   unsigned getTBLOpc(bool IsExt, bool Is64Bit, unsigned NumOfVec);
@@ -425,9 +425,7 @@ SDNode *AArch64DAGToDAGISel::SelectAtomic(SDNode *Node, unsigned Op8,
   Ops.push_back(CurDAG->getTargetConstant(AN->getOrdering(), MVT::i32));
   Ops.push_back(AN->getOperand(0)); // Chain moves to the end
 
-  return CurDAG->SelectNodeTo(Node, Op,
-                              AN->getValueType(0), MVT::Other,
-                              &Ops[0], Ops.size());
+  return CurDAG->SelectNodeTo(Node, Op, AN->getValueType(0), MVT::Other, Ops);
 }
 
 SDValue AArch64DAGToDAGISel::createDTuple(ArrayRef<SDValue> Regs) {
@@ -1561,7 +1559,7 @@ SDNode *AArch64DAGToDAGISel::Select(SDNode *Node) {
   SDNode *ResNode = SelectCode(Node);
 
   DEBUG(dbgs() << "=> ";
-        if (ResNode == NULL || ResNode == Node)
+        if (ResNode == nullptr || ResNode == Node)
           Node->dump(CurDAG);
         else
           ResNode->dump(CurDAG);

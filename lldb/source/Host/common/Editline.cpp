@@ -162,10 +162,7 @@ Editline::Editline (const char *prog,       // prog can't be NULL
     m_history_sp (),
     m_prompt (),
     m_lines_prompt (),
-    m_getc_buffer (),
-    m_getc_mutex (Mutex::eMutexTypeNormal),
-    m_getc_cond (),
-//    m_gets_mutex (Mutex::eMutexTypeNormal),
+    m_getting_char (false),
     m_completion_callback (NULL),
     m_completion_callback_baton (NULL),
     m_line_complete_callback (NULL),
@@ -174,6 +171,7 @@ Editline::Editline (const char *prog,       // prog can't be NULL
     m_line_offset (0),
     m_lines_curr_line (0),
     m_lines_max_line (0),
+    m_file (fileno(fin), false),
     m_prompt_with_line_numbers (false),
     m_getting_line (false),
     m_got_eof (false),
@@ -190,6 +188,7 @@ Editline::Editline (const char *prog,       // prog can't be NULL
     {
         m_editline = ::el_init("lldb-tmp", fin, fout, ferr);
     }
+    
     if (prompt && prompt[0])
         SetPrompt (prompt);
 
@@ -324,7 +323,7 @@ Editline::PrivateGetLine(std::string &line)
             llvm::StringRef line_ref (line_cstr);
             line_ref = line_ref.rtrim("\n\r");
             
-            if (!line_ref.empty())
+            if (!line_ref.empty() && !m_interrupted)
             {
                 // We didn't strip the newlines, we just adjusted the length, and
                 // we want to add the history item with the newlines
@@ -345,9 +344,10 @@ Editline::PrivateGetLine(std::string &line)
 
 
 Error
-Editline::GetLine(std::string &line)
+Editline::GetLine(std::string &line, bool &interrupted)
 {
     Error error;
+    interrupted = false;
     line.clear();
 
     // Set arrow key bindings for up and down arrows for single line
@@ -370,6 +370,8 @@ Editline::GetLine(std::string &line)
         error = PrivateGetLine(line);
         m_getting_line = false;
     }
+
+    interrupted = m_interrupted;
 
     if (m_got_eof && line.empty())
     {
@@ -397,9 +399,10 @@ Editline::Push (const char *bytes, size_t len)
 
 
 Error
-Editline::GetLines(const std::string &end_line, StringList &lines)
+Editline::GetLines(const std::string &end_line, StringList &lines, bool &interrupted)
 {
     Error error;
+    interrupted = false;
     if (m_getting_line)
     {
         error.SetErrorString("already getting a line");
@@ -435,6 +438,11 @@ Editline::GetLines(const std::string &end_line, StringList &lines)
         if (error.Fail())
         {
             line_status = LineStatus::Error;
+        }
+        else if (m_interrupted)
+        {
+            interrupted = true;
+            line_status = LineStatus::Done;
         }
         else
         {
@@ -500,7 +508,7 @@ Editline::GetLines(const std::string &end_line, StringList &lines)
 
     // If we have a callback, call it one more time to let the
     // user know the lines are complete
-    if (m_line_complete_callback)
+    if (m_line_complete_callback && !interrupted)
         m_line_complete_callback (this,
                                   lines,
                                   UINT32_MAX,
@@ -714,80 +722,77 @@ Editline::GetPromptCallback (::EditLine *e)
     return "";
 }
 
-size_t
-Editline::SetInputBuffer (const char *c, size_t len)
-{
-    if (c && len > 0)
-    {
-        Mutex::Locker locker(m_getc_mutex);
-        SetGetCharCallback(GetCharInputBufferCallback);
-        m_getc_buffer.append(c, len);
-        m_getc_cond.Broadcast();
-    }
-    return len;
-}
-
-int
-Editline::GetChar (char *c)
-{
-    Mutex::Locker locker(m_getc_mutex);
-    if (m_getc_buffer.empty())
-        m_getc_cond.Wait(m_getc_mutex);
-    if (m_getc_buffer.empty())
-        return 0;
-    *c = m_getc_buffer[0];
-    m_getc_buffer.erase(0,1);
-    return 1;
-}
-
-int
-Editline::GetCharInputBufferCallback (EditLine *e, char *c)
-{
-    Editline *editline = GetClientData (e);
-    if (editline)
-        return editline->GetChar(c);
-    return 0;
-}
-
 int
 Editline::GetCharFromInputFileCallback (EditLine *e, char *c)
 {
     Editline *editline = GetClientData (e);
     if (editline && editline->m_got_eof == false)
     {
+        FILE *f = editline->GetInputFile();
+        if (f == NULL)
+        {
+            editline->m_got_eof = true;
+            return 0;
+        }
+        
+        
         while (1)
         {
-            errno = 0;
-            char ch = ::fgetc(editline->GetInputFile());
-            if (ch == '\x04')
+            lldb::ConnectionStatus status = eConnectionStatusSuccess;
+            char ch = 0;
+            // When we start to call el_gets() the editline library needs to
+            // output the prompt
+            editline->m_getting_char.SetValue(true, eBroadcastAlways);
+            const size_t n = editline->m_file.Read(&ch, 1, UINT32_MAX, status, NULL);
+            editline->m_getting_char.SetValue(false, eBroadcastAlways);
+            if (n)
             {
-                // Only turn a CTRL+D into a EOF if we receive the
-                // CTRL+D an empty line, otherwise it will forward
-                // delete the character at the cursor
-                const LineInfo *line_info = ::el_line(e);
-                if (line_info != NULL &&
-                    line_info->buffer == line_info->cursor &&
-                    line_info->cursor == line_info->lastchar)
+                if (ch == '\x04')
                 {
-                    ch = EOF;
-                    errno = 0;
+                    // Only turn a CTRL+D into a EOF if we receive the
+                    // CTRL+D an empty line, otherwise it will forward
+                    // delete the character at the cursor
+                    const LineInfo *line_info = ::el_line(e);
+                    if (line_info != NULL &&
+                        line_info->buffer == line_info->cursor &&
+                        line_info->cursor == line_info->lastchar)
+                    {
+                        editline->m_got_eof = true;
+                        break;
+                    }
                 }
-            }
-        
-            if (ch == EOF)
-            {
-                if (errno == EINTR)
-                    continue;
-                else
+            
+                if (status == eConnectionStatusEndOfFile)
                 {
                     editline->m_got_eof = true;
                     break;
                 }
+                else
+                {
+                    *c = ch;
+                    return 1;
+                }
             }
             else
             {
-                *c = ch;
-                return 1;
+                switch (status)
+                {
+                    case eConnectionStatusInterrupted:
+                        editline->m_interrupted = true;
+                        *c = '\n';
+                        return 1;
+
+                    case eConnectionStatusSuccess:         // Success
+                        break;
+                        
+                    case eConnectionStatusError:           // Check GetError() for details
+                    case eConnectionStatusTimedOut:        // Request timed out
+                    case eConnectionStatusEndOfFile:       // End-of-file encountered
+                    case eConnectionStatusNoConnection:    // No connection
+                    case eConnectionStatusLostConnection:  // Lost connection while connected to a valid connection
+                        editline->m_got_eof = true;
+                        break;
+                }
             }
         }
     }
@@ -797,12 +802,23 @@ Editline::GetCharFromInputFileCallback (EditLine *e, char *c)
 void
 Editline::Hide ()
 {
-    FILE *out_file = GetOutputFile();
-    if (out_file)
+    if (m_getting_line)
     {
-        const LineInfo *line_info  = ::el_line(m_editline);
-        if (line_info)
-            ::fprintf (out_file, "\033[%uD\033[K", (uint32_t)(strlen(GetPrompt()) + line_info->cursor - line_info->buffer));
+        // If we are getting a line, we might have started to call el_gets() and
+        // it might be printing the prompt. Here we make sure we are actually getting
+        // a character. This way we know the entire prompt has been printed.
+        TimeValue timeout = TimeValue::Now();
+        timeout.OffsetWithSeconds(1);
+        if (m_getting_char.WaitForValueEqualTo(true, &timeout))
+        {
+            FILE *out_file = GetOutputFile();
+            if (out_file)
+            {
+                const LineInfo *line_info  = ::el_line(m_editline);
+                if (line_info)
+                    ::fprintf (out_file, "\033[%uD\033[K", (uint32_t)(strlen(GetPrompt()) + line_info->cursor - line_info->buffer));
+            }
+        }
     }
 }
 
@@ -810,13 +826,25 @@ Editline::Hide ()
 void
 Editline::Refresh()
 {
-    ::el_set (m_editline, EL_REFRESH);
+    if (m_getting_line)
+    {
+        // If we are getting a line, we might have started to call el_gets() and
+        // it might be printing the prompt. Here we make sure we are actually getting
+        // a character. This way we know the entire prompt has been printed.
+        TimeValue timeout = TimeValue::Now();
+        timeout.OffsetWithSeconds(1);
+        if (m_getting_char.WaitForValueEqualTo(true, &timeout))
+        {
+            ::el_set (m_editline, EL_REFRESH);
+        }
+    }
 }
 
-void
+bool
 Editline::Interrupt ()
 {
     m_interrupted = true;
     if (m_getting_line || m_lines_curr_line > 0)
-        el_insertstr(m_editline, "\n"); // True to force the line to complete itself so we get exit from el_gets()
+        return m_file.InterruptRead();
+    return false; // Interrupt not handled as we weren't getting a line or lines
 }

@@ -67,6 +67,7 @@ public:
     }
 
     std::string name;
+    std::string externalName;
     int ordinal;
     bool noname;
     bool isData;
@@ -272,6 +273,13 @@ public:
   void setLibraryGroup(Group *group) { _libraryGroup = group; }
   Group *getLibraryGroup() const { return _libraryGroup; }
 
+  void setModuleDefinitionFile(const std::string val) {
+    _moduleDefinitionFile = val;
+  }
+  std::string getModuleDefinitionFile() const {
+    return _moduleDefinitionFile;
+  }
+
   std::recursive_mutex &getMutex() { return _mutex; }
 
 protected:
@@ -369,6 +377,10 @@ private:
 
   // The PECOFFGroup that contains all the .lib files.
   Group *_libraryGroup;
+
+  // Name of the temporary file for lib.exe subcommand. For debugging
+  // only.
+  std::string _moduleDefinitionFile;
 };
 
 } // end namespace lld

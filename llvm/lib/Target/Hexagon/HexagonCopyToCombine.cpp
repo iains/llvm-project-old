@@ -68,15 +68,15 @@ public:
     initializeHexagonCopyToCombinePass(*PassRegistry::getPassRegistry());
   }
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
-  const char *getPassName() const {
+  const char *getPassName() const override {
     return "Hexagon Copy-To-Combine Pass";
   }
 
-  virtual bool runOnMachineFunction(MachineFunction &Fn);
+  bool runOnMachineFunction(MachineFunction &Fn) override;
 
 private:
   MachineInstr *findPairable(MachineInstr *I1, bool &DoInsertAtI1);
@@ -333,7 +333,7 @@ bool HexagonCopyToCombine::isSafeToMoveTogether(MachineInstr *I1,
 
       // Check for an exact kill (registers match).
       if (I1UseReg && I->killsRegister(I1UseReg)) {
-        assert(KillingInstr == 0 && "Should only see one killing instruction");
+        assert(!KillingInstr && "Should only see one killing instruction");
         KilledOperand = I1UseReg;
         KillingInstr = &*I;
       }

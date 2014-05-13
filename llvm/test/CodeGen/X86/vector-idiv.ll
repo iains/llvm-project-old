@@ -1,19 +1,20 @@
-; RUN: llc -march=x86-64 -mcpu=corei7 < %s | FileCheck %s -check-prefix=SSE
+; RUN: llc -march=x86-64 -mcpu=core2 -mattr=+sse4.1 < %s | FileCheck %s -check-prefix=SSE41
+; RUN: llc -march=x86-64 -mcpu=core2 < %s | FileCheck %s -check-prefix=SSE
 ; RUN: llc -march=x86-64 -mcpu=core-avx2 < %s | FileCheck %s -check-prefix=AVX
 
 define <4 x i32> @test1(<4 x i32> %a) {
   %div = udiv <4 x i32> %a, <i32 7, i32 7, i32 7, i32 7>
   ret <4 x i32> %div
 
-; SSE-LABEL: test1:
-; SSE: pmuludq
-; SSE: pshufd	$57
-; SSE: pmuludq
-; SSE: shufps	$-35
-; SSE: psubd
-; SSE: psrld $1
-; SSE: padd
-; SSE: psrld $2
+; SSE41-LABEL: test1:
+; SSE41: pmuludq
+; SSE41: pshufd	$57
+; SSE41: pmuludq
+; SSE41: shufps	$-35
+; SSE41: psubd
+; SSE41: psrld $1
+; SSE41: padd
+; SSE41: psrld $2
 
 ; AVX-LABEL: test1:
 ; AVX: vpmuludq
@@ -46,12 +47,12 @@ define <8 x i16> @test3(<8 x i16> %a) {
   %div = udiv <8 x i16> %a, <i16 7, i16 7, i16 7, i16 7, i16 7, i16 7, i16 7, i16 7>
   ret <8 x i16> %div
 
-; SSE-LABEL: test3:
-; SSE: pmulhuw
-; SSE: psubw
-; SSE: psrlw $1
-; SSE: paddw
-; SSE: psrlw $2
+; SSE41-LABEL: test3:
+; SSE41: pmulhuw
+; SSE41: psubw
+; SSE41: psrlw $1
+; SSE41: paddw
+; SSE41: psrlw $2
 
 ; AVX-LABEL: test3:
 ; AVX: vpmulhuw
@@ -78,11 +79,11 @@ define <8 x i16> @test5(<8 x i16> %a) {
   %div = sdiv <8 x i16> %a, <i16 7, i16 7, i16 7, i16 7, i16 7, i16 7, i16 7, i16 7>
   ret <8 x i16> %div
 
-; SSE-LABEL: test5:
-; SSE: pmulhw
-; SSE: psrlw $15
-; SSE: psraw $1
-; SSE: paddw
+; SSE41-LABEL: test5:
+; SSE41: pmulhw
+; SSE41: psrlw $15
+; SSE41: psraw $1
+; SSE41: paddw
 
 ; AVX-LABEL: test5:
 ; AVX: vpmulhw
@@ -112,12 +113,29 @@ define <4 x i32> @test8(<4 x i32> %a) {
   %div = sdiv <4 x i32> %a, <i32 7, i32 7, i32 7, i32 7>
   ret <4 x i32> %div
 
+; SSE41-LABEL: test8:
+; SSE41: pmuldq
+; SSE41: pshufd	$57
+; SSE41-NOT: pshufd	$57
+; SSE41: pmuldq
+; SSE41: shufps	$-35
+; SSE41: pshufd	$-40
+; SSE41: padd
+; SSE41: psrld $31
+; SSE41: psrad $2
+; SSE41: padd
+
 ; SSE-LABEL: test8:
-; SSE: pmuldq
+; SSE: psrad $31
+; SSE: pand
+; SSE: paddd
+; SSE: pmuludq
 ; SSE: pshufd	$57
-; SSE: pmuldq
+; SSE-NOT: pshufd	$57
+; SSE: pmuludq
 ; SSE: shufps	$-35
 ; SSE: pshufd	$-40
+; SSE: psubd
 ; SSE: padd
 ; SSE: psrld $31
 ; SSE: psrad $2
@@ -126,6 +144,7 @@ define <4 x i32> @test8(<4 x i32> %a) {
 ; AVX-LABEL: test8:
 ; AVX: vpmuldq
 ; AVX: vpshufd	$57
+; AVX-NOT: vpshufd	$57
 ; AVX: vpmuldq
 ; AVX: vshufps	$-35
 ; AVX: vpshufd	$-40
@@ -140,7 +159,7 @@ define <8 x i32> @test9(<8 x i32> %a) {
   ret <8 x i32> %div
 
 ; AVX-LABEL: test9:
-; AVX: vpermd
+; AVX: vpbroadcastd
 ; AVX: vpmuldq
 ; AVX: vshufps	$-35
 ; AVX: vpmuldq
@@ -150,4 +169,49 @@ define <8 x i32> @test9(<8 x i32> %a) {
 ; AVX: vpsrld $31
 ; AVX: vpsrad $2
 ; AVX: vpadd
+}
+
+define <8 x i32> @test10(<8 x i32> %a) {
+  %rem = urem <8 x i32> %a, <i32 7, i32 7, i32 7, i32 7,i32 7, i32 7, i32 7, i32 7>
+  ret <8 x i32> %rem
+
+; AVX-LABEL: test10:
+; AVX: vpbroadcastd
+; AVX: vpmuludq
+; AVX: vshufps	$-35
+; AVX: vpmuludq
+; AVX: vshufps	$-35
+; AVX: vpsubd
+; AVX: vpsrld $1
+; AVX: vpadd
+; AVX: vpsrld $2
+; AVX: vpmulld
+}
+
+define <8 x i32> @test11(<8 x i32> %a) {
+  %rem = srem <8 x i32> %a, <i32 7, i32 7, i32 7, i32 7,i32 7, i32 7, i32 7, i32 7>
+  ret <8 x i32> %rem
+
+; AVX-LABEL: test11:
+; AVX: vpbroadcastd
+; AVX: vpmuldq
+; AVX: vshufps	$-35
+; AVX: vpmuldq
+; AVX: vshufps	$-35
+; AVX: vpshufd	$-40
+; AVX: vpadd
+; AVX: vpsrld $31
+; AVX: vpsrad $2
+; AVX: vpadd
+; AVX: vpmulld
+}
+
+define <2 x i16> @test12() {
+  %I8 = insertelement <2 x i16> zeroinitializer, i16 -1, i32 0
+  %I9 = insertelement <2 x i16> %I8, i16 -1, i32 1
+  %B9 = urem <2 x i16> %I9, %I9
+  ret <2 x i16> %B9
+
+; AVX-LABEL: test12:
+; AVX: xorps
 }

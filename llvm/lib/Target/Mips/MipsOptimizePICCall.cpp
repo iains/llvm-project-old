@@ -61,11 +61,11 @@ class OptimizePICCall : public MachineFunctionPass {
 public:
   OptimizePICCall(TargetMachine &tm) : MachineFunctionPass(ID) {}
 
-  virtual const char *getPassName() const { return "Mips OptimizePICCall"; }
+  const char *getPassName() const override { return "Mips OptimizePICCall"; }
 
-  bool runOnMachineFunction(MachineFunction &F);
+  bool runOnMachineFunction(MachineFunction &F) override;
 
-  void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<MachineDominatorTree>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
@@ -155,7 +155,7 @@ static void eraseGPOpnd(MachineInstr &MI) {
     }
   }
 
-  llvm_unreachable(0);
+  llvm_unreachable(nullptr);
 }
 
 MBBInfo::MBBInfo(MachineDomTreeNode *N) : Node(N), HTScope(nullptr) {}

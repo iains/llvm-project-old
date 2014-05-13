@@ -36,7 +36,9 @@ uptr GetMmapGranularity() {
 #if SANITIZER_WORDSIZE == 32
 // Take care of unusable kernel area in top gigabyte
 static uptr GetKernelStartAddress() {
-#if SANITIZER_LINUX
+#if 0  // SANITIZER_LINUX
+  // FIXME: this code is too naive. We have a situation where the machine is a
+  // true x8_64, but under schroot uname returns i686.
   // 64-bit Linux provides 32-bit apps with full address space
   struct utsname uname_info;
   return 0 == uname(&uname_info) && !internal_strstr(uname_info.machine, "64")
@@ -134,7 +136,7 @@ void *MmapFixedNoReserve(uptr fixed_addr, uptr size) {
   int reserrno;
   if (internal_iserror(p, &reserrno))
     Report("ERROR: %s failed to "
-           "allocate 0x%zx (%zd) bytes at address %zu (errno: %d)\n",
+           "allocate 0x%zx (%zd) bytes at address %zx (errno: %d)\n",
            SanitizerToolName, size, size, fixed_addr, reserrno);
   IncreaseTotalMmap(size);
   return (void *)p;
@@ -150,7 +152,7 @@ void *MmapFixedOrDie(uptr fixed_addr, uptr size) {
   int reserrno;
   if (internal_iserror(p, &reserrno)) {
     Report("ERROR: %s failed to "
-           "allocate 0x%zx (%zd) bytes at address %zu (errno: %d)\n",
+           "allocate 0x%zx (%zd) bytes at address %zx (errno: %d)\n",
            SanitizerToolName, size, size, fixed_addr, reserrno);
     CHECK("unable to mmap" && 0);
   }

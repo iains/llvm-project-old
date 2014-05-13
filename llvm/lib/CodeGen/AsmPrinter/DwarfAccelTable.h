@@ -183,6 +183,7 @@ private:
   struct DataArray {
     MCSymbol *StrSym;
     std::vector<HashDataContents *> Values;
+    DataArray() : StrSym(nullptr) {}
   };
   friend struct HashData;
   struct HashData {

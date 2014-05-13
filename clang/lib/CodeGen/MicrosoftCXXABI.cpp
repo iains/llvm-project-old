@@ -39,22 +39,11 @@ public:
 
   bool HasThisReturn(GlobalDecl GD) const override;
 
-  bool isReturnTypeIndirect(const CXXRecordDecl *RD) const override {
-    // Structures that are not C++03 PODs are always indirect.
-    return !RD->isPOD();
-  }
+  bool classifyReturnType(CGFunctionInfo &FI) const override;
 
-  RecordArgABI getRecordArgABI(const CXXRecordDecl *RD) const override {
-    if (RD->hasNonTrivialCopyConstructor() || RD->hasNonTrivialDestructor()) {
-      llvm::Triple::ArchType Arch = CGM.getTarget().getTriple().getArch();
-      if (Arch == llvm::Triple::x86)
-        return RAA_DirectInMemory;
-      // On x64, pass non-trivial records indirectly.
-      // FIXME: Test other Windows architectures.
-      return RAA_Indirect;
-    }
-    return RAA_Default;
-  }
+  RecordArgABI getRecordArgABI(const CXXRecordDecl *RD) const override;
+
+  bool isSRetParameterAfterThis() const override { return true; }
 
   StringRef GetPureVirtualCallName() override { return "_purecall"; }
   // No known support for deleted functions in MSVC yet, so this choice is
@@ -407,6 +396,33 @@ private:
 
 }
 
+CGCXXABI::RecordArgABI
+MicrosoftCXXABI::getRecordArgABI(const CXXRecordDecl *RD) const {
+  switch (CGM.getTarget().getTriple().getArch()) {
+  default:
+    // FIXME: Implement for other architectures.
+    return RAA_Default;
+
+  case llvm::Triple::x86:
+    // 32-bit x86 constructs non-trivial objects directly in outgoing argument
+    // slots.  LLVM uses the inalloca attribute to implement this.
+    if (RD->hasNonTrivialCopyConstructor() || RD->hasNonTrivialDestructor())
+      return RAA_DirectInMemory;
+    return RAA_Default;
+
+  case llvm::Triple::x86_64:
+    // Win64 passes objects with non-trivial copy ctors indirectly.
+    if (RD->hasNonTrivialCopyConstructor())
+      return RAA_Indirect;
+    // Win64 passes objects larger than 8 bytes indirectly.
+    if (getContext().getTypeSize(RD->getTypeForDecl()) > 64)
+      return RAA_Indirect;
+    return RAA_Default;
+  }
+
+  llvm_unreachable("invalid enum");
+}
+
 llvm::Value *MicrosoftCXXABI::adjustToCompleteObject(CodeGenFunction &CGF,
                                                      llvm::Value *ptr,
                                                      QualType type) {
@@ -438,6 +454,27 @@ MicrosoftCXXABI::GetVirtualBaseClassOffset(CodeGenFunction &CGF,
 
 bool MicrosoftCXXABI::HasThisReturn(GlobalDecl GD) const {
   return isa<CXXConstructorDecl>(GD.getDecl());
+}
+
+bool MicrosoftCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
+  const CXXRecordDecl *RD = FI.getReturnType()->getAsCXXRecordDecl();
+  if (!RD)
+    return false;
+
+  if (FI.isInstanceMethod()) {
+    // If it's an instance method, aggregates are always returned indirectly via
+    // the second parameter.
+    FI.getReturnInfo() = ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    FI.getReturnInfo().setSRetAfterThis(FI.isInstanceMethod());
+    return true;
+  } else if (!RD->isPOD()) {
+    // If it's a free function, non-POD types are returned indirectly.
+    FI.getReturnInfo() = ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    return true;
+  }
+
+  // Otherwise, use the C ABI rules.
+  return false;
 }
 
 void MicrosoftCXXABI::BuildConstructorSignature(
@@ -1628,7 +1665,7 @@ MicrosoftCXXABI::EmitMemberPointerIsNotNull(CodeGenFunction &CGF,
   for (int I = 1, E = fields.size(); I < E; ++I) {
     llvm::Value *Field = Builder.CreateExtractValue(MemPtr, I);
     llvm::Value *Next = Builder.CreateICmpNE(Field, fields[I], "memptr.cmp");
-    Res = Builder.CreateAnd(Res, Next, "memptr.tobool");
+    Res = Builder.CreateOr(Res, Next, "memptr.tobool");
   }
   return Res;
 }

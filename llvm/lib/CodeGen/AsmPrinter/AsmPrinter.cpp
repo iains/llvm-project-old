@@ -110,7 +110,7 @@ AsmPrinter::AsmPrinter(TargetMachine &tm, MCStreamer &Streamer)
 }
 
 AsmPrinter::~AsmPrinter() {
-  assert(DD == 0 && Handlers.empty() && "Debug/EH info didn't get finalized");
+  assert(!DD && Handlers.empty() && "Debug/EH info didn't get finalized");
 
   if (GCMetadataPrinters) {
     gcp_map_type &GCMap = getGCMap(GCMetadataPrinters);
@@ -1458,7 +1458,7 @@ void AsmPrinter::EmitLabelPlusOffset(const MCSymbol *Label, uint64_t Offset,
 // an explicit alignment requested, it will override the alignment request
 // if required for correctness.
 //
-void AsmPrinter::EmitAlignment(unsigned NumBits, const GlobalValue *GV) const {
+void AsmPrinter::EmitAlignment(unsigned NumBits, const GlobalObject *GV) const {
   if (GV) NumBits = getGVAlignmentLog2(GV, *TM.getDataLayout(), NumBits);
 
   if (NumBits == 0) return;   // 1-byte aligned: no need to emit alignment.

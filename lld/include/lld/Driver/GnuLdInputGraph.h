@@ -35,17 +35,20 @@ public:
   class Attributes {
   public:
     Attributes()
-        : _isWholeArchive(false), _asNeeded(false), _isDashlPrefix(false) {}
+        : _isWholeArchive(false), _asNeeded(false), _isDashlPrefix(false),
+          _isSysRooted(false) {}
     void setWholeArchive(bool isWholeArchive) {
       _isWholeArchive = isWholeArchive;
     }
     void setAsNeeded(bool asNeeded) { _asNeeded = asNeeded; }
     void setDashlPrefix(bool isDashlPrefix) { _isDashlPrefix = isDashlPrefix; }
+    void setSysRooted(bool isSysRooted) { _isSysRooted = isSysRooted; }
 
   public:
     bool _isWholeArchive;
     bool _asNeeded;
     bool _isDashlPrefix;
+    bool _isSysRooted;
   };
 
   ELFFileNode(ELFLinkingContext &ctx, StringRef path, Attributes &attributes)
@@ -124,16 +127,15 @@ public:
 
   error_code parse(const LinkingContext &ctx, raw_ostream &diagnostics) override;
 
-  bool shouldExpand() const override { return true; }
+  bool getReplacements(InputGraph::InputElementVectorT &result) override {
+    for (std::unique_ptr<InputElement> &elt : _expandElements)
+      result.push_back(std::move(elt));
+    return true;
+  }
 
   /// Unused functions for ELFGNULdScript Nodes.
   ErrorOr<File &> getNextFile() override {
     return make_error_code(InputGraphError::no_more_files);
-  }
-
-  /// Return the elements that we would want to expand with.
-  range<InputGraph::InputElementIterT> expandElements() override {
-    return make_range(_expandElements.begin(), _expandElements.end());
   }
 
   // Linker Script will be expanded and replaced with other elements

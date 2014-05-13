@@ -1,4 +1,4 @@
-//===--- SemaOpenMP.cpp - Semantic Analysis for OpenMP constructs ----------===//
+//===--- SemaOpenMP.cpp - Semantic Analysis for OpenMP constructs ---------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,13 +12,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "clang/Basic/OpenMPKinds.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclOpenMP.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtOpenMP.h"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/Basic/OpenMPKinds.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
@@ -670,6 +671,35 @@ public:
 };
 }
 
+void Sema::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, SourceLocation Loc,
+                                  Scope *CurScope) {
+  switch (DKind) {
+  case OMPD_parallel: {
+    QualType KmpInt32Ty = Context.getIntTypeForBitwidth(32, 1);
+    QualType KmpInt32PtrTy = Context.getPointerType(KmpInt32Ty);
+    Sema::CapturedParamNameType Params[3] = {
+      std::make_pair(".global_tid.", KmpInt32PtrTy),
+      std::make_pair(".bound_tid.", KmpInt32PtrTy),
+      std::make_pair(StringRef(), QualType()) // __context with shared vars
+    };
+    ActOnCapturedRegionStart(Loc, CurScope, CR_OpenMP, Params);
+    break;
+  }
+  case OMPD_simd: {
+    Sema::CapturedParamNameType Params[1] = {
+      std::make_pair(StringRef(), QualType()) // __context with shared vars
+    };
+    ActOnCapturedRegionStart(Loc, CurScope, CR_OpenMP, Params);
+    break;
+  }
+  case OMPD_threadprivate:
+  case OMPD_task:
+    llvm_unreachable("OpenMP Directive is not allowed");
+  case OMPD_unknown:
+    llvm_unreachable("Unknown OpenMP directive");
+  }
+}
+
 StmtResult Sema::ActOnOpenMPExecutableDirective(OpenMPDirectiveKind Kind,
                                                 ArrayRef<OMPClause *> Clauses,
                                                 Stmt *AStmt,
@@ -714,7 +744,6 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(OpenMPDirectiveKind Kind,
   case OMPD_task:
     llvm_unreachable("OpenMP Directive is not allowed");
   case OMPD_unknown:
-  case NUM_OPENMP_DIRECTIVES:
     llvm_unreachable("Unknown OpenMP directive");
   }
 
@@ -726,6 +755,15 @@ StmtResult Sema::ActOnOpenMPParallelDirective(ArrayRef<OMPClause *> Clauses,
                                               Stmt *AStmt,
                                               SourceLocation StartLoc,
                                               SourceLocation EndLoc) {
+  assert(AStmt && isa<CapturedStmt>(AStmt) && "Captured statement expected");
+  CapturedStmt *CS = cast<CapturedStmt>(AStmt);
+  // 1.2.2 OpenMP Language Terminology
+  // Structured block - An executable statement with a single entry at the
+  // top and a single exit at the bottom.
+  // The point of exit cannot be a branch out of the structured block.
+  // longjmp() and throw() must not violate the entry/exit criteria.
+  CS->getCapturedDecl()->setNothrow();
+
   getCurFunction()->setHasBranchProtectedScope();
 
   return Owned(OMPParallelDirective::Create(Context, StartLoc, EndLoc,
@@ -772,6 +810,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
     Res = ActOnOpenMPSafelenClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
   case OMPC_default:
+  case OMPC_proc_bind:
   case OMPC_private:
   case OMPC_firstprivate:
   case OMPC_shared:
@@ -779,7 +818,6 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
   case OMPC_copyin:
   case OMPC_threadprivate:
   case OMPC_unknown:
-  case NUM_OPENMP_CLAUSES:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -842,7 +880,7 @@ ExprResult Sema::PerformImplicitIntegerConversion(SourceLocation Loc,
                << ConvTy->isEnumeralType() << ConvTy;
     }
     SemaDiagnosticBuilder diagnoseConversion(
-        Sema &S, SourceLocation Loc, QualType T, QualType ConvTy) override {
+        Sema &, SourceLocation, QualType, QualType) override {
       llvm_unreachable("conversion functions are permitted");
     }
   } ConvertDiagnoser;
@@ -925,6 +963,11 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
       ActOnOpenMPDefaultClause(static_cast<OpenMPDefaultClauseKind>(Argument),
                                ArgumentLoc, StartLoc, LParenLoc, EndLoc);
     break;
+  case OMPC_proc_bind:
+    Res =
+      ActOnOpenMPProcBindClause(static_cast<OpenMPProcBindClauseKind>(Argument),
+                                ArgumentLoc, StartLoc, LParenLoc, EndLoc);
+    break;
   case OMPC_if:
   case OMPC_num_threads:
   case OMPC_safelen:
@@ -935,7 +978,6 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(OpenMPClauseKind Kind,
   case OMPC_copyin:
   case OMPC_threadprivate:
   case OMPC_unknown:
-  case NUM_OPENMP_CLAUSES:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -948,19 +990,18 @@ OMPClause *Sema::ActOnOpenMPDefaultClause(OpenMPDefaultClauseKind Kind,
                                           SourceLocation EndLoc) {
   if (Kind == OMPC_DEFAULT_unknown) {
     std::string Values;
-    static_assert(NUM_OPENMP_DEFAULT_KINDS > 1,
-                  "NUM_OPENMP_DEFAULT_KINDS not greater than 1");
+    static_assert(OMPC_DEFAULT_unknown > 0,
+                  "OMPC_DEFAULT_unknown not greater than 0");
     std::string Sep(", ");
-    for (unsigned i = OMPC_DEFAULT_unknown + 1;
-         i < NUM_OPENMP_DEFAULT_KINDS; ++i) {
+    for (unsigned i = 0; i < OMPC_DEFAULT_unknown; ++i) {
       Values += "'";
       Values += getOpenMPSimpleClauseTypeName(OMPC_default, i);
       Values += "'";
       switch (i) {
-      case NUM_OPENMP_DEFAULT_KINDS - 2:
+      case OMPC_DEFAULT_unknown - 2:
         Values += " or ";
         break;
-      case NUM_OPENMP_DEFAULT_KINDS - 1:
+      case OMPC_DEFAULT_unknown - 1:
         break;
       default:
         Values += Sep;
@@ -979,12 +1020,42 @@ OMPClause *Sema::ActOnOpenMPDefaultClause(OpenMPDefaultClauseKind Kind,
     DSAStack->setDefaultDSAShared();
     break;
   case OMPC_DEFAULT_unknown:
-  case NUM_OPENMP_DEFAULT_KINDS:
     llvm_unreachable("Clause kind is not allowed.");
     break;
   }
   return new (Context) OMPDefaultClause(Kind, KindKwLoc, StartLoc, LParenLoc,
                                         EndLoc);
+}
+
+OMPClause *Sema::ActOnOpenMPProcBindClause(OpenMPProcBindClauseKind Kind,
+                                           SourceLocation KindKwLoc,
+                                           SourceLocation StartLoc,
+                                           SourceLocation LParenLoc,
+                                           SourceLocation EndLoc) {
+  if (Kind == OMPC_PROC_BIND_unknown) {
+    std::string Values;
+    std::string Sep(", ");
+    for (unsigned i = 0; i < OMPC_PROC_BIND_unknown; ++i) {
+      Values += "'";
+      Values += getOpenMPSimpleClauseTypeName(OMPC_proc_bind, i);
+      Values += "'";
+      switch (i) {
+      case OMPC_PROC_BIND_unknown - 2:
+        Values += " or ";
+        break;
+      case OMPC_PROC_BIND_unknown - 1:
+        break;
+      default:
+        Values += Sep;
+        break;
+      }
+    }
+    Diag(KindKwLoc, diag::err_omp_unexpected_clause_value)
+      << Values << getOpenMPClauseName(OMPC_proc_bind);
+    return 0;
+  }
+  return new (Context) OMPProcBindClause(Kind, KindKwLoc, StartLoc, LParenLoc,
+                                         EndLoc);
 }
 
 OMPClause *Sema::ActOnOpenMPVarListClause(OpenMPClauseKind Kind,
@@ -1016,9 +1087,9 @@ OMPClause *Sema::ActOnOpenMPVarListClause(OpenMPClauseKind Kind,
   case OMPC_num_threads:
   case OMPC_safelen:
   case OMPC_default:
+  case OMPC_proc_bind:
   case OMPC_threadprivate:
   case OMPC_unknown:
-  case NUM_OPENMP_CLAUSES:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;

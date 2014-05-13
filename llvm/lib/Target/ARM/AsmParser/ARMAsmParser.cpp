@@ -22,9 +22,7 @@
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler.h"
-#include "llvm/MC/MCELF.h"
 #include "llvm/MC/MCELFStreamer.h"
-#include "llvm/MC/MCELFSymbolFlags.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstrDesc.h"
@@ -8364,32 +8362,6 @@ void ARMAsmParser::onLabelParsed(MCSymbol *Symbol) {
   if (NextSymbolIsThumb) {
     getParser().getStreamer().EmitThumbFunc(Symbol);
     NextSymbolIsThumb = false;
-    return;
-  }
-
-  if (!isThumb())
-    return;
-
-  const MCObjectFileInfo::Environment Format =
-    getContext().getObjectFileInfo()->getObjectFileType();
-  switch (Format) {
-  case MCObjectFileInfo::IsCOFF: {
-    const MCSymbolData &SD =
-      getParser().getStreamer().getOrCreateSymbolData(Symbol);
-    char Type = COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT;
-    if (SD.getFlags() & (Type << COFF::SF_TypeShift))
-      getParser().getStreamer().EmitThumbFunc(Symbol);
-    break;
-  }
-  case MCObjectFileInfo::IsELF: {
-    const MCSymbolData &SD =
-      getParser().getStreamer().getOrCreateSymbolData(Symbol);
-    if (MCELF::GetType(SD) & (ELF::STT_FUNC << ELF_STT_Shift))
-      getParser().getStreamer().EmitThumbFunc(Symbol);
-    break;
-  }
-  case MCObjectFileInfo::IsMachO:
-    break;
   }
 }
 
@@ -9400,36 +9372,7 @@ bool ARMAsmParser::parseDirectiveThumbSet(SMLoc L) {
   Lex();
 
   MCSymbol *Alias = getContext().GetOrCreateSymbol(Name);
-  if (const MCSymbolRefExpr *SRE = dyn_cast<MCSymbolRefExpr>(Value)) {
-    MCSymbol *Sym = getContext().LookupSymbol(SRE->getSymbol().getName());
-    if (!Sym->isDefined()) {
-      getStreamer().EmitSymbolAttribute(Sym, MCSA_Global);
-      getStreamer().EmitAssignment(Alias, Value);
-      return false;
-    }
-
-    const MCObjectFileInfo::Environment Format =
-      getContext().getObjectFileInfo()->getObjectFileType();
-    switch (Format) {
-    case MCObjectFileInfo::IsCOFF: {
-      char Type = COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT;
-      getStreamer().EmitCOFFSymbolType(Type);
-      // .set values are always local in COFF
-      getStreamer().EmitSymbolAttribute(Alias, MCSA_Local);
-      break;
-    }
-    case MCObjectFileInfo::IsELF:
-      getStreamer().EmitSymbolAttribute(Alias, MCSA_ELF_TypeFunction);
-      break;
-    case MCObjectFileInfo::IsMachO:
-      break;
-    }
-  }
-
-  // FIXME: set the function as being a thumb function via the assembler
-  getStreamer().EmitThumbFunc(Alias);
-  getStreamer().EmitAssignment(Alias, Value);
-
+  getTargetStreamer().emitThumbSet(Alias, Value);
   return false;
 }
 
@@ -9544,8 +9487,8 @@ unsigned ARMAsmParser::validateTargetOperandClass(MCParsedAsmOperand *AsmOp,
       int64_t Value;
       if (!SOExpr->EvaluateAsAbsolute(Value))
         return Match_Success;
-      assert((Value >= INT32_MIN && Value <= INT32_MAX) &&
-             "expression value must be representiable in 32 bits");
+      assert((Value >= INT32_MIN && Value <= UINT32_MAX) &&
+             "expression value must be representable in 32 bits");
     }
     break;
   case MCK_GPRPair:

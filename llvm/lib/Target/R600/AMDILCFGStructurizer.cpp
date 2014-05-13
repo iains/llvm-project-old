@@ -139,11 +139,11 @@ public:
     initializeAMDGPUCFGStructurizerPass(*PassRegistry::getPassRegistry());
   }
 
-   const char *getPassName() const {
+   const char *getPassName() const override {
     return "AMDGPU Control Flow Graph structurizer Pass";
   }
 
-  void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addPreserved<MachineFunctionAnalysis>();
     AU.addRequired<MachineFunctionAnalysis>();
     AU.addRequired<MachineDominatorTree>();
@@ -159,7 +159,7 @@ public:
   /// sure all loops have an exit block
   bool prepare();
 
-  bool runOnMachineFunction(MachineFunction &MF) {
+  bool runOnMachineFunction(MachineFunction &MF) override {
     TII = static_cast<const R600InstrInfo *>(MF.getTarget().getInstrInfo());
     TRI = &TII->getRegisterInfo();
     DEBUG(MF.dump(););
@@ -168,7 +168,7 @@ public:
     MLI = &getAnalysis<MachineLoopInfo>();
     DEBUG(dbgs() << "LoopInfo:\n"; PrintLoopinfo(*MLI););
     MDT = &getAnalysis<MachineDominatorTree>();
-    DEBUG(MDT->print(dbgs(), (const llvm::Module*)0););
+    DEBUG(MDT->print(dbgs(), (const llvm::Module*)nullptr););
     PDT = &getAnalysis<MachinePostDominatorTree>();
     DEBUG(PDT->print(dbgs()););
     prepare();

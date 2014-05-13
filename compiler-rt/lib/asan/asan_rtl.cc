@@ -53,7 +53,7 @@ static void AsanDie() {
       UnmapOrDie((void*)kLowShadowBeg, kHighShadowEnd - kLowShadowBeg);
     }
   }
-  if (flags()->coverage)
+  if (common_flags()->coverage)
     __sanitizer_cov_dump();
   if (death_callback)
     death_callback();
@@ -172,13 +172,11 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
   ParseFlag(str, &f->atexit, "atexit",
       "If set, prints ASan exit stats even after program terminates "
       "successfully.");
-  ParseFlag(str, &f->coverage, "coverage",
-      "If set, coverage information will be dumped at program shutdown (if the "
-      "coverage instrumentation was enabled at compile time).");
 
   ParseFlag(str, &f->disable_core, "disable_core",
       "Disable core dumping. By default, disable_core=1 on 64-bit to avoid "
-      "dumping a 16T+ core file.");
+      "dumping a 16T+ core file. "
+      "Ignored on OSes that don't dump core by default.");
 
   ParseFlag(str, &f->allow_reexec, "allow_reexec",
       "Allow the tool to re-exec the program. This may interfere badly with "
@@ -226,18 +224,20 @@ static void ParseFlagsFromString(Flags *f, const char *str) {
       "If true, honor the container overflow  annotations. "
       "See https://code.google.com/p/address-sanitizer/wiki/ContainerOverflow");
 
-  ParseFlag(str, &f->detect_odr_violation,
-      "detect_odr_violation",
-      "If true, detect violation of One-Definition-Rule (ODR) ");
+  ParseFlag(str, &f->detect_odr_violation, "detect_odr_violation",
+            "If >=2, detect violation of One-Definition-Rule (ODR); "
+            "If ==1, detect ODR-violation only if the two variables "
+            "have different sizes");
 }
 
 void InitializeFlags(Flags *f, const char *env) {
   CommonFlags *cf = common_flags();
   SetCommonFlagsDefaults(cf);
-  cf->detect_leaks = false;  // CAN_SANITIZE_LEAKS;
+  cf->detect_leaks = CAN_SANITIZE_LEAKS;
   cf->external_symbolizer_path = GetEnv("ASAN_SYMBOLIZER_PATH");
   cf->malloc_context_size = kDefaultMallocContextSize;
   cf->intercept_tls_get_addr = true;
+  cf->coverage = false;
 
   internal_memset(f, 0, sizeof(*f));
   f->quarantine_size = (ASAN_LOW_MEMORY) ? 1UL << 26 : 1UL << 28;
@@ -264,13 +264,14 @@ void InitializeFlags(Flags *f, const char *env) {
   f->print_stats = false;
   f->print_legend = true;
   f->atexit = false;
-  f->coverage = false;
   f->disable_core = (SANITIZER_WORDSIZE == 64);
   f->allow_reexec = true;
   f->print_full_thread_history = true;
   f->poison_heap = true;
   f->poison_partial = true;
   // Turn off alloc/dealloc mismatch checker on Mac and Windows for now.
+  // https://code.google.com/p/address-sanitizer/issues/detail?id=131
+  // https://code.google.com/p/address-sanitizer/issues/detail?id=309
   // TODO(glider,timurrrr): Fix known issues and enable this back.
   f->alloc_dealloc_mismatch = (SANITIZER_MAC == 0) && (SANITIZER_WINDOWS == 0);
   f->strict_memcmp = true;
@@ -594,7 +595,6 @@ static void AsanInitInternal() {
   InitializeAsanInterceptors();
 
   ReplaceSystemMalloc();
-  ReplaceOperatorsNewAndDelete();
 
   uptr shadow_start = kLowShadowBeg;
   if (kLowShadowBeg)
@@ -663,8 +663,10 @@ static void AsanInitInternal() {
   if (flags()->atexit)
     Atexit(asan_atexit);
 
-  if (flags()->coverage)
+  if (common_flags()->coverage) {
+    __sanitizer_cov_init();
     Atexit(__sanitizer_cov_dump);
+  }
 
   // interceptors
   InitTlsSize();

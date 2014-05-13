@@ -2017,6 +2017,15 @@ public:
   ///
   virtual SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
+  /// Return true if it is profitable to move a following shift through this
+  //  node, adjusting any immediate operands as necessary to preserve semantics.
+  //  This transformation may not be desirable if it disrupts a particularly
+  //  auspicious target-specific tree (e.g. bitfield extraction in AArch64).
+  //  By default, it returns true.
+  virtual bool isDesirableToCommuteWithShift(const SDNode *N /*Op*/) const {
+    return true;
+  }
+
   /// Return true if the target has native support for the specified value type
   /// and it is 'desirable' to use the type for the given node type. e.g. On x86
   /// i16 is legal, but undesirable since i16 instruction encodings are longer
@@ -2205,6 +2214,13 @@ public:
     return "__clear_cache";
   }
 
+  /// Return the register ID of the name passed in. Used by named register
+  /// global variables extension. There is no target-independent behaviour
+  /// so the default action is to bail.
+  virtual unsigned getRegisterByName(const char* RegName, EVT VT) const {
+    report_fatal_error("Named registers not implemented for this target");
+  }
+
   /// Return the type that should be used to zero or sign extend a
   /// zeroext/signext integer argument or return value.  FIXME: Most C calling
   /// convention requires the return type to be promoted, but this is not true
@@ -2215,6 +2231,15 @@ public:
                                        ISD::NodeType /*ExtendKind*/) const {
     MVT MinVT = getRegisterType(MVT::i32);
     return VT.bitsLT(MinVT) ? MinVT : VT;
+  }
+
+  /// For some targets, an LLVM struct type must be broken down into multiple
+  /// simple types, but the calling convention specifies that the entire struct
+  /// must be passed in a block of consecutive registers.
+  virtual bool
+  functionArgumentNeedsConsecutiveRegisters(Type *Ty, CallingConv::ID CallConv,
+                                            bool isVarArg) const {
+    return false;
   }
 
   /// Returns a 0 terminated array of registers that can be safely used as
@@ -2439,8 +2464,8 @@ public:
   /// \returns true if the node has been expanded. false if it has not
   bool expandMUL(SDNode *N, SDValue &Lo, SDValue &Hi, EVT HiLoVT,
                  SelectionDAG &DAG, SDValue LL = SDValue(),
-		 SDValue LH = SDValue(), SDValue RL = SDValue(),
-		 SDValue RH = SDValue()) const;
+                 SDValue LH = SDValue(), SDValue RL = SDValue(),
+                 SDValue RH = SDValue()) const;
 
   //===--------------------------------------------------------------------===//
   // Instruction Emitting Hooks

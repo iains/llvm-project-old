@@ -104,14 +104,14 @@ namespace {
     void dump() {
       dbgs() << "X86ISelAddressMode " << this << '\n';
       dbgs() << "Base_Reg ";
-      if (Base_Reg.getNode() != 0)
+      if (Base_Reg.getNode())
         Base_Reg.getNode()->dump();
       else
         dbgs() << "nul";
       dbgs() << " Base.FrameIndex " << Base_FrameIndex << '\n'
              << " Scale" << Scale << '\n'
              << "IndexReg ";
-      if (IndexReg.getNode() != 0)
+      if (IndexReg.getNode())
         IndexReg.getNode()->dump();
       else
         dbgs() << "nul";
@@ -376,14 +376,13 @@ static void MoveBelowOrigChain(SelectionDAG *CurDAG, SDValue Load,
       else
         Ops.push_back(Chain.getOperand(i));
     SDValue NewChain =
-      CurDAG->getNode(ISD::TokenFactor, SDLoc(Load),
-                      MVT::Other, &Ops[0], Ops.size());
+      CurDAG->getNode(ISD::TokenFactor, SDLoc(Load), MVT::Other, Ops);
     Ops.clear();
     Ops.push_back(NewChain);
   }
   for (unsigned i = 1, e = OrigChain.getNumOperands(); i != e; ++i)
     Ops.push_back(OrigChain.getOperand(i));
-  CurDAG->UpdateNodeOperands(OrigChain.getNode(), &Ops[0], Ops.size());
+  CurDAG->UpdateNodeOperands(OrigChain.getNode(), Ops);
   CurDAG->UpdateNodeOperands(Load.getNode(), Call.getOperand(0),
                              Load.getOperand(1), Load.getOperand(2));
 
@@ -392,7 +391,7 @@ static void MoveBelowOrigChain(SelectionDAG *CurDAG, SDValue Load,
   Ops.push_back(SDValue(Load.getNode(), 1));
   for (unsigned i = 1, e = NumOps; i != e; ++i)
     Ops.push_back(Call.getOperand(i));
-  CurDAG->UpdateNodeOperands(Call.getNode(), &Ops[0], NumOps);
+  CurDAG->UpdateNodeOperands(Call.getNode(), Ops);
 }
 
 /// isCalleeLoad - Return true if call address is a load and it can be
@@ -1849,7 +1848,7 @@ SDNode *X86DAGToDAGISel::SelectAtomicLoadArith(SDNode *Node, MVT NVT) {
   }
   cast<MachineSDNode>(Ret)->setMemRefs(MemOp, MemOp + 1);
   SDValue RetVals[] = { Undef, Ret };
-  return CurDAG->getMergeValues(RetVals, 2, dl).getNode();
+  return CurDAG->getMergeValues(RetVals, dl).getNode();
 }
 
 /// HasNoSignedComparisonUses - Test whether the given X86ISD::CMP node has
@@ -1992,7 +1991,7 @@ static bool isLoadIncOrDecStore(StoreSDNode *StoreNode, unsigned Opc,
       // Make a new TokenFactor with all the other input chains except
       // for the load.
       InputChain = CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain),
-                                   MVT::Other, &ChainOps[0], ChainOps.size());
+                                   MVT::Other, ChainOps);
   }
   if (!ChainCheck)
     return false;
@@ -2774,7 +2773,7 @@ SDNode *X86DAGToDAGISel::Select(SDNode *Node) {
   SDNode *ResNode = SelectCode(Node);
 
   DEBUG(dbgs() << "=> ";
-        if (ResNode == NULL || ResNode == Node)
+        if (ResNode == nullptr || ResNode == Node)
           Node->dump(CurDAG);
         else
           ResNode->dump(CurDAG);

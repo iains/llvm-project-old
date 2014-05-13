@@ -153,6 +153,8 @@ bool Parser::parseOne(Directive *&ret) {
     uint64_t baseaddr;
     if (!parseName(name, baseaddr))
       return false;
+    if (!StringRef(name).endswith_lower(".dll"))
+      name.append(".dll");
     ret = new (_alloc) Library(name, baseaddr);
     return true;
   }
@@ -194,6 +196,17 @@ bool Parser::parseExport(PECOFFLinkingContext::ExportDesc &result) {
     return false;
   }
   result.name = _tok._range;
+
+  consumeToken();
+  if (_tok._kind == Kind::equal) {
+    consumeToken();
+    if (_tok._kind != Kind::identifier)
+      return false;
+    result.externalName = result.name;
+    result.name = _tok._range;
+  } else {
+    ungetToken();
+  }
 
   for (;;) {
     consumeToken();

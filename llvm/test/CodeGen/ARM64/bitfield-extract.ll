@@ -74,7 +74,7 @@ define void @fct4(i64* nocapture %y, i64 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct4:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #16, #39
+; CHECK-NEXT: bfxil [[REG1]], x1, #16, #24
 ; CHECK-NEXT: str [[REG1]],
 ; CHECK-NEXT: ret
   %0 = load i64* %y, align 8
@@ -90,7 +90,7 @@ define void @fct5(i32* nocapture %y, i32 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct5:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], w1, #16, #3
 ; CHECK-NEXT: str [[REG1]],
 ; CHECK-NEXT: ret
   %0 = load i32* %y, align 8
@@ -107,7 +107,7 @@ define void @fct6(i32* nocapture %y, i32 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct6:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], w1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: lsr [[REG2:w[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -128,7 +128,7 @@ define void @fct7(i32* nocapture %y, i32 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct7:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], w1, #16, #3
 ; lsl is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG2:w[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -150,7 +150,7 @@ define void @fct8(i64* nocapture %y, i64 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct8:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], x1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: lsr [[REG2:x[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -172,7 +172,7 @@ define void @fct9(i64* nocapture %y, i64 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct9:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], x1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG2:x[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -193,7 +193,7 @@ define void @fct10(i32* nocapture %y, i32 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct10:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #0, #2
+; CHECK-NEXT: bfxil [[REG1]], w1, #0, #3
 ; lsl is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG2:w[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -213,7 +213,7 @@ define void @fct11(i64* nocapture %y, i64 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct11:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #0, #2
+; CHECK-NEXT: bfxil [[REG1]], x1, #0, #3
 ; lsl is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG2:x[0-9]+]], [[REG1]], #2
 ; CHECK-NEXT: str [[REG2]],
@@ -242,7 +242,7 @@ define void @fct12(i32* nocapture %y, i32 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct12:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], w1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: ubfx [[REG2:w[0-9]+]], [[REG1]], #2, #28
 ; CHECK-NEXT: str [[REG2]],
@@ -265,7 +265,7 @@ define void @fct13(i64* nocapture %y, i64 %x) nounwind optsize inlinehint ssp {
 entry:
 ; CHECK-LABEL: fct13:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #16, #18
+; CHECK-NEXT: bfxil [[REG1]], x1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: ubfx [[REG2:x[0-9]+]], [[REG1]], #2, #60
 ; CHECK-NEXT: str [[REG2]],
@@ -288,10 +288,10 @@ define void @fct14(i32* nocapture %y, i32 %x, i32 %x1) nounwind optsize inlinehi
 entry:
 ; CHECK-LABEL: fct14:
 ; CHECK: ldr [[REG1:w[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], w1, #16, #23
+; CHECK-NEXT: bfxil [[REG1]], w1, #16, #8
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: lsr [[REG2:w[0-9]+]], [[REG1]], #4
-; CHECK-NEXT: bfm [[REG2]], w2, #5, #7
+; CHECK-NEXT: bfxil [[REG2]], w2, #5, #3
 ; lsl is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG3:w[0-9]+]], [[REG2]], #2
 ; CHECK-NEXT: str [[REG3]],
@@ -318,10 +318,10 @@ define void @fct15(i64* nocapture %y, i64 %x, i64 %x1) nounwind optsize inlinehi
 entry:
 ; CHECK-LABEL: fct15:
 ; CHECK: ldr [[REG1:x[0-9]+]],
-; CHECK-NEXT: bfm [[REG1]], x1, #16, #23
+; CHECK-NEXT: bfxil [[REG1]], x1, #16, #8
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: lsr [[REG2:x[0-9]+]], [[REG1]], #4
-; CHECK-NEXT: bfm [[REG2]], x2, #5, #7
+; CHECK-NEXT: bfxil [[REG2]], x2, #5, #3
 ; lsl is an alias of ubfm
 ; CHECK-NEXT: lsl [[REG3:x[0-9]+]], [[REG2]], #2
 ; CHECK-NEXT: str [[REG3]],
@@ -348,11 +348,11 @@ entry:
 ; CHECK-LABEL: fct16:
 ; CHECK: ldr [[REG1:w[0-9]+]],
 ; Create the constant
-; CHECK: movz [[REGCST:w[0-9]+]], #26, lsl #16
-; CHECK: movk [[REGCST]], #33120
+; CHECK: movz [[REGCST:w[0-9]+]], #0x1a, lsl #16
+; CHECK: movk [[REGCST]], #0x8160
 ; Do the masking
 ; CHECK: and [[REG2:w[0-9]+]], [[REG1]], [[REGCST]]
-; CHECK-NEXT: bfm [[REG2]], w1, #16, #18
+; CHECK-NEXT: bfxil [[REG2]], w1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: ubfx [[REG3:w[0-9]+]], [[REG2]], #2, #28
 ; CHECK-NEXT: str [[REG3]],
@@ -377,11 +377,11 @@ entry:
 ; CHECK-LABEL: fct17:
 ; CHECK: ldr [[REG1:x[0-9]+]],
 ; Create the constant
-; CHECK: movz w[[REGCST:[0-9]+]], #26, lsl #16
-; CHECK: movk w[[REGCST]], #33120
+; CHECK: movz w[[REGCST:[0-9]+]], #0x1a, lsl #16
+; CHECK: movk w[[REGCST]], #0x8160
 ; Do the masking
 ; CHECK: and [[REG2:x[0-9]+]], [[REG1]], x[[REGCST]]
-; CHECK-NEXT: bfm [[REG2]], x1, #16, #18
+; CHECK-NEXT: bfxil [[REG2]], x1, #16, #3
 ; lsr is an alias of ubfm
 ; CHECK-NEXT: ubfx [[REG3:x[0-9]+]], [[REG2]], #2, #60
 ; CHECK-NEXT: str [[REG3]],
@@ -501,6 +501,19 @@ end:
   ret i80 %conv3
 }
 
+; Check if we can still catch UBFX when "AND" is used by SHL.
+; CHECK-LABEL: fct21:
+; CHECK: ubfx
+@arr = external global [8 x [64 x i64]]
+define i64 @fct21(i64 %x) {
+entry:
+  %shr = lshr i64 %x, 4
+  %and = and i64 %shr, 15
+  %arrayidx = getelementptr inbounds [8 x [64 x i64]]* @arr, i64 0, i64 0, i64 %and
+  %0 = load i64* %arrayidx, align 8
+  ret i64 %0
+}
+
 define i16 @test_ignored_rightbits(i32 %dst, i32 %in) {
 ; CHECK-LABEL: test_ignored_rightbits:
 
@@ -508,12 +521,12 @@ define i16 @test_ignored_rightbits(i32 %dst, i32 %in) {
   %positioned_masked_field = and i32 %positioned_field, 120
   %masked_dst = and i32 %dst, 7
   %insertion = or i32 %masked_dst, %positioned_masked_field
-; CHECK: {{bfm|bfi}}
+; CHECK: {{bfm|bfi|bfxil}}
 
   %shl16 = shl i32 %insertion, 8
   %or18 = or i32 %shl16, %insertion
   %conv19 = trunc i32 %or18 to i16
-; CHECK: {{bfm w[0-9]+, w[0-9]+, #24, #6|bfi w[0-9]+, w[0-9]+, #8, #7}}
+; CHECK: bfi {{w[0-9]+}}, {{w[0-9]+}}, #8, #7
 
   ret i16 %conv19
 }

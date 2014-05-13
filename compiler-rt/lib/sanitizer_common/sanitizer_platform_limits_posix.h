@@ -275,10 +275,17 @@ namespace __sanitizer {
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID
+
+#if defined(__arm__)
+  const unsigned kXDROpsNumFuns = 9;
+#else
+  const unsigned kXDROpsNumFuns = 10;
+#endif
+
   struct __sanitizer_XDR {
     int x_op;
     struct xdr_ops {
-      uptr fns[10];
+      uptr fns[kXDROpsNumFuns];
     } *x_ops;
     uptr x_public;
     uptr x_private;
@@ -320,8 +327,14 @@ namespace __sanitizer {
     char **gr_mem;
   };
 
+#if defined(__x86_64__) && !defined(_LP64)
+  typedef long long __sanitizer_time_t;
+#else
+  typedef long __sanitizer_time_t;
+#endif
+
   struct __sanitizer_timeb {
-    long time;
+    __sanitizer_time_t time;
     unsigned short millitm;
     short timezone;
     short dstflag;
@@ -648,6 +661,10 @@ namespace __sanitizer {
     __sanitizer_FILE *_chain;
     int _fileno;
   };
+# define SANITIZER_HAS_STRUCT_FILE 1
+#else
+  typedef void __sanitizer_FILE;
+# define SANITIZER_HAS_STRUCT_FILE 0
 #endif
 
 #if SANITIZER_LINUX && !SANITIZER_ANDROID && \
@@ -692,6 +709,21 @@ namespace __sanitizer {
   } __attribute__((packed));
 #else
   };
+#endif
+
+#if SANITIZER_LINUX && !SANITIZER_ANDROID
+struct __sanitizer__obstack_chunk {
+  char *limit;
+  struct __sanitizer__obstack_chunk *prev;
+};
+
+struct __sanitizer_obstack {
+  long chunk_size;
+  struct __sanitizer__obstack_chunk *chunk;
+  char *object_base;
+  char *next_free;
+  uptr more_fields[7];
+};
 #endif
 
 #define IOC_NRBITS 8

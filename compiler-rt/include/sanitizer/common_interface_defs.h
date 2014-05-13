@@ -47,6 +47,8 @@ extern "C" {
   void __sanitizer_unaligned_store32(void *p, uint32_t x);
   void __sanitizer_unaligned_store64(void *p, uint64_t x);
 
+  // Initialize coverage.
+  void __sanitizer_cov_init();
   // Record and dump coverage info.
   void __sanitizer_cov_dump();
 
@@ -84,6 +86,14 @@ extern "C" {
                                                  const void *end,
                                                  const void *old_mid,
                                                  const void *new_mid);
+  // Returns true if the contiguous container [beg, end) ir properly poisoned
+  // (e.g. with __sanitizer_annotate_contiguous_container), i.e. if
+  //  - [beg, mid) is addressable,
+  //  - [mid, end) is unaddressable.
+  // Full verification requires O(end-beg) time; this function tries to avoid
+  // such complexity by touching only parts of the container around beg/mid/end.
+  int __sanitizer_verify_contiguous_container(const void *beg, const void *mid,
+                                              const void *end);
 
   // Print the stack trace leading to this call. Useful for debugging user code.
   void __sanitizer_print_stack_trace();

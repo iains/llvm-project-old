@@ -30,6 +30,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstPrinter.h"
+#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSection.h"
@@ -139,6 +140,7 @@ class ARMTargetAsmStreamer : public ARMTargetStreamer {
   void finishAttributeSection() override;
 
   void AnnotateTLSDescriptorSequence(const MCSymbolRefExpr *SRE) override;
+  void emitThumbSet(MCSymbol *Symbol, const MCExpr *Value) override;
 
 public:
   ARMTargetAsmStreamer(MCStreamer &S, formatted_raw_ostream &OS,
@@ -258,6 +260,10 @@ void ARMTargetAsmStreamer::finishAttributeSection() {
 void
 ARMTargetAsmStreamer::AnnotateTLSDescriptorSequence(const MCSymbolRefExpr *S) {
   OS << "\t.tlsdescseq\t" << S->getSymbol().getName();
+}
+
+void ARMTargetAsmStreamer::emitThumbSet(MCSymbol *Symbol, const MCExpr *Value) {
+  OS << "\t.thumb_set\t" << *Symbol << ", " << *Value << '\n';
 }
 
 void ARMTargetAsmStreamer::emitInst(uint32_t Inst, char Suffix) {
@@ -406,8 +412,10 @@ private:
   void emitFPU(unsigned FPU) override;
   void emitInst(uint32_t Inst, char Suffix = '\0') override;
   void finishAttributeSection() override;
+  void emitLabel(MCSymbol *Symbol) override;
 
   void AnnotateTLSDescriptorSequence(const MCSymbolRefExpr *SRE) override;
+  void emitThumbSet(MCSymbol *Symbol, const MCExpr *Value) override;
 
   size_t calculateContentSize() const;
 
@@ -601,12 +609,8 @@ private:
   }
 
   void EmitThumbFunc(MCSymbol *Func) override {
-    // FIXME: Anything needed here to flag the function as thumb?
-
     getAssembler().setIsThumbFunc(Func);
-
-    MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Func);
-    SD.setFlags(SD.getFlags() | ELF_Other_ThumbFunc);
+    EmitSymbolAttribute(Func, MCSA_ELF_TypeFunction);
   }
 
   // Helper functions for ARM exception handling directives
@@ -981,10 +985,35 @@ void ARMTargetELFStreamer::finishAttributeSection() {
   Contents.clear();
   FPU = ARM::INVALID_FPU;
 }
+
+void ARMTargetELFStreamer::emitLabel(MCSymbol *Symbol) {
+  ARMELFStreamer &Streamer = getStreamer();
+  if (!Streamer.IsThumb)
+    return;
+
+  const MCSymbolData &SD = Streamer.getOrCreateSymbolData(Symbol);
+  if (MCELF::GetType(SD) & (ELF::STT_FUNC << ELF_STT_Shift))
+    Streamer.EmitThumbFunc(Symbol);
+}
+
 void
 ARMTargetELFStreamer::AnnotateTLSDescriptorSequence(const MCSymbolRefExpr *S) {
   getStreamer().EmitFixup(S, FK_Data_4);
 }
+
+void ARMTargetELFStreamer::emitThumbSet(MCSymbol *Symbol, const MCExpr *Value) {
+  if (const MCSymbolRefExpr *SRE = dyn_cast<MCSymbolRefExpr>(Value)) {
+    const MCSymbol &Sym = SRE->getSymbol();
+    if (!Sym.isDefined()) {
+      getStreamer().EmitAssignment(Symbol, Value);
+      return;
+    }
+  }
+
+  getStreamer().EmitThumbFunc(Symbol);
+  getStreamer().EmitAssignment(Symbol, Value);
+}
+
 void ARMTargetELFStreamer::emitInst(uint32_t Inst, char Suffix) {
   getStreamer().emitInst(Inst, Suffix);
 }
@@ -1066,7 +1095,7 @@ void ARMELFStreamer::Reset() {
 }
 
 void ARMELFStreamer::emitFnStart() {
-  assert(FnStart == 0);
+  assert(FnStart == nullptr);
   FnStart = getContext().CreateTempSymbol();
   EmitLabel(FnStart);
 }
@@ -1108,8 +1137,11 @@ void ARMELFStreamer::emitFnEnd() {
            "Compact model must use __aeabi_cpp_unwind_pr0 as personality");
     assert(Opcodes.size() == 4u &&
            "Unwind opcode size for __aeabi_cpp_unwind_pr0 must be equal to 4");
-    EmitBytes(StringRef(reinterpret_cast<const char*>(Opcodes.data()),
-                        Opcodes.size()));
+    uint64_t Intval = Opcodes[0] |
+                      Opcodes[1] << 8 |
+                      Opcodes[2] << 16 |
+                      Opcodes[3] << 24;
+    EmitIntValue(Intval, Opcodes.size());
   }
 
   // Switch to the section containing FnStart
@@ -1181,8 +1213,15 @@ void ARMELFStreamer::FlushUnwindOpcodes(bool NoHandlerData) {
   }
 
   // Emit unwind opcodes
-  EmitBytes(StringRef(reinterpret_cast<const char *>(Opcodes.data()),
-                      Opcodes.size()));
+  assert((Opcodes.size() % 4) == 0 &&
+         "Unwind opcode size for __aeabi_cpp_unwind_pr0 must be multiple of 4");
+  for (unsigned I = 0; I != Opcodes.size(); I += 4) {
+    uint64_t Intval = Opcodes[I] |
+                      Opcodes[I + 1] << 8 |
+                      Opcodes[I + 2] << 16 |
+                      Opcodes[I + 3] << 24;
+    EmitIntValue(Intval, 4);
+  }
 
   // According to ARM EHABI section 9.2, if the __aeabi_unwind_cpp_pr1() or
   // __aeabi_unwind_cpp_pr2() is used, then the handler data must be emitted
@@ -1284,13 +1323,11 @@ void ARMELFStreamer::emitUnwindRaw(int64_t Offset,
 namespace llvm {
 
 MCStreamer *createMCAsmStreamer(MCContext &Ctx, formatted_raw_ostream &OS,
-                                bool isVerboseAsm, bool useCFI,
-                                bool useDwarfDirectory,
+                                bool isVerboseAsm, bool useDwarfDirectory,
                                 MCInstPrinter *InstPrint, MCCodeEmitter *CE,
                                 MCAsmBackend *TAB, bool ShowInst) {
-  MCStreamer *S =
-      llvm::createAsmStreamer(Ctx, OS, isVerboseAsm, useCFI, useDwarfDirectory,
-                              InstPrint, CE, TAB, ShowInst);
+  MCStreamer *S = llvm::createAsmStreamer(
+      Ctx, OS, isVerboseAsm, useDwarfDirectory, InstPrint, CE, TAB, ShowInst);
   new ARMTargetAsmStreamer(*S, OS, *InstPrint, isVerboseAsm);
   return S;
 }

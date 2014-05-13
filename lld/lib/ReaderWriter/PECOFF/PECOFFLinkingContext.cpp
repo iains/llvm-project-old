@@ -110,6 +110,12 @@ bool PECOFFLinkingContext::createImplicitFiles(
   fileNode->appendInputFile(std::move(linkerGeneratedSymFile));
   getInputGraph().insertElementAt(std::move(fileNode),
                                   InputGraph::Position::END);
+
+  std::unique_ptr<SimpleFileNode> impFileNode(new SimpleFileNode("imp"));
+  impFileNode->appendInputFile(
+      std::unique_ptr<File>(new pecoff::LocallyImportedSymbolFile(*this)));
+  getInputGraph().insertElementAt(std::move(impFileNode),
+                                  InputGraph::Position::END);
   return true;
 }
 
@@ -256,6 +262,7 @@ static bool exportConflicts(const PECOFFLinkingContext::ExportDesc &a,
 }
 
 void PECOFFLinkingContext::addDllExport(ExportDesc &desc) {
+  addInitialUndefinedSymbol(allocate(desc.name));
   auto existing = _dllExports.insert(desc);
   if (existing.second)
     return;

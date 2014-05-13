@@ -356,12 +356,8 @@ void Verifier::visit(Instruction &I) {
 
 
 void Verifier::visitGlobalValue(const GlobalValue &GV) {
-  Assert1(!GV.isDeclaration() ||
-          GV.isMaterializable() ||
-          GV.hasExternalLinkage() ||
-          GV.hasExternalWeakLinkage() ||
-          (isa<GlobalAlias>(GV) &&
-           (GV.hasLocalLinkage() || GV.hasWeakLinkage())),
+  Assert1(!GV.isDeclaration() || GV.isMaterializable() ||
+              GV.hasExternalLinkage() || GV.hasExternalWeakLinkage(),
           "Global is external, but doesn't have external or weak linkage!",
           &GV);
 
@@ -480,8 +476,6 @@ void Verifier::visitGlobalAlias(const GlobalAlias &GA) {
   Assert1(GA.getType() == GA.getAliasee()->getType(),
           "Alias and aliasee types should match!", &GA);
   Assert1(!GA.hasUnnamedAddr(), "Alias cannot have unnamed_addr!", &GA);
-  Assert1(!GA.hasSection(), "Alias cannot have a section!", &GA);
-  Assert1(!GA.getAlignment(), "Alias connot have an alignment", &GA);
 
   const Constant *Aliasee = GA.getAliasee();
   const GlobalValue *GV = dyn_cast<GlobalValue>(Aliasee);
@@ -826,6 +820,7 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
 
   bool SawNest = false;
   bool SawReturned = false;
+  bool SawSRet = false;
 
   for (unsigned i = 0, e = Attrs.getNumSlots(); i != e; ++i) {
     unsigned Idx = Attrs.getSlotIndex(i);
@@ -856,8 +851,12 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
       SawReturned = true;
     }
 
-    if (Attrs.hasAttribute(Idx, Attribute::StructRet))
-      Assert1(Idx == 1, "Attribute sret is not on first parameter!", V);
+    if (Attrs.hasAttribute(Idx, Attribute::StructRet)) {
+      Assert1(!SawSRet, "Cannot have multiple 'sret' parameters!", V);
+      Assert1(Idx == 1 || Idx == 2,
+              "Attribute 'sret' is not on first or second parameter!", V);
+      SawSRet = true;
+    }
 
     if (Attrs.hasAttribute(Idx, Attribute::InAlloca)) {
       Assert1(Idx == FT->getNumParams(),
@@ -1493,6 +1492,16 @@ void Verifier::VerifyCallSite(CallSite CS) {
 
   // Verify call attributes.
   VerifyFunctionAttrs(FTy, Attrs, I);
+
+  // Conservatively check the inalloca argument.
+  // We have a bug if we can find that there is an underlying alloca without
+  // inalloca.
+  if (CS.hasInAllocaArgument()) {
+    Value *InAllocaArg = CS.getArgument(FTy->getNumParams() - 1);
+    if (auto AI = dyn_cast<AllocaInst>(InAllocaArg->stripInBoundsOffsets()))
+      Assert2(AI->isUsedWithInAlloca(),
+              "inalloca argument for call has mismatched alloca", AI, I);
+  }
 
   if (FTy->isVarArg()) {
     // FIXME? is 'nest' even legal here?

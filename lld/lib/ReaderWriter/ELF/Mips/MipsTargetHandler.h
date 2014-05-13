@@ -26,9 +26,11 @@ public:
   MipsTargetLayout(const MipsLinkingContext &ctx)
       : TargetLayout<ELFType>(ctx),
         _gotSection(new (_alloc) MipsGOTSection<ELFType>(ctx)),
+        _pltSection(new (_alloc) MipsPLTSection<ELFType>(ctx)),
         _cachedGP(false) {}
 
   const MipsGOTSection<ELFType> &getGOTSection() const { return *_gotSection; }
+  const MipsPLTSection<ELFType> &getPLTSection() const { return *_pltSection; }
 
   AtomSection<ELFType> *
   createSection(StringRef name, int32_t type,
@@ -36,6 +38,8 @@ public:
                 Layout::SectionOrder order) override {
     if (type == DefinedAtom::typeGOT && name == ".got")
       return _gotSection;
+    if (type == DefinedAtom::typeStub && name == ".plt")
+      return _pltSection;
     return DefaultLayout<ELFType>::createSection(name, type, permissions,
                                                  order);
   }
@@ -56,6 +60,7 @@ public:
 private:
   llvm::BumpPtrAllocator _alloc;
   MipsGOTSection<ELFType> *_gotSection;
+  MipsPLTSection<ELFType> *_pltSection;
   AtomLayout *_gp;
   bool _cachedGP;
 };
@@ -97,17 +102,19 @@ private:
   std::unique_ptr<MipsTargetRelocationHandler> _relocationHandler;
 };
 
-class MipsDynamicSymbolTable : public DynamicSymbolTable<Mips32ElELFType> {
+template <class ELFT>
+class MipsDynamicSymbolTable : public DynamicSymbolTable<ELFT> {
 public:
   MipsDynamicSymbolTable(const MipsLinkingContext &context,
-                         MipsTargetLayout<Mips32ElELFType> &layout)
-      : DynamicSymbolTable<Mips32ElELFType>(
+                         MipsTargetLayout<ELFT> &layout)
+      : DynamicSymbolTable<ELFT>(
             context, layout, ".dynsym",
-            DefaultLayout<Mips32ElELFType>::ORDER_DYNAMIC_SYMBOLS),
+            DefaultLayout<ELFT>::ORDER_DYNAMIC_SYMBOLS),
         _targetLayout(layout) {}
 
   void sortSymbols() override {
-    std::stable_sort(_symbolTable.begin(), _symbolTable.end(),
+    typedef typename DynamicSymbolTable<ELFT>::SymbolEntry SymbolEntry;
+    std::stable_sort(this->_symbolTable.begin(), this->_symbolTable.end(),
                      [this](const SymbolEntry &A, const SymbolEntry &B) {
       if (A._symbol.getBinding() != STB_GLOBAL &&
           B._symbol.getBinding() != STB_GLOBAL)
@@ -117,8 +124,28 @@ public:
     });
   }
 
+  void finalize() override {
+    const auto &pltSection = _targetLayout.getPLTSection();
+
+    // Under some conditions a dynamic symbol table record should hold a symbol
+    // value of the corresponding PLT entry. For details look at the PLT entry
+    // creation code in the class MipsRelocationPass. Let's update atomLayout
+    // fields for such symbols.
+    for (auto &ste : this->_symbolTable) {
+      if (!ste._atom || ste._atomLayout)
+        continue;
+      auto *layout = pltSection.findPLTLayout(ste._atom);
+      if (layout) {
+        ste._symbol.st_value = layout->_virtualAddr;
+        ste._symbol.st_other |= ELF::STO_MIPS_PLT;
+      }
+    }
+
+    DynamicSymbolTable<Mips32ElELFType>::finalize();
+  }
+
 private:
-  MipsTargetLayout<Mips32ElELFType> &_targetLayout;
+  MipsTargetLayout<ELFT> &_targetLayout;
 };
 
 } // end namespace elf

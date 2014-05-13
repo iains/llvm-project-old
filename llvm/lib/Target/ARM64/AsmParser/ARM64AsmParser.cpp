@@ -56,8 +56,6 @@ private:
   bool parseCondCode(OperandVector &Operands, bool invertCondCode);
   int tryParseRegister();
   int tryMatchVectorRegister(StringRef &Kind, bool expected);
-  bool parseOptionalShift(OperandVector &Operands);
-  bool parseOptionalExtend(OperandVector &Operands);
   bool parseRegister(OperandVector &Operands);
   bool parseMemory(OperandVector &Operands);
   bool parseSymbolicImmVal(const MCExpr *&ImmVal);
@@ -77,7 +75,8 @@ private:
   bool validateInstruction(MCInst &Inst, SmallVectorImpl<SMLoc> &Loc);
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands, MCStreamer &Out,
-                               unsigned &ErrorInfo, bool MatchingInlineAsm);
+                               unsigned &ErrorInfo,
+                               bool MatchingInlineAsm) override;
 /// @name Auto-generated Match Functions
 /// {
 
@@ -86,6 +85,7 @@ private:
 
   /// }
 
+  OperandMatchResultTy tryParseOptionalShiftExtend(OperandVector &Operands);
   OperandMatchResultTy tryParseNoIndexMemory(OperandVector &Operands);
   OperandMatchResultTy tryParseBarrierOperand(OperandVector &Operands);
   OperandMatchResultTy tryParseMRSSystemRegister(OperandVector &Operands);
@@ -95,6 +95,7 @@ private:
   OperandMatchResultTy tryParseAdrpLabel(OperandVector &Operands);
   OperandMatchResultTy tryParseAdrLabel(OperandVector &Operands);
   OperandMatchResultTy tryParseFPImm(OperandVector &Operands);
+  OperandMatchResultTy tryParseAddSubImm(OperandVector &Operands);
   bool tryParseVectorRegister(OperandVector &Operands);
 
 public:
@@ -113,11 +114,12 @@ public:
     setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
   }
 
-  virtual bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
-                                SMLoc NameLoc, OperandVector &Operands);
-  virtual bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
-  virtual bool ParseDirective(AsmToken DirectiveID);
-  unsigned validateTargetOperandClass(MCParsedAsmOperand *Op, unsigned Kind);
+  bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
+                        SMLoc NameLoc, OperandVector &Operands) override;
+  bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) override;
+  bool ParseDirective(AsmToken DirectiveID) override;
+  unsigned validateTargetOperandClass(MCParsedAsmOperand *Op,
+                                      unsigned Kind) override;
 
   static bool classifySymbolRef(const MCExpr *Expr,
                                 ARM64MCExpr::VariantKind &ELFRefKind,
@@ -140,6 +142,7 @@ public:
 private:
   enum KindTy {
     k_Immediate,
+    k_ShiftedImm,
     k_Memory,
     k_Register,
     k_VectorList,
@@ -148,8 +151,7 @@ private:
     k_SysReg,
     k_SysCR,
     k_Prefetch,
-    k_Shifter,
-    k_Extend,
+    k_ShiftExtend,
     k_FPImm,
     k_Barrier
   } Kind;
@@ -182,6 +184,11 @@ private:
     const MCExpr *Val;
   };
 
+  struct ShiftedImmOp {
+    const MCExpr *Val;
+    unsigned ShiftAmount;
+  };
+
   struct FPImmOp {
     unsigned Val; // Encoded 8-bit representation.
   };
@@ -193,6 +200,9 @@ private:
   struct SysRegOp {
     const char *Data;
     unsigned Length;
+    uint64_t FeatureBits; // We need to pass through information about which
+                          // core we are compiling for so that the SysReg
+                          // Mappers can appropriately conditionalize.
   };
 
   struct SysCRImmOp {
@@ -203,8 +213,9 @@ private:
     unsigned Val;
   };
 
-  struct ShifterOp {
-    unsigned Val;
+  struct ShiftExtendOp {
+    ARM64_AM::ShiftExtendType Type;
+    unsigned Amount;
   };
 
   struct ExtendOp {
@@ -214,7 +225,7 @@ private:
   // This is for all forms of ARM64 address expressions
   struct MemOp {
     unsigned BaseRegNum, OffsetRegNum;
-    ARM64_AM::ExtendType ExtType;
+    ARM64_AM::ShiftExtendType ExtType;
     unsigned ShiftVal;
     bool ExplicitShift;
     const MCExpr *OffsetImm;
@@ -227,13 +238,13 @@ private:
     struct VectorListOp VectorList;
     struct VectorIndexOp VectorIndex;
     struct ImmOp Imm;
+    struct ShiftedImmOp ShiftedImm;
     struct FPImmOp FPImm;
     struct BarrierOp Barrier;
     struct SysRegOp SysReg;
     struct SysCRImmOp SysCRImm;
     struct PrefetchOp Prefetch;
-    struct ShifterOp Shifter;
-    struct ExtendOp Extend;
+    struct ShiftExtendOp ShiftExtend;
     struct MemOp Mem;
   };
 
@@ -255,6 +266,9 @@ public:
       break;
     case k_Immediate:
       Imm = o.Imm;
+      break;
+    case k_ShiftedImm:
+      ShiftedImm = o.ShiftedImm;
       break;
     case k_FPImm:
       FPImm = o.FPImm;
@@ -283,19 +297,16 @@ public:
     case k_Memory:
       Mem = o.Mem;
       break;
-    case k_Shifter:
-      Shifter = o.Shifter;
-      break;
-    case k_Extend:
-      Extend = o.Extend;
+    case k_ShiftExtend:
+      ShiftExtend = o.ShiftExtend;
       break;
     }
   }
 
   /// getStartLoc - Get the location of the first token of this operand.
-  SMLoc getStartLoc() const { return StartLoc; }
+  SMLoc getStartLoc() const override { return StartLoc; }
   /// getEndLoc - Get the location of the last token of this operand.
-  SMLoc getEndLoc() const { return EndLoc; }
+  SMLoc getEndLoc() const override { return EndLoc; }
   /// getOffsetLoc - Get the location of the offset of this memory operand.
   SMLoc getOffsetLoc() const { return OffsetLoc; }
 
@@ -314,6 +325,16 @@ public:
     return Imm.Val;
   }
 
+  const MCExpr *getShiftedImmVal() const {
+    assert(Kind == k_ShiftedImm && "Invalid access!");
+    return ShiftedImm.Val;
+  }
+
+  unsigned getShiftedImmShift() const {
+    assert(Kind == k_ShiftedImm && "Invalid access!");
+    return ShiftedImm.ShiftAmount;
+  }
+
   unsigned getFPImm() const {
     assert(Kind == k_FPImm && "Invalid access!");
     return FPImm.Val;
@@ -324,7 +345,7 @@ public:
     return Barrier.Val;
   }
 
-  unsigned getReg() const {
+  unsigned getReg() const override {
     assert(Kind == k_Register && "Invalid access!");
     return Reg.RegNum;
   }
@@ -349,6 +370,11 @@ public:
     return StringRef(SysReg.Data, SysReg.Length);
   }
 
+  uint64_t getSysRegFeatureBits() const {
+    assert(Kind == k_SysReg && "Invalid access!");
+    return SysReg.FeatureBits;
+  }
+
   unsigned getSysCR() const {
     assert(Kind == k_SysCR && "Invalid access!");
     return SysCRImm.Val;
@@ -359,17 +385,17 @@ public:
     return Prefetch.Val;
   }
 
-  unsigned getShifter() const {
-    assert(Kind == k_Shifter && "Invalid access!");
-    return Shifter.Val;
+  ARM64_AM::ShiftExtendType getShiftExtendType() const {
+    assert(Kind == k_ShiftExtend && "Invalid access!");
+    return ShiftExtend.Type;
   }
 
-  unsigned getExtend() const {
-    assert(Kind == k_Extend && "Invalid access!");
-    return Extend.Val;
+  unsigned getShiftExtendAmount() const {
+    assert(Kind == k_ShiftExtend && "Invalid access!");
+    return ShiftExtend.Amount;
   }
 
-  bool isImm() const { return Kind == k_Immediate; }
+  bool isImm() const override { return Kind == k_Immediate; }
   bool isSImm9() const {
     if (!isImm())
       return false;
@@ -539,6 +565,45 @@ public:
       return false;
     return ARM64_AM::isLogicalImmediate(MCE->getValue(), 64);
   }
+  bool isShiftedImm() const { return Kind == k_ShiftedImm; }
+  bool isAddSubImm() const {
+    if (!isShiftedImm() && !isImm())
+      return false;
+
+    const MCExpr *Expr;
+
+    // An ADD/SUB shifter is either 'lsl #0' or 'lsl #12'.
+    if (isShiftedImm()) {
+      unsigned Shift = ShiftedImm.ShiftAmount;
+      Expr = ShiftedImm.Val;
+      if (Shift != 0 && Shift != 12)
+        return false;
+    } else {
+      Expr = getImm();
+    }
+
+    ARM64MCExpr::VariantKind ELFRefKind;
+    MCSymbolRefExpr::VariantKind DarwinRefKind;
+    int64_t Addend;
+    if (ARM64AsmParser::classifySymbolRef(Expr, ELFRefKind,
+                                          DarwinRefKind, Addend)) {
+      return DarwinRefKind == MCSymbolRefExpr::VK_PAGEOFF
+          || DarwinRefKind == MCSymbolRefExpr::VK_TLVPPAGEOFF
+          || (DarwinRefKind == MCSymbolRefExpr::VK_GOTPAGEOFF && Addend == 0)
+          || ELFRefKind == ARM64MCExpr::VK_LO12
+          || ELFRefKind == ARM64MCExpr::VK_DTPREL_HI12
+          || ELFRefKind == ARM64MCExpr::VK_DTPREL_LO12
+          || ELFRefKind == ARM64MCExpr::VK_DTPREL_LO12_NC
+          || ELFRefKind == ARM64MCExpr::VK_TPREL_HI12
+          || ELFRefKind == ARM64MCExpr::VK_TPREL_LO12
+          || ELFRefKind == ARM64MCExpr::VK_TPREL_LO12_NC
+          || ELFRefKind == ARM64MCExpr::VK_TLSDESC_LO12;
+    }
+
+    // Otherwise it should be a real immediate in range:
+    const MCConstantExpr *CE = cast<MCConstantExpr>(Expr);
+    return CE->getValue() >= 0 && CE->getValue() <= 0xfff;
+  }
   bool isSIMDImmType10() const {
     if (!isImm())
       return false;
@@ -659,6 +724,44 @@ public:
     return isMovWSymbol(Variants);
   }
 
+  template<int RegWidth, int Shift>
+  bool isMOVZMovAlias() const {
+    if (!isImm()) return false;
+
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+    uint64_t Value = CE->getValue();
+
+    if (RegWidth == 32)
+      Value &= 0xffffffffULL;
+
+    // "lsl #0" takes precedence: in practice this only affects "#0, lsl #0".
+    if (Value == 0 && Shift != 0)
+      return false;
+
+    return (Value & ~(0xffffULL << Shift)) == 0;
+  }
+
+  template<int RegWidth, int Shift>
+  bool isMOVNMovAlias() const {
+    if (!isImm()) return false;
+
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+    uint64_t Value = CE->getValue();
+
+    // MOVZ takes precedence over MOVN.
+    for (int MOVZShift = 0; MOVZShift <= 48; MOVZShift += 16)
+      if ((Value & ~(0xffffULL << MOVZShift)) == 0)
+        return false;
+
+    Value = ~Value;
+    if (RegWidth == 32)
+      Value &= 0xffffffffULL;
+
+    return (Value & ~(0xffffULL << Shift)) == 0;
+  }
+
   bool isFPImm() const { return Kind == k_FPImm; }
   bool isBarrier() const { return Kind == k_Barrier; }
   bool isSysReg() const { return Kind == k_SysReg; }
@@ -666,7 +769,8 @@ public:
     if (!isSysReg()) return false;
 
     bool IsKnownRegister;
-    ARM64SysReg::MRSMapper().fromString(getSysReg(), IsKnownRegister);
+    auto Mapper = ARM64SysReg::MRSMapper(getSysRegFeatureBits());
+    Mapper.fromString(getSysReg(), IsKnownRegister);
 
     return IsKnownRegister;
   }
@@ -674,11 +778,12 @@ public:
     if (!isSysReg()) return false;
 
     bool IsKnownRegister;
-    ARM64SysReg::MSRMapper().fromString(getSysReg(), IsKnownRegister);
+    auto Mapper = ARM64SysReg::MSRMapper(getSysRegFeatureBits());
+    Mapper.fromString(getSysReg(), IsKnownRegister);
 
     return IsKnownRegister;
   }
-  bool isSystemCPSRField() const {
+  bool isSystemPStateField() const {
     if (!isSysReg()) return false;
 
     bool IsKnownRegister;
@@ -686,8 +791,12 @@ public:
 
     return IsKnownRegister;
   }
-  bool isReg() const { return Kind == k_Register && !Reg.isVector; }
+  bool isReg() const override { return Kind == k_Register && !Reg.isVector; }
   bool isVectorReg() const { return Kind == k_Register && Reg.isVector; }
+  bool isVectorRegLo() const {
+    return Kind == k_Register && Reg.isVector &&
+      ARM64MCRegisterClasses[ARM64::FPR128_loRegClassID].contains(Reg.RegNum);
+  }
 
   /// Is this a vector list with the type implicit (presumably attached to the
   /// instruction itself)?
@@ -719,48 +828,71 @@ public:
   bool isVectorIndexD() const {
     return Kind == k_VectorIndex && VectorIndex.Val < 2;
   }
-  bool isToken() const { return Kind == k_Token; }
+  bool isToken() const override { return Kind == k_Token; }
   bool isTokenEqual(StringRef Str) const {
     return Kind == k_Token && getToken() == Str;
   }
-  bool isMem() const { return Kind == k_Memory; }
+  bool isMem() const override { return Kind == k_Memory; }
   bool isSysCR() const { return Kind == k_SysCR; }
   bool isPrefetch() const { return Kind == k_Prefetch; }
-  bool isShifter() const { return Kind == k_Shifter; }
-  bool isExtend() const {
-    // lsl is an alias for UXTW but will be a parsed as a k_Shifter operand.
-    if (isShifter()) {
-      ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(Shifter.Val);
-      return ST == ARM64_AM::LSL;
-    }
-    return Kind == k_Extend;
+  bool isShiftExtend() const { return Kind == k_ShiftExtend; }
+  bool isShifter() const {
+    if (!isShiftExtend())
+      return false;
+
+    ARM64_AM::ShiftExtendType ST = getShiftExtendType();
+    return (ST == ARM64_AM::LSL || ST == ARM64_AM::LSR || ST == ARM64_AM::ASR ||
+            ST == ARM64_AM::ROR || ST == ARM64_AM::MSL);
   }
+  bool isExtend() const {
+    if (!isShiftExtend())
+      return false;
+
+    ARM64_AM::ShiftExtendType ET = getShiftExtendType();
+    return (ET == ARM64_AM::UXTB || ET == ARM64_AM::SXTB ||
+            ET == ARM64_AM::UXTH || ET == ARM64_AM::SXTH ||
+            ET == ARM64_AM::UXTW || ET == ARM64_AM::SXTW ||
+            ET == ARM64_AM::UXTX || ET == ARM64_AM::SXTX ||
+            ET == ARM64_AM::LSL) &&
+           getShiftExtendAmount() <= 4;
+  }
+
   bool isExtend64() const {
-    if (Kind != k_Extend)
+    if (!isExtend())
       return false;
     // UXTX and SXTX require a 64-bit source register (the ExtendLSL64 class).
-    ARM64_AM::ExtendType ET = ARM64_AM::getArithExtendType(Extend.Val);
+    ARM64_AM::ShiftExtendType ET = getShiftExtendType();
     return ET != ARM64_AM::UXTX && ET != ARM64_AM::SXTX;
   }
   bool isExtendLSL64() const {
-    // lsl is an alias for UXTX but will be a parsed as a k_Shifter operand.
-    if (isShifter()) {
-      ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(Shifter.Val);
-      return ST == ARM64_AM::LSL;
-    }
-    if (Kind != k_Extend)
+    if (!isExtend())
       return false;
-    ARM64_AM::ExtendType ET = ARM64_AM::getArithExtendType(Extend.Val);
-    return ET == ARM64_AM::UXTX || ET == ARM64_AM::SXTX;
+    ARM64_AM::ShiftExtendType ET = getShiftExtendType();
+    return (ET == ARM64_AM::UXTX || ET == ARM64_AM::SXTX || ET == ARM64_AM::LSL) &&
+      getShiftExtendAmount() <= 4;
   }
 
+  template <unsigned width>
   bool isArithmeticShifter() const {
     if (!isShifter())
       return false;
 
     // An arithmetic shifter is LSL, LSR, or ASR.
-    ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(Shifter.Val);
-    return ST == ARM64_AM::LSL || ST == ARM64_AM::LSR || ST == ARM64_AM::ASR;
+    ARM64_AM::ShiftExtendType ST = getShiftExtendType();
+    return (ST == ARM64_AM::LSL || ST == ARM64_AM::LSR ||
+            ST == ARM64_AM::ASR) && getShiftExtendAmount() < width;
+  }
+
+  template <unsigned width>
+  bool isLogicalShifter() const {
+    if (!isShifter())
+      return false;
+
+    // A logical shifter is LSL, LSR, ASR or ROR.
+    ARM64_AM::ShiftExtendType ST = getShiftExtendType();
+    return (ST == ARM64_AM::LSL || ST == ARM64_AM::LSR || ST == ARM64_AM::ASR ||
+            ST == ARM64_AM::ROR) &&
+           getShiftExtendAmount() < width;
   }
 
   bool isMovImm32Shifter() const {
@@ -768,10 +900,10 @@ public:
       return false;
 
     // A MOVi shifter is LSL of 0, 16, 32, or 48.
-    ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(Shifter.Val);
+    ARM64_AM::ShiftExtendType ST = getShiftExtendType();
     if (ST != ARM64_AM::LSL)
       return false;
-    uint64_t Val = ARM64_AM::getShiftValue(Shifter.Val);
+    uint64_t Val = getShiftExtendAmount();
     return (Val == 0 || Val == 16);
   }
 
@@ -780,22 +912,11 @@ public:
       return false;
 
     // A MOVi shifter is LSL of 0 or 16.
-    ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(Shifter.Val);
+    ARM64_AM::ShiftExtendType ST = getShiftExtendType();
     if (ST != ARM64_AM::LSL)
       return false;
-    uint64_t Val = ARM64_AM::getShiftValue(Shifter.Val);
+    uint64_t Val = getShiftExtendAmount();
     return (Val == 0 || Val == 16 || Val == 32 || Val == 48);
-  }
-
-  bool isAddSubShifter() const {
-    if (!isShifter())
-      return false;
-
-    // An ADD/SUB shifter is either 'lsl #0' or 'lsl #12'.
-    unsigned Val = Shifter.Val;
-    return ARM64_AM::getShiftType(Val) == ARM64_AM::LSL &&
-           (ARM64_AM::getShiftValue(Val) == 0 ||
-            ARM64_AM::getShiftValue(Val) == 12);
   }
 
   bool isLogicalVecShifter() const {
@@ -803,9 +924,8 @@ public:
       return false;
 
     // A logical vector shifter is a left shift by 0, 8, 16, or 24.
-    unsigned Val = Shifter.Val;
-    unsigned Shift = ARM64_AM::getShiftValue(Val);
-    return ARM64_AM::getShiftType(Val) == ARM64_AM::LSL &&
+    unsigned Shift = getShiftExtendAmount();
+    return getShiftExtendType() == ARM64_AM::LSL &&
            (Shift == 0 || Shift == 8 || Shift == 16 || Shift == 24);
   }
 
@@ -814,21 +934,17 @@ public:
       return false;
 
     // A logical vector shifter is a left shift by 0 or 8.
-    unsigned Val = Shifter.Val;
-    unsigned Shift = ARM64_AM::getShiftValue(Val);
-    return ARM64_AM::getShiftType(Val) == ARM64_AM::LSL &&
-           (Shift == 0 || Shift == 8);
+    unsigned Shift = getShiftExtendAmount();
+    return getShiftExtendType() == ARM64_AM::LSL && (Shift == 0 || Shift == 8);
   }
 
   bool isMoveVecShifter() const {
-    if (!isShifter())
+    if (!isShiftExtend())
       return false;
 
     // A logical vector shifter is a left shift by 8 or 16.
-    unsigned Val = Shifter.Val;
-    unsigned Shift = ARM64_AM::getShiftValue(Val);
-    return ARM64_AM::getShiftType(Val) == ARM64_AM::MSL &&
-           (Shift == 8 || Shift == 16);
+    unsigned Shift = getShiftExtendAmount();
+    return getShiftExtendType() == ARM64_AM::MSL && (Shift == 8 || Shift == 16);
   }
 
   bool isMemoryRegisterOffset8() const {
@@ -1059,6 +1175,11 @@ public:
     Inst.addOperand(MCOperand::CreateReg(getReg()));
   }
 
+  void addVectorRegLoOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateReg(getReg()));
+  }
+
   template <unsigned NumRegs>
   void addVectorList64Operands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
@@ -1107,6 +1228,17 @@ public:
     // to be only the page-offset portion. Otherwise, just add the expr
     // as-is.
     addExpr(Inst, getImm());
+  }
+
+  void addAddSubImmOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 2 && "Invalid number of operands!");
+    if (isShiftedImm()) {
+      addExpr(Inst, getShiftedImmVal());
+      Inst.addOperand(MCOperand::CreateImm(getShiftedImmShift()));
+    } else {
+      addExpr(Inst, getImm());
+      Inst.addOperand(MCOperand::CreateImm(0));
+    }
   }
 
   void addAdrpLabelOperands(MCInst &Inst, unsigned N) const {
@@ -1321,7 +1453,8 @@ public:
     assert(N == 1 && "Invalid number of operands!");
 
     bool Valid;
-    uint32_t Bits = ARM64SysReg::MRSMapper().fromString(getSysReg(), Valid);
+    auto Mapper = ARM64SysReg::MRSMapper(getSysRegFeatureBits());
+    uint32_t Bits = Mapper.fromString(getSysReg(), Valid);
 
     Inst.addOperand(MCOperand::CreateImm(Bits));
   }
@@ -1330,12 +1463,13 @@ public:
     assert(N == 1 && "Invalid number of operands!");
 
     bool Valid;
-    uint32_t Bits = ARM64SysReg::MSRMapper().fromString(getSysReg(), Valid);
+    auto Mapper = ARM64SysReg::MSRMapper(getSysRegFeatureBits());
+    uint32_t Bits = Mapper.fromString(getSysReg(), Valid);
 
     Inst.addOperand(MCOperand::CreateImm(Bits));
   }
 
-  void addSystemCPSRFieldOperands(MCInst &Inst, unsigned N) const {
+  void addSystemPStateFieldOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
 
     bool Valid;
@@ -1356,71 +1490,43 @@ public:
 
   void addShifterOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addArithmeticShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addMovImm32ShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addMovImm64ShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addAddSubShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addLogicalVecShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addLogicalVecHalfWordShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
-  }
-
-  void addMoveVecShifterOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getShifter()));
+    unsigned Imm =
+        ARM64_AM::getShifterImm(getShiftExtendType(), getShiftExtendAmount());
+    Inst.addOperand(MCOperand::CreateImm(Imm));
   }
 
   void addExtendOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    // lsl is an alias for UXTW but will be a parsed as a k_Shifter operand.
-    if (isShifter()) {
-      assert(ARM64_AM::getShiftType(getShifter()) == ARM64_AM::LSL);
-      unsigned imm = getArithExtendImm(ARM64_AM::UXTW,
-                                       ARM64_AM::getShiftValue(getShifter()));
-      Inst.addOperand(MCOperand::CreateImm(imm));
-    } else
-      Inst.addOperand(MCOperand::CreateImm(getExtend()));
+    ARM64_AM::ShiftExtendType ET = getShiftExtendType();
+    if (ET == ARM64_AM::LSL) ET = ARM64_AM::UXTW;
+    unsigned Imm = ARM64_AM::getArithExtendImm(ET, getShiftExtendAmount());
+    Inst.addOperand(MCOperand::CreateImm(Imm));
   }
 
   void addExtend64Operands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateImm(getExtend()));
+    ARM64_AM::ShiftExtendType ET = getShiftExtendType();
+    if (ET == ARM64_AM::LSL) ET = ARM64_AM::UXTX;
+    unsigned Imm = ARM64_AM::getArithExtendImm(ET, getShiftExtendAmount());
+    Inst.addOperand(MCOperand::CreateImm(Imm));
   }
 
-  void addExtendLSL64Operands(MCInst &Inst, unsigned N) const {
+  template<int Shift>
+  void addMOVZMovAliasOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    // lsl is an alias for UXTX but will be a parsed as a k_Shifter operand.
-    if (isShifter()) {
-      assert(ARM64_AM::getShiftType(getShifter()) == ARM64_AM::LSL);
-      unsigned imm = getArithExtendImm(ARM64_AM::UXTX,
-                                       ARM64_AM::getShiftValue(getShifter()));
-      Inst.addOperand(MCOperand::CreateImm(imm));
-    } else
-      Inst.addOperand(MCOperand::CreateImm(getExtend()));
+
+    const MCConstantExpr *CE = cast<MCConstantExpr>(getImm());
+    uint64_t Value = CE->getValue();
+    Inst.addOperand(MCOperand::CreateImm((Value >> Shift) & 0xffff));
+  }
+
+  template<int Shift>
+  void addMOVNMovAliasOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+
+    const MCConstantExpr *CE = cast<MCConstantExpr>(getImm());
+    uint64_t Value = CE->getValue();
+    Inst.addOperand(MCOperand::CreateImm((~Value >> Shift) & 0xffff));
   }
 
   void addMemoryRegisterOffsetOperands(MCInst &Inst, unsigned N, bool DoShift) {
@@ -1585,7 +1691,7 @@ public:
     addMemoryWritebackIndexedOperands(Inst, N, 16);
   }
 
-  virtual void print(raw_ostream &OS) const;
+  void print(raw_ostream &OS) const override;
 
   static ARM64Operand *CreateToken(StringRef Str, bool IsSuffix, SMLoc S,
                                    MCContext &Ctx) {
@@ -1639,6 +1745,16 @@ public:
     return Op;
   }
 
+  static ARM64Operand *CreateShiftedImm(const MCExpr *Val, unsigned ShiftAmount,
+                                        SMLoc S, SMLoc E, MCContext &Ctx) {
+    ARM64Operand *Op = new ARM64Operand(k_ShiftedImm, Ctx);
+    Op->ShiftedImm .Val = Val;
+    Op->ShiftedImm.ShiftAmount = ShiftAmount;
+    Op->StartLoc = S;
+    Op->EndLoc = E;
+    return Op;
+  }
+
   static ARM64Operand *CreateFPImm(unsigned Val, SMLoc S, MCContext &Ctx) {
     ARM64Operand *Op = new ARM64Operand(k_FPImm, Ctx);
     Op->FPImm.Val = Val;
@@ -1655,10 +1771,12 @@ public:
     return Op;
   }
 
-  static ARM64Operand *CreateSysReg(StringRef Str, SMLoc S, MCContext &Ctx) {
+  static ARM64Operand *CreateSysReg(StringRef Str, SMLoc S,
+                                    uint64_t FeatureBits, MCContext &Ctx) {
     ARM64Operand *Op = new ARM64Operand(k_SysReg, Ctx);
     Op->SysReg.Data = Str.data();
     Op->SysReg.Length = Str.size();
+    Op->SysReg.FeatureBits = FeatureBits;
     Op->StartLoc = S;
     Op->EndLoc = S;
     return Op;
@@ -1682,7 +1800,7 @@ public:
   }
 
   static ARM64Operand *CreateRegOffsetMem(unsigned BaseReg, unsigned OffsetReg,
-                                          ARM64_AM::ExtendType ExtType,
+                                          ARM64_AM::ShiftExtendType ExtType,
                                           unsigned ShiftVal, bool ExplicitShift,
                                           SMLoc S, SMLoc E, MCContext &Ctx) {
     ARM64Operand *Op = new ARM64Operand(k_Memory, Ctx);
@@ -1715,19 +1833,11 @@ public:
     return Op;
   }
 
-  static ARM64Operand *CreateShifter(ARM64_AM::ShiftType ShOp, unsigned Val,
-                                     SMLoc S, SMLoc E, MCContext &Ctx) {
-    ARM64Operand *Op = new ARM64Operand(k_Shifter, Ctx);
-    Op->Shifter.Val = ARM64_AM::getShifterImm(ShOp, Val);
-    Op->StartLoc = S;
-    Op->EndLoc = E;
-    return Op;
-  }
-
-  static ARM64Operand *CreateExtend(ARM64_AM::ExtendType ExtOp, unsigned Val,
-                                    SMLoc S, SMLoc E, MCContext &Ctx) {
-    ARM64Operand *Op = new ARM64Operand(k_Extend, Ctx);
-    Op->Extend.Val = ARM64_AM::getArithExtendImm(ExtOp, Val);
+  static ARM64Operand *CreateShiftExtend(ARM64_AM::ShiftExtendType ShOp, unsigned Val,
+                                         SMLoc S, SMLoc E, MCContext &Ctx) {
+    ARM64Operand *Op = new ARM64Operand(k_ShiftExtend, Ctx);
+    Op->ShiftExtend.Type = ShOp;
+    Op->ShiftExtend.Amount = Val;
     Op->StartLoc = S;
     Op->EndLoc = E;
     return Op;
@@ -1754,6 +1864,13 @@ void ARM64Operand::print(raw_ostream &OS) const {
   case k_Immediate:
     getImm()->print(OS);
     break;
+  case k_ShiftedImm: {
+    unsigned Shift = getShiftedImmShift();
+    OS << "<shiftedimm ";
+    getShiftedImmVal()->print(OS);
+    OS << ", lsl #" << ARM64_AM::getShiftValue(Shift) << ">";
+    break;
+  }
   case k_Memory:
     OS << "<memory>";
     break;
@@ -1789,16 +1906,9 @@ void ARM64Operand::print(raw_ostream &OS) const {
       OS << "<prfop invalid #" << getPrefetch() << ">";
     break;
   }
-  case k_Shifter: {
-    unsigned Val = getShifter();
-    OS << "<" << ARM64_AM::getShiftName(ARM64_AM::getShiftType(Val)) << " #"
-       << ARM64_AM::getShiftValue(Val) << ">";
-    break;
-  }
-  case k_Extend: {
-    unsigned Val = getExtend();
-    OS << "<" << ARM64_AM::getExtendName(ARM64_AM::getArithExtendType(Val))
-       << " #" << ARM64_AM::getArithShiftValue(Val) << ">";
+  case k_ShiftExtend: {
+    OS << "<" << ARM64_AM::getShiftExtendName(getShiftExtendType()) << " #"
+       << getShiftExtendAmount() << ">";
     break;
   }
   }
@@ -2205,15 +2315,81 @@ ARM64AsmParser::tryParseFPImm(OperandVector &Operands) {
   return MatchOperand_ParseFail;
 }
 
+/// tryParseAddSubImm - Parse ADD/SUB shifted immediate operand
+ARM64AsmParser::OperandMatchResultTy
+ARM64AsmParser::tryParseAddSubImm(OperandVector &Operands) {
+  SMLoc S = getLoc();
+
+  if (Parser.getTok().is(AsmToken::Hash))
+    Parser.Lex(); // Eat '#'
+  else if (Parser.getTok().isNot(AsmToken::Integer))
+    // Operand should start from # or should be integer, emit error otherwise.
+    return MatchOperand_NoMatch;
+
+  const MCExpr *Imm;
+  if (parseSymbolicImmVal(Imm))
+    return MatchOperand_ParseFail;
+  else if (Parser.getTok().isNot(AsmToken::Comma)) {
+    uint64_t ShiftAmount = 0;
+    const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(Imm);
+    if (MCE) {
+      int64_t Val = MCE->getValue();
+      if (Val > 0xfff && (Val & 0xfff) == 0) {
+        Imm = MCConstantExpr::Create(Val >> 12, getContext());
+        ShiftAmount = 12;
+      }
+    }
+    SMLoc E = Parser.getTok().getLoc();
+    Operands.push_back(ARM64Operand::CreateShiftedImm(Imm, ShiftAmount, S, E,
+                                                      getContext()));
+    return MatchOperand_Success;
+  }
+
+  // Eat ','
+  Parser.Lex();
+
+  // The optional operand must be "lsl #N" where N is non-negative.
+  if (!Parser.getTok().is(AsmToken::Identifier) ||
+      !Parser.getTok().getIdentifier().equals_lower("lsl")) {
+    Error(Parser.getTok().getLoc(), "only 'lsl #+N' valid after immediate");
+    return MatchOperand_ParseFail;
+  }
+
+  // Eat 'lsl'
+  Parser.Lex();
+
+  if (Parser.getTok().is(AsmToken::Hash)) {
+    Parser.Lex();
+  }
+
+  if (Parser.getTok().isNot(AsmToken::Integer)) {
+    Error(Parser.getTok().getLoc(), "only 'lsl #+N' valid after immediate");
+    return MatchOperand_ParseFail;
+  }
+
+  int64_t ShiftAmount = Parser.getTok().getIntVal();
+
+  if (ShiftAmount < 0) {
+    Error(Parser.getTok().getLoc(), "positive shift amount required");
+    return MatchOperand_ParseFail;
+  }
+  Parser.Lex(); // Eat the number
+
+  SMLoc E = Parser.getTok().getLoc();
+  Operands.push_back(ARM64Operand::CreateShiftedImm(Imm, ShiftAmount,
+                                                    S, E, getContext()));
+  return MatchOperand_Success;
+}
+
 /// parseCondCodeString - Parse a Condition Code string.
 unsigned ARM64AsmParser::parseCondCodeString(StringRef Cond) {
   unsigned CC = StringSwitch<unsigned>(Cond.lower())
                     .Case("eq", ARM64CC::EQ)
                     .Case("ne", ARM64CC::NE)
-                    .Case("cs", ARM64CC::CS)
-                    .Case("hs", ARM64CC::CS)
-                    .Case("cc", ARM64CC::CC)
-                    .Case("lo", ARM64CC::CC)
+                    .Case("cs", ARM64CC::HS)
+                    .Case("hs", ARM64CC::HS)
+                    .Case("cc", ARM64CC::LO)
+                    .Case("lo", ARM64CC::LO)
                     .Case("mi", ARM64CC::MI)
                     .Case("pl", ARM64CC::PL)
                     .Case("vs", ARM64CC::VS)
@@ -2252,116 +2428,76 @@ bool ARM64AsmParser::parseCondCode(OperandVector &Operands,
   return false;
 }
 
-/// ParseOptionalShift - Some operands take an optional shift argument. Parse
+/// tryParseOptionalShift - Some operands take an optional shift argument. Parse
 /// them if present.
-bool ARM64AsmParser::parseOptionalShift(OperandVector &Operands) {
+ARM64AsmParser::OperandMatchResultTy
+ARM64AsmParser::tryParseOptionalShiftExtend(OperandVector &Operands) {
   const AsmToken &Tok = Parser.getTok();
-  ARM64_AM::ShiftType ShOp = StringSwitch<ARM64_AM::ShiftType>(Tok.getString())
-                                 .Case("lsl", ARM64_AM::LSL)
-                                 .Case("lsr", ARM64_AM::LSR)
-                                 .Case("asr", ARM64_AM::ASR)
-                                 .Case("ror", ARM64_AM::ROR)
-                                 .Case("msl", ARM64_AM::MSL)
-                                 .Case("LSL", ARM64_AM::LSL)
-                                 .Case("LSR", ARM64_AM::LSR)
-                                 .Case("ASR", ARM64_AM::ASR)
-                                 .Case("ROR", ARM64_AM::ROR)
-                                 .Case("MSL", ARM64_AM::MSL)
-                                 .Default(ARM64_AM::InvalidShift);
-  if (ShOp == ARM64_AM::InvalidShift)
-    return true;
-
-  SMLoc S = Tok.getLoc();
-  Parser.Lex();
-
-  // We expect a number here.
-  bool Hash = getLexer().is(AsmToken::Hash);
-  if (!Hash && getLexer().isNot(AsmToken::Integer))
-    return TokError("immediate value expected for shifter operand");
-
-  if (Hash)
-    Parser.Lex(); // Eat the '#'.
-
-  SMLoc ExprLoc = getLoc();
-  const MCExpr *ImmVal;
-  if (getParser().parseExpression(ImmVal))
-    return true;
-
-  const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(ImmVal);
-  if (!MCE)
-    return TokError("immediate value expected for shifter operand");
-
-  if ((MCE->getValue() & 0x3f) != MCE->getValue())
-    return Error(ExprLoc, "immediate value too large for shifter operand");
-
-  SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
-  Operands.push_back(
-      ARM64Operand::CreateShifter(ShOp, MCE->getValue(), S, E, getContext()));
-  return false;
-}
-
-/// parseOptionalExtend - Some operands take an optional extend argument. Parse
-/// them if present.
-bool ARM64AsmParser::parseOptionalExtend(OperandVector &Operands) {
-  const AsmToken &Tok = Parser.getTok();
-  ARM64_AM::ExtendType ExtOp =
-      StringSwitch<ARM64_AM::ExtendType>(Tok.getString())
+  std::string LowerID = Tok.getString().lower();
+  ARM64_AM::ShiftExtendType ShOp =
+      StringSwitch<ARM64_AM::ShiftExtendType>(LowerID)
+          .Case("lsl", ARM64_AM::LSL)
+          .Case("lsr", ARM64_AM::LSR)
+          .Case("asr", ARM64_AM::ASR)
+          .Case("ror", ARM64_AM::ROR)
+          .Case("msl", ARM64_AM::MSL)
           .Case("uxtb", ARM64_AM::UXTB)
           .Case("uxth", ARM64_AM::UXTH)
           .Case("uxtw", ARM64_AM::UXTW)
           .Case("uxtx", ARM64_AM::UXTX)
-          .Case("lsl", ARM64_AM::UXTX) // Alias for UXTX
           .Case("sxtb", ARM64_AM::SXTB)
           .Case("sxth", ARM64_AM::SXTH)
           .Case("sxtw", ARM64_AM::SXTW)
           .Case("sxtx", ARM64_AM::SXTX)
-          .Case("UXTB", ARM64_AM::UXTB)
-          .Case("UXTH", ARM64_AM::UXTH)
-          .Case("UXTW", ARM64_AM::UXTW)
-          .Case("UXTX", ARM64_AM::UXTX)
-          .Case("LSL", ARM64_AM::UXTX) // Alias for UXTX
-          .Case("SXTB", ARM64_AM::SXTB)
-          .Case("SXTH", ARM64_AM::SXTH)
-          .Case("SXTW", ARM64_AM::SXTW)
-          .Case("SXTX", ARM64_AM::SXTX)
-          .Default(ARM64_AM::InvalidExtend);
-  if (ExtOp == ARM64_AM::InvalidExtend)
-    return true;
+          .Default(ARM64_AM::InvalidShiftExtend);
+
+  if (ShOp == ARM64_AM::InvalidShiftExtend)
+    return MatchOperand_NoMatch;
 
   SMLoc S = Tok.getLoc();
   Parser.Lex();
 
-  if (getLexer().is(AsmToken::EndOfStatement) ||
-      getLexer().is(AsmToken::Comma)) {
-    SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
-    Operands.push_back(
-        ARM64Operand::CreateExtend(ExtOp, 0, S, E, getContext()));
-    return false;
-  }
-
   bool Hash = getLexer().is(AsmToken::Hash);
   if (!Hash && getLexer().isNot(AsmToken::Integer)) {
+    if (ShOp == ARM64_AM::LSL || ShOp == ARM64_AM::LSR ||
+        ShOp == ARM64_AM::ASR || ShOp == ARM64_AM::ROR ||
+        ShOp == ARM64_AM::MSL) {
+      // We expect a number here.
+      TokError("expected #imm after shift specifier");
+      return MatchOperand_ParseFail;
+    }
+
+    // "extend" type operatoins don't need an immediate, #0 is implicit.
     SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
     Operands.push_back(
-        ARM64Operand::CreateExtend(ExtOp, 0, S, E, getContext()));
-    return false;
+        ARM64Operand::CreateShiftExtend(ShOp, 0, S, E, getContext()));
+    return MatchOperand_Success;
   }
 
   if (Hash)
     Parser.Lex(); // Eat the '#'.
 
+  // Make sure we do actually have a number
+  if (!Parser.getTok().is(AsmToken::Integer)) {
+    Error(Parser.getTok().getLoc(),
+          "expected integer shift amount");
+    return MatchOperand_ParseFail;
+  }
+
   const MCExpr *ImmVal;
   if (getParser().parseExpression(ImmVal))
-    return true;
+    return MatchOperand_ParseFail;
 
   const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(ImmVal);
-  if (!MCE)
-    return TokError("immediate value expected for extend operand");
+  if (!MCE) {
+    TokError("expected #imm after shift specifier");
+    return MatchOperand_ParseFail;
+  }
 
   SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
-  Operands.push_back(
-      ARM64Operand::CreateExtend(ExtOp, MCE->getValue(), S, E, getContext()));
-  return false;
+  Operands.push_back(ARM64Operand::CreateShiftExtend(ShOp, MCE->getValue(), S,
+                                                     E, getContext()));
+  return MatchOperand_Success;
 }
 
 /// parseSysAlias - The IC, DC, AT, and TLBI instructions are simple aliases for
@@ -2671,7 +2807,7 @@ ARM64AsmParser::tryParseSysReg(OperandVector &Operands) {
     return MatchOperand_NoMatch;
 
   Operands.push_back(ARM64Operand::CreateSysReg(Tok.getString(), getLoc(),
-                     getContext()));
+                     STI.getFeatureBits(), getContext()));
   Parser.Lex(); // Eat identifier
 
   return MatchOperand_Success;
@@ -2830,7 +2966,7 @@ bool ARM64AsmParser::parseMemory(OperandVector &Operands) {
     if (Reg2 != -1) {
       // Default shift is LSL, with an omitted shift.  We use the third bit of
       // the extend value to indicate presence/omission of the immediate offset.
-      ARM64_AM::ExtendType ExtOp = ARM64_AM::UXTX;
+      ARM64_AM::ShiftExtendType ExtOp = ARM64_AM::UXTX;
       int64_t ShiftVal = 0;
       bool ExplicitShift = false;
 
@@ -2840,17 +2976,13 @@ bool ARM64AsmParser::parseMemory(OperandVector &Operands) {
 
         SMLoc ExtLoc = getLoc();
         const AsmToken &Tok = Parser.getTok();
-        ExtOp = StringSwitch<ARM64_AM::ExtendType>(Tok.getString())
+        ExtOp = StringSwitch<ARM64_AM::ShiftExtendType>(Tok.getString().lower())
                     .Case("uxtw", ARM64_AM::UXTW)
                     .Case("lsl", ARM64_AM::UXTX) // Alias for UXTX
                     .Case("sxtw", ARM64_AM::SXTW)
                     .Case("sxtx", ARM64_AM::SXTX)
-                    .Case("UXTW", ARM64_AM::UXTW)
-                    .Case("LSL", ARM64_AM::UXTX) // Alias for UXTX
-                    .Case("SXTW", ARM64_AM::SXTW)
-                    .Case("SXTX", ARM64_AM::SXTX)
-                    .Default(ARM64_AM::InvalidExtend);
-        if (ExtOp == ARM64_AM::InvalidExtend)
+                    .Default(ARM64_AM::InvalidShiftExtend);
+        if (ExtOp == ARM64_AM::InvalidShiftExtend)
           return Error(ExtLoc, "expected valid extend operation");
 
         Parser.Lex(); // Eat the extend op.
@@ -2904,6 +3036,7 @@ bool ARM64AsmParser::parseMemory(OperandVector &Operands) {
 
       // Immediate expressions.
     } else if (Parser.getTok().is(AsmToken::Hash) ||
+               Parser.getTok().is(AsmToken::Colon) ||
                Parser.getTok().is(AsmToken::Integer)) {
       if (Parser.getTok().is(AsmToken::Hash))
         Parser.Lex(); // Eat hash token.
@@ -3005,6 +3138,7 @@ bool ARM64AsmParser::parseSymbolicImmVal(const MCExpr *&ImmVal) {
                   .Case("dtprel_g1_nc", ARM64MCExpr::VK_DTPREL_G1_NC)
                   .Case("dtprel_g0", ARM64MCExpr::VK_DTPREL_G0)
                   .Case("dtprel_g0_nc", ARM64MCExpr::VK_DTPREL_G0_NC)
+                  .Case("dtprel_hi12", ARM64MCExpr::VK_DTPREL_HI12)
                   .Case("dtprel_lo12", ARM64MCExpr::VK_DTPREL_LO12)
                   .Case("dtprel_lo12_nc", ARM64MCExpr::VK_DTPREL_LO12_NC)
                   .Case("tprel_g2", ARM64MCExpr::VK_TPREL_G2)
@@ -3012,6 +3146,7 @@ bool ARM64AsmParser::parseSymbolicImmVal(const MCExpr *&ImmVal) {
                   .Case("tprel_g1_nc", ARM64MCExpr::VK_TPREL_G1_NC)
                   .Case("tprel_g0", ARM64MCExpr::VK_TPREL_G0)
                   .Case("tprel_g0_nc", ARM64MCExpr::VK_TPREL_G0_NC)
+                  .Case("tprel_hi12", ARM64MCExpr::VK_TPREL_HI12)
                   .Case("tprel_lo12", ARM64MCExpr::VK_TPREL_LO12)
                   .Case("tprel_lo12_nc", ARM64MCExpr::VK_TPREL_LO12_NC)
                   .Case("tlsdesc_lo12", ARM64MCExpr::VK_TLSDESC_LO12)
@@ -3103,9 +3238,12 @@ bool ARM64AsmParser::parseVectorList(OperandVector &Operands) {
     }
   }
 
-  if (Parser.getTok().is(AsmToken::EndOfStatement))
-    Error(getLoc(), "'}' expected");
+  if (Parser.getTok().isNot(AsmToken::RCurly))
+    return Error(getLoc(), "'}' expected");
   Parser.Lex(); // Eat the '}' token.
+
+  if (Count > 4)
+    return Error(S, "invalid number of vectors");
 
   unsigned NumElements = 0;
   char ElementKind = 0;
@@ -3184,13 +3322,11 @@ bool ARM64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
     if (!parseRegister(Operands))
       return false;
 
-    // This could be an optional "shift" operand.
-    if (!parseOptionalShift(Operands))
-      return false;
-
-    // Or maybe it could be an optional "extend" operand.
-    if (!parseOptionalExtend(Operands))
-      return false;
+    // This could be an optional "shift" or "extend" operand.
+    OperandMatchResultTy GotShift = tryParseOptionalShiftExtend(Operands);
+    // We can only continue if no tokens were eaten.
+    if (GotShift != MatchOperand_NoMatch)
+      return GotShift;
 
     // This was not a register so parse other operands that start with an
     // identifier (like labels) as expressions and create them as immediates.
@@ -3218,8 +3354,12 @@ bool ARM64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
     if (Tok.is(AsmToken::Real)) {
       APFloat RealVal(APFloat::IEEEdouble, Tok.getString());
       uint64_t IntVal = RealVal.bitcastToAPInt().getZExtValue();
-      if (IntVal != 0 || (Mnemonic != "fcmp" && Mnemonic != "fcmpe"))
+      if (Mnemonic != "fcmp" && Mnemonic != "fcmpe" && Mnemonic != "fcmeq" &&
+          Mnemonic != "fcmge" && Mnemonic != "fcmgt" && Mnemonic != "fcmle" &&
+          Mnemonic != "fcmlt")
         return TokError("unexpected floating point literal");
+      else if (IntVal != 0)
+        return TokError("only valid floating-point immediate is #0.0");
       Parser.Lex(); // Eat the token.
 
       Operands.push_back(
@@ -3245,6 +3385,27 @@ bool ARM64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
 bool ARM64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
                                       StringRef Name, SMLoc NameLoc,
                                       OperandVector &Operands) {
+  Name = StringSwitch<StringRef>(Name.lower())
+             .Case("beq", "b.eq")
+             .Case("bne", "b.ne")
+             .Case("bhs", "b.hs")
+             .Case("bcs", "b.cs")
+             .Case("blo", "b.lo")
+             .Case("bcc", "b.cc")
+             .Case("bmi", "b.mi")
+             .Case("bpl", "b.pl")
+             .Case("bvs", "b.vs")
+             .Case("bvc", "b.vc")
+             .Case("bhi", "b.hi")
+             .Case("bls", "b.ls")
+             .Case("bge", "b.ge")
+             .Case("blt", "b.lt")
+             .Case("bgt", "b.gt")
+             .Case("ble", "b.le")
+             .Case("bal", "b.al")
+             .Case("bnv", "b.nv")
+             .Default(Name);
+
   // Create the leading tokens for the mnemonic, split by '.' characters.
   size_t Start = 0, Next = Name.find('.');
   StringRef Head = Name.slice(Start, Next);
@@ -3456,18 +3617,6 @@ bool ARM64AsmParser::validateInstruction(MCInst &Inst,
   // in the instructions being checked and this keeps the nested conditionals
   // to a minimum.
   switch (Inst.getOpcode()) {
-  case ARM64::ANDWrs:
-  case ARM64::ANDSWrs:
-  case ARM64::EORWrs:
-  case ARM64::ORRWrs: {
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[3], "immediate value expected");
-    int64_t shifter = Inst.getOperand(3).getImm();
-    ARM64_AM::ShiftType ST = ARM64_AM::getShiftType(shifter);
-    if (ST == ARM64_AM::LSL && shifter > 31)
-      return Error(Loc[3], "shift value out of range");
-    return false;
-  }
   case ARM64::ADDSWri:
   case ARM64::ADDSXri:
   case ARM64::ADDWri:
@@ -3476,17 +3625,9 @@ bool ARM64AsmParser::validateInstruction(MCInst &Inst,
   case ARM64::SUBSXri:
   case ARM64::SUBWri:
   case ARM64::SUBXri: {
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[3], "immediate value expected");
-    int64_t shifter = Inst.getOperand(3).getImm();
-    if (shifter != 0 && shifter != 12)
-      return Error(Loc[3], "shift value out of range");
-    // The imm12 operand can be an expression. Validate that it's legit.
-    // FIXME: We really, really want to allow arbitrary expressions here
-    // and resolve the value and validate the result at fixup time, but
-    // that's hard as we have long since lost any source information we
-    // need to generate good diagnostics by that point.
-    if (Inst.getOpcode() == ARM64::ADDXri && Inst.getOperand(2).isExpr()) {
+    // Annoyingly we can't do this in the isAddSubImm predicate, so there is
+    // some slight duplication here.
+    if (Inst.getOperand(2).isExpr()) {
       const MCExpr *Expr = Inst.getOperand(2).getExpr();
       ARM64MCExpr::VariantKind ELFRefKind;
       MCSymbolRefExpr::VariantKind DarwinRefKind;
@@ -3495,293 +3636,33 @@ bool ARM64AsmParser::validateInstruction(MCInst &Inst,
         return Error(Loc[2], "invalid immediate expression");
       }
 
-      if (DarwinRefKind == MCSymbolRefExpr::VK_PAGEOFF ||
-          DarwinRefKind == MCSymbolRefExpr::VK_TLVPPAGEOFF ||
-          ELFRefKind == ARM64MCExpr::VK_LO12 ||
+      // Only allow these with ADDXri.
+      if ((DarwinRefKind == MCSymbolRefExpr::VK_PAGEOFF ||
+          DarwinRefKind == MCSymbolRefExpr::VK_TLVPPAGEOFF) &&
+          Inst.getOpcode() == ARM64::ADDXri)
+        return false;
+
+      // Only allow these with ADDXri/ADDWri
+      if ((ELFRefKind == ARM64MCExpr::VK_LO12 ||
+          ELFRefKind == ARM64MCExpr::VK_DTPREL_HI12 ||
           ELFRefKind == ARM64MCExpr::VK_DTPREL_LO12 ||
           ELFRefKind == ARM64MCExpr::VK_DTPREL_LO12_NC ||
+          ELFRefKind == ARM64MCExpr::VK_TPREL_HI12 ||
           ELFRefKind == ARM64MCExpr::VK_TPREL_LO12 ||
           ELFRefKind == ARM64MCExpr::VK_TPREL_LO12_NC ||
-          ELFRefKind == ARM64MCExpr::VK_TLSDESC_LO12) {
-        // Note that we don't range-check the addend. It's adjusted
-        // modulo page size when converted, so there is no "out of range"
-        // condition when using @pageoff. Any validity checking for the value
-        // was done in the is*() predicate function.
+          ELFRefKind == ARM64MCExpr::VK_TLSDESC_LO12) &&
+          (Inst.getOpcode() == ARM64::ADDXri ||
+          Inst.getOpcode() == ARM64::ADDWri))
         return false;
-      } else if (DarwinRefKind == MCSymbolRefExpr::VK_GOTPAGEOFF) {
-        // @gotpageoff can only be used directly, not with an addend.
-        return Addend != 0;
-      }
 
-      // Otherwise, we're not sure, so don't allow it for now.
+      // Don't allow expressions in the immediate field otherwise
       return Error(Loc[2], "invalid immediate expression");
     }
-
-    // If it's anything but an immediate, it's not legit.
-    if (!Inst.getOperand(2).isImm())
-      return Error(Loc[2], "invalid immediate expression");
-    int64_t imm = Inst.getOperand(2).getImm();
-    if (imm > 4095 || imm < 0)
-      return Error(Loc[2], "immediate value out of range");
-    return false;
-  }
-  case ARM64::LDRBpre:
-  case ARM64::LDRHpre:
-  case ARM64::LDRSBWpre:
-  case ARM64::LDRSBXpre:
-  case ARM64::LDRSHWpre:
-  case ARM64::LDRSHXpre:
-  case ARM64::LDRWpre:
-  case ARM64::LDRXpre:
-  case ARM64::LDRSpre:
-  case ARM64::LDRDpre:
-  case ARM64::LDRQpre:
-  case ARM64::STRBpre:
-  case ARM64::STRHpre:
-  case ARM64::STRWpre:
-  case ARM64::STRXpre:
-  case ARM64::STRSpre:
-  case ARM64::STRDpre:
-  case ARM64::STRQpre:
-  case ARM64::LDRBpost:
-  case ARM64::LDRHpost:
-  case ARM64::LDRSBWpost:
-  case ARM64::LDRSBXpost:
-  case ARM64::LDRSHWpost:
-  case ARM64::LDRSHXpost:
-  case ARM64::LDRWpost:
-  case ARM64::LDRXpost:
-  case ARM64::LDRSpost:
-  case ARM64::LDRDpost:
-  case ARM64::LDRQpost:
-  case ARM64::STRBpost:
-  case ARM64::STRHpost:
-  case ARM64::STRWpost:
-  case ARM64::STRXpost:
-  case ARM64::STRSpost:
-  case ARM64::STRDpost:
-  case ARM64::STRQpost:
-  case ARM64::LDTRXi:
-  case ARM64::LDTRWi:
-  case ARM64::LDTRHi:
-  case ARM64::LDTRBi:
-  case ARM64::LDTRSHWi:
-  case ARM64::LDTRSHXi:
-  case ARM64::LDTRSBWi:
-  case ARM64::LDTRSBXi:
-  case ARM64::LDTRSWi:
-  case ARM64::STTRWi:
-  case ARM64::STTRXi:
-  case ARM64::STTRHi:
-  case ARM64::STTRBi:
-  case ARM64::LDURWi:
-  case ARM64::LDURXi:
-  case ARM64::LDURSi:
-  case ARM64::LDURDi:
-  case ARM64::LDURQi:
-  case ARM64::LDURHi:
-  case ARM64::LDURBi:
-  case ARM64::LDURSHWi:
-  case ARM64::LDURSHXi:
-  case ARM64::LDURSBWi:
-  case ARM64::LDURSBXi:
-  case ARM64::LDURSWi:
-  case ARM64::PRFUMi:
-  case ARM64::STURWi:
-  case ARM64::STURXi:
-  case ARM64::STURSi:
-  case ARM64::STURDi:
-  case ARM64::STURQi:
-  case ARM64::STURHi:
-  case ARM64::STURBi: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(2).isImm())
-      return Error(Loc[1], "immediate value expected");
-    int64_t offset = Inst.getOperand(2).getImm();
-    if (offset > 255 || offset < -256)
-      return Error(Loc[1], "offset value out of range");
-    return false;
-  }
-  case ARM64::LDRSro:
-  case ARM64::LDRWro:
-  case ARM64::LDRSWro:
-  case ARM64::STRWro:
-  case ARM64::STRSro: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[1], "immediate value expected");
-    int64_t shift = Inst.getOperand(3).getImm();
-    ARM64_AM::ExtendType type = ARM64_AM::getMemExtendType(shift);
-    if (type != ARM64_AM::UXTW && type != ARM64_AM::UXTX &&
-        type != ARM64_AM::SXTW && type != ARM64_AM::SXTX)
-      return Error(Loc[1], "shift type invalid");
-    return false;
-  }
-  case ARM64::LDRDro:
-  case ARM64::LDRQro:
-  case ARM64::LDRXro:
-  case ARM64::PRFMro:
-  case ARM64::STRXro:
-  case ARM64::STRDro:
-  case ARM64::STRQro: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[1], "immediate value expected");
-    int64_t shift = Inst.getOperand(3).getImm();
-    ARM64_AM::ExtendType type = ARM64_AM::getMemExtendType(shift);
-    if (type != ARM64_AM::UXTW && type != ARM64_AM::UXTX &&
-        type != ARM64_AM::SXTW && type != ARM64_AM::SXTX)
-      return Error(Loc[1], "shift type invalid");
-    return false;
-  }
-  case ARM64::LDRHro:
-  case ARM64::LDRHHro:
-  case ARM64::LDRSHWro:
-  case ARM64::LDRSHXro:
-  case ARM64::STRHro:
-  case ARM64::STRHHro: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[1], "immediate value expected");
-    int64_t shift = Inst.getOperand(3).getImm();
-    ARM64_AM::ExtendType type = ARM64_AM::getMemExtendType(shift);
-    if (type != ARM64_AM::UXTW && type != ARM64_AM::UXTX &&
-        type != ARM64_AM::SXTW && type != ARM64_AM::SXTX)
-      return Error(Loc[1], "shift type invalid");
-    return false;
-  }
-  case ARM64::LDRBro:
-  case ARM64::LDRBBro:
-  case ARM64::LDRSBWro:
-  case ARM64::LDRSBXro:
-  case ARM64::STRBro:
-  case ARM64::STRBBro: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[1], "immediate value expected");
-    int64_t shift = Inst.getOperand(3).getImm();
-    ARM64_AM::ExtendType type = ARM64_AM::getMemExtendType(shift);
-    if (type != ARM64_AM::UXTW && type != ARM64_AM::UXTX &&
-        type != ARM64_AM::SXTW && type != ARM64_AM::SXTX)
-      return Error(Loc[1], "shift type invalid");
-    return false;
-  }
-  case ARM64::LDPWi:
-  case ARM64::LDPXi:
-  case ARM64::LDPSi:
-  case ARM64::LDPDi:
-  case ARM64::LDPQi:
-  case ARM64::LDPSWi:
-  case ARM64::STPWi:
-  case ARM64::STPXi:
-  case ARM64::STPSi:
-  case ARM64::STPDi:
-  case ARM64::STPQi:
-  case ARM64::LDPWpre:
-  case ARM64::LDPXpre:
-  case ARM64::LDPSpre:
-  case ARM64::LDPDpre:
-  case ARM64::LDPQpre:
-  case ARM64::LDPSWpre:
-  case ARM64::STPWpre:
-  case ARM64::STPXpre:
-  case ARM64::STPSpre:
-  case ARM64::STPDpre:
-  case ARM64::STPQpre:
-  case ARM64::LDPWpost:
-  case ARM64::LDPXpost:
-  case ARM64::LDPSpost:
-  case ARM64::LDPDpost:
-  case ARM64::LDPQpost:
-  case ARM64::LDPSWpost:
-  case ARM64::STPWpost:
-  case ARM64::STPXpost:
-  case ARM64::STPSpost:
-  case ARM64::STPDpost:
-  case ARM64::STPQpost:
-  case ARM64::LDNPWi:
-  case ARM64::LDNPXi:
-  case ARM64::LDNPSi:
-  case ARM64::LDNPDi:
-  case ARM64::LDNPQi:
-  case ARM64::STNPWi:
-  case ARM64::STNPXi:
-  case ARM64::STNPSi:
-  case ARM64::STNPDi:
-  case ARM64::STNPQi: {
-    // FIXME: Should accept expressions and error in fixup evaluation
-    // if out of range.
-    if (!Inst.getOperand(3).isImm())
-      return Error(Loc[2], "immediate value expected");
-    int64_t offset = Inst.getOperand(3).getImm();
-    if (offset > 63 || offset < -64)
-      return Error(Loc[2], "offset value out of range");
     return false;
   }
   default:
     return false;
   }
-}
-
-static void rewriteMOVI(ARM64AsmParser::OperandVector &Operands,
-                        StringRef mnemonic, uint64_t imm, unsigned shift,
-                        MCContext &Context) {
-  ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[0]);
-  ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-  Operands[0] =
-      ARM64Operand::CreateToken(mnemonic, false, Op->getStartLoc(), Context);
-
-  const MCExpr *NewImm = MCConstantExpr::Create(imm >> shift, Context);
-  Operands[2] = ARM64Operand::CreateImm(NewImm, Op2->getStartLoc(),
-                                        Op2->getEndLoc(), Context);
-
-  Operands.push_back(ARM64Operand::CreateShifter(
-      ARM64_AM::LSL, shift, Op2->getStartLoc(), Op2->getEndLoc(), Context));
-  delete Op2;
-  delete Op;
-}
-
-static void rewriteMOVRSP(ARM64AsmParser::OperandVector &Operands,
-                        MCContext &Context) {
-  ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[0]);
-  ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-  Operands[0] =
-    ARM64Operand::CreateToken("add", false, Op->getStartLoc(), Context);
-
-  const MCExpr *Imm = MCConstantExpr::Create(0, Context);
-  Operands.push_back(ARM64Operand::CreateImm(Imm, Op2->getStartLoc(),
-                                             Op2->getEndLoc(), Context));
-  Operands.push_back(ARM64Operand::CreateShifter(
-      ARM64_AM::LSL, 0, Op2->getStartLoc(), Op2->getEndLoc(), Context));
-
-  delete Op;
-}
-
-static void rewriteMOVR(ARM64AsmParser::OperandVector &Operands,
-                        MCContext &Context) {
-  ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[0]);
-  ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-  Operands[0] =
-    ARM64Operand::CreateToken("orr", false, Op->getStartLoc(), Context);
-
-  // Operands[2] becomes Operands[3].
-  Operands.push_back(Operands[2]);
-  // And Operands[2] becomes ZR.
-  unsigned ZeroReg = ARM64::XZR;
-  if (ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
-          Operands[2]->getReg()))
-    ZeroReg = ARM64::WZR;
-
-  Operands[2] =
-    ARM64Operand::CreateReg(ZeroReg, false, Op2->getStartLoc(),
-                            Op2->getEndLoc(), Context);
-
-  delete Op;
 }
 
 bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
@@ -3793,34 +3674,73 @@ bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
     return Error(Loc, "invalid operand for instruction");
   case Match_InvalidSuffix:
     return Error(Loc, "invalid type suffix for instruction");
+  case Match_AddSubRegExtendSmall:
+    return Error(Loc,
+      "expected '[su]xt[bhw]' or 'lsl' with optional integer in range [0, 4]");
+  case Match_AddSubRegExtendLarge:
+    return Error(Loc,
+      "expected 'sxtx' 'uxtx' or 'lsl' with optional integer in range [0, 4]");
+  case Match_AddSubSecondSource:
+    return Error(Loc,
+      "expected compatible register, symbol or integer in range [0, 4095]");
+  case Match_LogicalSecondSource:
+    return Error(Loc, "expected compatible register or logical immediate");
+  case Match_AddSubRegShift32:
+    return Error(Loc,
+       "expected 'lsl', 'lsr' or 'asr' with optional integer in range [0, 31]");
+  case Match_AddSubRegShift64:
+    return Error(Loc,
+       "expected 'lsl', 'lsr' or 'asr' with optional integer in range [0, 63]");
   case Match_InvalidMemoryIndexedSImm9:
-    return Error(Loc, "index must be an integer in range [-256,255].");
+    return Error(Loc, "index must be an integer in range [-256, 255].");
   case Match_InvalidMemoryIndexed32SImm7:
-    return Error(Loc, "index must be a multiple of 4 in range [-256,252].");
+    return Error(Loc, "index must be a multiple of 4 in range [-256, 252].");
   case Match_InvalidMemoryIndexed64SImm7:
-    return Error(Loc, "index must be a multiple of 8 in range [-512,504].");
+    return Error(Loc, "index must be a multiple of 8 in range [-512, 504].");
   case Match_InvalidMemoryIndexed128SImm7:
-    return Error(Loc, "index must be a multiple of 16 in range [-1024,1008].");
+    return Error(Loc, "index must be a multiple of 16 in range [-1024, 1008].");
+  case Match_InvalidMemoryIndexed:
+    return Error(Loc, "invalid offset in memory address.");
   case Match_InvalidMemoryIndexed8:
-    return Error(Loc, "index must be an integer in range [0,4095].");
+    return Error(Loc, "index must be an integer in range [0, 4095].");
   case Match_InvalidMemoryIndexed16:
-    return Error(Loc, "index must be a multiple of 2 in range [0,8190].");
+    return Error(Loc, "index must be a multiple of 2 in range [0, 8190].");
   case Match_InvalidMemoryIndexed32:
-    return Error(Loc, "index must be a multiple of 4 in range [0,16380].");
+    return Error(Loc, "index must be a multiple of 4 in range [0, 16380].");
   case Match_InvalidMemoryIndexed64:
-    return Error(Loc, "index must be a multiple of 8 in range [0,32760].");
+    return Error(Loc, "index must be a multiple of 8 in range [0, 32760].");
   case Match_InvalidMemoryIndexed128:
-    return Error(Loc, "index must be a multiple of 16 in range [0,65520].");
+    return Error(Loc, "index must be a multiple of 16 in range [0, 65520].");
+  case Match_InvalidImm0_7:
+    return Error(Loc, "immediate must be an integer in range [0, 7].");
+  case Match_InvalidImm0_15:
+    return Error(Loc, "immediate must be an integer in range [0, 15].");
+  case Match_InvalidImm0_31:
+    return Error(Loc, "immediate must be an integer in range [0, 31].");
+  case Match_InvalidImm0_63:
+    return Error(Loc, "immediate must be an integer in range [0, 63].");
   case Match_InvalidImm1_8:
-    return Error(Loc, "immediate must be an integer in range [1,8].");
+    return Error(Loc, "immediate must be an integer in range [1, 8].");
   case Match_InvalidImm1_16:
-    return Error(Loc, "immediate must be an integer in range [1,16].");
+    return Error(Loc, "immediate must be an integer in range [1, 16].");
   case Match_InvalidImm1_32:
-    return Error(Loc, "immediate must be an integer in range [1,32].");
+    return Error(Loc, "immediate must be an integer in range [1, 32].");
   case Match_InvalidImm1_64:
-    return Error(Loc, "immediate must be an integer in range [1,64].");
+    return Error(Loc, "immediate must be an integer in range [1, 64].");
+  case Match_InvalidIndexB:
+    return Error(Loc, "vector lane must be an integer in range [0, 15].");
+  case Match_InvalidIndexH:
+    return Error(Loc, "vector lane must be an integer in range [0, 7].");
+  case Match_InvalidIndexS:
+    return Error(Loc, "vector lane must be an integer in range [0, 3].");
+  case Match_InvalidIndexD:
+    return Error(Loc, "vector lane must be an integer in range [0, 1].");
   case Match_InvalidLabel:
     return Error(Loc, "expected label or encodable integer pc offset");
+  case Match_MRS:
+    return Error(Loc, "expected readable system register");
+  case Match_MSR:
+    return Error(Loc, "expected writable system register or pstate");
   case Match_MnemonicFail:
     return Error(Loc, "unrecognized instruction mnemonic");
   default:
@@ -3841,199 +3761,37 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   assert(Op->isToken() && "Leading operand should always be a mnemonic!");
 
   StringRef Tok = Op->getToken();
-  // Translate CMN/CMP pseudos to ADDS/SUBS with zero register destination.
-  // This needs to be done before the special handling of ADD/SUB immediates.
-  if (Tok == "cmp" || Tok == "cmn") {
-    // Replace the opcode with either ADDS or SUBS.
-    const char *Repl = StringSwitch<const char *>(Tok)
-                           .Case("cmp", "subs")
-                           .Case("cmn", "adds")
-                           .Default(nullptr);
-    assert(Repl && "Unknown compare instruction");
-    delete Operands[0];
-    Operands[0] = ARM64Operand::CreateToken(Repl, false, IDLoc, getContext());
-
-    // Insert WZR or XZR as destination operand.
-    ARM64Operand *RegOp = static_cast<ARM64Operand *>(Operands[1]);
-    unsigned ZeroReg;
-    if (RegOp->isReg() &&
-        ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
-            RegOp->getReg()))
-      ZeroReg = ARM64::WZR;
-    else
-      ZeroReg = ARM64::XZR;
-    Operands.insert(
-        Operands.begin() + 1,
-        ARM64Operand::CreateReg(ZeroReg, false, IDLoc, IDLoc, getContext()));
-    // Update since we modified it above.
-    ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[0]);
-    Tok = Op->getToken();
-  }
-
   unsigned NumOperands = Operands.size();
 
-  if (Tok == "mov" && NumOperands == 3) {
-    // The MOV mnemomic is aliased to movn/movz, depending on the value of
-    // the immediate being instantiated.
-    // FIXME: Catching this here is a total hack, and we should use tblgen
-    // support to implement this instead as soon as it is available.
-
-    ARM64Operand *Op1 = static_cast<ARM64Operand *>(Operands[1]);
+  if (NumOperands == 4 && Tok == "lsl") {
     ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-    if (Op2->isImm()) {
-      if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Op2->getImm())) {
-        uint64_t Val = CE->getValue();
-        uint64_t NVal = ~Val;
-
-        // If this is a 32-bit register and the value has none of the upper
-        // set, clear the complemented upper 32-bits so the logic below works
-        // for 32-bit registers too.
-        ARM64Operand *Op1 = static_cast<ARM64Operand *>(Operands[1]);
-        if (Op1->isReg() &&
-            ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
-                Op1->getReg()) &&
-            (Val & 0xFFFFFFFFULL) == Val)
-          NVal &= 0x00000000FFFFFFFFULL;
-
-        // MOVK Rd, imm << 0
-        if ((Val & 0xFFFF) == Val)
-          rewriteMOVI(Operands, "movz", Val, 0, getContext());
-
-        // MOVK Rd, imm << 16
-        else if ((Val & 0xFFFF0000ULL) == Val)
-          rewriteMOVI(Operands, "movz", Val, 16, getContext());
-
-        // MOVK Rd, imm << 32
-        else if ((Val & 0xFFFF00000000ULL) == Val)
-          rewriteMOVI(Operands, "movz", Val, 32, getContext());
-
-        // MOVK Rd, imm << 48
-        else if ((Val & 0xFFFF000000000000ULL) == Val)
-          rewriteMOVI(Operands, "movz", Val, 48, getContext());
-
-        // MOVN Rd, (~imm << 0)
-        else if ((NVal & 0xFFFFULL) == NVal)
-          rewriteMOVI(Operands, "movn", NVal, 0, getContext());
-
-        // MOVN Rd, ~(imm << 16)
-        else if ((NVal & 0xFFFF0000ULL) == NVal)
-          rewriteMOVI(Operands, "movn", NVal, 16, getContext());
-
-        // MOVN Rd, ~(imm << 32)
-        else if ((NVal & 0xFFFF00000000ULL) == NVal)
-          rewriteMOVI(Operands, "movn", NVal, 32, getContext());
-
-        // MOVN Rd, ~(imm << 48)
-        else if ((NVal & 0xFFFF000000000000ULL) == NVal)
-          rewriteMOVI(Operands, "movn", NVal, 48, getContext());
-      }
-    } else if (Op1->isReg() && Op2->isReg()) {
-      // reg->reg move.
-      unsigned Reg1 = Op1->getReg();
-      unsigned Reg2 = Op2->getReg();
-      if ((Reg1 == ARM64::SP &&
-           ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(Reg2)) ||
-          (Reg2 == ARM64::SP &&
-           ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(Reg1)) ||
-          (Reg1 == ARM64::WSP &&
-           ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(Reg2)) ||
-          (Reg2 == ARM64::WSP &&
-           ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(Reg1)))
-        rewriteMOVRSP(Operands, getContext());
-      else
-        rewriteMOVR(Operands, getContext());
-    }
-  } else if (NumOperands == 4) {
-    if (Tok == "add" || Tok == "adds" || Tok == "sub" || Tok == "subs") {
-      // Handle the uimm24 immediate form, where the shift is not specified.
-      ARM64Operand *Op3 = static_cast<ARM64Operand *>(Operands[3]);
-      if (Op3->isImm()) {
-        if (const MCConstantExpr *CE =
-                dyn_cast<MCConstantExpr>(Op3->getImm())) {
-          uint64_t Val = CE->getValue();
-          if (Val >= (1 << 24)) {
-            Error(IDLoc, "immediate value is too large");
-            return true;
-          }
-          if (Val < (1 << 12)) {
-            Operands.push_back(ARM64Operand::CreateShifter(
-                ARM64_AM::LSL, 0, IDLoc, IDLoc, getContext()));
-          } else if ((Val & 0xfff) == 0) {
-            delete Operands[3];
-            CE = MCConstantExpr::Create(Val >> 12, getContext());
-            Operands[3] =
-                ARM64Operand::CreateImm(CE, IDLoc, IDLoc, getContext());
-            Operands.push_back(ARM64Operand::CreateShifter(
-                ARM64_AM::LSL, 12, IDLoc, IDLoc, getContext()));
-          } else {
-            Error(IDLoc, "immediate value is too large");
-            return true;
-          }
+    ARM64Operand *Op3 = static_cast<ARM64Operand *>(Operands[3]);
+    if (Op2->isReg() && Op3->isImm()) {
+      const MCConstantExpr *Op3CE = dyn_cast<MCConstantExpr>(Op3->getImm());
+      if (Op3CE) {
+        uint64_t Op3Val = Op3CE->getValue();
+        uint64_t NewOp3Val = 0;
+        uint64_t NewOp4Val = 0;
+        if (ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
+                Op2->getReg())) {
+          NewOp3Val = (32 - Op3Val) & 0x1f;
+          NewOp4Val = 31 - Op3Val;
         } else {
-          Operands.push_back(ARM64Operand::CreateShifter(
-              ARM64_AM::LSL, 0, IDLoc, IDLoc, getContext()));
+          NewOp3Val = (64 - Op3Val) & 0x3f;
+          NewOp4Val = 63 - Op3Val;
         }
-      }
 
-      // FIXME: Horible hack to handle the LSL -> UBFM alias.
-    } else if (NumOperands == 4 && Tok == "lsl") {
-      ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-      ARM64Operand *Op3 = static_cast<ARM64Operand *>(Operands[3]);
-      if (Op2->isReg() && Op3->isImm()) {
-        const MCConstantExpr *Op3CE = dyn_cast<MCConstantExpr>(Op3->getImm());
-        if (Op3CE) {
-          uint64_t Op3Val = Op3CE->getValue();
-          uint64_t NewOp3Val = 0;
-          uint64_t NewOp4Val = 0;
-          if (ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
-                  Op2->getReg())) {
-            NewOp3Val = (32 - Op3Val) & 0x1f;
-            NewOp4Val = 31 - Op3Val;
-          } else {
-            NewOp3Val = (64 - Op3Val) & 0x3f;
-            NewOp4Val = 63 - Op3Val;
-          }
+        const MCExpr *NewOp3 = MCConstantExpr::Create(NewOp3Val, getContext());
+        const MCExpr *NewOp4 = MCConstantExpr::Create(NewOp4Val, getContext());
 
-          const MCExpr *NewOp3 =
-              MCConstantExpr::Create(NewOp3Val, getContext());
-          const MCExpr *NewOp4 =
-              MCConstantExpr::Create(NewOp4Val, getContext());
-
-          Operands[0] = ARM64Operand::CreateToken(
-              "ubfm", false, Op->getStartLoc(), getContext());
-          Operands[3] = ARM64Operand::CreateImm(NewOp3, Op3->getStartLoc(),
-                                                Op3->getEndLoc(), getContext());
-          Operands.push_back(ARM64Operand::CreateImm(
-              NewOp4, Op3->getStartLoc(), Op3->getEndLoc(), getContext()));
-          delete Op3;
-          delete Op;
-        }
-      }
-
-      // FIXME: Horrible hack to handle the optional LSL shift for vector
-      //        instructions.
-    } else if (NumOperands == 4 && (Tok == "bic" || Tok == "orr")) {
-      ARM64Operand *Op1 = static_cast<ARM64Operand *>(Operands[1]);
-      ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-      ARM64Operand *Op3 = static_cast<ARM64Operand *>(Operands[3]);
-      if ((Op1->isToken() && Op2->isVectorReg() && Op3->isImm()) ||
-          (Op1->isVectorReg() && Op2->isToken() && Op3->isImm()))
-        Operands.push_back(ARM64Operand::CreateShifter(ARM64_AM::LSL, 0, IDLoc,
-                                                       IDLoc, getContext()));
-    } else if (NumOperands == 4 && (Tok == "movi" || Tok == "mvni")) {
-      ARM64Operand *Op1 = static_cast<ARM64Operand *>(Operands[1]);
-      ARM64Operand *Op2 = static_cast<ARM64Operand *>(Operands[2]);
-      ARM64Operand *Op3 = static_cast<ARM64Operand *>(Operands[3]);
-      if ((Op1->isToken() && Op2->isVectorReg() && Op3->isImm()) ||
-          (Op1->isVectorReg() && Op2->isToken() && Op3->isImm())) {
-        StringRef Suffix = Op1->isToken() ? Op1->getToken() : Op2->getToken();
-        // Canonicalize on lower-case for ease of comparison.
-        std::string CanonicalSuffix = Suffix.lower();
-        if (Tok != "movi" ||
-            (CanonicalSuffix != ".1d" && CanonicalSuffix != ".2d" &&
-             CanonicalSuffix != ".8b" && CanonicalSuffix != ".16b"))
-          Operands.push_back(ARM64Operand::CreateShifter(
-              ARM64_AM::LSL, 0, IDLoc, IDLoc, getContext()));
+        Operands[0] = ARM64Operand::CreateToken(
+            "ubfm", false, Op->getStartLoc(), getContext());
+        Operands[3] = ARM64Operand::CreateImm(NewOp3, Op3->getStartLoc(),
+                                              Op3->getEndLoc(), getContext());
+        Operands.push_back(ARM64Operand::CreateImm(
+            NewOp4, Op3->getStartLoc(), Op3->getEndLoc(), getContext()));
+        delete Op3;
+        delete Op;
       }
     }
   } else if (NumOperands == 5) {
@@ -4052,6 +3810,20 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
           uint64_t Op3Val = Op3CE->getValue();
           uint64_t Op4Val = Op4CE->getValue();
 
+          uint64_t RegWidth = 0;
+          if (ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(
+              Op1->getReg()))
+            RegWidth = 64;
+          else
+            RegWidth = 32;
+
+          if (Op3Val >= RegWidth)
+            return Error(Op3->getStartLoc(),
+                         "expected integer in range [0, 31]");
+          if (Op4Val < 1 || Op4Val > RegWidth)
+            return Error(Op4->getStartLoc(),
+                         "expected integer in range [1, 32]");
+
           uint64_t NewOp3Val = 0;
           if (ARM64MCRegisterClasses[ARM64::GPR32allRegClassID].contains(
                   Op1->getReg()))
@@ -4060,6 +3832,10 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
             NewOp3Val = (64 - Op3Val) & 0x3f;
 
           uint64_t NewOp4Val = Op4Val - 1;
+
+          if (NewOp3Val != 0 && NewOp4Val >= NewOp3Val)
+            return Error(Op4->getStartLoc(),
+                         "requested insert overflows register");
 
           const MCExpr *NewOp3 =
               MCConstantExpr::Create(NewOp3Val, getContext());
@@ -4102,28 +3878,45 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
         if (Op3CE && Op4CE) {
           uint64_t Op3Val = Op3CE->getValue();
           uint64_t Op4Val = Op4CE->getValue();
+
+          uint64_t RegWidth = 0;
+          if (ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(
+              Op1->getReg()))
+            RegWidth = 64;
+          else
+            RegWidth = 32;
+
+          if (Op3Val >= RegWidth)
+            return Error(Op3->getStartLoc(),
+                         "expected integer in range [0, 31]");
+          if (Op4Val < 1 || Op4Val > RegWidth)
+            return Error(Op4->getStartLoc(),
+                         "expected integer in range [1, 32]");
+
           uint64_t NewOp4Val = Op3Val + Op4Val - 1;
 
-          if (NewOp4Val >= Op3Val) {
-            const MCExpr *NewOp4 =
-                MCConstantExpr::Create(NewOp4Val, getContext());
-            Operands[4] = ARM64Operand::CreateImm(
-                NewOp4, Op4->getStartLoc(), Op4->getEndLoc(), getContext());
-            if (Tok == "bfxil")
-              Operands[0] = ARM64Operand::CreateToken(
-                  "bfm", false, Op->getStartLoc(), getContext());
-            else if (Tok == "sbfx")
-              Operands[0] = ARM64Operand::CreateToken(
-                  "sbfm", false, Op->getStartLoc(), getContext());
-            else if (Tok == "ubfx")
-              Operands[0] = ARM64Operand::CreateToken(
-                  "ubfm", false, Op->getStartLoc(), getContext());
-            else
-              llvm_unreachable("No valid mnemonic for alias?");
+          if (NewOp4Val >= RegWidth || NewOp4Val < Op3Val)
+            return Error(Op4->getStartLoc(),
+                         "requested extract overflows register");
 
-            delete Op;
-            delete Op4;
-          }
+          const MCExpr *NewOp4 =
+              MCConstantExpr::Create(NewOp4Val, getContext());
+          Operands[4] = ARM64Operand::CreateImm(
+              NewOp4, Op4->getStartLoc(), Op4->getEndLoc(), getContext());
+          if (Tok == "bfxil")
+            Operands[0] = ARM64Operand::CreateToken(
+                "bfm", false, Op->getStartLoc(), getContext());
+          else if (Tok == "sbfx")
+            Operands[0] = ARM64Operand::CreateToken(
+                "sbfm", false, Op->getStartLoc(), getContext());
+          else if (Tok == "ubfx")
+            Operands[0] = ARM64Operand::CreateToken(
+                "ubfm", false, Op->getStartLoc(), getContext());
+          else
+            llvm_unreachable("No valid mnemonic for alias?");
+
+          delete Op;
+          delete Op4;
         }
       }
     }
@@ -4163,9 +3956,8 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       delete Op;
     }
   }
-  // FIXME: Likewise for [su]xt[bh] with a Xd dst operand
-  else if (NumOperands == 3 &&
-           (Tok == "sxtb" || Tok == "uxtb" || Tok == "sxth" || Tok == "uxth")) {
+  // FIXME: Likewise for sxt[bh] with a Xd dst operand
+  else if (NumOperands == 3 && (Tok == "sxtb" || Tok == "sxth")) {
     ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[1]);
     if (Op->isReg() &&
         ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(
@@ -4176,6 +3968,23 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       if (Op->isReg()) {
         unsigned Reg = getXRegFromWReg(Op->getReg());
         Operands[2] = ARM64Operand::CreateReg(Reg, false, Op->getStartLoc(),
+                                              Op->getEndLoc(), getContext());
+        delete Op;
+      }
+    }
+  }
+  // FIXME: Likewise for uxt[bh] with a Xd dst operand
+  else if (NumOperands == 3 && (Tok == "uxtb" || Tok == "uxth")) {
+    ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[1]);
+    if (Op->isReg() &&
+        ARM64MCRegisterClasses[ARM64::GPR64allRegClassID].contains(
+            Op->getReg())) {
+      // The source register can be Wn here, but the matcher expects a
+      // GPR32. Twiddle it here if necessary.
+      ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[1]);
+      if (Op->isReg()) {
+        unsigned Reg = getWRegFromXReg(Op->getReg());
+        Operands[1] = ARM64Operand::CreateReg(Reg, false, Op->getStartLoc(),
                                               Op->getEndLoc(), getContext());
         delete Op;
       }
@@ -4307,17 +4116,11 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     if (Operands.size() == ErrorInfo + 1 &&
         !((ARM64Operand *)Operands[ErrorInfo])->isImm() &&
         !Tok.startswith("stur") && !Tok.startswith("ldur")) {
-      // whether we want an Indexed64 or Indexed32 diagnostic depends on
-      // the register class of the previous operand. Default to 64 in case
-      // we see something unexpected.
-      MatchResult = Match_InvalidMemoryIndexed64;
-      if (ErrorInfo) {
-        ARM64Operand *PrevOp = (ARM64Operand *)Operands[ErrorInfo - 1];
-        if (PrevOp->isReg() &&
-            ARM64MCRegisterClasses[ARM64::GPR32RegClassID].contains(
-                PrevOp->getReg()))
-          MatchResult = Match_InvalidMemoryIndexed32;
-      }
+      // FIXME: Here we use a vague diagnostic for memory operand in many
+      // instructions of various formats. This diagnostic can be more accurate
+      // if splitting memory operand into many smaller operands to help
+      // diagnose.
+      MatchResult = Match_InvalidMemoryIndexed;
     }
     SMLoc ErrorLoc = ((ARM64Operand *)Operands[ErrorInfo])->getStartLoc();
     if (ErrorLoc == SMLoc())
@@ -4333,16 +4136,32 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
         ((ARM64Operand *)Operands[ErrorInfo + 1])->isTokenEqual("!"))
       MatchResult = Match_InvalidMemoryIndexedSImm9;
   // FALL THROUGH
+  case Match_AddSubRegExtendSmall:
+  case Match_AddSubRegExtendLarge:
+  case Match_AddSubSecondSource:
+  case Match_LogicalSecondSource:
+  case Match_AddSubRegShift32:
+  case Match_AddSubRegShift64:
   case Match_InvalidMemoryIndexed8:
   case Match_InvalidMemoryIndexed16:
   case Match_InvalidMemoryIndexed32SImm7:
   case Match_InvalidMemoryIndexed64SImm7:
   case Match_InvalidMemoryIndexed128SImm7:
+  case Match_InvalidImm0_7:
+  case Match_InvalidImm0_15:
+  case Match_InvalidImm0_31:
+  case Match_InvalidImm0_63:
   case Match_InvalidImm1_8:
   case Match_InvalidImm1_16:
   case Match_InvalidImm1_32:
   case Match_InvalidImm1_64:
-  case Match_InvalidLabel: {
+  case Match_InvalidIndexB:
+  case Match_InvalidIndexH:
+  case Match_InvalidIndexS:
+  case Match_InvalidIndexD:
+  case Match_InvalidLabel:
+  case Match_MSR:
+  case Match_MRS: {
     // Any time we get here, there's nothing fancy to do. Just get the
     // operand SMLoc and display the diagnostic.
     SMLoc ErrorLoc = ((ARM64Operand *)Operands[ErrorInfo])->getStartLoc();

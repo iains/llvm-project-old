@@ -153,9 +153,9 @@ static bool parseDefsymAsAlias(StringRef opt, StringRef &sym,
 }
 
 llvm::ErrorOr<StringRef> ELFFileNode::getPath(const LinkingContext &) const {
-  if (!_attributes._isDashlPrefix)
-    return _path;
-  return _elfLinkingContext.searchLibrary(_path);
+  if (_attributes._isDashlPrefix)
+    return _elfLinkingContext.searchLibrary(_path);
+  return _elfLinkingContext.searchFile(_path, _attributes._isSysRooted);
 }
 
 std::string ELFFileNode::errStr(error_code errc) {
@@ -198,6 +198,10 @@ getArchType(const llvm::Triple &triple, StringRef value) {
       return llvm::Triple::x86;
     if (value == "elf_x86_64")
       return llvm::Triple::x86_64;
+    return llvm::None;
+  case llvm::Triple::mipsel:
+    if (value == "elf32ltsmip")
+      return llvm::Triple::mipsel;
     return llvm::None;
   default:
     return llvm::None;
@@ -563,13 +567,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
   if (!ctx->validate(diagnostics))
     return false;
 
-  // Normalize the InputGraph.
-  inputGraph->normalize();
-
   ctx->setInputGraph(std::move(inputGraph));
-
   context.swap(ctx);
-
   return true;
 }
 
