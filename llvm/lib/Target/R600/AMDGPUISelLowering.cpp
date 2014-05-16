@@ -222,10 +222,8 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   static const MVT::SimpleValueType IntTypes[] = {
     MVT::v2i32, MVT::v4i32
   };
-  const size_t NumIntTypes = array_lengthof(IntTypes);
 
-  for (unsigned int x  = 0; x < NumIntTypes; ++x) {
-    MVT::SimpleValueType VT = IntTypes[x];
+  for (MVT VT : IntTypes) {
     //Expand the following operations for the current type by default
     setOperationAction(ISD::ADD,  VT, Expand);
     setOperationAction(ISD::AND,  VT, Expand);
@@ -249,10 +247,8 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   static const MVT::SimpleValueType FloatTypes[] = {
     MVT::v2f32, MVT::v4f32
   };
-  const size_t NumFloatTypes = array_lengthof(FloatTypes);
 
-  for (unsigned int x = 0; x < NumFloatTypes; ++x) {
-    MVT::SimpleValueType VT = FloatTypes[x];
+  for (MVT VT : FloatTypes) {
     setOperationAction(ISD::FABS, VT, Expand);
     setOperationAction(ISD::FADD, VT, Expand);
     setOperationAction(ISD::FCOS, VT, Expand);
@@ -1223,7 +1219,7 @@ SDValue AMDGPUTargetLowering::LowerSIGN_EXTEND_INREG(SDValue Op,
 static bool isU24(SDValue Op, SelectionDAG &DAG) {
   APInt KnownZero, KnownOne;
   EVT VT = Op.getValueType();
-  DAG.ComputeMaskedBits(Op, KnownZero, KnownOne);
+  DAG.computeKnownBits(Op, KnownZero, KnownOne);
 
   return (VT.getSizeInBits() - KnownZero.countLeadingOnes()) <= 24;
 }
@@ -1416,22 +1412,22 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   }
 }
 
-static void computeMaskedBitsForMinMax(const SDValue Op0,
-                                       const SDValue Op1,
-                                       APInt &KnownZero,
-                                       APInt &KnownOne,
-                                       const SelectionDAG &DAG,
-                                       unsigned Depth) {
+static void computeKnownBitsForMinMax(const SDValue Op0,
+                                      const SDValue Op1,
+                                      APInt &KnownZero,
+                                      APInt &KnownOne,
+                                      const SelectionDAG &DAG,
+                                      unsigned Depth) {
   APInt Op0Zero, Op0One;
   APInt Op1Zero, Op1One;
-  DAG.ComputeMaskedBits(Op0, Op0Zero, Op0One, Depth);
-  DAG.ComputeMaskedBits(Op1, Op1Zero, Op1One, Depth);
+  DAG.computeKnownBits(Op0, Op0Zero, Op0One, Depth);
+  DAG.computeKnownBits(Op1, Op1Zero, Op1One, Depth);
 
   KnownZero = Op0Zero & Op1Zero;
   KnownOne = Op0One & Op1One;
 }
 
-void AMDGPUTargetLowering::computeMaskedBitsForTargetNode(
+void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
   const SDValue Op,
   APInt &KnownZero,
   APInt &KnownOne,
@@ -1448,8 +1444,8 @@ void AMDGPUTargetLowering::computeMaskedBitsForTargetNode(
     case AMDGPUIntrinsic::AMDGPU_umax:
     case AMDGPUIntrinsic::AMDGPU_imin:
     case AMDGPUIntrinsic::AMDGPU_umin:
-      computeMaskedBitsForMinMax(Op.getOperand(1), Op.getOperand(2),
-                                 KnownZero, KnownOne, DAG, Depth);
+      computeKnownBitsForMinMax(Op.getOperand(1), Op.getOperand(2),
+                                KnownZero, KnownOne, DAG, Depth);
       break;
     default:
       break;
@@ -1461,8 +1457,8 @@ void AMDGPUTargetLowering::computeMaskedBitsForTargetNode(
   case AMDGPUISD::UMAX:
   case AMDGPUISD::SMIN:
   case AMDGPUISD::UMIN:
-    computeMaskedBitsForMinMax(Op.getOperand(0), Op.getOperand(1),
-                               KnownZero, KnownOne, DAG, Depth);
+    computeKnownBitsForMinMax(Op.getOperand(0), Op.getOperand(1),
+                              KnownZero, KnownOne, DAG, Depth);
     break;
   default:
     break;

@@ -1408,6 +1408,16 @@ def V_MOV_I1 : InstSI <
   "", [(set i1:$dst, (imm:$src))]
 >;
 
+def V_AND_I1 : InstSI <
+   (outs VReg_1:$dst), (ins VReg_1:$src0, VReg_1:$src1), "",
+   [(set i1:$dst, (and i1:$src0, i1:$src1))]
+>;
+
+def V_OR_I1 : InstSI <
+   (outs VReg_1:$dst), (ins VReg_1:$src0, VReg_1:$src1), "",
+   [(set i1:$dst, (or i1:$src0, i1:$src1))]
+>;
+
 def LOAD_CONST : AMDGPUShaderInst <
   (outs GPRF32:$dst),
   (ins i32imm:$src),
@@ -1421,37 +1431,20 @@ def LOAD_CONST : AMDGPUShaderInst <
 let mayLoad = 1, mayStore = 1, hasSideEffects = 1,
     Uses = [EXEC], Defs = [EXEC] in {
 
-let usesCustomInserter = 1 in {
-
-def SI_IF_NON_TERM : InstSI <
-  (outs SReg_64:$dst),
-  (ins SReg_64:$vcc, brtarget:$target), "",
-  [(set i64:$dst, (int_SI_if i1:$vcc, bb:$target))]
->;
-
-def SI_ELSE_NON_TERM : InstSI <
-  (outs SReg_64:$dst),
-  (ins SReg_64:$src, brtarget:$target),
-  "",
-  [(set i64:$dst, (int_SI_else i64:$src, bb:$target))]
-> {
-  let Constraints = "$src = $dst";
-}
-
-} // usesCustomInserter = 1
-
 let isBranch = 1, isTerminator = 1 in {
 
 def SI_IF: InstSI <
   (outs SReg_64:$dst),
   (ins SReg_64:$vcc, brtarget:$target),
-  "", []
+  "",
+  [(set i64:$dst, (int_SI_if i1:$vcc, bb:$target))]
 >;
 
 def SI_ELSE : InstSI <
   (outs SReg_64:$dst),
   (ins SReg_64:$src, brtarget:$target),
-  "", []
+  "",
+  [(set i64:$dst, (int_SI_else i64:$src, bb:$target))]
 > {
   let Constraints = "$src = $dst";
 }
@@ -1679,16 +1672,6 @@ def : Pat <
 //===----------------------------------------------------------------------===//
 // SOP2 Patterns
 //===----------------------------------------------------------------------===//
-
-def : Pat <
-  (i1 (and i1:$src0, i1:$src1)),
-  (S_AND_B64 $src0, $src1)
->;
-
-def : Pat <
-  (i1 (or i1:$src0, i1:$src1)),
-  (S_OR_B64 $src0, $src1)
->;
 
 def : Pat <
   (i1 (xor i1:$src0, i1:$src1)),

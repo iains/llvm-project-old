@@ -33,7 +33,6 @@ using namespace llvm;
 //
 
 namespace llvm {
-  bool HasDivModLibcall;
   bool AsmVerbosityDefault(false);
 }
 
@@ -55,10 +54,6 @@ TargetMachine::TargetMachine(const Target &T,
                              const TargetOptions &Options)
   : TheTarget(T), TargetTriple(TT), TargetCPU(CPU), TargetFS(FS),
     CodeGenInfo(nullptr), AsmInfo(nullptr),
-    MCRelaxAll(false),
-    MCNoExecStack(false),
-    MCSaveTempLabels(false),
-    MCUseDwarfDirectory(false),
     RequireStructuredCFG(false),
     Options(Options) {
 }

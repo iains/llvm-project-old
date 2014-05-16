@@ -9764,20 +9764,12 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   if (const FunctionProtoType *FPT = FD->getType()->getAs<FunctionProtoType>())
     ResolveExceptionSpec(D->getLocation(), FPT);
 
-  // Checking attributes of current function definition
-  // dllimport attribute.
-  DLLImportAttr *DA = FD->getAttr<DLLImportAttr>();
-  if (DA && (!FD->hasAttr<DLLExportAttr>())) {
-    // dllimport attribute cannot be directly applied to definition.
-    // Microsoft accepts dllimport for functions defined within class scope. 
-    if (!DA->isInherited() &&
-        !(LangOpts.MicrosoftExt && FD->getLexicalDeclContext()->isRecord())) {
-      Diag(FD->getLocation(),
-           diag::err_attribute_can_be_applied_only_to_symbol_declaration)
-        << DA;
-      FD->setInvalidDecl();
-      return D;
-    }
+  // dllimport cannot be applied to non-inline function definitions.
+  if (FD->hasAttr<DLLImportAttr>() && !FD->isInlined()) {
+    assert(!FD->hasAttr<DLLExportAttr>());
+    Diag(FD->getLocation(), diag::err_attribute_dllimport_function_definition);
+    FD->setInvalidDecl();
+    return D;
   }
   // We want to attach documentation to original Decl (which might be
   // a function template).
@@ -10919,14 +10911,17 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
         }
 
         if (!Invalid) {
-          // If this is a use, just return the declaration we found.
+          // If this is a use, just return the declaration we found, unless
+          // we have attributes.
 
           // FIXME: In the future, return a variant or some other clue
           // for the consumer of this Decl to know it doesn't own it.
           // For our current ASTs this shouldn't be a problem, but will
           // need to be changed with DeclGroups.
-          if ((TUK == TUK_Reference && (!PrevTagDecl->getFriendObjectKind() ||
-               getLangOpts().MicrosoftExt)) || TUK == TUK_Friend)
+          if (!Attr &&
+              ((TUK == TUK_Reference &&
+                (!PrevTagDecl->getFriendObjectKind() || getLangOpts().MicrosoftExt))
+               || TUK == TUK_Friend))
             return PrevTagDecl;
 
           // Diagnose attempts to redefine a tag.
@@ -10978,7 +10973,15 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
             }
 
             // Okay, this is definition of a previously declared or referenced
-            // tag PrevDecl. We're going to create a new Decl for it.
+            // tag. We're going to create a new Decl for it.
+          }
+
+          // Okay, we're going to make a redeclaration.  If this is some kind
+          // of reference, make sure we build the redeclaration in the same DC
+          // as the original, and ignore the current access specifier.
+          if (TUK == TUK_Friend || TUK == TUK_Reference) {
+            SearchDC = PrevTagDecl->getDeclContext();
+            AS = AS_none;
           }
         }
         // If we get here we have (another) forward declaration or we

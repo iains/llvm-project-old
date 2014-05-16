@@ -131,6 +131,8 @@ endif()
 
 if("${COMPILER_RT_TEST_COMPILER}" MATCHES "clang[+]*$")
   set(COMPILER_RT_TEST_COMPILER_ID Clang)
+elseif("${COMPILER_RT_TEST_COMPILER}" MATCHES "clang-cl.exe$")
+  set(COMPILER_RT_TEST_COMPILER_ID Clang)
 else()
   set(COMPILER_RT_TEST_COMPILER_ID GNU)
 endif()
@@ -221,7 +223,8 @@ endif()
 # We support running instrumented tests when we're not cross compiling
 # and target a UNIX-like system or Windows.
 # We can run tests on Android even when we are cross-compiling.
-if(("${CMAKE_HOST_SYSTEM}" STREQUAL "${CMAKE_SYSTEM}" AND (UNIX OR MSVC)) OR ANDROID)
+if(("${CMAKE_HOST_SYSTEM}" STREQUAL "${CMAKE_SYSTEM}" AND (UNIX OR MSVC)) OR ANDROID
+   OR COMPILER_RT_EMULATOR)
   option(COMPILER_RT_CAN_EXECUTE_TESTS "Can we execute instrumented tests" ON)
 else()
   option(COMPILER_RT_CAN_EXECUTE_TESTS "Can we execute instrumented tests" OFF)

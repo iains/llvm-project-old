@@ -57,7 +57,9 @@ public:
   RecordArgABI getRecordArgABI(const CXXRecordDecl *RD) const override {
     // Structures with either a non-trivial destructor or a non-trivial
     // copy constructor are always indirect.
-    if (!RD->hasTrivialDestructor() || RD->hasNonTrivialCopyConstructor())
+    // FIXME: Use canCopyArgument() when it is fixed to handle lazily declared
+    // special members.
+    if (RD->hasNonTrivialDestructor() || RD->hasNonTrivialCopyConstructor())
       return RAA_Indirect;
     return RAA_Default;
   }
@@ -763,12 +765,12 @@ bool ItaniumCXXABI::classifyReturnType(CGFunctionInfo &FI) const {
     return false;
 
   // Return indirectly if we have a non-trivial copy ctor or non-trivial dtor.
+  // FIXME: Use canCopyArgument() when it is fixed to handle lazily declared
+  // special members.
   if (RD->hasNonTrivialDestructor() || RD->hasNonTrivialCopyConstructor()) {
     FI.getReturnInfo() = ABIArgInfo::getIndirect(0, /*ByVal=*/false);
     return true;
   }
-
-  // Otherwise, use the normal C ABI rules.
   return false;
 }
 
@@ -1625,9 +1627,9 @@ void ItaniumCXXABI::EmitThreadLocalInitFuncs(
     if (VD->hasDefinition()) {
       InitIsInitFunc = true;
       if (InitFunc)
-        Init =
-            new llvm::GlobalAlias(InitFunc->getType(), Var->getLinkage(),
-                                  InitFnName.str(), InitFunc, &CGM.getModule());
+        Init = new llvm::GlobalAlias(InitFunc->getType()->getElementType(),
+                                     Var->getLinkage(), InitFnName.str(),
+                                     InitFunc, &CGM.getModule());
     } else {
       // Emit a weak global function referring to the initialization function.
       // This function will not exist if the TU defining the thread_local

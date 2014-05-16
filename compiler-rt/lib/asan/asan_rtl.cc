@@ -80,7 +80,7 @@ static const char *MaybeCallAsanDefaultOptions() {
   return (&__asan_default_options) ? __asan_default_options() : "";
 }
 
-static const char *MaybeUseAsanDefaultOptionsCompileDefiniton() {
+static const char *MaybeUseAsanDefaultOptionsCompileDefinition() {
 #ifdef ASAN_DEFAULT_OPTIONS
 // Stringize the macro value.
 # define ASAN_STRINGIZE(x) #x
@@ -281,7 +281,7 @@ void InitializeFlags(Flags *f, const char *env) {
   f->detect_container_overflow = true;
 
   // Override from compile definition.
-  ParseFlagsFromString(f, MaybeUseAsanDefaultOptionsCompileDefiniton());
+  ParseFlagsFromString(f, MaybeUseAsanDefaultOptionsCompileDefinition());
 
   // Override from user-specified string.
   ParseFlagsFromString(f, MaybeCallAsanDefaultOptions());
@@ -552,10 +552,16 @@ static void PrintAddressSpaceLayout() {
 }
 
 static void AsanInitInternal() {
-  if (asan_inited) return;
+  if (LIKELY(asan_inited)) return;
   SanitizerToolName = "AddressSanitizer";
   CHECK(!asan_init_is_running && "ASan init calls itself!");
   asan_init_is_running = true;
+
+  // Initialize flags. This must be done early, because most of the
+  // initialization steps look at flags().
+  const char *options = GetEnv("ASAN_OPTIONS");
+  InitializeFlags(flags(), options);
+
   InitializeHighMemEnd();
 
   // Make sure we are not statically linked.
@@ -565,11 +571,6 @@ static void AsanInitInternal() {
   SetDieCallback(AsanDie);
   SetCheckFailedCallback(AsanCheckFailed);
   SetPrintfAndReportCallback(AppendToErrorMessageBuffer);
-
-  // Initialize flags. This must be done early, because most of the
-  // initialization steps look at flags().
-  const char *options = GetEnv("ASAN_OPTIONS");
-  InitializeFlags(flags(), options);
 
   if (!flags()->start_deactivated)
     ParseExtraActivationFlags();
@@ -707,7 +708,7 @@ public:  // NOLINT
   AsanInitializer() {
     AsanCheckIncompatibleRT();
     AsanCheckDynamicRTPrereqs();
-    if (!asan_inited)
+    if (UNLIKELY(!asan_inited))
       __asan_init();
   }
 };

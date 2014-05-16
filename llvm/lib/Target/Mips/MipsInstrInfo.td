@@ -316,6 +316,11 @@ def simm16      : Operand<i32> {
   let DecoderMethod= "DecodeSimm16";
 }
 
+def simm19_lsl2 : Operand<i32> {
+  let EncoderMethod = "getSimm19Lsl2Encoding";
+  let DecoderMethod = "DecodeSimm19Lsl2";
+}
+
 def simm20      : Operand<i32> {
 }
 
@@ -335,6 +340,14 @@ def uimmz       : Operand<i32> {
 }
 
 // Unsigned Operand
+def uimm2 : Operand<i32> {
+  let PrintMethod = "printUnsignedImm";
+}
+
+def uimm3 : Operand<i32> {
+  let PrintMethod = "printUnsignedImm";
+}
+
 def uimm5       : Operand<i32> {
   let PrintMethod = "printUnsignedImm";
 }
@@ -1305,13 +1318,13 @@ def  : MipsInstAlias<"sll $rd, $rt, $rs",
                      (SLLV GPR32Opnd:$rd, GPR32Opnd:$rt, GPR32Opnd:$rs), 0>;
 def : MipsInstAlias<"sub, $rd, $rs, $imm",
                     (ADDi GPR32Opnd:$rd, GPR32Opnd:$rs,
-                          InvertedImOperand:$imm)>;
+                          InvertedImOperand:$imm), 0>;
 def : MipsInstAlias<"sub $rs, $imm",
                     (ADDi GPR32Opnd:$rs, GPR32Opnd:$rs, InvertedImOperand:$imm),
                     0>;
 def : MipsInstAlias<"subu, $rd, $rs, $imm",
                     (ADDiu GPR32Opnd:$rd, GPR32Opnd:$rs,
-                           InvertedImOperand:$imm)>;
+                           InvertedImOperand:$imm), 0>;
 def : MipsInstAlias<"subu $rs, $imm", (ADDiu GPR32Opnd:$rs, GPR32Opnd:$rs,
                                              InvertedImOperand:$imm), 0>;
 def : MipsInstAlias<"sra $rd, $rt, $rs",

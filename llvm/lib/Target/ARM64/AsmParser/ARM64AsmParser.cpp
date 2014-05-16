@@ -52,7 +52,7 @@ private:
   SMLoc getLoc() const { return Parser.getTok().getLoc(); }
 
   bool parseSysAlias(StringRef Name, SMLoc NameLoc, OperandVector &Operands);
-  unsigned parseCondCodeString(StringRef Cond);
+  ARM64CC::CondCode parseCondCodeString(StringRef Cond);
   bool parseCondCode(OperandVector &Operands, bool invertCondCode);
   int tryParseRegister();
   int tryMatchVectorRegister(StringRef &Kind, bool expected);
@@ -143,6 +143,7 @@ private:
   enum KindTy {
     k_Immediate,
     k_ShiftedImm,
+    k_CondCode,
     k_Memory,
     k_Register,
     k_VectorList,
@@ -187,6 +188,10 @@ private:
   struct ShiftedImmOp {
     const MCExpr *Val;
     unsigned ShiftAmount;
+  };
+
+  struct CondCodeOp {
+    ARM64CC::CondCode Code;
   };
 
   struct FPImmOp {
@@ -239,6 +244,7 @@ private:
     struct VectorIndexOp VectorIndex;
     struct ImmOp Imm;
     struct ShiftedImmOp ShiftedImm;
+    struct CondCodeOp CondCode;
     struct FPImmOp FPImm;
     struct BarrierOp Barrier;
     struct SysRegOp SysReg;
@@ -269,6 +275,9 @@ public:
       break;
     case k_ShiftedImm:
       ShiftedImm = o.ShiftedImm;
+      break;
+    case k_CondCode:
+      CondCode = o.CondCode;
       break;
     case k_FPImm:
       FPImm = o.FPImm;
@@ -333,6 +342,11 @@ public:
   unsigned getShiftedImmShift() const {
     assert(Kind == k_ShiftedImm && "Invalid access!");
     return ShiftedImm.ShiftAmount;
+  }
+
+  ARM64CC::CondCode getCondCode() const {
+    assert(Kind == k_CondCode && "Invalid access!");
+    return CondCode.Code;
   }
 
   unsigned getFPImm() const {
@@ -604,6 +618,7 @@ public:
     const MCConstantExpr *CE = cast<MCConstantExpr>(Expr);
     return CE->getValue() >= 0 && CE->getValue() <= 0xfff;
   }
+  bool isCondCode() const { return Kind == k_CondCode; }
   bool isSIMDImmType10() const {
     if (!isImm())
       return false;
@@ -816,6 +831,9 @@ public:
     return VectorList.NumElements == NumElements;
   }
 
+  bool isVectorIndex1() const {
+    return Kind == k_VectorIndex && VectorIndex.Val == 1;
+  }
   bool isVectorIndexB() const {
     return Kind == k_VectorIndex && VectorIndex.Val < 16;
   }
@@ -1170,8 +1188,15 @@ public:
     Inst.addOperand(MCOperand::CreateReg(getReg()));
   }
 
-  void addVectorRegOperands(MCInst &Inst, unsigned N) const {
+  void addVectorReg64Operands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
+    assert(ARM64MCRegisterClasses[ARM64::FPR128RegClassID].contains(getReg()));
+    Inst.addOperand(MCOperand::CreateReg(ARM64::D0 + getReg() - ARM64::Q0));
+  }
+
+  void addVectorReg128Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    assert(ARM64MCRegisterClasses[ARM64::FPR128RegClassID].contains(getReg()));
     Inst.addOperand(MCOperand::CreateReg(getReg()));
   }
 
@@ -1200,6 +1225,11 @@ public:
 
     Inst.addOperand(
         MCOperand::CreateReg(FirstReg + getVectorListStart() - ARM64::Q0));
+  }
+
+  void addVectorIndex1Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateImm(getVectorIndex()));
   }
 
   void addVectorIndexBOperands(MCInst &Inst, unsigned N) const {
@@ -1239,6 +1269,11 @@ public:
       addExpr(Inst, getImm());
       Inst.addOperand(MCOperand::CreateImm(0));
     }
+  }
+
+  void addCondCodeOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateImm(getCondCode()));
   }
 
   void addAdrpLabelOperands(MCInst &Inst, unsigned N) const {
@@ -1755,6 +1790,15 @@ public:
     return Op;
   }
 
+  static ARM64Operand *CreateCondCode(ARM64CC::CondCode Code, SMLoc S, SMLoc E,
+                                      MCContext &Ctx) {
+    ARM64Operand *Op = new ARM64Operand(k_CondCode, Ctx);
+    Op->CondCode.Code = Code;
+    Op->StartLoc = S;
+    Op->EndLoc = E;
+    return Op;
+  }
+
   static ARM64Operand *CreateFPImm(unsigned Val, SMLoc S, MCContext &Ctx) {
     ARM64Operand *Op = new ARM64Operand(k_FPImm, Ctx);
     Op->FPImm.Val = Val;
@@ -1871,6 +1915,9 @@ void ARM64Operand::print(raw_ostream &OS) const {
     OS << ", lsl #" << ARM64_AM::getShiftValue(Shift) << ">";
     break;
   }
+  case k_CondCode:
+    OS << "<condcode " << getCondCode() << ">";
+    break;
   case k_Memory:
     OS << "<memory>";
     break;
@@ -2061,80 +2108,31 @@ int ARM64AsmParser::tryMatchVectorRegister(StringRef &Kind, bool expected) {
   return -1;
 }
 
-static int MatchSysCRName(StringRef Name) {
-  // Use the same layout as the tablegen'erated register name matcher. Ugly,
-  // but efficient.
-  switch (Name.size()) {
-  default:
-    break;
-  case 2:
-    if (Name[0] != 'c' && Name[0] != 'C')
-      return -1;
-    switch (Name[1]) {
-    default:
-      return -1;
-    case '0':
-      return 0;
-    case '1':
-      return 1;
-    case '2':
-      return 2;
-    case '3':
-      return 3;
-    case '4':
-      return 4;
-    case '5':
-      return 5;
-    case '6':
-      return 6;
-    case '7':
-      return 7;
-    case '8':
-      return 8;
-    case '9':
-      return 9;
-    }
-    break;
-  case 3:
-    if ((Name[0] != 'c' && Name[0] != 'C') || Name[1] != '1')
-      return -1;
-    switch (Name[2]) {
-    default:
-      return -1;
-    case '0':
-      return 10;
-    case '1':
-      return 11;
-    case '2':
-      return 12;
-    case '3':
-      return 13;
-    case '4':
-      return 14;
-    case '5':
-      return 15;
-    }
-    break;
-  }
-
-  llvm_unreachable("Unhandled SysCR operand string!");
-  return -1;
-}
-
 /// tryParseSysCROperand - Try to parse a system instruction CR operand name.
 ARM64AsmParser::OperandMatchResultTy
 ARM64AsmParser::tryParseSysCROperand(OperandVector &Operands) {
   SMLoc S = getLoc();
-  const AsmToken &Tok = Parser.getTok();
-  if (Tok.isNot(AsmToken::Identifier))
-    return MatchOperand_NoMatch;
 
-  int Num = MatchSysCRName(Tok.getString());
-  if (Num == -1)
-    return MatchOperand_NoMatch;
+  if (Parser.getTok().isNot(AsmToken::Identifier)) {
+    Error(S, "Expected cN operand where 0 <= N <= 15");
+    return MatchOperand_ParseFail;
+  }
+
+  StringRef Tok = Parser.getTok().getIdentifier();
+  if (Tok[0] != 'c' && Tok[0] != 'C') {
+    Error(S, "Expected cN operand where 0 <= N <= 15");
+    return MatchOperand_ParseFail;
+  }
+
+  uint32_t CRNum;
+  bool BadNum = Tok.drop_front().getAsInteger(10, CRNum);
+  if (BadNum || CRNum > 15) {
+    Error(S, "Expected cN operand where 0 <= N <= 15");
+    return MatchOperand_ParseFail;
+  }
 
   Parser.Lex(); // Eat identifier token.
-  Operands.push_back(ARM64Operand::CreateSysCR(Num, S, getLoc(), getContext()));
+  Operands.push_back(ARM64Operand::CreateSysCR(CRNum, S, getLoc(), getContext()));
   return MatchOperand_Success;
 }
 
@@ -2282,7 +2280,7 @@ ARM64AsmParser::tryParseFPImm(OperandVector &Operands) {
     // as we handle that special case in post-processing before matching in
     // order to use the zero register for it.
     if (Val == -1 && !RealVal.isZero()) {
-      TokError("floating point value out of range");
+      TokError("expected compatible register or floating-point constant");
       return MatchOperand_ParseFail;
     }
     Operands.push_back(ARM64Operand::CreateFPImm(Val, S, getContext()));
@@ -2382,8 +2380,8 @@ ARM64AsmParser::tryParseAddSubImm(OperandVector &Operands) {
 }
 
 /// parseCondCodeString - Parse a Condition Code string.
-unsigned ARM64AsmParser::parseCondCodeString(StringRef Cond) {
-  unsigned CC = StringSwitch<unsigned>(Cond.lower())
+ARM64CC::CondCode ARM64AsmParser::parseCondCodeString(StringRef Cond) {
+  ARM64CC::CondCode CC = StringSwitch<ARM64CC::CondCode>(Cond.lower())
                     .Case("eq", ARM64CC::EQ)
                     .Case("ne", ARM64CC::NE)
                     .Case("cs", ARM64CC::HS)
@@ -2414,7 +2412,7 @@ bool ARM64AsmParser::parseCondCode(OperandVector &Operands,
   assert(Tok.is(AsmToken::Identifier) && "Token is not an Identifier");
 
   StringRef Cond = Tok.getString();
-  unsigned CC = parseCondCodeString(Cond);
+  ARM64CC::CondCode CC = parseCondCodeString(Cond);
   if (CC == ARM64CC::Invalid)
     return TokError("invalid condition code");
   Parser.Lex(); // Eat identifier token.
@@ -2422,9 +2420,8 @@ bool ARM64AsmParser::parseCondCode(OperandVector &Operands,
   if (invertCondCode)
     CC = ARM64CC::getInvertedCondCode(ARM64CC::CondCode(CC));
 
-  const MCExpr *CCExpr = MCConstantExpr::Create(CC, getContext());
   Operands.push_back(
-      ARM64Operand::CreateImm(CCExpr, S, getLoc(), getContext()));
+      ARM64Operand::CreateCondCode(CC, S, getLoc(), getContext()));
   return false;
 }
 
@@ -2946,12 +2943,16 @@ bool ARM64AsmParser::parseMemory(OperandVector &Operands) {
   Parser.Lex(); // Eat left bracket token.
 
   const AsmToken &BaseRegTok = Parser.getTok();
+  SMLoc BaseRegLoc = BaseRegTok.getLoc();
   if (BaseRegTok.isNot(AsmToken::Identifier))
-    return Error(BaseRegTok.getLoc(), "register expected");
+    return Error(BaseRegLoc, "register expected");
 
   int64_t Reg = tryParseRegister();
   if (Reg == -1)
-    return Error(BaseRegTok.getLoc(), "register expected");
+    return Error(BaseRegLoc, "register expected");
+
+  if (!ARM64MCRegisterClasses[ARM64::GPR64spRegClassID].contains(Reg))
+    return Error(BaseRegLoc, "invalid operand for instruction");
 
   // If there is an offset expression, parse it.
   const MCExpr *OffsetExpr = nullptr;
@@ -3347,6 +3348,16 @@ bool ARM64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
     if (getLexer().is(AsmToken::Hash))
       Parser.Lex();
 
+    // Parse a negative sign
+    bool isNegative = false;
+    if (Parser.getTok().is(AsmToken::Minus)) {
+      isNegative = true;
+      // We need to consume this token only when we have a Real, otherwise
+      // we let parseSymbolicImmVal take care of it
+      if (Parser.getLexer().peekTok().is(AsmToken::Real))
+        Parser.Lex();
+    }
+
     // The only Real that should come through here is a literal #0.0 for
     // the fcmp[e] r, #0.0 instructions. They expect raw token operands,
     // so convert the value.
@@ -3358,8 +3369,8 @@ bool ARM64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
           Mnemonic != "fcmge" && Mnemonic != "fcmgt" && Mnemonic != "fcmle" &&
           Mnemonic != "fcmlt")
         return TokError("unexpected floating point literal");
-      else if (IntVal != 0)
-        return TokError("only valid floating-point immediate is #0.0");
+      else if (IntVal != 0 || isNegative)
+        return TokError("expected floating-point constant #0.0");
       Parser.Lex(); // Eat the token.
 
       Operands.push_back(
@@ -3411,8 +3422,12 @@ bool ARM64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
   StringRef Head = Name.slice(Start, Next);
 
   // IC, DC, AT, and TLBI instructions are aliases for the SYS instruction.
-  if (Head == "ic" || Head == "dc" || Head == "at" || Head == "tlbi")
-    return parseSysAlias(Head, NameLoc, Operands);
+  if (Head == "ic" || Head == "dc" || Head == "at" || Head == "tlbi") {
+    bool IsError = parseSysAlias(Head, NameLoc, Operands);
+    if (IsError && getLexer().isNot(AsmToken::EndOfStatement))
+      Parser.eatToEndOfStatement();
+    return IsError;
+  }
 
   Operands.push_back(
       ARM64Operand::CreateToken(Head, false, NameLoc, getContext()));
@@ -3426,12 +3441,13 @@ bool ARM64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
 
     SMLoc SuffixLoc = SMLoc::getFromPointer(NameLoc.getPointer() +
                                             (Head.data() - Name.data()));
-    unsigned CC = parseCondCodeString(Head);
+    ARM64CC::CondCode CC = parseCondCodeString(Head);
     if (CC == ARM64CC::Invalid)
       return Error(SuffixLoc, "invalid condition code");
-    const MCExpr *CCExpr = MCConstantExpr::Create(CC, getContext());
     Operands.push_back(
-        ARM64Operand::CreateImm(CCExpr, NameLoc, NameLoc, getContext()));
+        ARM64Operand::CreateToken(".", true, SuffixLoc, getContext()));
+    Operands.push_back(
+        ARM64Operand::CreateCondCode(CC, NameLoc, NameLoc, getContext()));
   }
 
   // Add the remaining tokens in the mnemonic.
@@ -3674,6 +3690,8 @@ bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
     return Error(Loc, "invalid operand for instruction");
   case Match_InvalidSuffix:
     return Error(Loc, "invalid type suffix for instruction");
+  case Match_InvalidCondCode:
+    return Error(Loc, "expected AArch64 condition code");
   case Match_AddSubRegExtendSmall:
     return Error(Loc,
       "expected '[su]xt[bhw]' or 'lsl' with optional integer in range [0, 4]");
@@ -3685,12 +3703,19 @@ bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
       "expected compatible register, symbol or integer in range [0, 4095]");
   case Match_LogicalSecondSource:
     return Error(Loc, "expected compatible register or logical immediate");
+  case Match_InvalidMovImm32Shift:
+    return Error(Loc, "expected 'lsl' with optional integer 0 or 16");
+  case Match_InvalidMovImm64Shift:
+    return Error(Loc, "expected 'lsl' with optional integer 0, 16, 32 or 48");
   case Match_AddSubRegShift32:
     return Error(Loc,
        "expected 'lsl', 'lsr' or 'asr' with optional integer in range [0, 31]");
   case Match_AddSubRegShift64:
     return Error(Loc,
        "expected 'lsl', 'lsr' or 'asr' with optional integer in range [0, 63]");
+  case Match_InvalidFPImm:
+    return Error(Loc,
+                 "expected compatible register or floating-point constant");
   case Match_InvalidMemoryIndexedSImm9:
     return Error(Loc, "index must be an integer in range [-256, 255].");
   case Match_InvalidMemoryIndexed32SImm7:
@@ -3719,6 +3744,10 @@ bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
     return Error(Loc, "immediate must be an integer in range [0, 31].");
   case Match_InvalidImm0_63:
     return Error(Loc, "immediate must be an integer in range [0, 63].");
+  case Match_InvalidImm0_127:
+    return Error(Loc, "immediate must be an integer in range [0, 127].");
+  case Match_InvalidImm0_65535:
+    return Error(Loc, "immediate must be an integer in range [0, 65535].");
   case Match_InvalidImm1_8:
     return Error(Loc, "immediate must be an integer in range [1, 8].");
   case Match_InvalidImm1_16:
@@ -3727,6 +3756,8 @@ bool ARM64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode) {
     return Error(Loc, "immediate must be an integer in range [1, 32].");
   case Match_InvalidImm1_64:
     return Error(Loc, "immediate must be an integer in range [1, 64].");
+  case Match_InvalidIndex1:
+    return Error(Loc, "expected lane specifier '[1]'");
   case Match_InvalidIndexB:
     return Error(Loc, "vector lane must be an integer in range [0, 15].");
   case Match_InvalidIndexH:
@@ -4007,45 +4038,6 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     }
   }
 
-  // FIXME: Horrible hack to handle the literal .d[1] vector index on
-  // FMOV instructions. The index isn't an actual instruction operand
-  // but rather syntactic sugar. It really should be part of the mnemonic,
-  // not the operand, but whatever.
-  if ((NumOperands == 5) && Tok == "fmov") {
-    // If the last operand is a vectorindex of '1', then replace it with
-    // a '[' '1' ']' token sequence, which is what the matcher
-    // (annoyingly) expects for a literal vector index operand.
-    ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[NumOperands - 1]);
-    if (Op->isVectorIndexD() && Op->getVectorIndex() == 1) {
-      SMLoc Loc = Op->getStartLoc();
-      Operands.pop_back();
-      delete Op;
-      Operands.push_back(
-          ARM64Operand::CreateToken("[", false, Loc, getContext()));
-      Operands.push_back(
-          ARM64Operand::CreateToken("1", false, Loc, getContext()));
-      Operands.push_back(
-          ARM64Operand::CreateToken("]", false, Loc, getContext()));
-    } else if (Op->isReg()) {
-      // Similarly, check the destination operand for the GPR->High-lane
-      // variant.
-      unsigned OpNo = NumOperands - 2;
-      ARM64Operand *Op = static_cast<ARM64Operand *>(Operands[OpNo]);
-      if (Op->isVectorIndexD() && Op->getVectorIndex() == 1) {
-        SMLoc Loc = Op->getStartLoc();
-        Operands[OpNo] =
-            ARM64Operand::CreateToken("[", false, Loc, getContext());
-        Operands.insert(
-            Operands.begin() + OpNo + 1,
-            ARM64Operand::CreateToken("1", false, Loc, getContext()));
-        Operands.insert(
-            Operands.begin() + OpNo + 2,
-            ARM64Operand::CreateToken("]", false, Loc, getContext()));
-        delete Op;
-      }
-    }
-  }
-
   MCInst Inst;
   // First try to match against the secondary set of tables containing the
   // short-form NEON instructions (e.g. "fadd.2s v0, v1, v2").
@@ -4122,6 +4114,10 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       // diagnose.
       MatchResult = Match_InvalidMemoryIndexed;
     }
+    else if(Operands.size() == 3 && Operands.size() == ErrorInfo + 1 &&
+            ((ARM64Operand *)Operands[ErrorInfo])->isImm()) {
+      MatchResult = Match_InvalidLabel;
+    }
     SMLoc ErrorLoc = ((ARM64Operand *)Operands[ErrorInfo])->getStartLoc();
     if (ErrorLoc == SMLoc())
       ErrorLoc = IDLoc;
@@ -4136,12 +4132,17 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
         ((ARM64Operand *)Operands[ErrorInfo + 1])->isTokenEqual("!"))
       MatchResult = Match_InvalidMemoryIndexedSImm9;
   // FALL THROUGH
+  case Match_InvalidCondCode:
   case Match_AddSubRegExtendSmall:
   case Match_AddSubRegExtendLarge:
   case Match_AddSubSecondSource:
   case Match_LogicalSecondSource:
   case Match_AddSubRegShift32:
   case Match_AddSubRegShift64:
+  case Match_InvalidMovImm32Shift:
+  case Match_InvalidMovImm64Shift:
+  case Match_InvalidFPImm:
+  case Match_InvalidMemoryIndexed:
   case Match_InvalidMemoryIndexed8:
   case Match_InvalidMemoryIndexed16:
   case Match_InvalidMemoryIndexed32SImm7:
@@ -4151,10 +4152,13 @@ bool ARM64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidImm0_15:
   case Match_InvalidImm0_31:
   case Match_InvalidImm0_63:
+  case Match_InvalidImm0_127:
+  case Match_InvalidImm0_65535:
   case Match_InvalidImm1_8:
   case Match_InvalidImm1_16:
   case Match_InvalidImm1_32:
   case Match_InvalidImm1_64:
+  case Match_InvalidIndex1:
   case Match_InvalidIndexB:
   case Match_InvalidIndexH:
   case Match_InvalidIndexS:

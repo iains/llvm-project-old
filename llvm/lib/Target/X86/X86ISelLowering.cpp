@@ -7410,7 +7410,7 @@ static SDValue getINSERTPS(ShuffleVectorSDNode *SVOp, SDLoc &dl,
   // v4f32 or when copying a member from one v4f32 to another.
   // We also use it for transferring i32 from one register to another,
   // since it simply copies the same bits.
-  // If we're transfering an i32 from memory to a specific element in a
+  // If we're transferring an i32 from memory to a specific element in a
   // register, we output a generic DAG that will match the PINSRD
   // instruction.
   // TODO: Optimize for AVX cases too (VINSERTPS)
@@ -10217,7 +10217,7 @@ SDValue X86TargetLowering::LowerToBT(SDValue And, ISD::CondCode CC,
         unsigned AndBitWidth = And.getValueSizeInBits();
         if (BitWidth > AndBitWidth) {
           APInt Zeros, Ones;
-          DAG.ComputeMaskedBits(Op0, Zeros, Ones);
+          DAG.computeKnownBits(Op0, Zeros, Ones);
           if (Zeros.countLeadingOnes() < BitWidth - AndBitWidth)
             return SDValue();
         }
@@ -17103,11 +17103,11 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
 //                           X86 Optimization Hooks
 //===----------------------------------------------------------------------===//
 
-void X86TargetLowering::computeMaskedBitsForTargetNode(const SDValue Op,
-                                                       APInt &KnownZero,
-                                                       APInt &KnownOne,
-                                                       const SelectionDAG &DAG,
-                                                       unsigned Depth) const {
+void X86TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
+                                                      APInt &KnownZero,
+                                                      APInt &KnownOne,
+                                                      const SelectionDAG &DAG,
+                                                      unsigned Depth) const {
   unsigned BitWidth = KnownZero.getBitWidth();
   unsigned Opc = Op.getOpcode();
   assert((Opc >= ISD::BUILTIN_OP_END ||
@@ -17973,7 +17973,7 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
 
       // Another special case: If C was a sign bit, the sub has been
       // canonicalized into a xor.
-      // FIXME: Would it be better to use ComputeMaskedBits to determine whether
+      // FIXME: Would it be better to use computeKnownBits to determine whether
       //        it's safe to decanonicalize the xor?
       // x s< 0 ? x^C : 0 --> subus x, C
       if (CC == ISD::SETLT && Other->getOpcode() == ISD::XOR &&
@@ -18473,10 +18473,61 @@ static SDValue PerformCMOVCombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
-static SDValue PerformINTRINSIC_WO_CHAINCombine(SDNode *N, SelectionDAG &DAG) {
+static SDValue PerformINTRINSIC_WO_CHAINCombine(SDNode *N, SelectionDAG &DAG,
+                                                const X86Subtarget *Subtarget) {
   unsigned IntNo = cast<ConstantSDNode>(N->getOperand(0))->getZExtValue();
   switch (IntNo) {
   default: return SDValue();
+  // SSE/AVX/AVX2 blend intrinsics.
+  case Intrinsic::x86_avx2_pblendvb:
+  case Intrinsic::x86_avx2_pblendw:
+  case Intrinsic::x86_avx2_pblendd_128:
+  case Intrinsic::x86_avx2_pblendd_256:
+    // Don't try to simplify this intrinsic if we don't have AVX2.
+    if (!Subtarget->hasAVX2())
+      return SDValue();
+    // FALL-THROUGH
+  case Intrinsic::x86_avx_blend_pd_256:
+  case Intrinsic::x86_avx_blend_ps_256:
+  case Intrinsic::x86_avx_blendv_pd_256:
+  case Intrinsic::x86_avx_blendv_ps_256:
+    // Don't try to simplify this intrinsic if we don't have AVX.
+    if (!Subtarget->hasAVX())
+      return SDValue();
+    // FALL-THROUGH
+  case Intrinsic::x86_sse41_pblendw:
+  case Intrinsic::x86_sse41_blendpd:
+  case Intrinsic::x86_sse41_blendps:
+  case Intrinsic::x86_sse41_blendvps:
+  case Intrinsic::x86_sse41_blendvpd:
+  case Intrinsic::x86_sse41_pblendvb: {
+    SDValue Op0 = N->getOperand(1);
+    SDValue Op1 = N->getOperand(2);
+    SDValue Mask = N->getOperand(3);
+
+    // Don't try to simplify this intrinsic if we don't have SSE4.1.
+    if (!Subtarget->hasSSE41())
+      return SDValue();
+
+    // fold (blend A, A, Mask) -> A
+    if (Op0 == Op1)
+      return Op0;
+    // fold (blend A, B, allZeros) -> A
+    if (ISD::isBuildVectorAllZeros(Mask.getNode()))
+      return Op0;
+    // fold (blend A, B, allOnes) -> B
+    if (ISD::isBuildVectorAllOnes(Mask.getNode()))
+      return Op1;
+    
+    // Simplify the case where the mask is a constant i32 value.
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Mask)) {
+      if (C->isNullValue())
+        return Op0;
+      if (C->isAllOnesValue())
+        return Op1;
+    }
+  }
+
   // Packed SSE2/AVX2 arithmetic shift immediate intrinsics.
   case Intrinsic::x86_sse2_psrai_w:
   case Intrinsic::x86_sse2_psrai_d:
@@ -20343,7 +20394,8 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::VPERM2X128:
   case ISD::VECTOR_SHUFFLE: return PerformShuffleCombine(N, DAG, DCI,Subtarget);
   case ISD::FMA:            return PerformFMACombine(N, DAG, Subtarget);
-  case ISD::INTRINSIC_WO_CHAIN: return PerformINTRINSIC_WO_CHAINCombine(N, DAG);
+  case ISD::INTRINSIC_WO_CHAIN:
+    return PerformINTRINSIC_WO_CHAINCombine(N, DAG, Subtarget);
   }
 
   return SDValue();

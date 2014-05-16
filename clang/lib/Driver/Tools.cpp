@@ -1913,9 +1913,16 @@ static void addProfileRT(
         Args.hasArg(options::OPT_coverage)))
     return;
 
+  // -fprofile-instr-generate requires position-independent code to build with
+  // shared objects.  Link against the right archive.
+  const char *Lib = "libclang_rt.profile-";
+  if (Args.hasArg(options::OPT_fprofile_instr_generate) &&
+      Args.hasArg(options::OPT_shared))
+    Lib = "libclang_rt.profile-pic-";
+
   SmallString<128> LibProfile = getCompilerRTLibDir(TC);
   llvm::sys::path::append(LibProfile,
-      Twine("libclang_rt.profile-") + getArchNameForCompilerRTLib(TC) + ".a");
+      Twine(Lib) + getArchNameForCompilerRTLib(TC) + ".a");
 
   CmdArgs.push_back(Args.MakeArgString(LibProfile));
 }
@@ -4106,7 +4113,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     tools::visualstudio::Compile CL(getToolChain());
     Command *CLCommand = CL.GetCommand(C, JA, Output, Inputs, Args,
                                        LinkingOutput);
-    C.addCommand(new FallbackCommand(JA, *this, Exec, CmdArgs, CLCommand));
+    // RTTI support in clang-cl is a work in progress.  Fall back to MSVC early
+    // if we are using 'clang-cl /fallback /GR'.
+    // FIXME: Remove this when RTTI is finished.
+    if (Args.hasFlag(options::OPT_frtti, options::OPT_fno_rtti, false)) {
+      D.Diag(diag::warn_drv_rtti_fallback) << CLCommand->getExecutable();
+      C.addCommand(CLCommand);
+    } else {
+      C.addCommand(new FallbackCommand(JA, *this, Exec, CmdArgs, CLCommand));
+    }
   } else {
     C.addCommand(new Command(JA, *this, Exec, CmdArgs));
   }

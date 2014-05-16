@@ -7742,7 +7742,8 @@ QualType ASTContext::GetBuiltinType(unsigned Id,
   return getFunctionType(ResType, ArgTypes, EPI);
 }
 
-GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
+static GVALinkage basicGVALinkageForFunction(const ASTContext &Context,
+                                             const FunctionDecl *FD) {
   if (!FD->isExternallyVisible())
     return GVA_Internal;
 
@@ -7756,6 +7757,12 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
   case TSK_ExplicitInstantiationDefinition:
     return GVA_StrongODR;
 
+  // C++11 [temp.explicit]p10:
+  //   [ Note: The intent is that an inline function that is the subject of
+  //   an explicit instantiation declaration will still be implicitly
+  //   instantiated when used so that the body can be considered for
+  //   inlining, but that no out-of-line copy of the inline function would be
+  //   generated in the translation unit. -- end note ]
   case TSK_ExplicitInstantiationDeclaration:
     return GVA_AvailableExternally;
 
@@ -7767,8 +7774,11 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
   if (!FD->isInlined())
     return External;
 
-  if ((!getLangOpts().CPlusPlus && !getLangOpts().MSVCCompat) ||
+  if ((!Context.getLangOpts().CPlusPlus && !Context.getLangOpts().MSVCCompat &&
+       !FD->hasAttr<DLLExportAttr>()) ||
       FD->hasAttr<GNUInlineAttr>()) {
+    // FIXME: This doesn't match gcc's behavior for dllexport inline functions.
+
     // GNU or C99 inline semantics. Determine whether this symbol should be
     // externally visible.
     if (FD->isInlineDefinitionExternallyVisible())
@@ -7777,16 +7787,6 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
     // C99 inline semantics, where the symbol is not externally visible.
     return GVA_AvailableExternally;
   }
-
-  // C++0x [temp.explicit]p9:
-  //   [ Note: The intent is that an inline function that is the subject of 
-  //   an explicit instantiation declaration will still be implicitly 
-  //   instantiated when used so that the body can be considered for 
-  //   inlining, but that no out-of-line copy of the inline function would be
-  //   generated in the translation unit. -- end note ]
-  if (FD->getTemplateSpecializationKind() 
-                                       == TSK_ExplicitInstantiationDeclaration)
-    return GVA_AvailableExternally;
 
   // Functions specified with extern and inline in -fms-compatibility mode
   // forcibly get emitted.  While the body of the function cannot be later
@@ -7797,7 +7797,26 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
   return GVA_DiscardableODR;
 }
 
-GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
+static GVALinkage adjustGVALinkageForDLLAttribute(GVALinkage L, const Decl *D) {
+  // See http://msdn.microsoft.com/en-us/library/xa0d9ste.aspx
+  // dllexport/dllimport on inline functions.
+  if (D->hasAttr<DLLImportAttr>()) {
+    if (L == GVA_DiscardableODR || L == GVA_StrongODR)
+      return GVA_AvailableExternally;
+  } else if (D->hasAttr<DLLExportAttr>()) {
+    if (L == GVA_DiscardableODR)
+      return GVA_StrongODR;
+  }
+  return L;
+}
+
+GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
+  return adjustGVALinkageForDLLAttribute(basicGVALinkageForFunction(*this, FD),
+                                         FD);
+}
+
+static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
+                                             const VarDecl *VD) {
   if (!VD->isExternallyVisible())
     return GVA_Internal;
 
@@ -7811,7 +7830,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
     // enclosing function.
     if (LexicalContext)
       StaticLocalLinkage =
-          GetGVALinkageForFunction(cast<FunctionDecl>(LexicalContext));
+          Context.GetGVALinkageForFunction(cast<FunctionDecl>(LexicalContext));
 
     // GVA_StrongODR function linkage is stronger than what we need,
     // downgrade to GVA_DiscardableODR.
@@ -7825,7 +7844,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
   // Itanium-specified entry point, which has the normal linkage of the
   // variable.
   if (VD->getTLSKind() == VarDecl::TLS_Dynamic &&
-      getTargetInfo().getTriple().isMacOSX())
+      Context.getTargetInfo().getTriple().isMacOSX())
     return GVA_Internal;
 
   switch (VD->getTemplateSpecializationKind()) {
@@ -7844,6 +7863,11 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
   }
 
   llvm_unreachable("Invalid Linkage!");
+}
+
+GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
+  return adjustGVALinkageForDLLAttribute(basicGVALinkageForVariable(*this, VD),
+                                         VD);
 }
 
 bool ASTContext::DeclMustBeEmitted(const Decl *D) {
@@ -7910,7 +7934,8 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D) {
 
   // Variables that can be needed in other TUs are required.
   GVALinkage L = GetGVALinkageForVariable(VD);
-  if (L != GVA_Internal && L != GVA_DiscardableODR)
+  if (L != GVA_Internal && L != GVA_AvailableExternally &&
+      L != GVA_DiscardableODR)
     return true;
 
   // Variables that have destruction with side-effects are required.

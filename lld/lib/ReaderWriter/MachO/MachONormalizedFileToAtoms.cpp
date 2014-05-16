@@ -74,6 +74,11 @@ static Atom::Scope atomScope(uint8_t scope) {
   llvm_unreachable("unknown scope value!");
 }
 
+static DefinedAtom::ContentType atomTypeFromSection(const Section &section) {
+  // FIX ME
+  return DefinedAtom::typeCode;
+}
+
 static void processSymbol(const NormalizedFile &normalizedFile, MachOFile &file,
                           const Symbol &sym, bool copyRefs) {
   // Mach-O symbol table does have size in it, so need to scan ahead
@@ -81,9 +86,27 @@ static void processSymbol(const NormalizedFile &normalizedFile, MachOFile &file,
   const Section &section = normalizedFile.sections[sym.sect - 1];
   uint64_t offset = sym.value - section.address;
   uint64_t size = nextSymbolAddress(normalizedFile, sym) - sym.value;
-  ArrayRef<uint8_t> atomContent = section.content.slice(offset, size);
-  file.addDefinedAtom(sym.name, atomContent, atomScope(sym.scope), copyRefs);
+  if (section.type == llvm::MachO::S_ZEROFILL){
+    file.addZeroFillDefinedAtom(sym.name, atomScope(sym.scope), size, copyRefs);
+  } else {
+    ArrayRef<uint8_t> atomContent = section.content.slice(offset, size);
+    file.addDefinedAtom(sym.name, atomScope(sym.scope),
+                        atomTypeFromSection(section), atomContent, copyRefs);
+  }
 }
+
+
+static void processUndefindeSymbol(MachOFile &file, const Symbol &sym,
+                                  bool copyRefs) {
+  // Undefinded symbols with n_value!=0 are actually tentative definitions.
+  if (sym.value == Hex64(0)) {
+    file.addUndefinedAtom(sym.name, copyRefs);
+  } else {
+    file.addTentativeDefAtom(sym.name, atomScope(sym.scope), sym.value,
+                              DefinedAtom::Alignment(sym.desc >> 8), copyRefs);
+  }
+}
+
 
 static ErrorOr<std::unique_ptr<lld::File>>
 normalizedObjectToAtoms(const NormalizedFile &normalizedFile, StringRef path,
@@ -99,7 +122,7 @@ normalizedObjectToAtoms(const NormalizedFile &normalizedFile, StringRef path,
   }
 
   for (auto &sym : normalizedFile.undefinedSymbols) {
-    file->addUndefinedAtom(sym.name, copyRefs);
+    processUndefindeSymbol(*file, sym, copyRefs);
   }
 
   return std::unique_ptr<File>(std::move(file));

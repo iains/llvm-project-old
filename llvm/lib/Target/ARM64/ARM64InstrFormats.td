@@ -91,11 +91,13 @@ def MovImm32ShifterOperand : AsmOperandClass {
   let SuperClasses = [ShifterOperand];
   let Name = "MovImm32Shifter";
   let RenderMethod = "addShifterOperands";
+  let DiagnosticType = "InvalidMovImm32Shift";
 }
 def MovImm64ShifterOperand : AsmOperandClass {
   let SuperClasses = [ShifterOperand];
   let Name = "MovImm64Shifter";
   let RenderMethod = "addShifterOperands";
+  let DiagnosticType = "InvalidMovImm64Shift";
 }
 
 // Shifter operand for arithmetic register shifted encodings.
@@ -163,6 +165,12 @@ def ExtendOperandLSL64 : AsmOperandClass {
 def FPImmOperand : AsmOperandClass {
   let Name = "FPImm";
   let ParserMethod = "tryParseFPImm";
+  let DiagnosticType = "InvalidFPImm";
+}
+
+def CondCode : AsmOperandClass {
+  let Name = "CondCode";
+  let DiagnosticType = "InvalidCondCode";
 }
 
 // 8-bit immediate for AdvSIMD where 64-bit values of the form:
@@ -237,15 +245,6 @@ def SImm7s16Operand : AsmOperandClass {
 def simm7s16 : Operand<i32> {
   let ParserMatchClass = SImm7s16Operand;
   let PrintMethod = "printImmScale<16>";
-}
-
-// imm0_65535 predicate - True if the immediate is in the range [0,65535].
-def Imm0_65535Operand : AsmOperandClass { let Name = "Imm0_65535"; }
-def imm0_65535 : Operand<i32>, ImmLeaf<i32, [{
-  return ((uint32_t)Imm) < 65536;
-}]> {
-  let ParserMatchClass = Imm0_65535Operand;
-  let PrintMethod = "printHexImm";
 }
 
 class AsmImmRange<int Low, int High> : AsmOperandClass {
@@ -469,6 +468,15 @@ def logical_imm64 : Operand<i64>, PatLeaf<(imm), [{
   let ParserMatchClass = LogicalImm64Operand;
 }
 
+// imm0_65535 predicate - True if the immediate is in the range [0,65535].
+def Imm0_65535Operand : AsmImmRange<0, 65535>;
+def imm0_65535 : Operand<i32>, ImmLeaf<i32, [{
+  return ((uint32_t)Imm) < 65536;
+}]> {
+  let ParserMatchClass = Imm0_65535Operand;
+  let PrintMethod = "printHexImm";
+}
+
 // imm0_255 predicate - True if the immediate is in the range [0,255].
 def Imm0_255Operand : AsmOperandClass { let Name = "Imm0_255"; }
 def imm0_255 : Operand<i32>, ImmLeaf<i32, [{
@@ -479,7 +487,7 @@ def imm0_255 : Operand<i32>, ImmLeaf<i32, [{
 }
 
 // imm0_127 predicate - True if the immediate is in the range [0,127]
-def Imm0_127Operand : AsmOperandClass { let Name = "Imm0_127"; }
+def Imm0_127Operand : AsmImmRange<0, 127>;
 def imm0_127 : Operand<i32>, ImmLeaf<i32, [{
   return ((uint32_t)Imm) < 128;
 }]> {
@@ -681,6 +689,53 @@ def fpimm8 : Operand<i32> {
 def fpimm0 : PatLeaf<(fpimm), [{
   return N->isExactlyValue(+0.0);
 }]>;
+
+// Vector lane operands
+class AsmVectorIndex<string Suffix> : AsmOperandClass {
+  let Name = "VectorIndex" # Suffix;
+  let DiagnosticType = "InvalidIndex" # Suffix;
+}
+def VectorIndex1Operand : AsmVectorIndex<"1">;
+def VectorIndexBOperand : AsmVectorIndex<"B">;
+def VectorIndexHOperand : AsmVectorIndex<"H">;
+def VectorIndexSOperand : AsmVectorIndex<"S">;
+def VectorIndexDOperand : AsmVectorIndex<"D">;
+
+def VectorIndex1 : Operand<i64>, ImmLeaf<i64, [{
+  return ((uint64_t)Imm) == 1;
+}]> {
+  let ParserMatchClass = VectorIndex1Operand;
+  let PrintMethod = "printVectorIndex";
+  let MIOperandInfo = (ops i64imm);
+}
+def VectorIndexB : Operand<i64>, ImmLeaf<i64, [{
+  return ((uint64_t)Imm) < 16;
+}]> {
+  let ParserMatchClass = VectorIndexBOperand;
+  let PrintMethod = "printVectorIndex";
+  let MIOperandInfo = (ops i64imm);
+}
+def VectorIndexH : Operand<i64>, ImmLeaf<i64, [{
+  return ((uint64_t)Imm) < 8;
+}]> {
+  let ParserMatchClass = VectorIndexHOperand;
+  let PrintMethod = "printVectorIndex";
+  let MIOperandInfo = (ops i64imm);
+}
+def VectorIndexS : Operand<i64>, ImmLeaf<i64, [{
+  return ((uint64_t)Imm) < 4;
+}]> {
+  let ParserMatchClass = VectorIndexSOperand;
+  let PrintMethod = "printVectorIndex";
+  let MIOperandInfo = (ops i64imm);
+}
+def VectorIndexD : Operand<i64>, ImmLeaf<i64, [{
+  return ((uint64_t)Imm) < 2;
+}]> {
+  let ParserMatchClass = VectorIndexDOperand;
+  let PrintMethod = "printVectorIndex";
+  let MIOperandInfo = (ops i64imm);
+}
 
 // 8-bit immediate for AdvSIMD where 64-bit values of the form:
 // aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff gggggggg hhhhhhhh
@@ -899,16 +954,23 @@ class SpecialReturn<bits<4> opc, string asm>
 //---
 // Conditional branch instruction.
 //---
-// Branch condition code.
-// 4-bit immediate. Pretty-printed as .<cc>
-def dotCcode : Operand<i32> {
-  let PrintMethod = "printDotCondCode";
+
+// Condition code.
+// 4-bit immediate. Pretty-printed as <cc>
+def ccode : Operand<i32> {
+  let PrintMethod = "printCondCode";
+  let ParserMatchClass = CondCode;
+}
+def inv_ccode : Operand<i32> {
+  let PrintMethod = "printInverseCondCode";
+  let ParserMatchClass = CondCode;
 }
 
 // Conditional branch target. 19-bit immediate. The low two bits of the target
 // offset are implied zero and so are not part of the immediate.
 def PCRelLabel19Operand : AsmOperandClass {
   let Name = "PCRelLabel19";
+  let DiagnosticType = "InvalidLabel";
 }
 def am_brcond : Operand<OtherVT> {
   let EncoderMethod = "getCondBranchTargetOpValue";
@@ -917,8 +979,8 @@ def am_brcond : Operand<OtherVT> {
   let ParserMatchClass = PCRelLabel19Operand;
 }
 
-class BranchCond : I<(outs), (ins dotCcode:$cond, am_brcond:$target),
-                     "b", "$cond\t$target", "",
+class BranchCond : I<(outs), (ins ccode:$cond, am_brcond:$target),
+                     "b", ".$cond\t$target", "",
                      [(ARM64brcond bb:$target, imm:$cond, NZCV)]>,
                    Sched<[WriteBr]> {
   let isBranch = 1;
@@ -1002,6 +1064,7 @@ class TestBranch<bit op, string asm, SDNode node>
 //---
 def BranchTarget26Operand : AsmOperandClass {
   let Name = "BranchTarget26";
+  let DiagnosticType = "InvalidLabel";
 }
 def am_b_target : Operand<OtherVT> {
   let EncoderMethod = "getBranchTargetOpValue";
@@ -1192,7 +1255,7 @@ multiclass Shift<bits<2> shift_type, string asm, SDNode OpNode> {
 
 class ShiftAlias<string asm, Instruction inst, RegisterClass regtype>
     : InstAlias<asm#" $dst, $src1, $src2",
-                (inst regtype:$dst, regtype:$src1, regtype:$src2)>;
+                (inst regtype:$dst, regtype:$src1, regtype:$src2), 0>;
 
 class BaseMulAccum<bit isSub, bits<3> opc, RegisterClass multype,
                        RegisterClass addtype, string asm,
@@ -1543,12 +1606,6 @@ multiclass AddSub<bit isSub, string mnemonic,
     let Inst{31} = 1;
   }
 
-  // Register/register aliases with no shift when SP is not used.
-  def : AddSubRegAlias<mnemonic, !cast<Instruction>(NAME#"Wrs"),
-                       GPR32, GPR32, GPR32, 0>;
-  def : AddSubRegAlias<mnemonic, !cast<Instruction>(NAME#"Xrs"),
-                       GPR64, GPR64, GPR64, 0>;
-
   // Register/register aliases with no shift when either the destination or
   // first source register is SP.  This relies on the shifted register aliases
   // above matching first in the case when SP is not used.
@@ -1610,15 +1667,15 @@ multiclass AddSubS<bit isSub, string mnemonic, SDNode OpNode, string cmp> {
                   WZR, GPR32sp:$src, addsub_shifted_imm32:$imm)>;
   def : InstAlias<cmp#" $src, $imm", (!cast<Instruction>(NAME#"Xri")
                   XZR, GPR64sp:$src, addsub_shifted_imm64:$imm)>;
-  def : InstAlias<cmp#" $src1, $src2, $sh", (!cast<Instruction>(NAME#"Wrx")
+  def : InstAlias<cmp#" $src1, $src2$sh", (!cast<Instruction>(NAME#"Wrx")
                   WZR, GPR32sp:$src1, GPR32:$src2, arith_extend:$sh)>;
-  def : InstAlias<cmp#" $src1, $src2, $sh", (!cast<Instruction>(NAME#"Xrx")
+  def : InstAlias<cmp#" $src1, $src2$sh", (!cast<Instruction>(NAME#"Xrx")
                   XZR, GPR64sp:$src1, GPR32:$src2, arith_extend:$sh)>;
-  def : InstAlias<cmp#" $src1, $src2, $sh", (!cast<Instruction>(NAME#"Xrx64")
+  def : InstAlias<cmp#" $src1, $src2$sh", (!cast<Instruction>(NAME#"Xrx64")
                   XZR, GPR64sp:$src1, GPR64:$src2, arith_extendlsl64:$sh)>;
-  def : InstAlias<cmp#" $src1, $src2, $sh", (!cast<Instruction>(NAME#"Wrs")
+  def : InstAlias<cmp#" $src1, $src2$sh", (!cast<Instruction>(NAME#"Wrs")
                   WZR, GPR32:$src1, GPR32:$src2, arith_shift32:$sh)>;
-  def : InstAlias<cmp#" $src1, $src2, $sh", (!cast<Instruction>(NAME#"Xrs")
+  def : InstAlias<cmp#" $src1, $src2$sh", (!cast<Instruction>(NAME#"Xrs")
                   XZR, GPR64:$src1, GPR64:$src2, arith_shift64:$sh)>;
 
   // Compare shorthands
@@ -1626,12 +1683,6 @@ multiclass AddSubS<bit isSub, string mnemonic, SDNode OpNode, string cmp> {
                   WZR, GPR32:$src1, GPR32:$src2, 0)>;
   def : InstAlias<cmp#" $src1, $src2", (!cast<Instruction>(NAME#"Xrs")
                   XZR, GPR64:$src1, GPR64:$src2, 0)>;
-
-  // Register/register aliases with no shift when SP is not used.
-  def : AddSubRegAlias<mnemonic, !cast<Instruction>(NAME#"Wrs"),
-                       GPR32, GPR32, GPR32, 0>;
-  def : AddSubRegAlias<mnemonic, !cast<Instruction>(NAME#"Xrs"),
-                       GPR64, GPR64, GPR64, 0>;
 
   // Register/register aliases with no shift when the first source register
   // is SP.  This relies on the shifted register aliases above matching first
@@ -1897,16 +1948,6 @@ multiclass LogicalRegS<bits<2> opc, bit N, string mnemonic,
 //---
 // Conditionally set flags
 //---
-
-// Condition code.
-// 4-bit immediate. Pretty-printed as <cc>
-def ccode : Operand<i32> {
-  let PrintMethod = "printCondCode";
-}
-
-def inv_ccode : Operand<i32> {
-  let PrintMethod = "printInverseCondCode";
-}
 
 let mayLoad = 0, mayStore = 0, hasSideEffects = 0 in
 class BaseCondSetFlagsImm<bit op, RegisterClass regtype, string asm>
@@ -3403,8 +3444,8 @@ let mayLoad = 0, mayStore = 0, hasSideEffects = 0 in
 class BaseUnscaledConversionToHigh<bits<2> rmode, bits<3> opcode,
                      RegisterClass srcType, RegisterOperand dstType, string asm,
                      string kind>
-    : I<(outs dstType:$Rd), (ins srcType:$Rn), asm,
-        "{\t$Rd"#kind#"[1], $Rn|"#kind#"\t$Rd[1], $Rn}", "", []>,
+    : I<(outs dstType:$Rd), (ins srcType:$Rn, VectorIndex1:$idx), asm,
+        "{\t$Rd"#kind#"$idx, $Rn|"#kind#"\t$Rd$idx, $Rn}", "", []>,
       Sched<[WriteFCopy]> {
   bits<5> Rd;
   bits<5> Rn;
@@ -3415,14 +3456,16 @@ class BaseUnscaledConversionToHigh<bits<2> rmode, bits<3> opcode,
   let Inst{15-10} = 0b000000;
   let Inst{9-5}   = Rn;
   let Inst{4-0}   = Rd;
+
+  let DecoderMethod =  "DecodeFMOVLaneInstruction";
 }
 
 let mayLoad = 0, mayStore = 0, hasSideEffects = 0 in
 class BaseUnscaledConversionFromHigh<bits<2> rmode, bits<3> opcode,
                      RegisterOperand srcType, RegisterClass dstType, string asm,
                      string kind>
-    : I<(outs dstType:$Rd), (ins srcType:$Rn), asm,
-        "{\t$Rd, $Rn"#kind#"[1]|"#kind#"\t$Rd, $Rn[1]}", "", []>,
+    : I<(outs dstType:$Rd), (ins srcType:$Rn, VectorIndex1:$idx), asm,
+        "{\t$Rd, $Rn"#kind#"$idx|"#kind#"\t$Rd, $Rn$idx}", "", []>,
       Sched<[WriteFCopy]> {
   bits<5> Rd;
   bits<5> Rn;
@@ -3433,6 +3476,8 @@ class BaseUnscaledConversionFromHigh<bits<2> rmode, bits<3> opcode,
   let Inst{15-10} = 0b000000;
   let Inst{9-5}   = Rn;
   let Inst{4-0}   = Rd;
+
+  let DecoderMethod =  "DecodeFMOVLaneInstruction";
 }
 
 
@@ -3803,44 +3848,6 @@ multiclass FPMoveImmediate<string asm> {
 //----------------------------------------------------------------------------
 // AdvSIMD
 //----------------------------------------------------------------------------
-
-class AsmVectorIndex<string Suffix> : AsmOperandClass {
-  let Name = "VectorIndex" # Suffix;
-  let DiagnosticType = "InvalidIndex" # Suffix;
-}
-def VectorIndexBOperand : AsmVectorIndex<"B">;
-def VectorIndexHOperand : AsmVectorIndex<"H">;
-def VectorIndexSOperand : AsmVectorIndex<"S">;
-def VectorIndexDOperand : AsmVectorIndex<"D">;
-
-def VectorIndexB : Operand<i64>, ImmLeaf<i64, [{
-  return ((uint64_t)Imm) < 16;
-}]> {
-  let ParserMatchClass = VectorIndexBOperand;
-  let PrintMethod = "printVectorIndex";
-  let MIOperandInfo = (ops i64imm);
-}
-def VectorIndexH : Operand<i64>, ImmLeaf<i64, [{
-  return ((uint64_t)Imm) < 8;
-}]> {
-  let ParserMatchClass = VectorIndexHOperand;
-  let PrintMethod = "printVectorIndex";
-  let MIOperandInfo = (ops i64imm);
-}
-def VectorIndexS : Operand<i64>, ImmLeaf<i64, [{
-  return ((uint64_t)Imm) < 4;
-}]> {
-  let ParserMatchClass = VectorIndexSOperand;
-  let PrintMethod = "printVectorIndex";
-  let MIOperandInfo = (ops i64imm);
-}
-def VectorIndexD : Operand<i64>, ImmLeaf<i64, [{
-  return ((uint64_t)Imm) < 2;
-}]> {
-  let ParserMatchClass = VectorIndexDOperand;
-  let PrintMethod = "printVectorIndex";
-  let MIOperandInfo = (ops i64imm);
-}
 
 def MemorySIMDNoIndexOperand : AsmOperandClass {
   let Name = "MemorySIMDNoIndex";
@@ -5315,9 +5322,9 @@ multiclass SIMDCmpTwoScalarSD<bit U, bit S, bits<5> opc, string asm,
   def v1i32rz  : BaseSIMDCmpTwoScalar<U, {S,0}, opc, FPR32, asm, "0.0">;
 
   def : InstAlias<asm # " $Rd, $Rn, #0",
-                  (!cast<Instruction>(NAME # v1i64rz) FPR64:$Rd, FPR64:$Rn)>;
+                  (!cast<Instruction>(NAME # v1i64rz) FPR64:$Rd, FPR64:$Rn), 0>;
   def : InstAlias<asm # " $Rd, $Rn, #0",
-                  (!cast<Instruction>(NAME # v1i32rz) FPR32:$Rd, FPR32:$Rn)>;
+                  (!cast<Instruction>(NAME # v1i32rz) FPR32:$Rd, FPR32:$Rn), 0>;
 
   def : Pat<(v1i64 (OpNode (v1f64 FPR64:$Rn))),
             (!cast<Instruction>(NAME # v1i64rz) FPR64:$Rn)>;
@@ -5576,13 +5583,11 @@ class SIMDUMov<bit Q, string size, ValueType vectype, RegisterClass regtype,
   : BaseSIMDMov<Q, size, 0b0111, regtype, idxtype, "umov",
       [(set regtype:$Rd, (vector_extract (vectype V128:$Rn), idxtype:$idx))]>;
 
-// FIXME: these aliases should be canonical, but TableGen can't handle the
-// alternate syntaxes.
 class SIMDMovAlias<string asm, string size, Instruction inst,
                    RegisterClass regtype, Operand idxtype>
     : InstAlias<asm#"{\t$dst, $src"#size#"$idx" #
                     "|" # size # "\t$dst, $src$idx}",
-                (inst regtype:$dst, V128:$src, idxtype:$idx), 0>;
+                (inst regtype:$dst, V128:$src, idxtype:$idx)>;
 
 multiclass SMov {
   def vi8to32 : SIMDSMov<0, ".b", GPR32, VectorIndexB> {
@@ -5666,18 +5671,16 @@ class SIMDInsFromElement<string size, ValueType vectype,
                  (elttype (vector_extract (vectype V128:$Rn), idxtype:$idx2)),
                  idxtype:$idx))]>;
 
-// FIXME: the MOVs should be canonical, but TableGen's alias printing can't cope
-// with syntax variants.
 class SIMDInsMainMovAlias<string size, Instruction inst,
                           RegisterClass regtype, Operand idxtype>
     : InstAlias<"mov" # "{\t$dst" # size # "$idx, $src" #
                         "|" # size #"\t$dst$idx, $src}",
-                (inst V128:$dst, idxtype:$idx, regtype:$src), 0>;
+                (inst V128:$dst, idxtype:$idx, regtype:$src)>;
 class SIMDInsElementMovAlias<string size, Instruction inst,
                              Operand idxtype>
     : InstAlias<"mov" # "{\t$dst" # size # "$idx, $src" # size # "$idx2" #
                       # "|" # size #" $dst$idx, $src$idx2}",
-                (inst V128:$dst, idxtype:$idx, V128:$src, idxtype:$idx2), 0>;
+                (inst V128:$dst, idxtype:$idx, V128:$src, idxtype:$idx2)>;
 
 
 multiclass SIMDIns {
