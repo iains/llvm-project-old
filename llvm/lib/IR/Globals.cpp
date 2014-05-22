@@ -60,7 +60,7 @@ void GlobalValue::copyAttributesFrom(const GlobalValue *Src) {
 
 unsigned GlobalValue::getAlignment() const {
   if (auto *GA = dyn_cast<GlobalAlias>(this))
-    return GA->getAliasedGlobal()->getAlignment();
+    return GA->getAliasee()->getAlignment();
 
   return cast<GlobalObject>(this)->getAlignment();
 }
@@ -82,7 +82,7 @@ void GlobalObject::copyAttributesFrom(const GlobalValue *Src) {
 
 const std::string &GlobalValue::getSection() const {
   if (auto *GA = dyn_cast<GlobalAlias>(this))
-    return GA->getAliasedGlobal()->getSection();
+    return GA->getAliasee()->getSection();
   return cast<GlobalObject>(this)->getSection();
 }
 
@@ -213,20 +213,45 @@ void GlobalVariable::copyAttributesFrom(const GlobalValue *Src) {
 // GlobalAlias Implementation
 //===----------------------------------------------------------------------===//
 
-GlobalAlias::GlobalAlias(Type *Ty, LinkageTypes Link, const Twine &Name,
-                         Constant *Aliasee, Module *ParentModule,
-                         unsigned AddressSpace)
+GlobalAlias::GlobalAlias(Type *Ty, unsigned AddressSpace, LinkageTypes Link,
+                         const Twine &Name, GlobalObject *Aliasee,
+                         Module *ParentModule)
     : GlobalValue(PointerType::get(Ty, AddressSpace), Value::GlobalAliasVal,
                   &Op<0>(), 1, Link, Name) {
   LeakDetector::addGarbageObject(this);
-
-  if (Aliasee)
-    assert(Aliasee->getType() == getType() &&
-           "Alias and aliasee types should match!");
   Op<0>() = Aliasee;
 
   if (ParentModule)
     ParentModule->getAliasList().push_back(this);
+}
+
+GlobalAlias *GlobalAlias::create(Type *Ty, unsigned AddressSpace,
+                                 LinkageTypes Link, const Twine &Name,
+                                 GlobalObject *Aliasee, Module *ParentModule) {
+  return new GlobalAlias(Ty, AddressSpace, Link, Name, Aliasee, ParentModule);
+}
+
+GlobalAlias *GlobalAlias::create(Type *Ty, unsigned AddressSpace,
+                                 LinkageTypes Linkage, const Twine &Name,
+                                 Module *Parent) {
+  return create(Ty, AddressSpace, Linkage, Name, nullptr, Parent);
+}
+
+GlobalAlias *GlobalAlias::create(Type *Ty, unsigned AddressSpace,
+                                 LinkageTypes Linkage, const Twine &Name,
+                                 GlobalObject *Aliasee) {
+  return create(Ty, AddressSpace, Linkage, Name, Aliasee, Aliasee->getParent());
+}
+
+GlobalAlias *GlobalAlias::create(LinkageTypes Link, const Twine &Name,
+                                 GlobalObject *Aliasee) {
+  PointerType *PTy = Aliasee->getType();
+  return create(PTy->getElementType(), PTy->getAddressSpace(), Link, Name,
+                Aliasee);
+}
+
+GlobalAlias *GlobalAlias::create(const Twine &Name, GlobalObject *Aliasee) {
+  return create(Aliasee->getLinkage(), Name, Aliasee);
 }
 
 void GlobalAlias::setParent(Module *parent) {
@@ -245,42 +270,4 @@ void GlobalAlias::eraseFromParent() {
   getParent()->getAliasList().erase(this);
 }
 
-void GlobalAlias::setAliasee(Constant *Aliasee) {
-  assert((!Aliasee || Aliasee->getType() == getType()) &&
-         "Alias and aliasee types should match!");
-
-  setOperand(0, Aliasee);
-}
-
-static GlobalValue *getAliaseeGV(GlobalAlias *GA) {
-  Constant *C = GA->getAliasee();
-  assert(C && "Must alias something");
-
-  if (GlobalValue *GV = dyn_cast<GlobalValue>(C))
-    return GV;
-
-  ConstantExpr *CE = cast<ConstantExpr>(C);
-  assert((CE->getOpcode() == Instruction::BitCast ||
-          CE->getOpcode() == Instruction::AddrSpaceCast ||
-          CE->getOpcode() == Instruction::GetElementPtr) &&
-         "Unsupported aliasee");
-
-  return cast<GlobalValue>(CE->getOperand(0));
-}
-
-GlobalObject *GlobalAlias::getAliasedGlobal() {
-  SmallPtrSet<GlobalValue*, 3> Visited;
-
-  GlobalAlias *GA = this;
-
-  for (;;) {
-    GlobalValue *GV = getAliaseeGV(GA);
-    if (!Visited.insert(GV))
-      return nullptr;
-
-    // Iterate over aliasing chain.
-    GA = dyn_cast<GlobalAlias>(GV);
-    if (!GA)
-      return cast<GlobalObject>(GV);
-  }
-}
+void GlobalAlias::setAliasee(GlobalObject *Aliasee) { setOperand(0, Aliasee); }

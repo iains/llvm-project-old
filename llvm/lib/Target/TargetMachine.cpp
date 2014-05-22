@@ -29,23 +29,6 @@
 using namespace llvm;
 
 //---------------------------------------------------------------------------
-// Command-line options that tend to be useful on more than one back-end.
-//
-
-namespace llvm {
-  bool AsmVerbosityDefault(false);
-}
-
-static cl::opt<bool>
-DataSections("fdata-sections",
-  cl::desc("Emit data into separate sections"),
-  cl::init(false));
-static cl::opt<bool>
-FunctionSections("ffunction-sections",
-  cl::desc("Emit functions into separate sections"),
-  cl::init(false));
-
-//---------------------------------------------------------------------------
 // TargetMachine Class
 //
 
@@ -126,7 +109,7 @@ TLSModel::Model TargetMachine::getTLSModel(const GlobalValue *GV) const {
   // If GV is an alias then use the aliasee for determining
   // thread-localness.
   if (const GlobalAlias *GA = dyn_cast<GlobalAlias>(GV))
-    GV = GA->getAliasedGlobal();
+    GV = GA->getAliasee();
   const GlobalVariable *Var = cast<GlobalVariable>(GV);
 
   bool isLocal = Var->hasLocalLinkage();
@@ -171,28 +154,28 @@ void TargetMachine::setOptLevel(CodeGenOpt::Level Level) const {
     CodeGenInfo->setOptLevel(Level);
 }
 
-bool TargetMachine::getAsmVerbosityDefault() {
-  return AsmVerbosityDefault;
+bool TargetMachine::getAsmVerbosityDefault() const {
+  return Options.MCOptions.AsmVerbose;
 }
 
 void TargetMachine::setAsmVerbosityDefault(bool V) {
-  AsmVerbosityDefault = V;
+  Options.MCOptions.AsmVerbose = V;
 }
 
-bool TargetMachine::getFunctionSections() {
-  return FunctionSections;
+bool TargetMachine::getFunctionSections() const {
+  return Options.FunctionSections;
 }
 
-bool TargetMachine::getDataSections() {
-  return DataSections;
+bool TargetMachine::getDataSections() const {
+  return Options.DataSections;
 }
 
 void TargetMachine::setFunctionSections(bool V) {
-  FunctionSections = V;
+  Options.FunctionSections = V;
 }
 
 void TargetMachine::setDataSections(bool V) {
-  DataSections = V;
+  Options.DataSections = V;
 }
 
 void TargetMachine::getNameWithPrefix(SmallVectorImpl<char> &Name,

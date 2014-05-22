@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <map>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -179,6 +180,7 @@ class BumpPtrStringSaver : public llvm::cl::StringSaver {
 public:
   const char *SaveString(const char *str) override {
     size_t len = strlen(str);
+    std::lock_guard<std::mutex> lock(_allocMutex);
     char *copy = _alloc.Allocate<char>(len + 1);
     memcpy(copy, str, len + 1);
     return copy;
@@ -186,6 +188,7 @@ public:
 
 private:
   llvm::BumpPtrAllocator _alloc;
+  std::mutex _allocMutex;
 };
 
 // Converts the COFF symbol attribute to the LLD's atom attribute.
@@ -611,6 +614,15 @@ FileCOFF::AtomizeDefinedSymbolsInSection(const coff_section *section,
   if (section->Characteristics & llvm::COFF::IMAGE_SCN_LNK_INFO ||
       section->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
     return error_code::success();
+
+  // Supporting debug info needs more work than just linking and combining
+  // .debug sections. We don't support it yet. Let's discard .debug sections at
+  // the very beginning of the process so that we don't spend time on linking
+  // blobs that nobody would understand.
+  if ((section->Characteristics & llvm::COFF::IMAGE_SCN_MEM_DISCARDABLE) &&
+      (sectionName == ".debug" || sectionName.startswith(".debug$"))) {
+    return error_code::success();
+  }
 
   DefinedAtom::ContentType type = getContentType(section);
   DefinedAtom::ContentPermissions perms = getPermissions(section);

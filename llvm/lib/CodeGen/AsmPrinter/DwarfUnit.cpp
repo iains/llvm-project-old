@@ -749,8 +749,23 @@ void DwarfUnit::addBlockByrefAddress(const DbgVariable &DV, DIE &Die,
 static bool isUnsignedDIType(DwarfDebug *DD, DIType Ty) {
   DIDerivedType DTy(Ty);
   if (DTy.isDerivedType()) {
-    if (DIType Deriv = DD->resolve(DTy.getTypeDerivedFrom()))
-      return isUnsignedDIType(DD, Deriv);
+    dwarf::Tag T = (dwarf::Tag)Ty.getTag();
+    // Encode pointer constants as unsigned bytes. This is used at least for
+    // null pointer constant emission.
+    // FIXME: reference and rvalue_reference /probably/ shouldn't be allowed
+    // here, but accept them for now due to a bug in SROA producing bogus
+    // dbg.values.
+    if (T == dwarf::DW_TAG_pointer_type ||
+        T == dwarf::DW_TAG_ptr_to_member_type ||
+        T == dwarf::DW_TAG_reference_type ||
+        T == dwarf::DW_TAG_rvalue_reference_type)
+      return true;
+    assert(T == dwarf::DW_TAG_typedef || T == dwarf::DW_TAG_const_type ||
+           T == dwarf::DW_TAG_volatile_type ||
+           T == dwarf::DW_TAG_restrict_type ||
+           T == dwarf::DW_TAG_enumeration_type);
+    if (DITypeRef Deriv = DTy.getTypeDerivedFrom())
+      return isUnsignedDIType(DD, DD->resolve(Deriv));
     // FIXME: Enums without a fixed underlying type have unknown signedness
     // here, leading to incorrectly emitted constants.
     assert(DTy.getTag() == dwarf::DW_TAG_enumeration_type);
@@ -764,10 +779,11 @@ static bool isUnsignedDIType(DwarfDebug *DD, DIType Ty) {
           Encoding == dwarf::DW_ATE_unsigned_char ||
           Encoding == dwarf::DW_ATE_signed ||
           Encoding == dwarf::DW_ATE_signed_char ||
-          Encoding == dwarf::DW_ATE_boolean) && "Unsupported encoding");
+          Encoding == dwarf::DW_ATE_UTF || Encoding == dwarf::DW_ATE_boolean) &&
+         "Unsupported encoding");
   return (Encoding == dwarf::DW_ATE_unsigned ||
           Encoding == dwarf::DW_ATE_unsigned_char ||
-          Encoding == dwarf::DW_ATE_boolean);
+          Encoding == dwarf::DW_ATE_UTF || Encoding == dwarf::DW_ATE_boolean);
 }
 
 /// If this type is derived from a base type then return base type size.
@@ -1368,40 +1384,37 @@ DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   if (DIE *SPDie = getDIE(SP))
     return SPDie;
 
-  DISubprogram SPDecl = SP.getFunctionDeclaration();
-  if (SPDecl.isSubprogram())
+  DIE *DeclDie = nullptr;
+  StringRef DeclLinkageName;
+  if (DISubprogram SPDecl = SP.getFunctionDeclaration()) {
     // Add subprogram definitions to the CU die directly.
     ContextDIE = &getUnitDie();
+    DeclDie = getOrCreateSubprogramDIE(SPDecl);
+    DeclLinkageName = SPDecl.getLinkageName();
+  }
 
   // DW_TAG_inlined_subroutine may refer to this DIE.
   DIE &SPDie = createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE, SP);
 
-  DIE *DeclDie = nullptr;
-  if (SPDecl.isSubprogram())
-    DeclDie = getOrCreateSubprogramDIE(SPDecl);
 
   // Add function template parameters.
   addTemplateParams(SPDie, SP.getTemplateParams());
 
-  if (DeclDie)
-    // Refer function declaration directly.
-    addDIEEntry(SPDie, dwarf::DW_AT_specification, *DeclDie);
-
   // Add the linkage name if we have one and it isn't in the Decl.
   StringRef LinkageName = SP.getLinkageName();
-  if (!LinkageName.empty()) {
-    if (SPDecl.isSubprogram() && !SPDecl.getLinkageName().empty())
-      assert(SPDecl.getLinkageName() == SP.getLinkageName() &&
-             "decl has a linkage name and it is different");
-    else
-      addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
-                GlobalValue::getRealLinkageName(LinkageName));
-  }
+  assert(((LinkageName.empty() || DeclLinkageName.empty()) ||
+          LinkageName == DeclLinkageName) &&
+         "decl has a linkage name and it is different");
+  if (!LinkageName.empty() && DeclLinkageName.empty())
+    addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
+              GlobalValue::getRealLinkageName(LinkageName));
 
-  // If this DIE is going to refer declaration info using AT_specification
-  // then there is no need to add other attributes.
-  if (DeclDie)
+  if (DeclDie) {
+    // Refer to the function declaration where all the other attributes will be
+    // found.
+    addDIEEntry(SPDie, dwarf::DW_AT_specification, *DeclDie);
     return &SPDie;
+  }
 
   // Constructors and operators for anonymous aggregates do not have names.
   if (!SP.getName().empty())

@@ -26,6 +26,9 @@ class LldbGdbServerTestCase(TestBase):
     _LOGGING_LEVEL = logging.WARNING
     # _LOGGING_LEVEL = logging.DEBUG
 
+    _STARTUP_ATTACH = "attach"
+    _STARTUP_LAUNCH = "launch"
+
     def setUp(self):
         TestBase.setUp(self)
         FORMAT = '%(asctime)-15s %(levelname)-8s %(message)s'
@@ -33,6 +36,7 @@ class LldbGdbServerTestCase(TestBase):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(self._LOGGING_LEVEL)
         self.test_sequence = GdbRemoteTestSequence(self.logger)
+        self.set_inferior_startup_launch()
 
     def init_llgs_test(self):
         self.debug_monitor_exe = get_lldb_gdbserver_exe()
@@ -66,6 +70,12 @@ class LldbGdbServerTestCase(TestBase):
         sock.connect(('localhost', self.port))
         return sock
 
+    def set_inferior_startup_launch(self):
+        self._inferior_startup = self._STARTUP_LAUNCH
+
+    def set_inferior_startup_attach(self):
+        self._inferior_startup = self._STARTUP_ATTACH
+
     def start_server(self, attach_pid=None):
         # Create the command line
         commandline = "{} localhost:{}".format(self.debug_monitor_exe, self.port)
@@ -97,16 +107,66 @@ class LldbGdbServerTestCase(TestBase):
 
         return server
 
-    def launch_process_for_attach(self,sleep_seconds=3):
+    def launch_process_for_attach(self,inferior_args=None, sleep_seconds=3):
         # We're going to start a child process that the debug monitor stub can later attach to.
         # This process needs to be started so that it just hangs around for a while.  We'll
         # have it sleep.
         exe_path = os.path.abspath("a.out")
+
         args = [exe_path]
+        if inferior_args:
+            args.extend(inferior_args)
         if sleep_seconds:
             args.append("sleep:%d" % sleep_seconds)
-            
+
         return subprocess.Popen(args)
+
+    def prep_debug_monitor_and_inferior(self, inferior_args=None, inferior_sleep_seconds=3):
+        """Prep the debug monitor, the inferior, and the expected packet stream.
+
+        Handle the separate cases of using the debug monitor in attach-to-inferior mode
+        and in launch-inferior mode.
+
+        For attach-to-inferior mode, the inferior process is first started, then
+        the debug monitor is started in attach to pid mode (using --attach on the
+        stub command line), and the no-ack-mode setup is appended to the packet
+        stream.  The packet stream is not yet executed, ready to have more expected
+        packet entries added to it.
+
+        For launch-inferior mode, the stub is first started, then no ack mode is
+        setup on the expected packet stream, then the verified launch packets are added
+        to the expected socket stream.  The packet stream is not yet executed, ready
+        to have more expected packet entries added to it.
+
+        The return value is:
+        {inferior:<inferior>, server:<server>}
+        """
+        if self._inferior_startup == self._STARTUP_ATTACH:
+            # Launch the process that we'll use as the inferior.
+            inferior = self.launch_process_for_attach(inferior_args=inferior_args, sleep_seconds=inferior_sleep_seconds)
+            self.assertIsNotNone(inferior)
+            self.assertTrue(inferior.pid > 0)
+            attach_pid = inferior.pid
+        else:
+            attach_pid = None
+            inferior = None
+
+        # Launch the debug monitor stub, attaching to the inferior.
+        server = self.start_server(attach_pid=attach_pid)
+        self.assertIsNotNone(server)
+
+        if self._inferior_startup == self._STARTUP_LAUNCH:
+            # Build launch args
+            launch_args = [os.path.abspath('a.out')]
+            if inferior_args:
+                launch_args.extend(inferior_args)
+
+        # Build the expected protocol stream
+        self.add_no_ack_remote_stream()
+        if self._inferior_startup == self._STARTUP_LAUNCH:
+            self.add_verified_launch_packets(launch_args)
+
+        return {"inferior":inferior, "server":server}
 
     def add_no_ack_remote_stream(self):
         self.test_sequence.add_log_lines(
@@ -131,8 +191,71 @@ class LldbGdbServerTestCase(TestBase):
               { "direction":"send", "regex":r"^\$pid:([0-9a-fA-F]+);", "capture":{1:"pid"} }],
             True)
 
+    def add_register_info_collection_packets(self):
+        self.test_sequence.add_log_lines(
+            [ { "type":"multi_response", "query":"qRegisterInfo", "append_iteration_suffix":True,
+              "end_regex":re.compile(r"^\$(E\d+)?#[0-9a-fA-F]{2}$"),
+              "save_key":"reg_info_responses" } ],
+            True)
+
+    def parse_register_info_packets(self, context):
+        """Return an array of register info dictionaries, one per register info."""
+        reg_info_responses = context.get("reg_info_responses")
+        self.assertIsNotNone(reg_info_responses)
+
+        # Parse register infos.
+        return [parse_reg_info_response(reg_info_response) for reg_info_response in reg_info_responses]
+
     def expect_gdbremote_sequence(self):
         return expect_lldb_gdbserver_replay(self, self.sock, self.test_sequence, self._TIMEOUT_SECONDS, self.logger)
+
+    _KNOWN_REGINFO_KEYS = [
+        "name",
+        "alt-name",
+        "bitsize",
+        "offset",
+        "encoding",
+        "format",
+        "set",
+        "gcc",
+        "dwarf",
+        "generic",
+        "container-regs",
+        "invalidate-regs"
+    ]
+
+    def assert_valid_reg_info(self, reg_info):
+        # Assert we know about all the reginfo keys parsed.
+        for key in reg_info:
+            self.assertTrue(key in self._KNOWN_REGINFO_KEYS)
+        
+        # Check the bare-minimum expected set of register info keys.
+        self.assertTrue("name" in reg_info)
+        self.assertTrue("bitsize" in reg_info)
+        self.assertTrue("offset" in reg_info)
+        self.assertTrue("encoding" in reg_info)
+        self.assertTrue("format" in reg_info)
+
+
+    def add_threadinfo_collection_packets(self):
+        self.test_sequence.add_log_lines(
+            [ { "type":"multi_response", "first_query":"qfThreadInfo", "next_query":"qsThreadInfo",
+                "append_iteration_suffix":False, "end_regex":re.compile(r"^\$(l)?#[0-9a-fA-F]{2}$"),
+              "save_key":"threadinfo_responses" } ],
+            True)
+
+
+    def parse_threadinfo_packets(self, context):
+        """Return an array of thread ids (decimal ints), one per thread."""
+        threadinfo_responses = context.get("threadinfo_responses")
+        self.assertIsNotNone(threadinfo_responses)
+
+        thread_ids = []
+        for threadinfo_response in threadinfo_responses:
+            new_thread_infos = parse_threadinfo_response(threadinfo_response)
+            thread_ids.extend(new_thread_infos)
+        return thread_ids
+
 
     @debugserver_test
     def test_exe_starts_debugserver(self):
@@ -496,7 +619,7 @@ class LldbGdbServerTestCase(TestBase):
         self.add_get_pid()
         self.test_sequence.add_log_lines(
             ["read packet: $k#6b",
-             "send packet: $W09#00"],
+             "send packet: $X09#00"],
             True)
         self.expect_gdbremote_sequence()
 
@@ -521,6 +644,292 @@ class LldbGdbServerTestCase(TestBase):
         self.init_llgs_test()
         self.buildDwarf()
         self.attach_commandline_kill_after_initial_stop()
+
+    def qRegisterInfo_returns_one_valid_result(self):
+        server = self.start_server()
+        self.assertIsNotNone(server)
+
+        # Build launch args
+        launch_args = [os.path.abspath('a.out')]
+
+        # Build the expected protocol stream
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.test_sequence.add_log_lines(
+            ["read packet: $qRegisterInfo0#00",
+             { "direction":"send", "regex":r"^\$(.+);#\d{2}", "capture":{1:"reginfo_0"} }],
+            True)
+
+        # Run the stream
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        reg_info_packet = context.get("reginfo_0")
+        self.assertIsNotNone(reg_info_packet)
+        self.assert_valid_reg_info(parse_reg_info_response(reg_info_packet))
+
+    @debugserver_test
+    @dsym_test
+    def test_qRegisterInfo_returns_one_valid_result_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.qRegisterInfo_returns_one_valid_result()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qRegisterInfo_returns_one_valid_result_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.qRegisterInfo_returns_one_valid_result()
+
+    def qRegisterInfo_returns_all_valid_results(self):
+        server = self.start_server()
+        self.assertIsNotNone(server)
+
+        # Build launch args.
+        launch_args = [os.path.abspath('a.out')]
+
+        # Build the expected protocol stream.
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.add_register_info_collection_packets()
+
+        # Run the stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Validate that each register info returned validates.
+        for reg_info in self.parse_register_info_packets(context):
+            self.assert_valid_reg_info(reg_info)
+
+    @debugserver_test
+    @dsym_test
+    def test_qRegisterInfo_returns_all_valid_results_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.qRegisterInfo_returns_all_valid_results()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qRegisterInfo_returns_all_valid_results_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.qRegisterInfo_returns_all_valid_results()
+
+    def qRegisterInfo_contains_required_generics(self):
+        server = self.start_server()
+        self.assertIsNotNone(server)
+
+        # Build launch args
+        launch_args = [os.path.abspath('a.out')]
+
+        # Build the expected protocol stream
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.add_register_info_collection_packets()
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Gather register info entries.
+        reg_infos = self.parse_register_info_packets(context)
+
+        # Collect all generic registers found.
+        generic_regs = { reg_info['generic']:1 for reg_info in reg_infos if 'generic' in reg_info }
+
+        # Ensure we have a program counter register.
+        self.assertTrue('pc' in generic_regs)
+
+        # Ensure we have a frame pointer register.
+        self.assertTrue('fp' in generic_regs)
+
+        # Ensure we have a stack pointer register.
+        self.assertTrue('sp' in generic_regs)
+
+        # Ensure we have a flags register.
+        self.assertTrue('flags' in generic_regs)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qRegisterInfo_contains_required_generics_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.qRegisterInfo_contains_required_generics()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qRegisterInfo_contains_required_generics_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.qRegisterInfo_contains_required_generics()
+
+
+    def qRegisterInfo_contains_at_least_one_register_set(self):
+        server = self.start_server()
+        self.assertIsNotNone(server)
+
+        # Build launch args
+        launch_args = [os.path.abspath('a.out')]
+
+        # Build the expected protocol stream
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.add_register_info_collection_packets()
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Gather register info entries.
+        reg_infos = self.parse_register_info_packets(context)
+
+        # Collect all register sets found.
+        register_sets = { reg_info['set']:1 for reg_info in reg_infos if 'set' in reg_info }
+        self.assertTrue(len(register_sets) >= 1)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qRegisterInfo_contains_at_least_one_register_set_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.qRegisterInfo_contains_at_least_one_register_set()
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qRegisterInfo_contains_at_least_one_register_set_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.qRegisterInfo_contains_at_least_one_register_set()
+
+
+    def qThreadInfo_contains_thread(self):
+        procs = self.prep_debug_monitor_and_inferior()
+        self.add_threadinfo_collection_packets()
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Gather threadinfo entries.
+        threads = self.parse_threadinfo_packets(context)
+        self.assertIsNotNone(threads)
+
+        # We should have exactly one thread.
+        self.assertEqual(len(threads), 1)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qThreadInfo_contains_thread_launch_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qThreadInfo_contains_thread()
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qThreadInfo_contains_thread_launch_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qThreadInfo_contains_thread()
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qThreadInfo_contains_thread_attach_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_attach()
+        self.qThreadInfo_contains_thread()
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qThreadInfo_contains_thread_attach_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_attach()
+        self.qThreadInfo_contains_thread()
+
+
+    def qThreadInfo_matches_qC(self):
+        procs = self.prep_debug_monitor_and_inferior()
+
+        self.add_threadinfo_collection_packets()
+        self.test_sequence.add_log_lines(
+            ["read packet: $qC#00",
+             { "direction":"send", "regex":r"^\$QC([0-9a-fA-F]+)#", "capture":{1:"thread_id"} }],
+            True)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Gather threadinfo entries.
+        threads = self.parse_threadinfo_packets(context)
+        self.assertIsNotNone(threads)
+
+        # We should have exactly one thread from threadinfo.
+        self.assertEqual(len(threads), 1)
+
+        # We should have a valid thread_id from $QC.
+        QC_thread_id_hex = context.get("thread_id")
+        self.assertIsNotNone(QC_thread_id_hex)
+        QC_thread_id = int(QC_thread_id_hex, 16)
+
+        # Those two should be the same.
+        self.assertEquals(threads[0], QC_thread_id)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qThreadInfo_matches_qC_launch_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qThreadInfo_matches_qC()
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qThreadInfo_matches_qC_launch_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qThreadInfo_matches_qC()
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qThreadInfo_matches_qC_attach_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_attach()
+        self.qThreadInfo_matches_qC()
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qThreadInfo_matches_qC_attach_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_attach()
+        self.qThreadInfo_matches_qC()
+
 
 if __name__ == '__main__':
     unittest2.main()

@@ -450,6 +450,8 @@ ARM64TargetLowering::ARM64TargetLowering(ARM64TargetMachine &TM)
       setOperationAction(ISD::MULHU, (MVT::SimpleValueType)VT, Expand);
       setOperationAction(ISD::UMUL_LOHI, (MVT::SimpleValueType)VT, Expand);
 
+      setOperationAction(ISD::BSWAP, (MVT::SimpleValueType)VT, Expand);
+
       for (unsigned InnerVT = (unsigned)MVT::FIRST_VECTOR_VALUETYPE;
            InnerVT <= (unsigned)MVT::LAST_VECTOR_VALUETYPE; ++InnerVT)
         setTruncStoreAction((MVT::SimpleValueType)VT,
@@ -1510,10 +1512,10 @@ SDValue ARM64TargetLowering::LowerFSINCOS(SDValue Op, SelectionDAG &DAG) const {
   SDValue Callee = DAG.getExternalSymbol(LibcallName, getPointerTy());
 
   StructType *RetTy = StructType::get(ArgTy, ArgTy, NULL);
-  TargetLowering::CallLoweringInfo CLI(
-      DAG.getEntryNode(), RetTy, false, false, false, false, 0,
-      CallingConv::Fast, /*isTaillCall=*/false,
-      /*doesNotRet=*/false, /*isReturnValueUsed*/ true, Callee, Args, DAG, dl);
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
+    .setCallee(CallingConv::Fast, RetTy, Callee, &Args, 0);
+
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
 }
@@ -2172,7 +2174,7 @@ SDValue ARM64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     for (unsigned i = 0; i != NumArgs; ++i) {
       MVT ValVT = Outs[i].VT;
       // Get type of the original argument.
-      EVT ActualVT = getValueType(CLI.Args[Outs[i].OrigArgIndex].Ty,
+      EVT ActualVT = getValueType(CLI.getArgs()[Outs[i].OrigArgIndex].Ty,
                                   /*AllowUnknown*/ true);
       MVT ActualMVT = ActualVT.isSimple() ? ActualVT.getSimpleVT() : ValVT;
       ISD::ArgFlagsTy ArgFlags = Outs[i].Flags;
@@ -7296,6 +7298,7 @@ static SDValue performPostLD1Combine(SDNode *N,
   }
 
   SDValue Addr = LD->getOperand(1);
+  SDValue Vector = N->getOperand(0);
   // Search for a use of the address operand that is an increment.
   for (SDNode::use_iterator UI = Addr.getNode()->use_begin(), UE =
        Addr.getNode()->use_end(); UI != UE; ++UI) {
@@ -7307,6 +7310,10 @@ static SDValue performPostLD1Combine(SDNode *N,
     // Check that the add is independent of the load.  Otherwise, folding it
     // would create a cycle.
     if (User->isPredecessorOf(LD) || LD->isPredecessorOf(User))
+      continue;
+    // Also check that add is not used in the vector operand.  This would also
+    // create a cycle.
+    if (User->isPredecessorOf(Vector.getNode()))
       continue;
 
     // If the increment is a constant, it must match the memory ref size.
@@ -7322,7 +7329,7 @@ static SDValue performPostLD1Combine(SDNode *N,
     SmallVector<SDValue, 8> Ops;
     Ops.push_back(LD->getOperand(0));  // Chain
     if (IsLaneOp) {
-      Ops.push_back(N->getOperand(0)); // The vector to be inserted
+      Ops.push_back(Vector);           // The vector to be inserted
       Ops.push_back(N->getOperand(2)); // The lane to be inserted in the vector
     }
     Ops.push_back(Addr);

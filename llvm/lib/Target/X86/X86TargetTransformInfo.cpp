@@ -26,7 +26,7 @@ using namespace llvm;
 #define DEBUG_TYPE "x86tti"
 
 // Declare the pass initialization routine locally as target-specific passes
-// don't havve a target-wide initialization entry point, and so we rely on the
+// don't have a target-wide initialization entry point, and so we rely on the
 // pass constructor initialization.
 namespace llvm {
 void initializeX86TTIPass(PassRegistry &);
@@ -815,6 +815,13 @@ unsigned X86TTI::getIntImmCost(const APInt &Imm, Type *Ty) const {
   if (BitSize == 0)
     return ~0U;
 
+  // Never hoist constants larger than 128bit, because this might lead to
+  // incorrect code generation or assertions in codegen.
+  // Fixme: Create a cost model for types larger than i128 once the codegen
+  // issues have been fixed.
+  if (BitSize > 128)
+    return TCC_Free;
+
   if (Imm == 0)
     return TCC_Free;
 
@@ -830,8 +837,10 @@ unsigned X86TTI::getIntImmCost(unsigned Opcode, unsigned Idx, const APInt &Imm,
   assert(Ty->isIntegerTy());
 
   unsigned BitSize = Ty->getPrimitiveSizeInBits();
+  // There is no cost model for constants with a bit size of 0. Return TCC_Free
+  // here, so that constant hoisting will ignore this constant.
   if (BitSize == 0)
-    return ~0U;
+    return TCC_Free;
 
   unsigned ImmIdx = ~0U;
   switch (Opcode) {
@@ -892,8 +901,10 @@ unsigned X86TTI::getIntImmCost(Intrinsic::ID IID, unsigned Idx,
   assert(Ty->isIntegerTy());
 
   unsigned BitSize = Ty->getPrimitiveSizeInBits();
+  // There is no cost model for constants with a bit size of 0. Return TCC_Free
+  // here, so that constant hoisting will ignore this constant.
   if (BitSize == 0)
-    return ~0U;
+    return TCC_Free;
 
   switch (IID) {
   default: return TCC_Free;

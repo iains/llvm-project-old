@@ -1728,12 +1728,8 @@ X86InstrInfo::isReallyTriviallyReMaterializable(const MachineInstr *MI,
   return true;
 }
 
-/// isSafeToClobberEFLAGS - Return true if it's safe insert an instruction that
-/// would clobber the EFLAGS condition register. Note the result may be
-/// conservative. If it cannot definitely determine the safety after visiting
-/// a few instructions in each direction it assumes it's not safe.
-static bool isSafeToClobberEFLAGS(MachineBasicBlock &MBB,
-                                  MachineBasicBlock::iterator I) {
+bool X86InstrInfo::isSafeToClobberEFLAGS(MachineBasicBlock &MBB,
+                                         MachineBasicBlock::iterator I) const {
   MachineBasicBlock::iterator E = MBB.end();
 
   // For compile time consideration, if we are not able to determine the
@@ -5399,8 +5395,10 @@ namespace {
       const X86TargetMachine *TM =
         static_cast<const X86TargetMachine *>(&MF.getTarget());
 
-      assert(!TM->getSubtarget<X86Subtarget>().is64Bit() &&
-             "X86-64 PIC uses RIP relative addressing");
+      // Don't do anything if this is 64-bit as 64-bit PIC
+      // uses RIP relative addressing.
+      if (TM->getSubtarget<X86Subtarget>().is64Bit())
+        return false;
 
       // Only emit a global base reg in PIC mode.
       if (TM->getRelocationModel() != Reloc::PIC_)
@@ -5455,7 +5453,7 @@ namespace {
 
 char CGBR::ID = 0;
 FunctionPass*
-llvm::createGlobalBaseRegPass() { return new CGBR(); }
+llvm::createX86GlobalBaseRegPass() { return new CGBR(); }
 
 namespace {
   struct LDTLSCleanup : public MachineFunctionPass {

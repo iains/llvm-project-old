@@ -277,7 +277,7 @@ getGlobalAddressWrapper(SDValue GA, const GlobalValue *GV,
   const GlobalValue *UnderlyingGV = GV;
   // If GV is an alias then use the aliasee to determine the wrapper type
   if (const GlobalAlias *GA = dyn_cast<GlobalAlias>(GV))
-    UnderlyingGV = GA->getAliasedGlobal();
+    UnderlyingGV = GA->getAliasee();
   if (const GlobalVariable *GVar = dyn_cast<GlobalVariable>(UnderlyingGV)) {
     if (  ( GVar->isConstant() &&
             UnderlyingGV->isLocalLinkage(GV->getLinkage()) )
@@ -506,16 +506,14 @@ LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   Entry.Node = BasePtr;
   Args.push_back(Entry);
 
-  TargetLowering::CallLoweringInfo CLI(Chain, IntPtrTy, false, false,
-                    false, false, 0, CallingConv::C, /*isTailCall=*/false,
-                    /*doesNotRet=*/false, /*isReturnValueUsed=*/true,
-                    DAG.getExternalSymbol("__misaligned_load", getPointerTy()),
-                    Args, DAG, DL);
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(DL).setChain(Chain)
+    .setCallee(CallingConv::C, IntPtrTy,
+               DAG.getExternalSymbol("__misaligned_load", getPointerTy()),
+               &Args, 0);
+
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
-
-  SDValue Ops[] =
-    { CallResult.first, CallResult.second };
-
+  SDValue Ops[] = { CallResult.first, CallResult.second };
   return DAG.getMergeValues(Ops, DL);
 }
 
@@ -568,14 +566,13 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG) const
   Entry.Node = Value;
   Args.push_back(Entry);
 
-  TargetLowering::CallLoweringInfo CLI(Chain,
-                    Type::getVoidTy(*DAG.getContext()), false, false,
-                    false, false, 0, CallingConv::C, /*isTailCall=*/false,
-                    /*doesNotRet=*/false, /*isReturnValueUsed=*/true,
-                    DAG.getExternalSymbol("__misaligned_store", getPointerTy()),
-                    Args, DAG, dl);
-  std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(dl).setChain(Chain)
+    .setCallee(CallingConv::C, Type::getVoidTy(*DAG.getContext()),
+               DAG.getExternalSymbol("__misaligned_store", getPointerTy()),
+               &Args, 0);
 
+  std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.second;
 }
 

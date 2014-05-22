@@ -163,8 +163,8 @@ namespace clang {
       
     public:
       FindExistingResult(ASTReader &Reader)
-        : Reader(Reader), New(0), Existing(0), AddResult(false) { }
-      
+        : Reader(Reader), New(nullptr), Existing(nullptr), AddResult(false) {}
+
       FindExistingResult(ASTReader &Reader, NamedDecl *New, NamedDecl *Existing)
         : Reader(Reader), New(New), Existing(Existing), AddResult(true) { }
       
@@ -207,6 +207,10 @@ namespace clang {
     static void attachLatestDeclImpl(Redeclarable<DeclT> *D, Decl *Latest);
     static void attachLatestDeclImpl(...);
     static void attachLatestDecl(Decl *D, Decl *latest);
+
+    template <typename DeclT>
+    static void markIncompleteDeclChainImpl(Redeclarable<DeclT> *D);
+    static void markIncompleteDeclChainImpl(...);
 
     /// \brief Determine whether this declaration has a pending body.
     bool hasPendingBody() const { return HasPendingBody; }
@@ -644,7 +648,8 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
     FunctionTemplateSpecializationInfo *FTInfo
         = FunctionTemplateSpecializationInfo::Create(C, FD, Template, TSK,
                                                      TemplArgList,
-                             HasTemplateArgumentsAsWritten ? &TemplArgsInfo : 0,
+                             HasTemplateArgumentsAsWritten ? &TemplArgsInfo
+                                                           : nullptr,
                                                      POI);
     FD->TemplateOrSpecialization = FTInfo;
 
@@ -661,7 +666,7 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
       llvm::FoldingSetNodeID ID;
       FunctionTemplateSpecializationInfo::Profile(ID, TemplArgs.data(),
                                                   TemplArgs.size(), C);
-      void *InsertPos = 0;
+      void *InsertPos = nullptr;
       FunctionTemplateDecl::Common *CommonPtr = CanonTemplate->getCommonPtr();
       CommonPtr->Specializations.FindNodeOrInsertPos(ID, InsertPos);
       if (InsertPos)
@@ -804,8 +809,8 @@ void ASTDeclReader::VisitObjCInterfaceDecl(ObjCInterfaceDecl *ID) {
                                           Reader.getContext());
   
     // We will rebuild this list lazily.
-    ID->setIvarList(0);
-    
+    ID->setIvarList(nullptr);
+
     // Note that we have deserialized a definition.
     Reader.PendingDefinitions.insert(ID);
     
@@ -820,7 +825,7 @@ void ASTDeclReader::VisitObjCIvarDecl(ObjCIvarDecl *IVD) {
   VisitFieldDecl(IVD);
   IVD->setAccessControl((ObjCIvarDecl::AccessControl)Record[Idx++]);
   // This field will be built lazily.
-  IVD->setNextIvar(0);
+  IVD->setNextIvar(nullptr);
   bool synth = Record[Idx++];
   IVD->setSynthesize(synth);
 }
@@ -1089,7 +1094,7 @@ void ASTDeclReader::VisitBlockDecl(BlockDecl *BD) {
     unsigned flags = Record[Idx++];
     bool byRef = (flags & 1);
     bool nested = (flags & 2);
-    Expr *copyExpr = ((flags & 4) ? Reader.ReadExpr(F) : 0);
+    Expr *copyExpr = ((flags & 4) ? Reader.ReadExpr(F) : nullptr);
 
     captures.push_back(BlockDecl::Capture(decl, byRef, nested, copyExpr));
   }
@@ -1274,7 +1279,7 @@ void ASTDeclReader::ReadCXXDefinitionData(
       LambdaCaptureKind Kind = static_cast<LambdaCaptureKind>(Record[Idx++]);
       switch (Kind) {
       case LCK_This:
-        *ToCapture++ = Capture(Loc, IsImplicit, Kind, 0, SourceLocation());
+        *ToCapture++ = Capture(Loc, IsImplicit, Kind, nullptr,SourceLocation());
         break;
       case LCK_ByCopy:
       case LCK_ByRef:
@@ -1289,8 +1294,9 @@ void ASTDeclReader::ReadCXXDefinitionData(
 
 void ASTDeclReader::MergeDefinitionData(
     CXXRecordDecl *D, struct CXXRecordDecl::DefinitionData &MergeDD) {
-  assert(D->DefinitionData && "merging class definition into non-definition");
-  auto &DD = *D->DefinitionData;
+  assert(D->DefinitionData.getNotUpdated() &&
+         "merging class definition into non-definition");
+  auto &DD = *D->DefinitionData.getNotUpdated();
 
   // If the new definition has new special members, let the name lookup
   // code know that it needs to look in the new definition too.
@@ -1381,7 +1387,7 @@ void ASTDeclReader::ReadCXXRecordDefinition(CXXRecordDecl *D) {
   // allocate the appropriate DefinitionData structure.
   bool IsLambda = Record[Idx++];
   if (IsLambda)
-    DD = new (C) CXXRecordDecl::LambdaDefinitionData(D, 0, false, false,
+    DD = new (C) CXXRecordDecl::LambdaDefinitionData(D, nullptr, false, false,
                                                      LCD_None);
   else
     DD = new (C) struct CXXRecordDecl::DefinitionData(D);
@@ -1390,7 +1396,7 @@ void ASTDeclReader::ReadCXXRecordDefinition(CXXRecordDecl *D) {
 
   // If we're reading an update record, we might already have a definition for
   // this record. If so, just merge into it.
-  if (D->DefinitionData) {
+  if (D->DefinitionData.getNotUpdated()) {
     MergeDefinitionData(D, *DD);
     return;
   }
@@ -1399,25 +1405,26 @@ void ASTDeclReader::ReadCXXRecordDefinition(CXXRecordDecl *D) {
   // that all other deserialized declarations will see it.
   CXXRecordDecl *Canon = D->getCanonicalDecl();
   if (Canon == D) {
-    D->DefinitionData = DD;
+    D->DefinitionData.setNotUpdated(DD);
     D->IsCompleteDefinition = true;
-  } else if (!Canon->DefinitionData) {
-    Canon->DefinitionData = D->DefinitionData = DD;
+  } else if (auto *CanonDD = Canon->DefinitionData.getNotUpdated()) {
+    // We have already deserialized a definition of this record. This
+    // definition is no longer really a definition. Note that the pre-existing
+    // definition is the *real* definition.
+    Reader.MergedDeclContexts.insert(
+        std::make_pair(D, CanonDD->Definition));
+    D->DefinitionData = Canon->DefinitionData;
+    D->IsCompleteDefinition = false;
+    MergeDefinitionData(D, *DD);
+  } else {
+    Canon->DefinitionData.setNotUpdated(DD);
+    D->DefinitionData = Canon->DefinitionData;
     D->IsCompleteDefinition = true;
 
     // Note that we have deserialized a definition. Any declarations
     // deserialized before this one will be be given the DefinitionData
     // pointer at the end.
     Reader.PendingDefinitions.insert(D);
-  } else {
-    // We have already deserialized a definition of this record. This
-    // definition is no longer really a definition. Note that the pre-existing
-    // definition is the *real* definition.
-    Reader.MergedDeclContexts.insert(
-        std::make_pair(D, Canon->DefinitionData->Definition));
-    D->DefinitionData = D->getCanonicalDecl()->DefinitionData;
-    D->IsCompleteDefinition = false;
-    MergeDefinitionData(D, *DD);
   }
 }
 
@@ -1741,16 +1748,16 @@ ASTDeclReader::VisitClassTemplateSpecializationDeclImpl(
 
         // This declaration might be a definition. Merge with any existing
         // definition.
-        if (D->DefinitionData) {
-          if (!CanonSpec->DefinitionData) {
-            CanonSpec->DefinitionData = D->DefinitionData;
-          } else {
-            MergeDefinitionData(CanonSpec, *D->DefinitionData);
+        if (auto *DDD = D->DefinitionData.getNotUpdated()) {
+          if (auto *CanonDD = CanonSpec->DefinitionData.getNotUpdated()) {
+            MergeDefinitionData(CanonSpec, *DDD);
             Reader.PendingDefinitions.erase(D);
             Reader.MergedDeclContexts.insert(
-                std::make_pair(D, CanonSpec->DefinitionData->Definition));
+                std::make_pair(D, CanonDD->Definition));
             D->IsCompleteDefinition = false;
             D->DefinitionData = CanonSpec->DefinitionData;
+          } else {
+            CanonSpec->DefinitionData = D->DefinitionData;
           }
         }
       }
@@ -2138,7 +2145,7 @@ void ASTDeclReader::VisitOMPThreadPrivateDecl(OMPThreadPrivateDecl *D) {
 void ASTReader::ReadAttributes(ModuleFile &F, AttrVec &Attrs,
                                const RecordData &Record, unsigned &Idx) {
   for (unsigned i = 0, e = Record[Idx++]; i != e; ++i) {
-    Attr *New = 0;
+    Attr *New = nullptr;
     attr::Kind Kind = (attr::Kind)Record[Idx++];
     SourceRange Range = ReadSourceRange(F, Record, Idx);
 
@@ -2370,9 +2377,10 @@ static DeclContext *getPrimaryContextForMerging(DeclContext *DC) {
     return RD->getDefinition();
 
   if (EnumDecl *ED = dyn_cast<EnumDecl>(DC))
-    return ED->getASTContext().getLangOpts().CPlusPlus? ED->getDefinition() : 0;
+    return ED->getASTContext().getLangOpts().CPlusPlus? ED->getDefinition()
+                                                      : nullptr;
 
-  return 0;
+  return nullptr;
 }
 
 ASTDeclReader::FindExistingResult::~FindExistingResult() {
@@ -2393,7 +2401,7 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
   DeclarationName Name = D->getDeclName();
   if (!Name) {
     // Don't bother trying to find unnamed declarations.
-    FindExistingResult Result(Reader, D, /*Existing=*/0);
+    FindExistingResult Result(Reader, D, /*Existing=*/nullptr);
     Result.suppress();
     return Result;
   }
@@ -2453,13 +2461,13 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
   if (Reader.MergedDeclContexts.count(D->getLexicalDeclContext()))
     Reader.PendingOdrMergeChecks.push_back(D);
 
-  return FindExistingResult(Reader, D, /*Existing=*/0);
+  return FindExistingResult(Reader, D, /*Existing=*/nullptr);
 }
 
 template<typename DeclT>
 void ASTDeclReader::attachPreviousDeclImpl(Redeclarable<DeclT> *D,
                                            Decl *Previous) {
-  D->RedeclLink.setNext(cast<DeclT>(Previous));
+  D->RedeclLink.setPrevious(cast<DeclT>(Previous));
 }
 void ASTDeclReader::attachPreviousDeclImpl(...) {
   llvm_unreachable("attachPreviousDecl on non-redeclarable declaration");
@@ -2489,7 +2497,7 @@ void ASTDeclReader::attachPreviousDecl(Decl *D, Decl *Previous) {
 
 template<typename DeclT>
 void ASTDeclReader::attachLatestDeclImpl(Redeclarable<DeclT> *D, Decl *Latest) {
-  D->RedeclLink = Redeclarable<DeclT>::LatestDeclLink(cast<DeclT>(Latest));
+  D->RedeclLink.setLatest(cast<DeclT>(Latest));
 }
 void ASTDeclReader::attachLatestDeclImpl(...) {
   llvm_unreachable("attachLatestDecl on non-redeclarable declaration");
@@ -2500,9 +2508,28 @@ void ASTDeclReader::attachLatestDecl(Decl *D, Decl *Latest) {
 
   switch (D->getKind()) {
 #define ABSTRACT_DECL(TYPE)
-#define DECL(TYPE, BASE)                               \
-  case Decl::TYPE:                                     \
+#define DECL(TYPE, BASE)                                  \
+  case Decl::TYPE:                                        \
     attachLatestDeclImpl(cast<TYPE##Decl>(D), Latest); \
+    break;
+#include "clang/AST/DeclNodes.inc"
+  }
+}
+
+template<typename DeclT>
+void ASTDeclReader::markIncompleteDeclChainImpl(Redeclarable<DeclT> *D) {
+  D->RedeclLink.markIncomplete();
+}
+void ASTDeclReader::markIncompleteDeclChainImpl(...) {
+  llvm_unreachable("markIncompleteDeclChain on non-redeclarable declaration");
+}
+
+void ASTReader::markIncompleteDeclChain(Decl *D) {
+  switch (D->getKind()) {
+#define ABSTRACT_DECL(TYPE)
+#define DECL(TYPE, BASE)                                             \
+  case Decl::TYPE:                                                   \
+    ASTDeclReader::markIncompleteDeclChainImpl(cast<TYPE##Decl>(D)); \
     break;
 #include "clang/AST/DeclNodes.inc"
   }
@@ -2552,7 +2579,7 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
   unsigned Idx = 0;
   ASTDeclReader Reader(*this, *Loc.F, ID, RawLocation, Record,Idx);
 
-  Decl *D = 0;
+  Decl *D = nullptr;
   switch ((DeclCode)DeclsCursor.readRecord(Code, Record)) {
   case DECL_CONTEXT_LEXICAL:
   case DECL_CONTEXT_VISIBLE:
@@ -2734,7 +2761,7 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
     break;
   case DECL_CXX_BASE_SPECIFIERS:
     Error("attempt to read a C++ base-specifier record as a declaration");
-    return 0;
+    return nullptr;
   case DECL_IMPORT:
     // Note: last entry of the ImportDecl record is the number of stored source 
     // locations.
@@ -2773,7 +2800,7 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
         LookupDC->setHasExternalVisibleStorage(true);
       if (ReadDeclContextStorage(*Loc.F, DeclsCursor, Offsets, 
                                  Loc.F->DeclContextInfos[DC]))
-        return 0;
+        return nullptr;
     }
 
     // Now add the pending visible updates for this decl context, if it has any.
@@ -3028,7 +3055,7 @@ namespace {
                           unsigned PreviousGeneration)
       : Reader(Reader), InterfaceID(InterfaceID), Interface(Interface),
         Deserialized(Deserialized), PreviousGeneration(PreviousGeneration),
-        Tail(0) 
+        Tail(nullptr)
     {
       // Populate the name -> category map with the set of known categories.
       for (auto *Cat : Interface->known_categories()) {

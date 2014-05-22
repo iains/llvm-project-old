@@ -268,6 +268,17 @@ TEST(ConstantsTest, ReplaceWithConstantTest) {
   EXPECT_DEATH(Global->replaceAllUsesWith(GEP),
                "this->replaceAllUsesWith\\(expr\\(this\\)\\) is NOT valid!");
 }
+
+TEST(ConstantsTest, ReplaceInAliasTest) {
+  std::unique_ptr<Module> M(new Module("MyModule", getGlobalContext()));
+
+  Type *Int32Ty = Type::getInt32Ty(getGlobalContext());
+  auto *Global = cast<GlobalObject>(M->getOrInsertGlobal("dummy", Int32Ty));
+  auto *GA = GlobalAlias::create(GlobalValue::ExternalLinkage, "alias", Global);
+  EXPECT_DEATH(Global->replaceAllUsesWith(GA),
+               "replaceAliasUseWith cannot form an alias cycle");
+}
+
 #endif
 #endif
 
