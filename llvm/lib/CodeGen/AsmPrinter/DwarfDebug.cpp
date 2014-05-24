@@ -324,7 +324,9 @@ DIE &DwarfDebug::updateSubprogramScopeDIE(DwarfCompileUnit &SPCU,
   if (DIE *AbsSPDIE = AbstractSPDies.lookup(SP)) {
     assert(SPDie == AbsSPDIE);
     // Pick up abstract subprogram DIE.
-    SPDie = &SPCU.createAndAddDIE(dwarf::DW_TAG_subprogram, SPCU.getUnitDie());
+    SPDie = &SPCU.createAndAddDIE(
+        dwarf::DW_TAG_subprogram,
+        *SPCU.getOrCreateContextDIE(resolve(SP.getContext())));
     SPCU.addDIEEntry(*SPDie, dwarf::DW_AT_abstract_origin, *AbsSPDIE);
   }
 
@@ -521,18 +523,19 @@ void DwarfDebug::constructAbstractSubprogramScopeDIE(DwarfCompileUnit &TheCU,
   assert(Scope->isAbstractScope());
   assert(!Scope->getInlinedAt());
 
-  DISubprogram Sub(Scope->getScopeNode());
+  DISubprogram SP(Scope->getScopeNode());
 
-  if (!ProcessedSPNodes.insert(Sub))
+  if (!ProcessedSPNodes.insert(SP))
     return;
 
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
-  DIE *ScopeDIE = SPMap[Sub]->getDIE(Sub);
-  assert(ScopeDIE);
-  AbstractSPDies.insert(std::make_pair(Sub, ScopeDIE));
-  TheCU.addUInt(*ScopeDIE, dwarf::DW_AT_inline, None, dwarf::DW_INL_inlined);
-  createAndAddScopeChildren(TheCU, Scope, *ScopeDIE);
+  DwarfCompileUnit &SPCU = *SPMap[SP];
+  DIE *AbsDef = SPCU.getDIE(SP);
+  assert(AbsDef);
+  AbstractSPDies.insert(std::make_pair(SP, AbsDef));
+  SPCU.addUInt(*AbsDef, dwarf::DW_AT_inline, None, dwarf::DW_INL_inlined);
+  createAndAddScopeChildren(SPCU, Scope, *AbsDef);
 }
 
 DIE &DwarfDebug::constructSubprogramScopeDIE(DwarfCompileUnit &TheCU,
@@ -2370,6 +2373,8 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   if (!useSplitDwarf())
     CU.applyStmtList(UnitDie);
 
+  // FIXME: Skip using COMDAT groups for type units in the .dwo file once tools
+  // such as DWP ( http://gcc.gnu.org/wiki/DebugFissionDWP ) can cope with it.
   NewTU.initSection(
       useSplitDwarf()
           ? Asm->getObjFileLowering().getDwarfTypesDWOSection(Signature)
