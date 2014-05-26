@@ -84,33 +84,24 @@ static void relocLo16(uint8_t *location, uint64_t P, uint64_t S, int64_t AHL,
   applyReloc(location, result, 0xffff);
 }
 
-/// \brief R_MIPS_GOT16
-/// local/external: rel16 G (verify)
-static void relocGOT16(uint8_t *location, uint64_t P, uint64_t S, int64_t AHL,
-                       uint64_t GP) {
-  // FIXME (simon): for local sym put high 16 bit of AHL to the GOT
+/// \brief R_MIPS_GOT16, R_MIPS_CALL16
+/// rel16 G (verify)
+static void relocGOT(uint8_t *location, uint64_t P, uint64_t S, int64_t A,
+                     uint64_t GP) {
   int32_t G = (int32_t)(S - GP);
   applyReloc(location, G, 0xffff);
 }
 
-/// \brief R_MIPS_CALL16
-/// external: rel16 G (verify)
-static void relocCall16(uint8_t *location, uint64_t P, uint64_t S, int64_t A,
-                        uint64_t GP) {
-  int32_t G = (int32_t)(S - GP);
-  applyReloc(location, G, 0xffff);
-}
-
-/// \brief R_MIPS_TLS_TPREL_HI16
+/// \brief R_MIPS_TLS_TPREL_HI16, LLD_R_MIPS_HI16
 /// (S + A) >> 16
-static void relocTLSTpRelHi16(uint8_t *location, uint64_t S, int64_t A) {
+static void relocGeneralHi16(uint8_t *location, uint64_t S, int64_t A) {
   int32_t result = S + A + 0x8000;
   applyReloc(location, result >> 16, 0xffff);
 }
 
-/// \brief R_MIPS_TLS_TPREL_LO16
+/// \brief R_MIPS_TLS_TPREL_LO16, LLD_R_MIPS_LO16
 /// S + A
-static void relocTLSTpRelLo16(uint8_t *location, uint64_t S, int64_t A) {
+static void relocGeneralLo16(uint8_t *location, uint64_t S, int64_t A) {
   int32_t result = S + A;
   applyReloc(location, result, 0xffff);
 }
@@ -126,16 +117,6 @@ static void relocGPRel32(uint8_t *location, uint64_t P, uint64_t S, int64_t A,
 /// \brief LLD_R_MIPS_32_HI16
 static void reloc32hi16(uint8_t *location, uint64_t S, int64_t A) {
   applyReloc(location, (S + A + 0x8000) & 0xffff0000, 0xffffffff);
-}
-
-/// \brief LLD_R_MIPS_HI16
-static void relocLldHi16(uint8_t *location, uint64_t S) {
-  applyReloc(location, (S + 0x8000) >> 16, 0xffff);
-}
-
-/// \brief LLD_R_MIPS_LO16
-static void relocLldLo16(uint8_t *location, uint64_t S) {
-  applyReloc(location, S, 0xffff);
 }
 
 error_code MipsTargetRelocationHandler::applyRelocation(
@@ -171,16 +152,16 @@ error_code MipsTargetRelocationHandler::applyRelocation(
               ref.target() == gpAtom->_atom);
     break;
   case R_MIPS_GOT16:
-    relocGOT16(location, relocVAddress, targetVAddress, ref.addend(), gpAddr);
+    relocGOT(location, relocVAddress, targetVAddress, ref.addend(), gpAddr);
     break;
   case R_MIPS_CALL16:
-    relocCall16(location, relocVAddress, targetVAddress, ref.addend(), gpAddr);
+    relocGOT(location, relocVAddress, targetVAddress, ref.addend(), gpAddr);
     break;
   case R_MIPS_TLS_TPREL_HI16:
-    relocTLSTpRelHi16(location, targetVAddress, ref.addend());
+    relocGeneralHi16(location, targetVAddress, ref.addend());
     break;
   case R_MIPS_TLS_TPREL_LO16:
-    relocTLSTpRelLo16(location, targetVAddress, ref.addend());
+    relocGeneralLo16(location, targetVAddress, ref.addend());
     break;
   case R_MIPS_GPREL32:
     relocGPRel32(location, relocVAddress, targetVAddress, ref.addend(), gpAddr);
@@ -206,10 +187,10 @@ error_code MipsTargetRelocationHandler::applyRelocation(
     reloc26ext(location, targetVAddress, ref.addend());
     break;
   case LLD_R_MIPS_HI16:
-    relocLldHi16(location, targetVAddress);
+    relocGeneralHi16(location, targetVAddress, 0);
     break;
   case LLD_R_MIPS_LO16:
-    relocLldLo16(location, targetVAddress);
+    relocGeneralLo16(location, targetVAddress, 0);
     break;
   case LLD_R_MIPS_STO_PLT:
     // Do nothing.
