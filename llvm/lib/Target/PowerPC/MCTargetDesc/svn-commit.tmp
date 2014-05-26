@@ -1,7 +1,0 @@
-Provide a stub Target Streamer implementation for PPC MachO
-
-At present, this handles .tc (error) and needs to be expanded to deal properly with .machine
-
---This line, and those below, will be ignored--
-
-M    PPCMCTargetDesc.cpp
