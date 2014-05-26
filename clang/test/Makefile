@@ -51,6 +51,8 @@ lit.site.cfg: FORCE
 	@$(ECHOPATH) s=@ENABLE_CLANG_STATIC_ANALYZER@=$(ENABLE_CLANG_STATIC_ANALYZER)=g >> lit.tmp
 	@$(ECHOPATH) s=@ENABLE_CLANG_EXAMPLES@=$(ENABLE_CLANG_EXAMPLES)=g >> lit.tmp
 	@$(ECHOPATH) s=@ENABLE_SHARED@=$(ENABLE_SHARED)=g >> lit.tmp
+	@$(ECHOPATH) s=@SHLIBDIR@=$(SharedLibDir)=g >> lit.tmp
+	@$(ECHOPATH) s=@LLVM_PLUGIN_EXT@=$(SHLIBEXT)=g >> lit.tmp
 	@sed -f lit.tmp $(PROJ_SRC_DIR)/lit.site.cfg.in > $@
 	@-rm -f lit.tmp
 
