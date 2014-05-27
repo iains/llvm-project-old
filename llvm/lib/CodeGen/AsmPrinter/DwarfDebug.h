@@ -389,6 +389,8 @@ class DwarfDebug : public AsmPrinterHandler {
   /// \brief Collect info for variables that were optimized out.
   void collectDeadVariables();
 
+  void finishSubprogramDefinitions();
+
   /// \brief Finish off debug information after all functions have been
   /// processed.
   void finalizeModuleInfo();
@@ -488,9 +490,6 @@ class DwarfDebug : public AsmPrinterHandler {
   /// \brief Create new DwarfCompileUnit for the given metadata node with tag
   /// DW_TAG_compile_unit.
   DwarfCompileUnit &constructDwarfCompileUnit(DICompileUnit DIUnit);
-
-  /// \brief Construct subprogram DIE.
-  void constructSubprogramDIE(DwarfCompileUnit &TheCU, const MDNode *N);
 
   /// \brief Construct imported_module or imported_declaration DIE.
   void constructImportedEntityDIE(DwarfCompileUnit &TheCU, const MDNode *N);

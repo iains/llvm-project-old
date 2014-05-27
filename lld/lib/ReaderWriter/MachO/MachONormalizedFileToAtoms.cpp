@@ -24,6 +24,7 @@
 #include "File.h"
 #include "Atoms.h"
 
+#include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
 
 #include "llvm/Support/MachO.h"
@@ -112,6 +113,31 @@ static error_code processSection(MachOFile &file, const Section &section,
   unsigned offset = 0;
   switch (section.type) {
   case llvm::MachO::S_REGULAR:
+    if (section.segmentName.equals("__TEXT") && 
+        section.sectionName.equals("__ustring")) {
+      if ((section.content.size() % 4) != 0)
+        return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                     + "/" + section.sectionName 
+                                     + " has a size that is not even"); 
+      for (size_t i = 0, e = section.content.size(); i != e; i +=2) {
+        if ((section.content[i] == 0) && (section.content[i+1] == 0)) {
+          unsigned size = i - offset + 2;
+          ArrayRef<uint8_t> utf16Content = section.content.slice(offset, size);
+          file.addDefinedAtom(StringRef(), DefinedAtom::scopeLinkageUnit,
+                              DefinedAtom::typeUTF16String, utf16Content, 
+                              copyRefs);
+          offset = i + 2;
+        }
+      }
+      if (offset != section.content.size()) {
+        return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                       + "/" + section.sectionName 
+                                       + " is supposed to contain 0x0000 "
+                                       "terminated UTF16 strings, but the "
+                                       "last string in the section is not zero "
+                                       "terminated."); 
+      }
+    }
   case llvm::MachO::S_COALESCED:
   case llvm::MachO::S_ZEROFILL:
     // These sections are broken in to atoms based on symbols.
@@ -126,10 +152,21 @@ static error_code processSection(MachOFile &file, const Section &section,
         offset = i + 1;
       }
     }
+    if (offset != section.content.size()) {
+      return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                     + "/" + section.sectionName 
+                                     + " has type S_CSTRING_LITERALS but the "
+                                     "last string in the section is not zero "
+                                     "terminated."); 
+    }
     break;
   case llvm::MachO::S_4BYTE_LITERALS:
     if ((section.content.size() % 4) != 0)
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                     + "/" + section.sectionName 
+                                     + " has type S_4BYTE_LITERALS but its "
+                                     "size (" + Twine(section.content.size()) 
+                                     + ") is not a multiple of 4"); 
     for (size_t i = 0, e = section.content.size(); i != e; i += 4) {
       ArrayRef<uint8_t> byteContent = section.content.slice(offset, 4);
       file.addDefinedAtom(StringRef(), DefinedAtom::scopeLinkageUnit,
@@ -139,7 +176,11 @@ static error_code processSection(MachOFile &file, const Section &section,
     break;
   case llvm::MachO::S_8BYTE_LITERALS:
     if ((section.content.size() % 8) != 0)
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                     + "/" + section.sectionName 
+                                     + " has type S_8YTE_LITERALS but its "
+                                     "size (" + Twine(section.content.size()) 
+                                     + ") is not a multiple of 8"); 
     for (size_t i = 0, e = section.content.size(); i != e; i += 8) {
       ArrayRef<uint8_t> byteContent = section.content.slice(offset, 8);
       file.addDefinedAtom(StringRef(), DefinedAtom::scopeLinkageUnit,
@@ -149,7 +190,11 @@ static error_code processSection(MachOFile &file, const Section &section,
     break;
   case llvm::MachO::S_16BYTE_LITERALS:
     if ((section.content.size() % 16) != 0)
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return make_dynamic_error_code(Twine("Section ") + section.segmentName
+                                     + "/" + section.sectionName 
+                                     + " has type S_16BYTE_LITERALS but its "
+                                     "size (" + Twine(section.content.size()) 
+                                     + ") is not a multiple of 16"); 
     for (size_t i = 0, e = section.content.size(); i != e; i += 16) {
       ArrayRef<uint8_t> byteContent = section.content.slice(offset, 16);
       file.addDefinedAtom(StringRef(), DefinedAtom::scopeLinkageUnit,

@@ -314,21 +314,7 @@ bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
 // scope then create and insert DIEs for these variables.
 DIE &DwarfDebug::updateSubprogramScopeDIE(DwarfCompileUnit &SPCU,
                                           DISubprogram SP) {
-  DIE *SPDie = SPCU.getDIE(SP);
-
-  assert(SPDie && "Unable to find subprogram DIE!");
-
-  // If we're updating an abstract DIE, then we will be adding the children and
-  // object pointer later on. But what we don't want to do is process the
-  // concrete DIE twice.
-  if (DIE *AbsSPDIE = AbstractSPDies.lookup(SP)) {
-    assert(SPDie == AbsSPDIE);
-    // Pick up abstract subprogram DIE.
-    SPDie = &SPCU.createAndAddDIE(
-        dwarf::DW_TAG_subprogram,
-        *SPCU.getOrCreateContextDIE(resolve(SP.getContext())));
-    SPCU.addDIEEntry(*SPDie, dwarf::DW_AT_abstract_origin, *AbsSPDIE);
-  }
+  DIE *SPDie = SPCU.getOrCreateSubprogramDIE(SP);
 
   attachLowHighPC(SPCU, *SPDie, FunctionBeginSym, FunctionEndSym);
 
@@ -435,7 +421,7 @@ DwarfDebug::constructInlinedScopeDIE(DwarfCompileUnit &TheCU,
   DISubprogram InlinedSP = getDISubprogram(DS);
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
-  DIE *OriginDIE = SPMap[InlinedSP]->getDIE(InlinedSP);
+  DIE *OriginDIE = AbstractSPDies[InlinedSP];
   assert(OriginDIE && "Unable to find original DIE for an inlined subprogram.");
 
   auto ScopeDIE = make_unique<DIE>(dwarf::DW_TAG_inlined_subroutine);
@@ -462,12 +448,7 @@ static std::unique_ptr<DIE> constructVariableDIE(DwarfCompileUnit &TheCU,
                                                  DbgVariable &DV,
                                                  const LexicalScope &Scope,
                                                  DIE *&ObjectPointer) {
-  AbstractOrInlined AOI = AOI_None;
-  if (Scope.isAbstractScope())
-    AOI = AOI_Abstract;
-  else if (Scope.getInlinedAt())
-    AOI = AOI_Inlined;
-  auto Var = TheCU.constructVariableDIE(DV, AOI);
+  auto Var = TheCU.constructVariableDIE(DV, Scope.isAbstractScope());
   if (DV.isObjectPointer())
     ObjectPointer = Var.get();
   return Var;
@@ -525,15 +506,34 @@ void DwarfDebug::constructAbstractSubprogramScopeDIE(DwarfCompileUnit &TheCU,
 
   DISubprogram SP(Scope->getScopeNode());
 
-  if (!ProcessedSPNodes.insert(SP))
+  ProcessedSPNodes.insert(SP);
+
+  DIE *&AbsDef = AbstractSPDies[SP];
+  if (AbsDef)
     return;
 
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
   DwarfCompileUnit &SPCU = *SPMap[SP];
-  DIE *AbsDef = SPCU.getDIE(SP);
-  assert(AbsDef);
-  AbstractSPDies.insert(std::make_pair(SP, AbsDef));
+  DIE *ContextDIE;
+
+  // Some of this is duplicated from DwarfUnit::getOrCreateSubprogramDIE, with
+  // the important distinction that the DIDescriptor is not associated with the
+  // DIE (since the DIDescriptor will be associated with the concrete DIE, if
+  // any). It could be refactored to some common utility function.
+  if (DISubprogram SPDecl = SP.getFunctionDeclaration()) {
+    ContextDIE = &SPCU.getUnitDie();
+    SPCU.getOrCreateSubprogramDIE(SPDecl);
+  } else
+    ContextDIE = SPCU.getOrCreateContextDIE(resolve(SP.getContext()));
+
+  // Passing null as the associated DIDescriptor because the abstract definition
+  // shouldn't be found by lookup.
+  AbsDef = &SPCU.createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE,
+                                 DIDescriptor());
+  SPCU.applySubprogramAttributes(SP, *AbsDef);
+  SPCU.addGlobalName(SP.getName(), *AbsDef, resolve(SP.getContext()));
+
   SPCU.addUInt(*AbsDef, dwarf::DW_AT_inline, None, dwarf::DW_INL_inlined);
   createAndAddScopeChildren(SPCU, Scope, *AbsDef);
 }
@@ -683,28 +683,6 @@ DwarfCompileUnit &DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
   return NewCU;
 }
 
-// Construct subprogram DIE.
-void DwarfDebug::constructSubprogramDIE(DwarfCompileUnit &TheCU,
-                                        const MDNode *N) {
-  // FIXME: We should only call this routine once, however, during LTO if a
-  // program is defined in multiple CUs we could end up calling it out of
-  // beginModule as we walk the CUs.
-
-  DwarfCompileUnit *&CURef = SPMap[N];
-  if (CURef)
-    return;
-  CURef = &TheCU;
-
-  DISubprogram SP(N);
-  assert(SP.isSubprogram());
-  assert(SP.isDefinition());
-
-  DIE &SubprogramDie = *TheCU.getOrCreateSubprogramDIE(SP);
-
-  // Expose as a global name.
-  TheCU.addGlobalName(SP.getName(), SubprogramDie, resolve(SP.getContext()));
-}
-
 void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit &TheCU,
                                             const MDNode *N) {
   DIImportedEntity Module(N);
@@ -781,7 +759,7 @@ void DwarfDebug::beginModule() {
       CU.createGlobalVariableDIE(DIGlobalVariable(GVs.getElement(i)));
     DIArray SPs = CUNode.getSubprograms();
     for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i)
-      constructSubprogramDIE(CU, SPs.getElement(i));
+      SPMap.insert(std::make_pair(SPs.getElement(i), &CU));
     DIArray EnumTypes = CUNode.getEnumTypes();
     for (unsigned i = 0, e = EnumTypes.getNumElements(); i != e; ++i)
       CU.getOrCreateTypeDIE(EnumTypes.getElement(i));
@@ -805,6 +783,41 @@ void DwarfDebug::beginModule() {
   // Prime section data.
   SectionMap[Asm->getObjFileLowering().getTextSection()];
 }
+
+void DwarfDebug::finishSubprogramDefinitions() {
+  const Module *M = MMI->getModule();
+
+  NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu");
+  for (MDNode *N : CU_Nodes->operands()) {
+    DICompileUnit TheCU(N);
+    // Construct subprogram DIE and add variables DIEs.
+    DwarfCompileUnit *SPCU =
+        static_cast<DwarfCompileUnit *>(CUMap.lookup(TheCU));
+    DIArray Subprograms = TheCU.getSubprograms();
+    for (unsigned i = 0, e = Subprograms.getNumElements(); i != e; ++i) {
+      DISubprogram SP(Subprograms.getElement(i));
+      // Perhaps the subprogram is in another CU (such as due to comdat
+      // folding, etc), in which case ignore it here.
+      if (SPMap[SP] != SPCU)
+        continue;
+      DIE *D = SPCU->getDIE(SP);
+      if (DIE *AbsSPDIE = AbstractSPDies.lookup(SP)) {
+        if (D)
+          // If this subprogram has an abstract definition, reference that
+          SPCU->addDIEEntry(*D, dwarf::DW_AT_abstract_origin, *AbsSPDIE);
+      } else {
+        if (!D)
+          // Lazily construct the subprogram if we didn't see either concrete or
+          // inlined versions during codegen.
+          D = SPCU->getOrCreateSubprogramDIE(SP);
+        // And attach the attributes
+        SPCU->applySubprogramAttributes(SP, *D);
+        SPCU->addGlobalName(SP.getName(), *D, resolve(SP.getContext()));
+      }
+    }
+  }
+}
+
 
 // Collect info for variables that were optimized out.
 void DwarfDebug::collectDeadVariables() {
@@ -830,7 +843,9 @@ void DwarfDebug::collectDeadVariables() {
         if (Variables.getNumElements() == 0)
           continue;
 
-        DIE *SPDIE = SPCU->getDIE(SP);
+        DIE *SPDIE = AbstractSPDies.lookup(SP);
+        if (!SPDIE)
+          SPDIE = SPCU->getDIE(SP);
         assert(SPDIE);
         for (unsigned vi = 0, ve = Variables.getNumElements(); vi != ve; ++vi) {
           DIVariable DV(Variables.getElement(vi));
@@ -844,6 +859,8 @@ void DwarfDebug::collectDeadVariables() {
 }
 
 void DwarfDebug::finalizeModuleInfo() {
+  finishSubprogramDefinitions();
+
   // Collect info for variables that were optimized out.
   collectDeadVariables();
 
