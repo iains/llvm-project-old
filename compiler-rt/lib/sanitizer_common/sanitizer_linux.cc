@@ -49,6 +49,7 @@
 #include <unwind.h>
 
 #if SANITIZER_FREEBSD
+#include <sys/sysctl.h>
 #include <machine/atomic.h>
 extern "C" {
 // <sys/umtx.h> must be included after <errno.h> and <sys/types.h> on
@@ -667,24 +668,32 @@ static char proc_self_exe_cache_str[kMaxPathLength];
 static uptr proc_self_exe_cache_len = 0;
 
 uptr ReadBinaryName(/*out*/char *buf, uptr buf_len) {
+  if (proc_self_exe_cache_len > 0) {
+    // If available, use the cached module name.
+    uptr module_name_len =
+        internal_snprintf(buf, buf_len, "%s", proc_self_exe_cache_str);
+    CHECK_LT(module_name_len, buf_len);
+    return module_name_len;
+  }
+#if SANITIZER_FREEBSD
+  const int Mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+  size_t Size = buf_len;
+  bool IsErr = (sysctl(Mib, 4, buf, &Size, NULL, 0) != 0);
+  int readlink_error = IsErr ? errno : 0;
+  uptr module_name_len = Size;
+#else
   uptr module_name_len = internal_readlink(
       "/proc/self/exe", buf, buf_len);
   int readlink_error;
-  if (internal_iserror(module_name_len, &readlink_error)) {
-    if (proc_self_exe_cache_len) {
-      // If available, use the cached module name.
-      CHECK_LE(proc_self_exe_cache_len, buf_len);
-      internal_strncpy(buf, proc_self_exe_cache_str, buf_len);
-      module_name_len = internal_strlen(proc_self_exe_cache_str);
-    } else {
-      // We can't read /proc/self/exe for some reason, assume the name of the
-      // binary is unknown.
-      Report("WARNING: readlink(\"/proc/self/exe\") failed with errno %d, "
-             "some stack frames may not be symbolized\n", readlink_error);
-      module_name_len = internal_snprintf(buf, buf_len, "/proc/self/exe");
-    }
+  bool IsErr = internal_iserror(module_name_len, &readlink_error);
+#endif
+  if (IsErr) {
+    // We can't read /proc/self/exe for some reason, assume the name of the
+    // binary is unknown.
+    Report("WARNING: readlink(\"/proc/self/exe\") failed with errno %d, "
+           "some stack frames may not be symbolized\n", readlink_error);
+    module_name_len = internal_snprintf(buf, buf_len, "/proc/self/exe");
     CHECK_LT(module_name_len, buf_len);
-    buf[module_name_len] = '\0';
   }
   return module_name_len;
 }

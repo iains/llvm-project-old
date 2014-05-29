@@ -70,7 +70,7 @@ static const uintptr_t kRetiredStackFrameMagic = 0x45E0360E;
 
 static const char *const kAsanModuleCtorName = "asan.module_ctor";
 static const char *const kAsanModuleDtorName = "asan.module_dtor";
-static const int         kAsanCtorAndCtorPriority = 1;
+static const int         kAsanCtorAndDtorPriority = 1;
 static const char *const kAsanReportErrorTemplate = "__asan_report_";
 static const char *const kAsanReportLoadN = "__asan_report_load_n";
 static const char *const kAsanReportStoreN = "__asan_report_store_n";
@@ -391,6 +391,7 @@ class AddressSanitizerModule : public ModulePass {
   void initializeCallbacks(Module &M);
 
   bool ShouldInstrumentGlobal(GlobalVariable *G);
+  void poisonOneInitializer(Function &GlobalInit, GlobalValue *ModuleName);
   void createInitializerPoisonCalls(Module &M, GlobalValue *ModuleName);
   size_t MinRedzoneSizeForGlobal() const {
     return RedzoneSizeForScale(Mapping.Scale);
@@ -851,48 +852,36 @@ void AddressSanitizer::instrumentAddress(Instruction *OrigIns,
   Crash->setDebugLoc(OrigIns->getDebugLoc());
 }
 
-void AddressSanitizerModule::createInitializerPoisonCalls(
-    Module &M, GlobalValue *ModuleName) {
-  // We do all of our poisoning and unpoisoning within a global constructor.
-  // These are called _GLOBAL__(sub_)?I_.*.
-  // TODO: Consider looking through the functions in
-  // M.getGlobalVariable("llvm.global_ctors") instead of using this stringly
-  // typed approach.
-  Function *GlobalInit = nullptr;
-  for (auto &F : M.getFunctionList()) {
-    StringRef FName = F.getName();
-
-    const char kGlobalPrefix[] = "_GLOBAL__";
-    if (!FName.startswith(kGlobalPrefix))
-      continue;
-    FName = FName.substr(strlen(kGlobalPrefix));
-
-    const char kOptionalSub[] = "sub_";
-    if (FName.startswith(kOptionalSub))
-      FName = FName.substr(strlen(kOptionalSub));
-
-    if (FName.startswith("I_")) {
-      GlobalInit = &F;
-      break;
-    }
-  }
-  // If that function is not present, this TU contains no globals, or they have
-  // all been optimized away
-  if (!GlobalInit)
-    return;
-
+void AddressSanitizerModule::poisonOneInitializer(Function &GlobalInit,
+                                                  GlobalValue *ModuleName) {
   // Set up the arguments to our poison/unpoison functions.
-  IRBuilder<> IRB(GlobalInit->begin()->getFirstInsertionPt());
+  IRBuilder<> IRB(GlobalInit.begin()->getFirstInsertionPt());
 
   // Add a call to poison all external globals before the given function starts.
   Value *ModuleNameAddr = ConstantExpr::getPointerCast(ModuleName, IntptrTy);
   IRB.CreateCall(AsanPoisonGlobals, ModuleNameAddr);
 
   // Add calls to unpoison all globals before each return instruction.
-  for (Function::iterator I = GlobalInit->begin(), E = GlobalInit->end();
-       I != E; ++I) {
-    if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
+  for (auto &BB : GlobalInit.getBasicBlockList())
+    if (ReturnInst *RI = dyn_cast<ReturnInst>(BB.getTerminator()))
       CallInst::Create(AsanUnpoisonGlobals, "", RI);
+}
+
+void AddressSanitizerModule::createInitializerPoisonCalls(
+    Module &M, GlobalValue *ModuleName) {
+  GlobalVariable *GV = M.getGlobalVariable("llvm.global_ctors");
+
+  ConstantArray *CA = cast<ConstantArray>(GV->getInitializer());
+  for (Use &OP : CA->operands()) {
+    if (isa<ConstantAggregateZero>(OP))
+      continue;
+    ConstantStruct *CS = cast<ConstantStruct>(OP);
+
+    // Must have a function or null ptr.
+    // (CS->getOperand(0) is the init priority.)
+    if (Function* F = dyn_cast<Function>(CS->getOperand(1))) {
+      if (F->getName() != kAsanModuleCtorName)
+        poisonOneInitializer(*F, ModuleName);
     }
   }
 }
@@ -1030,9 +1019,11 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
   assert(CtorFunc);
   IRBuilder<> IRB(CtorFunc->getEntryBlock().getTerminator());
 
-  Function *CovFunc = M.getFunction(kAsanCovName);
-  int nCov = CovFunc ? CovFunc->getNumUses() : 0;
-  IRB.CreateCall(AsanCovModuleInit, ConstantInt::get(IntptrTy, nCov));
+  if (ClCoverage > 0) {
+    Function *CovFunc = M.getFunction(kAsanCovName);
+    int nCov = CovFunc ? CovFunc->getNumUses() : 0;
+    IRB.CreateCall(AsanCovModuleInit, ConstantInt::get(IntptrTy, nCov));
+  }
 
   size_t n = GlobalsToChange.size();
   if (n == 0) return false;
@@ -1078,8 +1069,6 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
     // Determine whether this global should be poisoned in initialization.
     bool GlobalHasDynamicInitializer =
         DynamicallyInitializedGlobals.Contains(G);
-    // Don't check initialization order if this global is blacklisted.
-    GlobalHasDynamicInitializer &= !BL->isIn(*G, "init");
 
     StructType *NewTy = StructType::get(Ty, RightRedZoneTy, NULL);
     Constant *NewInitializer = ConstantStruct::get(
@@ -1147,7 +1136,7 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
   IRB_Dtor.CreateCall2(AsanUnregisterGlobals,
                        IRB.CreatePointerCast(AllGlobals, IntptrTy),
                        ConstantInt::get(IntptrTy, n));
-  appendToGlobalDtors(M, AsanDtorFunction, kAsanCtorAndCtorPriority);
+  appendToGlobalDtors(M, AsanDtorFunction, kAsanCtorAndDtorPriority);
 
   DEBUG(dbgs() << M);
   return true;
@@ -1236,7 +1225,7 @@ bool AddressSanitizer::doInitialization(Module &M) {
 
   Mapping = getShadowMapping(M, LongSize);
 
-  appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndCtorPriority);
+  appendToGlobalCtors(M, AsanCtorFunction, kAsanCtorAndDtorPriority);
   return true;
 }
 

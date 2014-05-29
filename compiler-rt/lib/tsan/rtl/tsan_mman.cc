@@ -95,8 +95,8 @@ static void SignalUnsafeCall(ThreadState *thr, uptr pc) {
   ThreadRegistryLock l(ctx->thread_registry);
   ScopedReport rep(ReportTypeSignalUnsafe);
   if (!IsFiredSuppression(ctx, rep, stack)) {
-    rep.AddStack(&stack);
-    OutputReport(ctx, rep, rep.GetReport()->stacks[0]);
+    rep.AddStack(&stack, true);
+    OutputReport(ctx, rep);
   }
 }
 
@@ -217,19 +217,15 @@ using namespace __tsan;
 
 extern "C" {
 uptr __tsan_get_current_allocated_bytes() {
-  u64 stats[AllocatorStatCount];
+  uptr stats[AllocatorStatCount];
   allocator()->GetStats(stats);
-  u64 m = stats[AllocatorStatMalloced];
-  u64 f = stats[AllocatorStatFreed];
-  return m >= f ? m - f : 1;
+  return stats[AllocatorStatAllocated];
 }
 
 uptr __tsan_get_heap_size() {
-  u64 stats[AllocatorStatCount];
+  uptr stats[AllocatorStatCount];
   allocator()->GetStats(stats);
-  u64 m = stats[AllocatorStatMmapped];
-  u64 f = stats[AllocatorStatUnmapped];
-  return m >= f ? m - f : 1;
+  return stats[AllocatorStatMapped];
 }
 
 uptr __tsan_get_free_bytes() {

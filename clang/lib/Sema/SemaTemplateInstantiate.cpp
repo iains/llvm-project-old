@@ -1185,7 +1185,7 @@ ExprResult TemplateInstantiator::transformNonTypeTemplateParmRef(
   }
   if (result.isInvalid()) return ExprError();
 
-  Expr *resultExpr = result.take();
+  Expr *resultExpr = result.get();
   return SemaRef.Owned(new (SemaRef.Context)
                 SubstNonTypeTemplateParmExpr(type,
                                              resultExpr->getValueKind(),
@@ -1850,7 +1850,7 @@ static bool DiagnoseUninstantiableTemplate(Sema &S,
     S.Diag(PointOfInstantiation,
            diag::err_implicit_instantiate_member_undefined)
       << S.Context.getTypeDeclType(Instantiation);
-    S.Diag(Pattern->getLocation(), diag::note_member_of_template_here);
+    S.Diag(Pattern->getLocation(), diag::note_member_declared_at);
   } else {
     S.Diag(PointOfInstantiation, diag::err_template_instantiate_undefined)
       << (TSK != TSK_ImplicitInstantiation)
@@ -2035,7 +2035,7 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
       ActOnStartCXXInClassMemberInitializer();
       ExprResult NewInit = SubstInitializer(OldInit, TemplateArgs,
                                             /*CXXDirectInit=*/false);
-      Expr *Init = NewInit.take();
+      Expr *Init = NewInit.get();
       assert((!Init || !isa<ParenListExpr>(Init)) &&
              "call-style init in class");
       ActOnFinishCXXInClassMemberInitializer(NewField, Init->getLocStart(),
