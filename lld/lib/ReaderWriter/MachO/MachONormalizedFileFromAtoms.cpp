@@ -197,6 +197,15 @@ SectionInfo *Util::makeSection(DefinedAtom::ContentType type) {
   case DefinedAtom::typeUTF16String:
      return new (_allocator) SectionInfo("__TEXT", "__ustring",
                             S_REGULAR);
+  case DefinedAtom::typeCFString:
+     return new (_allocator) SectionInfo("__DATA", "__cfstring",
+                            S_REGULAR);
+  case DefinedAtom::typeCFI:
+     return new (_allocator) SectionInfo("__TEXT", "__eh_frame",
+                            S_COALESCED);
+  case DefinedAtom::typeCompactUnwindInfo:
+     return new (_allocator) SectionInfo("__LD", "__compact_unwind",
+                            S_REGULAR);
   default:
     llvm_unreachable("TO DO: add support for more sections");
     break;

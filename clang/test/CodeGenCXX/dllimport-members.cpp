@@ -178,9 +178,9 @@ public:
 
   // MSC-DAG: @"\01?StaticField@ImportMembers@@2HA"               = external dllimport global i32
   // MSC-DAG: @"\01?StaticConstField@ImportMembers@@2HB"          = external dllimport constant i32
-  // MSC-DAG-FIXME: @"\01?StaticConstFieldEqualInit@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
-  // MSC-DAG-FIXME: @"\01?StaticConstFieldBraceInit@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
-  // MSC-DAG-FIXME: @"\01?ConstexprField@ImportMembers@@2HB"            = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?StaticConstFieldEqualInit@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?StaticConstFieldBraceInit@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?ConstexprField@ImportMembers@@2HB"            = available_externally dllimport constant i32 1, align 4
   // GNU-DAG: @_ZN13ImportMembers11StaticFieldE                   = external dllimport global i32
   // GNU-DAG: @_ZN13ImportMembers16StaticConstFieldE              = external dllimport constant i32
   // GNU-DAG: @_ZN13ImportMembers25StaticConstFieldEqualInitE     = external dllimport constant i32
@@ -188,11 +188,9 @@ public:
   // GNU-DAG: @_ZN13ImportMembers14ConstexprFieldE                = external dllimport constant i32
   __declspec(dllimport) static         int  StaticField;
   __declspec(dllimport) static  const  int  StaticConstField;
-  #ifndef MSABI // FIXME
   __declspec(dllimport) static  const  int  StaticConstFieldEqualInit = 1;
   __declspec(dllimport) static  const  int  StaticConstFieldBraceInit{1};
   __declspec(dllimport) constexpr static int ConstexprField = 1;
-  #endif
 
   template<int Line, typename T> friend void useMemFun();
 };
@@ -230,11 +228,9 @@ USEMF(ImportMembers, ignored)
 
 USEMV(ImportMembers, StaticField)
 USEMV(ImportMembers, StaticConstField)
-#ifndef MSABI // FIXME
 USEMV(ImportMembers, StaticConstFieldEqualInit)
 USEMV(ImportMembers, StaticConstFieldBraceInit)
 USEMV(ImportMembers, ConstexprField)
-#endif
 
 
 // Import individual members of a nested class.
@@ -355,9 +351,9 @@ public:
 
   // MSC-DAG: @"\01?StaticField@Nested@ImportMembers@@2HA"               = external dllimport global i32
   // MSC-DAG: @"\01?StaticConstField@Nested@ImportMembers@@2HB"          = external dllimport constant i32
-  // MSC-DAG-FIXME: @"\01?StaticConstFieldEqualInit@Nested@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
-  // MSC-DAG-FIXME: @"\01?StaticConstFieldBraceInit@Nested@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
-  // MSC-DAG-FIXME: @"\01?ConstexprField@Nested@ImportMembers@@2HB"            = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?StaticConstFieldEqualInit@Nested@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?StaticConstFieldBraceInit@Nested@ImportMembers@@2HB" = available_externally dllimport constant i32 1, align 4
+  // MSC-DAG: @"\01?ConstexprField@Nested@ImportMembers@@2HB"            = available_externally dllimport constant i32 1, align 4
   // GNU-DAG: @_ZN13ImportMembers6Nested11StaticFieldE                   = external dllimport global i32
   // GNU-DAG: @_ZN13ImportMembers6Nested16StaticConstFieldE              = external dllimport constant i32
   // GNU-DAG: @_ZN13ImportMembers6Nested25StaticConstFieldEqualInitE     = external dllimport constant i32
@@ -365,11 +361,9 @@ public:
   // GNU-DAG: @_ZN13ImportMembers6Nested14ConstexprFieldE                = external dllimport constant i32
   __declspec(dllimport) static         int  StaticField;
   __declspec(dllimport) static  const  int  StaticConstField;
-  #ifndef MSABI // FIXME
   __declspec(dllimport) static  const  int  StaticConstFieldEqualInit = 1;
   __declspec(dllimport) static  const  int  StaticConstFieldBraceInit{1};
   __declspec(dllimport) constexpr static int ConstexprField = 1;
-  #endif
 
   template<int Line, typename T> friend void useMemFun();
 };
@@ -407,11 +401,9 @@ USEMF(ImportMembers::Nested, ignored)
 
 USEMV(ImportMembers::Nested, StaticField)
 USEMV(ImportMembers::Nested, StaticConstField)
-#ifndef MSABI // FIXME
 USEMV(ImportMembers::Nested, StaticConstFieldEqualInit)
 USEMV(ImportMembers::Nested, StaticConstFieldBraceInit)
 USEMV(ImportMembers::Nested, ConstexprField)
-#endif
 
 
 // Import special member functions.
@@ -426,7 +418,7 @@ struct ImportSpecials {
   // M64-DAG: declare dllimport                void @"\01??1ImportSpecials@@QEAA@XZ"(%struct.ImportSpecials*)
   // G32-DAG: declare dllimport x86_thiscallcc void                    @_ZN14ImportSpecialsD1Ev(%struct.ImportSpecials*)
   // G64-DAG: declare dllimport                void                    @_ZN14ImportSpecialsD1Ev(%struct.ImportSpecials*)
-  __declspec(dllimport) ~ImportSpecials() {}
+  __declspec(dllimport) ~ImportSpecials();
 
   // M32-DAG: declare dllimport x86_thiscallcc %struct.ImportSpecials* @"\01??0ImportSpecials@@QAE@ABU0@@Z"(%struct.ImportSpecials* returned, %struct.ImportSpecials* nonnull)
   // M64-DAG: declare dllimport                %struct.ImportSpecials* @"\01??0ImportSpecials@@QEAA@AEBU0@@Z"(%struct.ImportSpecials* returned, %struct.ImportSpecials* nonnull)
@@ -494,7 +486,7 @@ struct ImportInlineSpecials {
   // G32-DAG: declare dllimport x86_thiscallcc void @_ZN20ImportInlineSpecialsC1EOS_(%struct.ImportInlineSpecials*, %struct.ImportInlineSpecials* nonnull)
   // G64-DAG: declare dllimport                void @_ZN20ImportInlineSpecialsC1EOS_(%struct.ImportInlineSpecials*, %struct.ImportInlineSpecials* nonnull)
   // MO1-DAG: define available_externally dllimport x86_thiscallcc %struct.ImportInlineSpecials* @"\01??0ImportInlineSpecials@@QAE@$$QAU0@@Z"(
-  // GO1-DAG: define available_externally dllimport x86_thiscallcc void  @_ZN20ImportInlineSpecialsC1EOS_(
+  // GO1-DAG: define available_externally dllimport x86_thiscallcc void @_ZN20ImportInlineSpecialsC1EOS_(
   __declspec(dllimport) ImportInlineSpecials(ImportInlineSpecials&&) {}
 
   // M32-DAG: declare dllimport x86_thiscallcc nonnull %struct.ImportInlineSpecials* @"\01??4ImportInlineSpecials@@QAEAAU0@$$QAU0@@Z"(%struct.ImportInlineSpecials*, %struct.ImportInlineSpecials* nonnull)

@@ -2833,7 +2833,7 @@ Sema::BuildDelegatingInitializer(TypeSourceInfo *TInfo, Expr *Init,
   // initializer. However, deconstructing the ASTs is a dicey process,
   // and this approach is far more likely to get the corner cases right.
   if (CurContext->isDependentContext())
-    DelegationInit = Owned(Init);
+    DelegationInit = Init;
 
   return new (Context) CXXCtorInitializer(Context, TInfo, InitRange.getBegin(), 
                                           DelegationInit.getAs<Expr>(),
@@ -2962,7 +2962,7 @@ Sema::BuildBaseInitializer(QualType BaseType, TypeSourceInfo *BaseTInfo,
   // initializer. However, deconstructing the ASTs is a dicey process,
   // and this approach is far more likely to get the corner cases right.
   if (CurContext->isDependentContext())
-    BaseInit = Owned(Init);
+    BaseInit = Init;
 
   return new (Context) CXXCtorInitializer(Context, BaseTInfo,
                                           BaseSpec->isVirtual(),
@@ -4346,6 +4346,15 @@ static void CheckAbstractClassUsage(AbstractUsageInfo &Info,
                              cast<ClassTemplateDecl>(D)->getTemplatedDecl());
     }
   }
+}
+
+/// \brief Return a DLL attribute from the declaration.
+static InheritableAttr *getDLLAttr(Decl *D) {
+  if (auto *Import = D->getAttr<DLLImportAttr>())
+    return Import;
+  if (auto *Export = D->getAttr<DLLExportAttr>())
+    return Export;
+  return nullptr;
 }
 
 /// \brief Perform semantic checks on a class definition that has been
@@ -9030,7 +9039,7 @@ buildMemcpyForAssignmentOp(Sema &S, SourceLocation Loc, QualType T,
                                     Loc, CallArgs, Loc);
 
   assert(!Call.isInvalid() && "Call to __builtin_memcpy cannot fail!");
-  return S.Owned(Call.getAs<Stmt>());
+  return Call.getAs<Stmt>();
 }
 
 /// \brief Builds a statement that copies/moves the given entity from \p From to
@@ -10585,12 +10594,11 @@ Sema::BuildCXXConstructExpr(SourceLocation ConstructLoc, QualType DeclInitType,
                             unsigned ConstructKind,
                             SourceRange ParenRange) {
   MarkFunctionReferenced(ConstructLoc, Constructor);
-  return Owned(CXXConstructExpr::Create(Context, DeclInitType, ConstructLoc,
-                                        Constructor, Elidable, ExprArgs,
-                                        HadMultipleCandidates,
-                                        IsListInitialization, RequiresZeroInit,
-              static_cast<CXXConstructExpr::ConstructionKind>(ConstructKind),
-                                        ParenRange));
+  return CXXConstructExpr::Create(
+      Context, DeclInitType, ConstructLoc, Constructor, Elidable, ExprArgs,
+      HadMultipleCandidates, IsListInitialization, RequiresZeroInit,
+      static_cast<CXXConstructExpr::ConstructionKind>(ConstructKind),
+      ParenRange);
 }
 
 void Sema::FinalizeVarWithDestructor(VarDecl *VD, const RecordType *Record) {
@@ -11970,6 +11978,12 @@ void Sema::SetDeclDeleted(Decl *Dcl, SourceLocation DelLoc) {
     // If the declaration wasn't the first, we delete the function anyway for
     // recovery.
     Fn = Fn->getCanonicalDecl();
+  }
+
+  // dllimport/dllexport cannot be deleted.
+  if (const InheritableAttr *DLLAttr = getDLLAttr(Fn)) {
+    Diag(Fn->getLocation(), diag::err_attribute_dll_deleted) << DLLAttr;
+    Fn->setInvalidDecl();
   }
 
   if (Fn->isDeleted())

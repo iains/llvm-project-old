@@ -429,9 +429,6 @@ InitListChecker::FillInValueInitializations(const InitializedEntity &Entity,
                                             bool &RequiresSecondPass) {
   assert((ILE->getType() != SemaRef.Context.VoidTy) &&
          "Should not have void type");
-  SourceLocation Loc = ILE->getLocStart();
-  if (ILE->getSyntacticForm())
-    Loc = ILE->getSyntacticForm()->getLocStart();
 
   if (const RecordType *RType = ILE->getType()->getAs<RecordType>()) {
     const RecordDecl *RDecl = RType->getDecl();
@@ -489,6 +486,9 @@ InitListChecker::FillInValueInitializations(const InitializedEntity &Entity,
   } else
     ElementType = ILE->getType();
 
+  SourceLocation Loc = ILE->getLocEnd();
+  if (ILE->getSyntacticForm())
+    Loc = ILE->getSyntacticForm()->getLocEnd();
 
   for (unsigned Init = 0; Init != NumElements; ++Init) {
     if (hadError)
@@ -505,6 +505,11 @@ InitListChecker::FillInValueInitializations(const InitializedEntity &Entity,
       InitializationSequence InitSeq(SemaRef, ElementEntity, Kind, None);
       if (!InitSeq) {
         InitSeq.Diagnose(SemaRef, ElementEntity, Kind, None);
+        if (NumInits < NumElements &&
+            InitSeq.getFailureKind() ==
+              InitializationSequence::FK_ConstructorOverloadFailed &&
+            InitSeq.getFailedOverloadResult() == OverloadingResult::OR_Deleted)
+          SemaRef.Diag(Loc, diag::note_omitted_element_default_constructed);
         hadError = true;
         return;
       }
@@ -894,7 +899,7 @@ void InitListChecker::CheckSubElementType(const InitializedEntity &Entity,
     //   compatible structure or union type. In the latter case, the
     //   initial value of the object, including unnamed members, is
     //   that of the expression.
-    ExprResult ExprRes = SemaRef.Owned(expr);
+    ExprResult ExprRes = expr;
     if ((ElemType->isRecordType() || ElemType->isVectorType()) &&
         SemaRef.CheckSingleAssignmentConstraints(ElemType, ExprRes,
                                                  !VerifyOnly)
@@ -930,8 +935,7 @@ void InitListChecker::CheckSubElementType(const InitializedEntity &Entity,
     if (!VerifyOnly) {
       // We cannot initialize this element, so let
       // PerformCopyInitialization produce the appropriate diagnostic.
-      SemaRef.PerformCopyInitialization(Entity, SourceLocation(),
-                                        SemaRef.Owned(expr),
+      SemaRef.PerformCopyInitialization(Entity, SourceLocation(), expr,
                                         /*TopLevelOfInitList=*/true);
     }
     hadError = true;
@@ -1019,15 +1023,14 @@ void InitListChecker::CheckScalarType(const InitializedEntity &Entity,
   }
 
   if (VerifyOnly) {
-    if (!SemaRef.CanPerformCopyInitialization(Entity, SemaRef.Owned(expr)))
+    if (!SemaRef.CanPerformCopyInitialization(Entity,expr))
       hadError = true;
     ++Index;
     return;
   }
 
   ExprResult Result =
-    SemaRef.PerformCopyInitialization(Entity, expr->getLocStart(),
-                                      SemaRef.Owned(expr),
+    SemaRef.PerformCopyInitialization(Entity, expr->getLocStart(), expr,
                                       /*TopLevelOfInitList=*/true);
 
   Expr *ResultExpr = nullptr;
@@ -1082,16 +1085,15 @@ void InitListChecker::CheckReferenceType(const InitializedEntity &Entity,
   }
 
   if (VerifyOnly) {
-    if (!SemaRef.CanPerformCopyInitialization(Entity, SemaRef.Owned(expr)))
+    if (!SemaRef.CanPerformCopyInitialization(Entity,expr))
       hadError = true;
     ++Index;
     return;
   }
 
   ExprResult Result =
-    SemaRef.PerformCopyInitialization(Entity, expr->getLocStart(),
-                                      SemaRef.Owned(expr),
-                                      /*TopLevelOfInitList=*/true);
+      SemaRef.PerformCopyInitialization(Entity, expr->getLocStart(), expr,
+                                        /*TopLevelOfInitList=*/true);
 
   if (Result.isInvalid())
     hadError = true;
@@ -1130,16 +1132,15 @@ void InitListChecker::CheckVectorType(const InitializedEntity &Entity,
     Expr *Init = IList->getInit(Index);
     if (!isa<InitListExpr>(Init) && Init->getType()->isVectorType()) {
       if (VerifyOnly) {
-        if (!SemaRef.CanPerformCopyInitialization(Entity, SemaRef.Owned(Init)))
+        if (!SemaRef.CanPerformCopyInitialization(Entity, Init))
           hadError = true;
         ++Index;
         return;
       }
 
-      ExprResult Result =
-        SemaRef.PerformCopyInitialization(Entity, Init->getLocStart(),
-                                          SemaRef.Owned(Init),
-                                          /*TopLevelOfInitList=*/true);
+  ExprResult Result =
+      SemaRef.PerformCopyInitialization(Entity, Init->getLocStart(), Init,
+                                        /*TopLevelOfInitList=*/true);
 
       Expr *ResultExpr = nullptr;
       if (Result.isInvalid())
@@ -2446,7 +2447,7 @@ ExprResult Sema::ActOnDesignatedInitializer(Designation &Desig,
     Diag(DIE->getLocStart(), diag::ext_designated_init)
       << DIE->getSourceRange();
 
-  return Owned(DIE);
+  return DIE;
 }
 
 //===----------------------------------------------------------------------===//
@@ -5010,7 +5011,7 @@ static ExprResult CopyObject(Sema &S,
       S.BuildCXXDefaultArgExpr(Loc, Constructor, Parm);
     }
 
-    return S.Owned(CurInitExpr);
+    return CurInitExpr;
   }
 
   // Determine the arguments required to actually perform the
@@ -5169,7 +5170,7 @@ PerformConstructorInitialization(Sema &S,
       S.DefineImplicitDefaultConstructor(Loc, Constructor);
   }
 
-  ExprResult CurInit = S.Owned((Expr *)nullptr);
+  ExprResult CurInit((Expr *)nullptr);
 
   // C++ [over.match.copy]p1:
   //   - When initializing a temporary to be bound to the first parameter 
@@ -5204,13 +5205,10 @@ PerformConstructorInitialization(Sema &S,
       ? SourceRange(LBraceLoc, RBraceLoc)
       : Kind.getParenRange();
 
-    CurInit = S.Owned(
-      new (S.Context) CXXTemporaryObjectExpr(S.Context, Constructor,
-                                             TSInfo, ConstructorArgs,
-                                             ParenOrBraceRange,
-                                             HadMultipleCandidates,
-                                             IsListInitialization,
-                                             ConstructorInitRequiresZeroInit));
+    CurInit = new (S.Context) CXXTemporaryObjectExpr(
+        S.Context, Constructor, TSInfo, ConstructorArgs, ParenOrBraceRange,
+        HadMultipleCandidates, IsListInitialization,
+        ConstructorInitRequiresZeroInit);
   } else {
     CXXConstructExpr::ConstructionKind ConstructKind =
       CXXConstructExpr::CK_Complete;
@@ -5589,7 +5587,7 @@ InitializationSequence::Perform(Sema &S,
 
   // No steps means no initialization.
   if (Steps.empty())
-    return S.Owned((Expr *)nullptr);
+    return ExprResult((Expr *)nullptr);
 
   if (S.getLangOpts().CPlusPlus11 && Entity.getType()->isReferenceType() &&
       Args.size() == 1 && isa<InitListExpr>(Args[0]) &&
@@ -5622,7 +5620,7 @@ InitializationSequence::Perform(Sema &S,
     *ResultType = Entity.getDecl() ? Entity.getDecl()->getType() :
                                      Entity.getType();
 
-  ExprResult CurInit = S.Owned((Expr *)nullptr);
+  ExprResult CurInit((Expr *)nullptr);
 
   // For initialization steps that start with a single initializer,
   // grab the only argument out the Args and place it into the "current"
@@ -5721,11 +5719,9 @@ InitializationSequence::Perform(Sema &S,
               (Step->Kind == SK_CastDerivedToBaseXValue ?
                    VK_XValue :
                    VK_RValue);
-      CurInit = S.Owned(ImplicitCastExpr::Create(S.Context,
-                                                 Step->Type,
-                                                 CK_DerivedToBase,
-                                                 CurInit.get(),
-                                                 &BasePath, VK));
+      CurInit =
+          ImplicitCastExpr::Create(S.Context, Step->Type, CK_DerivedToBase,
+                                   CurInit.get(), &BasePath, VK);
       break;
     }
 
@@ -5803,7 +5799,7 @@ InitializationSequence::Perform(Sema &S,
            MTE->getType().isDestructedType()))
         S.ExprNeedsCleanups = true;
 
-      CurInit = S.Owned(MTE);
+      CurInit = MTE;
       break;
     }
 
@@ -5904,11 +5900,9 @@ InitializationSequence::Perform(Sema &S,
         }
       }
 
-      CurInit = S.Owned(ImplicitCastExpr::Create(S.Context,
-                                                 CurInit.get()->getType(),
-                                                 CastKind, CurInit.get(),
-                                                 nullptr,
-                                                CurInit.get()->getValueKind()));
+      CurInit = ImplicitCastExpr::Create(S.Context, CurInit.get()->getType(),
+                                         CastKind, CurInit.get(), nullptr,
+                                         CurInit.get()->getValueKind());
       if (MaybeBindToTemp)
         CurInit = S.MaybeBindToTemporary(CurInit.getAs<Expr>());
       if (RequiresCopy)
@@ -5933,11 +5927,9 @@ InitializationSequence::Perform(Sema &S,
 
     case SK_LValueToRValue: {
       assert(CurInit.get()->isGLValue() && "cannot load from a prvalue");
-      CurInit = S.Owned(ImplicitCastExpr::Create(S.Context, Step->Type,
-                                                 CK_LValueToRValue,
-                                                 CurInit.get(),
-                                                 /*BasePath=*/nullptr,
-                                                 VK_RValue));
+      CurInit = ImplicitCastExpr::Create(S.Context, Step->Type,
+                                         CK_LValueToRValue, CurInit.get(),
+                                         /*BasePath=*/nullptr, VK_RValue);
       break;
     }
 
@@ -5993,7 +5985,7 @@ InitializationSequence::Perform(Sema &S,
       CurInit.get();
       CurInit = shouldBindAsTemporary(InitEntity)
           ? S.MaybeBindToTemporary(StructuredInitList)
-          : S.Owned(StructuredInitList);
+          : StructuredInitList;
       break;
     }
 
@@ -6023,7 +6015,7 @@ InitializationSequence::Perform(Sema &S,
     }
 
     case SK_UnwrapInitList:
-      CurInit = S.Owned(cast<InitListExpr>(CurInit.get())->getInit(0));
+      CurInit = cast<InitListExpr>(CurInit.get())->getInit(0);
       break;
 
     case SK_RewrapInitList: {
@@ -6034,7 +6026,7 @@ InitializationSequence::Perform(Sema &S,
       ILE->setSyntacticForm(Syntactic);
       ILE->setType(E->getType());
       ILE->setValueKind(E->getValueKind());
-      CurInit = S.Owned(ILE);
+      CurInit = ILE;
       break;
     }
 
@@ -6075,12 +6067,11 @@ InitializationSequence::Perform(Sema &S,
           TSInfo = S.Context.getTrivialTypeSourceInfo(Step->Type,
                                                     Kind.getRange().getBegin());
 
-        CurInit = S.Owned(new (S.Context) CXXScalarValueInitExpr(
-                              TSInfo->getType().getNonLValueExprType(S.Context),
-                                                                 TSInfo,
-                                                    Kind.getRange().getEnd()));
+        CurInit = new (S.Context) CXXScalarValueInitExpr(
+            TSInfo->getType().getNonLValueExprType(S.Context), TSInfo,
+            Kind.getRange().getEnd());
       } else {
-        CurInit = S.Owned(new (S.Context) ImplicitValueInitExpr(Step->Type));
+        CurInit = new (S.Context) ImplicitValueInitExpr(Step->Type);
       }
       break;
     }
@@ -6165,16 +6156,15 @@ InitializationSequence::Perform(Sema &S,
     case SK_PassByIndirectCopyRestore:
     case SK_PassByIndirectRestore:
       checkIndirectCopyRestoreSource(S, CurInit.get());
-      CurInit = S.Owned(new (S.Context)
-                        ObjCIndirectCopyRestoreExpr(CurInit.get(), Step->Type,
-                                Step->Kind == SK_PassByIndirectCopyRestore));
+      CurInit = new (S.Context) ObjCIndirectCopyRestoreExpr(
+          CurInit.get(), Step->Type,
+          Step->Kind == SK_PassByIndirectCopyRestore);
       break;
 
     case SK_ProduceObjCObject:
-      CurInit = S.Owned(ImplicitCastExpr::Create(S.Context, Step->Type,
-                                                 CK_ARCProduceObject,
-                                                 CurInit.get(), nullptr,
-                                                 VK_RValue));
+      CurInit =
+          ImplicitCastExpr::Create(S.Context, Step->Type, CK_ARCProduceObject,
+                                   CurInit.get(), nullptr, VK_RValue);
       break;
 
     case SK_StdInitializerList: {
@@ -6197,8 +6187,7 @@ InitializationSequence::Perform(Sema &S,
                                   ExtendingEntity->getDecl());
 
       // Wrap it in a construction of a std::initializer_list<T>.
-      CurInit = S.Owned(
-          new (S.Context) CXXStdInitializerListExpr(Step->Type, MTE));
+      CurInit = new (S.Context) CXXStdInitializerListExpr(Step->Type, MTE);
 
       // Bind the result, in case the library has given initializer_list a
       // non-trivial destructor.
