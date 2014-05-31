@@ -87,9 +87,10 @@ Here's the short story for getting up and running quickly with LLVM:
    * ``make check-all`` --- This run the regression tests to ensure everything
      is in working order.
 
-   * It is also possible to use CMake instead of the makefiles. With CMake it is
-     possible to generate project files for several IDEs: Xcode, Eclipse CDT4,
-     CodeBlocks, Qt-Creator (use the CodeBlocks generator), KDevelop3.
+   * It is also possible to use `CMake <CMake.html>`_ instead of the makefiles.
+     With CMake it is possible to generate project files for several IDEs:
+     Xcode, Eclipse CDT4, CodeBlocks, Qt-Creator (use the CodeBlocks
+     generator), KDevelop3.
 
    * If you get an "internal compiler error (ICE)" or test failures, see
      `below`.
@@ -680,7 +681,7 @@ The following options can be used to set or enable LLVM specific options:
 
   Enables optimized compilation (debugging symbols are removed and GCC
   optimization flags are enabled). Note that this is the default setting if you
-  are using the LLVM distribution. The default behavior of an Subversion
+  are using the LLVM distribution. The default behavior of a Subversion
   checkout is to use an unoptimized build (also known as a debug build).
 
 ``--enable-debug-runtime``
@@ -741,7 +742,7 @@ builds:
 
 Debug Builds
 
-  These builds are the default when one is using an Subversion checkout and
+  These builds are the default when one is using a Subversion checkout and
   types ``gmake`` (unless the ``--enable-optimized`` option was used during
   configuration).  The build system will compile the tools and libraries with
   debugging information.  To get a Debug Build using the LLVM distribution the

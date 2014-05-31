@@ -6435,8 +6435,8 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
       return IncompatiblePointer;
     }
 
-    // T^ -> A*
-    if (RHSType->isBlockPointerType()) {
+    // T^ -> id; not T^ ->A* and not T^ -> id<P>
+    if (RHSType->isBlockPointerType() && LHSType->isObjCIdType()) {
       maybeExtendBlockObject(*this, RHS);
       Kind = CK_BlockPointerToObjCPointerCast;
       return Compatible;
@@ -11284,7 +11284,7 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func) {
     Constructor = cast<CXXConstructorDecl>(Constructor->getFirstDecl());
     if (Constructor->isDefaulted() && !Constructor->isDeleted()) {
       if (Constructor->isDefaultConstructor()) {
-        if (Constructor->isTrivial())
+        if (Constructor->isTrivial() && !Constructor->hasAttr<DLLExportAttr>())
           return;
         DefineImplicitDefaultConstructor(Loc, Constructor);
       } else if (Constructor->isCopyConstructor()) {

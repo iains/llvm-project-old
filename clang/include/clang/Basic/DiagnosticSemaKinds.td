@@ -2109,6 +2109,8 @@ def err_attribute_dllimport_data_definition : Error<
   "definition of dllimport data">;
 def err_attribute_dllimport_static_field_definition : Error<
   "definition of dllimport static field not allowed">;
+def err_attribute_dll_member_of_dll_class : Error<
+  "attribute %q0 cannot be applied to member of %q1 class">;
 def err_attribute_weakref_not_static : Error<
   "weakref declaration must have internal linkage">;
 def err_attribute_weakref_not_global_context : Error<
@@ -6293,12 +6295,13 @@ def warn_missing_format_string : Warning<
 def warn_scanf_nonzero_width : Warning<
   "zero field width in scanf format string is unused">,
   InGroup<Format>;
-def warn_printf_conversion_argument_type_mismatch : Warning<
-  "format specifies type %0 but the argument has type %1">,
+def warn_format_conversion_argument_type_mismatch : Warning<
+  "format specifies type %0 but the argument has "
+  "%select{type|underlying type}2 %1">,
   InGroup<Format>;
 def warn_format_argument_needs_cast : Warning<
-  "values of type '%0' should not be used as format arguments; add an explicit "
-  "cast to %1 instead">,
+  "%select{values of type|enum values with underlying type}2 '%0' should not "
+  "be used as format arguments; add an explicit cast to %1 instead">,
   InGroup<Format>;
 def warn_printf_positional_arg_exceeds_data_args : Warning <
   "data argument position '%0' exceeds the number of data arguments (%1)">,

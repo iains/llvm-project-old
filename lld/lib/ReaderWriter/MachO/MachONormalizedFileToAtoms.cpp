@@ -83,8 +83,25 @@ static Atom::Scope atomScope(uint8_t scope) {
 }
 
 static DefinedAtom::ContentType atomTypeFromSection(const Section &section) {
-  // FIX ME
-  return DefinedAtom::typeCode;
+  if (section.attributes & S_ATTR_PURE_INSTRUCTIONS)
+    return DefinedAtom::typeCode;
+  if (section.segmentName.equals("__TEXT")) {
+    if (section.sectionName.equals("__StaticInit"))
+      return DefinedAtom::typeCode;
+    if (section.sectionName.equals("__gcc_except_tab"))
+      return DefinedAtom::typeLSDA;
+    if (section.sectionName.startswith("__text"))
+      return DefinedAtom::typeCode;
+    if (section.sectionName.startswith("__const"))
+      return DefinedAtom::typeConstant;
+  } else if (section.segmentName.equals("__DATA")) {
+    if (section.sectionName.startswith("__data"))
+      return DefinedAtom::typeData;
+    if (section.sectionName.startswith("__const"))
+      return DefinedAtom::typeConstData;
+  }
+
+  return DefinedAtom::typeUnknown;
 }
 
 static error_code
@@ -103,7 +120,7 @@ processSymbol(const NormalizedFile &normalizedFile, MachOFile &file,
   case symbolsOk:
     break;
   case symbolsIgnored:
-    return error_code::success();
+    return error_code();
     break;
   case symbolsIllegal:
     return make_dynamic_error_code(Twine("Symbol '") + sym.name
@@ -124,10 +141,21 @@ processSymbol(const NormalizedFile &normalizedFile, MachOFile &file,
     DefinedAtom::Merge m = DefinedAtom::mergeNo;
     if (sym.desc & N_WEAK_DEF)
       m = DefinedAtom::mergeAsWeak;
-    file.addDefinedAtom(sym.name, atomScope(sym.scope),
-                        atomTypeFromSection(section), m, atomContent, copyRefs);
+    DefinedAtom::ContentType type = atomTypeFromSection(section);
+    if (type == DefinedAtom::typeUnknown) {
+      // Mach-O needs a segment and section name.  Concatentate those two
+      // with a / seperator (e.g. "seg/sect") to fit into the lld model
+      // of just a section name.
+      std::string segSectName = section.segmentName.str() 
+                                + "/" + section.sectionName.str();
+      file.addDefinedAtomInCustomSection(sym.name, atomScope(sym.scope), type, 
+                                         m, atomContent, segSectName, true);
+    } else {
+      file.addDefinedAtom(sym.name, atomScope(sym.scope), type, m, atomContent, 
+                        copyRefs);
+    }
   }
-  return error_code::success();
+  return error_code();
 }
 
 
@@ -170,7 +198,7 @@ static error_code processUTF16Section(MachOFile &file, const Section &section,
                                    "last string in the section is not zero "
                                    "terminated.");
   }
-  return error_code::success();
+  return error_code();
 }
 
 // A __DATA/__cfstring section contain NS/CFString objects. Atom boundaries
@@ -192,7 +220,7 @@ static error_code processCFStringSection(MachOFile &file,const Section &section,
                         DefinedAtom::mergeByContent, byteContent, copyRefs);
     offset += cfsObjSize;
   }
-  return error_code::success();
+  return error_code();
 }
 
 
@@ -226,7 +254,7 @@ static error_code processCFISection(MachOFile &file, const Section &section,
                         bytes, copyRefs);
     offset += len;
   }
-  return error_code::success();
+  return error_code();
 }
 
 static error_code 
@@ -247,7 +275,7 @@ processCompactUnwindSection(MachOFile &file, const Section &section,
                         DefinedAtom::mergeNo, byteContent, copyRefs);
     offset += cuObjSize;
   }
-  return error_code::success();
+  return error_code();
 }
 
 static error_code processSection(MachOFile &file, const Section &section,
@@ -409,7 +437,7 @@ static error_code processSection(MachOFile &file, const Section &section,
     llvm_unreachable("mach-o section type not supported yet");
     break;
   }
-  return error_code::success();
+  return error_code();
 }
 
 static ErrorOr<std::unique_ptr<lld::File>>

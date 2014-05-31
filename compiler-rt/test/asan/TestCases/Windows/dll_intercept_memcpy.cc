@@ -2,6 +2,10 @@
 // RUN: %clang_cl_asan -LD -O0 %s -Fe%t.dll
 // RUN: not %run %t %t.dll 2>&1 | FileCheck %s
 
+// Test that it works correctly even with ICF enabled.
+// RUN: %clang_cl_asan -LD -O0 %s -Fe%t.dll -link /OPT:REF /OPT:ICF
+// RUN: not %run %t %t.dll 2>&1 | FileCheck %s
+
 #include <stdio.h>
 #include <string.h>
 
@@ -24,4 +28,5 @@ int test_function() {
 // CHECK: Address [[ADDR]] is located in stack of thread T0 at offset {{.*}} in frame
 // CHECK-NEXT:  test_function {{.*}}dll_intercept_memcpy.cc
 // CHECK: 'buff2' <== Memory access at offset {{.*}} overflows this variable
+  return 0;
 }

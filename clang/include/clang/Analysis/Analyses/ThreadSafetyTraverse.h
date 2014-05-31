@@ -599,9 +599,15 @@ protected:
     SS << E->value();
   }
 
+  void printLiteralT(LiteralT<uint8_t> *E, StreamType &SS) {
+    SS << "'" << E->value() << "'";
+  }
+
   void printLiteral(Literal *E, StreamType &SS) {
-    if (E->clangExpr())
+    if (E->clangExpr()) {
       SS << getSourceLiteralString(E->clangExpr());
+      return;
+    }
     else {
       ValueType VT = E->valueType();
       switch (VT.Base) {
@@ -610,7 +616,7 @@ protected:
         return;
       }
       case ValueType::BT_Bool: {
-        if (reinterpret_cast<LiteralT<bool>*>(E)->value())
+        if (E->as<bool>().value())
           SS << "true";
         else
           SS << "false";
@@ -620,27 +626,27 @@ protected:
         switch (VT.Size) {
         case ValueType::ST_8:
           if (VT.Signed)
-            printLiteralT(reinterpret_cast<LiteralT<int8_t>*>(E), SS);
+            printLiteralT(&E->as<int8_t>(), SS);
           else
-            printLiteralT(reinterpret_cast<LiteralT<uint8_t>*>(E), SS);
+            printLiteralT(&E->as<uint8_t>(), SS);
           return;
         case ValueType::ST_16:
           if (VT.Signed)
-            printLiteralT(reinterpret_cast<LiteralT<int16_t>*>(E), SS);
+            printLiteralT(&E->as<int16_t>(), SS);
           else
-            printLiteralT(reinterpret_cast<LiteralT<uint16_t>*>(E), SS);
+            printLiteralT(&E->as<uint16_t>(), SS);
           return;
         case ValueType::ST_32:
           if (VT.Signed)
-            printLiteralT(reinterpret_cast<LiteralT<int32_t>*>(E), SS);
+            printLiteralT(&E->as<int32_t>(), SS);
           else
-            printLiteralT(reinterpret_cast<LiteralT<uint32_t>*>(E), SS);
+            printLiteralT(&E->as<uint32_t>(), SS);
           return;
         case ValueType::ST_64:
           if (VT.Signed)
-            printLiteralT(reinterpret_cast<LiteralT<int64_t>*>(E), SS);
+            printLiteralT(&E->as<int64_t>(), SS);
           else
-            printLiteralT(reinterpret_cast<LiteralT<uint64_t>*>(E), SS);
+            printLiteralT(&E->as<uint64_t>(), SS);
           return;
         default:
           break;
@@ -650,10 +656,10 @@ protected:
       case ValueType::BT_Float: {
         switch (VT.Size) {
         case ValueType::ST_32:
-          printLiteralT(reinterpret_cast<LiteralT<float>*>(E), SS);
+          printLiteralT(&E->as<float>(), SS);
           return;
         case ValueType::ST_64:
-          printLiteralT(reinterpret_cast<LiteralT<double>*>(E), SS);
+          printLiteralT(&E->as<double>(), SS);
           return;
         default:
           break;
@@ -662,7 +668,7 @@ protected:
       }
       case ValueType::BT_String: {
         SS << "\"";
-        printLiteralT(reinterpret_cast<LiteralT<StringRef>*>(E), SS);
+        printLiteralT(&E->as<StringRef>(), SS);
         SS << "\"";
         return;
       }
