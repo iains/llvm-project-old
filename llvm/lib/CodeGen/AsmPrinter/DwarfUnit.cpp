@@ -1382,7 +1382,7 @@ DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   if (DISubprogram SPDecl = SP.getFunctionDeclaration()) {
     // Add subprogram definitions to the CU die directly.
     ContextDIE = &getUnitDie();
-    // Build the decl now to ensure it preceeds the definition.
+    // Build the decl now to ensure it precedes the definition.
     getOrCreateSubprogramDIE(SPDecl);
   }
 
@@ -1781,8 +1781,7 @@ std::unique_ptr<DIE> DwarfUnit::constructVariableDIEImpl(const DbgVariable &DV,
 
   // Define variable debug information entry.
   auto VariableDie = make_unique<DIE>(DV.getTag());
-  DbgVariable *AbsVar = DV.getAbstractVariable();
-  if (AbsVar && AbsVar->getDIE())
+  if (DbgVariable *AbsVar = DV.getAbstractVariable())
     addDIEEntry(*VariableDie, dwarf::DW_AT_abstract_origin, *AbsVar->getDIE());
   else {
     if (!Name.empty())
