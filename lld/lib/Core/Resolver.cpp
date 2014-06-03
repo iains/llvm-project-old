@@ -305,17 +305,26 @@ void Resolver::updateReferences() {
 }
 
 // For dead code stripping, recursively mark atoms "live"
-void Resolver::markLive(const Atom &atom) {
+void Resolver::markLive(const Atom *atom) {
   // Mark the atom is live. If it's already marked live, then stop recursion.
-  auto exists = _liveAtoms.insert(&atom);
+  auto exists = _liveAtoms.insert(atom);
   if (!exists.second)
     return;
 
   // Mark all atoms it references as live
-  if (const DefinedAtom *defAtom = dyn_cast<DefinedAtom>(&atom))
+  if (const DefinedAtom *defAtom = dyn_cast<DefinedAtom>(atom)) {
     for (const Reference *ref : *defAtom)
-      if (const Atom *target = ref->target())
-        markLive(*target);
+      markLive(ref->target());
+    for (const Atom *target : _reverseRef[defAtom])
+      markLive(target);
+  }
+}
+
+static bool isBackref(const Reference *ref) {
+  if (ref->kindNamespace() != lld::Reference::KindNamespace::all)
+    return false;
+  return (ref->kindValue() == lld::Reference::kindLayoutBefore ||
+          ref->kindValue() == lld::Reference::kindGroupChild);
 }
 
 // remove all atoms not actually used
@@ -324,7 +333,14 @@ void Resolver::deadStripOptimize() {
   // only do this optimization with -dead_strip
   if (!_context.deadStrip())
     return;
-  assert(_liveAtoms.empty());
+
+  // Some type of references prevent referring atoms to be dead-striped.
+  // Make a reverse map of such references before traversing the graph.
+  for (const Atom *atom : _atoms)
+    if (const DefinedAtom *defAtom = dyn_cast<DefinedAtom>(atom))
+      for (const Reference *ref : *defAtom)
+        if (isBackref(ref))
+          _reverseRef[ref->target()].insert(atom);
 
   // By default, shared libraries are built with all globals as dead strip roots
   if (_context.globalsAreDeadStripRoots())
@@ -342,7 +358,7 @@ void Resolver::deadStripOptimize() {
 
   // mark all roots as live, and recursively all atoms they reference
   for (const Atom *dsrAtom : _deadStripRoots)
-    markLive(*dsrAtom);
+    markLive(dsrAtom);
 
   // now remove all non-live atoms from _atoms
   _atoms.erase(std::remove_if(_atoms.begin(), _atoms.end(), [&](const Atom *a) {

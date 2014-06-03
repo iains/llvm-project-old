@@ -14,6 +14,7 @@
 #include "lld/Core/SharedLibraryFile.h"
 #include "lld/Core/SymbolTable.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
 #include <set>
@@ -67,7 +68,7 @@ private:
   void checkDylibSymbolCollisions();
   void forEachUndefines(bool searchForOverrides, UndefCallback callback);
 
-  void markLive(const Atom &atom);
+  void markLive(const Atom *atom);
   void addAtoms(const std::vector<const DefinedAtom *>&);
 
   class MergedFile : public MutableFile {
@@ -105,6 +106,7 @@ private:
   std::set<const Atom *>        _deadStripRoots;
   llvm::DenseSet<const Atom *>  _liveAtoms;
   std::unique_ptr<MergedFile>   _result;
+  llvm::DenseMap<const Atom *, llvm::DenseSet<const Atom *>> _reverseRef;
 };
 
 } // namespace lld
