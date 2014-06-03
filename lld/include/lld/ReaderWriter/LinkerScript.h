@@ -107,10 +107,12 @@ public:
 
   void dump(raw_ostream &os) const override {
     os << "OUTPUT_FORMAT(";
-    for (auto fb = _formats.begin(), fe = _formats.end(); fb != fe; ++fb) {
-      if (fb != _formats.begin())
+    bool first = true;
+    for (StringRef format : _formats) {
+      if (!first)
         os << ",";
-      os << *fb;
+      first = false;
+      os << format;
     }
     os << ")\n";
   }
@@ -155,9 +157,7 @@ class Group : public Command {
 public:
   template <class RangeT>
   explicit Group(RangeT range) : Command(Kind::Group) {
-    using std::begin;
-    using std::end;
-    std::copy(begin(range), end(range), std::back_inserter(_paths));
+    std::copy(std::begin(range), std::end(range), std::back_inserter(_paths));
   }
 
   static bool classof(const Command *c) { return c->getKind() == Kind::Group; }
@@ -168,8 +168,7 @@ public:
     for (const Path &path : getPaths()) {
       if (!first)
         os << " ";
-      else
-        first = false;
+      first = false;
       if (path._asNeeded)
         os << "AS_NEEDED(";
       os << path._path;
