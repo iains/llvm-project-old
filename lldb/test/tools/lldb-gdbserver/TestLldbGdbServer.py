@@ -49,7 +49,7 @@ class LldbGdbServerTestCase(TestBase):
         self.set_inferior_startup_launch()
 
         # Uncomment this code to force only a single test to run (by name).
-        # if not re.search(r"m_packet_reads_memory", self._testMethodName):
+        # if not re.search(r"breakpoint", self._testMethodName):
         #     self.skipTest("focusing on one test")
 
     def reset_test_sequence(self):
@@ -254,6 +254,41 @@ class LldbGdbServerTestCase(TestBase):
         self.assertTrue("offset" in reg_info)
         self.assertTrue("encoding" in reg_info)
         self.assertTrue("format" in reg_info)
+
+    def add_query_memory_region_packets(self, address):
+        self.test_sequence.add_log_lines(
+            ["read packet: $qMemoryRegionInfo:{0:x}#00".format(address),
+             {"direction":"send", "regex":r"^\$(.+)#[0-9a-fA-F]{2}$", "capture":{1:"memory_region_response"} }],
+            True)
+        
+    def parse_memory_region_packet(self, context):
+        # Ensure we have a context.
+        self.assertIsNotNone(context.get("memory_region_response"))
+        
+        # Pull out key:value; pairs.
+        mem_region_dict = {match.group(1):match.group(2) for match in re.finditer(r"([^:]+):([^;]+);", context.get("memory_region_response"))}
+
+        # Validate keys are known.
+        for (key, val) in mem_region_dict.items():
+            self.assertTrue(key in ["start", "size", "permissions", "error"])
+            self.assertIsNotNone(val)
+
+        # Return the dictionary of key-value pairs for the memory region.
+        return mem_region_dict
+
+    def assert_address_within_memory_region(self, test_address, mem_region_dict):
+        self.assertIsNotNone(mem_region_dict)
+        self.assertTrue("start" in mem_region_dict)
+        self.assertTrue("size" in mem_region_dict)
+        
+        range_start = int(mem_region_dict["start"], 16)
+        range_size = int(mem_region_dict["size"], 16)
+        range_end = range_start + range_size
+
+        if test_address < range_start:
+            self.fail("address 0x{0:x} comes before range 0x{1:x} - 0x{2:x} (size 0x{3:x})".format(test_address, range_start, range_end, range_size))
+        elif test_address >= range_end:
+            self.fail("address 0x{0:x} comes after range 0x{1:x} - 0x{2:x} (size 0x{3:x})".format(test_address, range_start, range_end, range_size))
 
     def add_threadinfo_collection_packets(self):
         self.test_sequence.add_log_lines(
@@ -1284,6 +1319,316 @@ class LldbGdbServerTestCase(TestBase):
         self.buildDwarf()
         self.set_inferior_startup_launch()
         self.m_packet_reads_memory()
+
+    def qMemoryRegionInfo_is_supported(self):
+        # Start up the inferior.
+        procs = self.prep_debug_monitor_and_inferior()
+
+        # Ask if it supports $qMemoryRegionInfo.
+        self.test_sequence.add_log_lines(
+            ["read packet: $qMemoryRegionInfo#00",
+             "send packet: $OK#00"
+             ], True)
+        self.expect_gdbremote_sequence()
+
+    @debugserver_test
+    @dsym_test
+    def test_qMemoryRegionInfo_is_supported_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_is_supported()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qMemoryRegionInfo_is_supported_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_is_supported()
+
+    def qMemoryRegionInfo_reports_code_address_as_executable(self):
+        # Start up the inferior.
+        procs = self.prep_debug_monitor_and_inferior(
+            inferior_args=["get-code-address-hex:hello", "sleep:5"])
+
+        # Run the process
+        self.test_sequence.add_log_lines(
+            [
+             # Start running after initial stop.
+             "read packet: $c#00",
+             # Match output line that prints the memory address of the message buffer within the inferior. 
+             # Note we require launch-only testing so we can get inferior otuput.
+             { "type":"output_match", "regex":r"^code address: 0x([0-9a-fA-F]+)\r\n$", "capture":{ 1:"code_address"} },
+             # Now stop the inferior.
+             "read packet: {}".format(chr(03)),
+             # And wait for the stop notification.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
+            True)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Grab the code address.
+        self.assertIsNotNone(context.get("code_address"))
+        code_address = int(context.get("code_address"), 16)
+
+        # Grab memory region info from the inferior.
+        self.reset_test_sequence()
+        self.add_query_memory_region_packets(code_address)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+        mem_region_dict = self.parse_memory_region_packet(context)
+
+        # Ensure code address is readable and executable.
+        self.assertTrue("permissions" in mem_region_dict)
+        self.assertTrue("r" in mem_region_dict["permissions"])
+        self.assertTrue("x" in mem_region_dict["permissions"])
+        
+        # Ensure the start address and size encompass the address we queried.
+        self.assert_address_within_memory_region(code_address, mem_region_dict)
+        
+
+    @debugserver_test
+    @dsym_test
+    def test_qMemoryRegionInfo_reports_code_address_as_executable_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_code_address_as_executable()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qMemoryRegionInfo_reports_code_address_as_executable_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_code_address_as_executable()
+
+    def qMemoryRegionInfo_reports_stack_address_as_readable_writeable(self):
+        # Start up the inferior.
+        procs = self.prep_debug_monitor_and_inferior(
+            inferior_args=["get-stack-address-hex:", "sleep:5"])
+
+        # Run the process
+        self.test_sequence.add_log_lines(
+            [
+             # Start running after initial stop.
+             "read packet: $c#00",
+             # Match output line that prints the memory address of the message buffer within the inferior. 
+             # Note we require launch-only testing so we can get inferior otuput.
+             { "type":"output_match", "regex":r"^stack address: 0x([0-9a-fA-F]+)\r\n$", "capture":{ 1:"stack_address"} },
+             # Now stop the inferior.
+             "read packet: {}".format(chr(03)),
+             # And wait for the stop notification.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
+            True)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Grab the address.
+        self.assertIsNotNone(context.get("stack_address"))
+        stack_address = int(context.get("stack_address"), 16)
+
+        # Grab memory region info from the inferior.
+        self.reset_test_sequence()
+        self.add_query_memory_region_packets(stack_address)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+        mem_region_dict = self.parse_memory_region_packet(context)
+
+        # Ensure address is readable and executable.
+        self.assertTrue("permissions" in mem_region_dict)
+        self.assertTrue("r" in mem_region_dict["permissions"])
+        self.assertTrue("w" in mem_region_dict["permissions"])
+
+        # Ensure the start address and size encompass the address we queried.
+        self.assert_address_within_memory_region(stack_address, mem_region_dict)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qMemoryRegionInfo_reports_stack_address_as_readable_writeable_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_stack_address_as_readable_writeable()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qMemoryRegionInfo_reports_stack_address_as_readable_writeable_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_stack_address_as_readable_writeable()
+
+    def qMemoryRegionInfo_reports_heap_address_as_readable_writeable(self):
+        # Start up the inferior.
+        procs = self.prep_debug_monitor_and_inferior(
+            inferior_args=["get-heap-address-hex:", "sleep:5"])
+
+        # Run the process
+        self.test_sequence.add_log_lines(
+            [
+             # Start running after initial stop.
+             "read packet: $c#00",
+             # Match output line that prints the memory address of the message buffer within the inferior. 
+             # Note we require launch-only testing so we can get inferior otuput.
+             { "type":"output_match", "regex":r"^heap address: 0x([0-9a-fA-F]+)\r\n$", "capture":{ 1:"heap_address"} },
+             # Now stop the inferior.
+             "read packet: {}".format(chr(03)),
+             # And wait for the stop notification.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
+            True)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Grab the address.
+        self.assertIsNotNone(context.get("heap_address"))
+        heap_address = int(context.get("heap_address"), 16)
+
+        # Grab memory region info from the inferior.
+        self.reset_test_sequence()
+        self.add_query_memory_region_packets(heap_address)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+        mem_region_dict = self.parse_memory_region_packet(context)
+
+        # Ensure address is readable and executable.
+        self.assertTrue("permissions" in mem_region_dict)
+        self.assertTrue("r" in mem_region_dict["permissions"])
+        self.assertTrue("w" in mem_region_dict["permissions"])
+
+        # Ensure the start address and size encompass the address we queried.
+        self.assert_address_within_memory_region(heap_address, mem_region_dict)
+
+
+    @debugserver_test
+    @dsym_test
+    def test_qMemoryRegionInfo_reports_heap_address_as_readable_writeable_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_heap_address_as_readable_writeable()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qMemoryRegionInfo_reports_heap_address_as_readable_writeable_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qMemoryRegionInfo_reports_heap_address_as_readable_writeable()
+
+    def software_breakpoint_set_and_remove_work(self):
+        # Start up the inferior.
+        procs = self.prep_debug_monitor_and_inferior(
+            inferior_args=["get-code-address-hex:hello", "sleep:1", "call-function:hello"])
+
+        # Run the process
+        self.test_sequence.add_log_lines(
+            [
+             # Start running after initial stop.
+             "read packet: $c#00",
+             # Match output line that prints the memory address of the function call entry point.
+             # Note we require launch-only testing so we can get inferior otuput.
+             { "type":"output_match", "regex":r"^code address: 0x([0-9a-fA-F]+)\r\n$", "capture":{ 1:"function_address"} },
+             # Now stop the inferior.
+             "read packet: {}".format(chr(03)),
+             # And wait for the stop notification.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
+            True)
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Grab the address.
+        self.assertIsNotNone(context.get("function_address"))
+        function_address = int(context.get("function_address"), 16)
+
+        # Set the breakpoint.
+        # Note this might need to be switched per platform (ARM, mips, etc.).
+        BREAKPOINT_KIND = 1
+        
+        self.reset_test_sequence()
+        self.test_sequence.add_log_lines(
+            [
+             # Set the breakpoint.
+             "read packet: $Z0,{0:x},{1}#00".format(function_address, BREAKPOINT_KIND),
+             # Verify the stub could set it.
+             "send packet: $OK#00",
+             # Continue the inferior.
+             "read packet: $c#00",
+             # Expect a breakpoint stop report.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} },
+             ], True)
+             
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Verify the stop signal reported was the breakpoint signal number.
+        stop_signo = context.get("stop_signo")
+        self.assertIsNotNone(stop_signo)
+        self.assertEquals(int(stop_signo,16), signal.SIGTRAP)
+
+        # Ensure we did not receive any output.  If the breakpoint was not set, we would
+        # see output (from a launched process with captured stdio) printing a hello, world message.
+        # That would indicate the breakpoint didn't take.
+        self.assertEquals(len(context["O_content"]), 0)
+
+        # Verify that a breakpoint unset and continue gets us the expected output.
+        self.reset_test_sequence()
+        self.test_sequence.add_log_lines(
+            [
+             # Remove the breakpoint.
+             "read packet: $z0,{0:x},{1}#00".format(function_address, BREAKPOINT_KIND),
+             # Verify the stub could unset it.
+             "send packet: $OK#00",
+             # Continue running.
+             "read packet: $c#00",
+             # We should now receive the output from the call.
+             { "type":"output_match", "regex":r"^hello, world\r\n$" },
+             # And wait for program completion.
+             {"direction":"send", "regex":r"^\$W00(.*)#00" },
+             ], True)
+
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+        
+
+    @debugserver_test
+    @dsym_test
+    def test_software_breakpoint_set_and_remove_work_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.software_breakpoint_set_and_remove_work()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_software_breakpoint_set_and_remove_work_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.software_breakpoint_set_and_remove_work()
+
 
 if __name__ == '__main__':
     unittest2.main()

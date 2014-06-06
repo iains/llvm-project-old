@@ -29,24 +29,6 @@
 
 namespace lld {
 
-namespace {
-
-/// This is used as a filter function to std::remove_if to coalesced atoms.
-class AtomCoalescedAway {
-public:
-  explicit AtomCoalescedAway(SymbolTable &sym) : _symbolTable(sym) {}
-
-  bool operator()(const Atom *atom) const {
-    const Atom *rep = _symbolTable.replacement(atom);
-    return rep != atom;
-  }
-
-private:
-  SymbolTable &_symbolTable;
-};
-
-} // namespace
-
 void Resolver::handleFile(const File &file) {
   bool undefAdded = false;
   for (const DefinedAtom *atom : file.defined())
@@ -148,26 +130,30 @@ bool Resolver::doUndefinedAtom(const UndefinedAtom &atom) {
 }
 
 /// \brief Add the section group and the group-child reference members.
-bool Resolver::maybeAddSectionGroupOrGnuLinkOnce(const DefinedAtom &atom) {
+void Resolver::maybeAddSectionGroupOrGnuLinkOnce(const DefinedAtom &atom) {
   // First time adding a group?
   bool isFirstTime = _symbolTable.addGroup(atom);
 
   if (!isFirstTime) {
     // If duplicate symbols are allowed, select the first group.
     if (_context.getAllowDuplicates())
-      return true;
-    const DefinedAtom *prevGroup =
-        dyn_cast<DefinedAtom>(_symbolTable.findGroup(atom.name()));
+      return;
+    auto *prevGroup = dyn_cast<DefinedAtom>(_symbolTable.findGroup(atom.name()));
     assert(prevGroup &&
            "Internal Error: The group atom could only be a defined atom");
     // The atoms should be of the same content type, reject invalid group
     // resolution behaviors.
-    return atom.contentType() == prevGroup->contentType();
+    if (atom.contentType() == prevGroup->contentType())
+      return;
+    llvm::errs() << "SymbolTable: error while merging " << atom.name()
+                 << "\n";
+    llvm::report_fatal_error("duplicate symbol error");
+    return;
   }
 
   for (const Reference *r : atom) {
-    if ((r->kindNamespace() == lld::Reference::KindNamespace::all) &&
-        (r->kindValue() == lld::Reference::kindGroupChild)) {
+    if (r->kindNamespace() == lld::Reference::KindNamespace::all &&
+        r->kindValue() == lld::Reference::kindGroupChild) {
       const DefinedAtom *target = dyn_cast<DefinedAtom>(r->target());
       assert(target && "Internal Error: kindGroupChild references need to "
                        "be associated with Defined Atoms only");
@@ -175,7 +161,6 @@ bool Resolver::maybeAddSectionGroupOrGnuLinkOnce(const DefinedAtom &atom) {
       _symbolTable.add(*target);
     }
   }
-  return true;
 }
 
 // Called on each atom when a file is added. Returns true if a given
@@ -202,12 +187,7 @@ void Resolver::doDefinedAtom(const DefinedAtom &atom) {
   _atoms.push_back(&atom);
 
   if (atom.isGroupParent()) {
-    // Raise error if there exists a similar gnu linkonce section.
-    if (!maybeAddSectionGroupOrGnuLinkOnce(atom)) {
-      llvm::errs() << "SymbolTable: error while merging " << atom.name()
-                   << "\n";
-      llvm::report_fatal_error("duplicate symbol error");
-    }
+    maybeAddSectionGroupOrGnuLinkOnce(atom);
   } else {
     _symbolTable.add(atom);
   }
@@ -396,7 +376,7 @@ bool Resolver::checkUndefines() {
         continue;
 
       // If the undefine is coalesced away, skip over it.
-      if (_symbolTable.replacement(undefAtom) != undefAtom)
+      if (_symbolTable.isCoalescedAway(undefAtom))
         continue;
 
       // Seems like this symbol is undefined. Warn that.
@@ -418,8 +398,9 @@ bool Resolver::checkUndefines() {
 // remove from _atoms all coaleseced away atoms
 void Resolver::removeCoalescedAwayAtoms() {
   ScopedTask task(getDefaultDomain(), "removeCoalescedAwayAtoms");
-  _atoms.erase(std::remove_if(_atoms.begin(), _atoms.end(),
-                              AtomCoalescedAway(_symbolTable)),
+  _atoms.erase(std::remove_if(_atoms.begin(), _atoms.end(), [&](const Atom *a) {
+                 return _symbolTable.isCoalescedAway(a);
+               }),
                _atoms.end());
 }
 
