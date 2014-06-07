@@ -102,7 +102,8 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const AttributeList &A,
           << /*MissingValue=*/false << ValueInt;
       return nullptr;
     }
-  }
+  } else
+    llvm_unreachable("Unknown loop hint option");
 
   return LoopHintAttr::CreateImplicit(S.Context, Option, ValueInt,
                                       A.getRange());
