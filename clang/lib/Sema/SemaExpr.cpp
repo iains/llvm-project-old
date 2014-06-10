@@ -2022,69 +2022,66 @@ ExprResult Sema::ActOnIdExpression(Scope *S,
   if (R.isAmbiguous())
     return ExprError();
 
+  // This could be an implicitly declared function reference (legal in C90,
+  // extension in C99, forbidden in C++).
+  if (R.empty() && HasTrailingLParen && II && !getLangOpts().CPlusPlus) {
+    NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *II, S);
+    if (D) R.addDecl(D);
+  }
+
   // Determine whether this name might be a candidate for
   // argument-dependent lookup.
   bool ADL = UseArgumentDependentLookup(SS, R, HasTrailingLParen);
 
   if (R.empty() && !ADL) {
-
-    // Otherwise, this could be an implicitly declared function reference (legal
-    // in C90, extension in C99, forbidden in C++).
-    if (HasTrailingLParen && II && !getLangOpts().CPlusPlus) {
-      NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *II, S);
-      if (D) R.addDecl(D);
+    // In Microsoft mode, if we are inside a template class member function
+    // whose parent class has dependent base classes, and we can't resolve
+    // an unqualified identifier, then assume the identifier is a member of a
+    // dependent base class.  The goal is to postpone name lookup to
+    // instantiation time to be able to search into the type dependent base
+    // classes.
+    // FIXME: If we want 100% compatibility with MSVC, we will have delay all
+    // unqualified name lookup.  Any name lookup during template parsing means
+    // clang might find something that MSVC doesn't.  For now, we only handle
+    // the common case of members of a dependent base class.
+    if (SS.isEmpty() && getLangOpts().MSVCCompat) {
+      CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(CurContext);
+      if (MD && MD->isInstance() && MD->getParent()->hasAnyDependentBases()) {
+        QualType ThisType = MD->getThisType(Context);
+        // Since the 'this' expression is synthesized, we don't need to
+        // perform the double-lookup check.
+        NamedDecl *FirstQualifierInScope = nullptr;
+        return CXXDependentScopeMemberExpr::Create(
+            Context, /*This=*/nullptr, ThisType, /*IsArrow=*/true,
+            /*Op=*/SourceLocation(), SS.getWithLocInContext(Context),
+            TemplateKWLoc, FirstQualifierInScope, NameInfo, TemplateArgs);
+      }
     }
+
+    // Don't diagnose an empty lookup for inline assmebly.
+    if (IsInlineAsmIdentifier)
+      return ExprError();
 
     // If this name wasn't predeclared and if this is not a function
     // call, diagnose the problem.
-    if (R.empty()) {
-      // In Microsoft mode, if we are inside a template class member function
-      // whose parent class has dependent base classes, and we can't resolve
-      // an unqualified identifier, then assume the identifier is a member of a
-      // dependent base class.  The goal is to postpone name lookup to
-      // instantiation time to be able to search into the type dependent base
-      // classes.
-      // FIXME: If we want 100% compatibility with MSVC, we will have delay all
-      // unqualified name lookup.  Any name lookup during template parsing means
-      // clang might find something that MSVC doesn't.  For now, we only handle
-      // the common case of members of a dependent base class.
-      if (SS.isEmpty() && getLangOpts().MSVCCompat) {
-        CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(CurContext);
-        if (MD && MD->isInstance() && MD->getParent()->hasAnyDependentBases()) {
-          QualType ThisType = MD->getThisType(Context);
-          // Since the 'this' expression is synthesized, we don't need to
-          // perform the double-lookup check.
-          NamedDecl *FirstQualifierInScope = nullptr;
-          return CXXDependentScopeMemberExpr::Create(
-              Context, /*This=*/nullptr, ThisType, /*IsArrow=*/true,
-              /*Op=*/SourceLocation(), SS.getWithLocInContext(Context),
-              TemplateKWLoc, FirstQualifierInScope, NameInfo, TemplateArgs);
-        }
-      }
+    CorrectionCandidateCallback DefaultValidator;
+    if (DiagnoseEmptyLookup(S, SS, R, CCC ? *CCC : DefaultValidator))
+      return ExprError();
 
-      // Don't diagnose an empty lookup for inline assmebly.
-      if (IsInlineAsmIdentifier)
+    assert(!R.empty() &&
+           "DiagnoseEmptyLookup returned false but added no results");
+
+    // If we found an Objective-C instance variable, let
+    // LookupInObjCMethod build the appropriate expression to
+    // reference the ivar.
+    if (ObjCIvarDecl *Ivar = R.getAsSingle<ObjCIvarDecl>()) {
+      R.clear();
+      ExprResult E(LookupInObjCMethod(R, S, Ivar->getIdentifier()));
+      // In a hopelessly buggy code, Objective-C instance variable
+      // lookup fails and no expression will be built to reference it.
+      if (!E.isInvalid() && !E.get())
         return ExprError();
-
-      CorrectionCandidateCallback DefaultValidator;
-      if (DiagnoseEmptyLookup(S, SS, R, CCC ? *CCC : DefaultValidator))
-        return ExprError();
-
-      assert(!R.empty() &&
-             "DiagnoseEmptyLookup returned false but added no results");
-
-      // If we found an Objective-C instance variable, let
-      // LookupInObjCMethod build the appropriate expression to
-      // reference the ivar.
-      if (ObjCIvarDecl *Ivar = R.getAsSingle<ObjCIvarDecl>()) {
-        R.clear();
-        ExprResult E(LookupInObjCMethod(R, S, Ivar->getIdentifier()));
-        // In a hopelessly buggy code, Objective-C instance variable
-        // lookup fails and no expression will be built to reference it.
-        if (!E.isInvalid() && !E.get())
-          return ExprError();
-        return E;
-      }
+      return E;
     }
   }
 
@@ -5478,6 +5475,36 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
   return ResultTy;
 }
 
+/// \brief Returns true if QT is quelified-id and implements 'NSObject' and/or
+/// 'NSCopying' protocols (and nothing else); or QT is an NSObject and optionally
+/// implements 'NSObject' and/or NSCopying' protocols (and nothing else).
+static bool isObjCPtrBlockCompatible(Sema &S, ASTContext &C, QualType QT) {
+  if (QT->isObjCIdType())
+    return true;
+  
+  const ObjCObjectPointerType *OPT = QT->getAs<ObjCObjectPointerType>();
+  if (!OPT)
+    return false;
+
+  if (ObjCInterfaceDecl *ID = OPT->getInterfaceDecl())
+    if (ID->getIdentifier() != &C.Idents.get("NSObject"))
+      return false;
+  
+  ObjCProtocolDecl* PNSCopying =
+    S.LookupProtocol(&C.Idents.get("NSCopying"), SourceLocation());
+  ObjCProtocolDecl* PNSObject =
+    S.LookupProtocol(&C.Idents.get("NSObject"), SourceLocation());
+
+  for (auto *Proto : OPT->quals()) {
+    if ((PNSCopying && declaresSameEntity(Proto, PNSCopying)) ||
+        (PNSObject && declaresSameEntity(Proto, PNSObject)))
+      ;
+    else
+      return false;
+  }
+  return true;
+}
+
 /// \brief Return the resulting type when the operands are both block pointers.
 static QualType checkConditionalBlockPointerCompatibility(Sema &S,
                                                           ExprResult &LHS,
@@ -6435,8 +6462,9 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
       return IncompatiblePointer;
     }
 
-    // T^ -> id; not T^ ->A* and not T^ -> id<P>
-    if (RHSType->isBlockPointerType() && LHSType->isObjCIdType()) {
+    // Only under strict condition T^ is compatible with an Objective-C pointer.
+    if (RHSType->isBlockPointerType() &&
+        isObjCPtrBlockCompatible(*this, Context, LHSType)) {
       maybeExtendBlockObject(*this, RHS);
       Kind = CK_BlockPointerToObjCPointerCast;
       return Compatible;

@@ -6059,6 +6059,7 @@ SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
                             LHS, RHS, Zero, DAG, dl);
   } else if (Op.getValueType() == MVT::v16i8) {
     SDValue LHS = Op.getOperand(0), RHS = Op.getOperand(1);
+    bool isLittleEndian = PPCSubTarget.isLittleEndian();
 
     // Multiply the even 8-bit parts, producing 16-bit sums.
     SDValue EvenParts = BuildIntrinsicOp(Intrinsic::ppc_altivec_vmuleub,
@@ -6070,13 +6071,24 @@ SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
                                           LHS, RHS, DAG, dl, MVT::v8i16);
     OddParts = DAG.getNode(ISD::BITCAST, dl, MVT::v16i8, OddParts);
 
-    // Merge the results together.
+    // Merge the results together.  Because vmuleub and vmuloub are
+    // instructions with a big-endian bias, we must reverse the
+    // element numbering and reverse the meaning of "odd" and "even"
+    // when generating little endian code.
     int Ops[16];
     for (unsigned i = 0; i != 8; ++i) {
-      Ops[i*2  ] = 2*i+1;
-      Ops[i*2+1] = 2*i+1+16;
+      if (isLittleEndian) {
+        Ops[i*2  ] = 2*i;
+        Ops[i*2+1] = 2*i+16;
+      } else {
+        Ops[i*2  ] = 2*i+1;
+        Ops[i*2+1] = 2*i+1+16;
+      }
     }
-    return DAG.getVectorShuffle(MVT::v16i8, dl, EvenParts, OddParts, Ops);
+    if (isLittleEndian)
+      return DAG.getVectorShuffle(MVT::v16i8, dl, OddParts, EvenParts, Ops);
+    else
+      return DAG.getVectorShuffle(MVT::v16i8, dl, EvenParts, OddParts, Ops);
   } else {
     llvm_unreachable("Unknown mul to lower!");
   }
@@ -8083,6 +8095,7 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       // This is a type-legal unaligned Altivec load.
       SDValue Chain = LD->getChain();
       SDValue Ptr = LD->getBasePtr();
+      bool isLittleEndian = PPCSubTarget.isLittleEndian();
 
       // This implements the loading of unaligned vectors as described in
       // the venerable Apple Velocity Engine overview. Specifically:
@@ -8090,25 +8103,28 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       // https://developer.apple.com/hardwaredrivers/ve/code_optimization.html
       //
       // The general idea is to expand a sequence of one or more unaligned
-      // loads into a alignment-based permutation-control instruction (lvsl),
-      // a series of regular vector loads (which always truncate their
-      // input address to an aligned address), and a series of permutations.
-      // The results of these permutations are the requested loaded values.
-      // The trick is that the last "extra" load is not taken from the address
-      // you might suspect (sizeof(vector) bytes after the last requested
-      // load), but rather sizeof(vector) - 1 bytes after the last
-      // requested vector. The point of this is to avoid a page fault if the
-      // base address happened to be aligned. This works because if the base
-      // address is aligned, then adding less than a full vector length will
-      // cause the last vector in the sequence to be (re)loaded. Otherwise,
-      // the next vector will be fetched as you might suspect was necessary.
+      // loads into an alignment-based permutation-control instruction (lvsl
+      // or lvsr), a series of regular vector loads (which always truncate
+      // their input address to an aligned address), and a series of
+      // permutations.  The results of these permutations are the requested
+      // loaded values.  The trick is that the last "extra" load is not taken
+      // from the address you might suspect (sizeof(vector) bytes after the
+      // last requested load), but rather sizeof(vector) - 1 bytes after the
+      // last requested vector. The point of this is to avoid a page fault if
+      // the base address happened to be aligned. This works because if the
+      // base address is aligned, then adding less than a full vector length
+      // will cause the last vector in the sequence to be (re)loaded.
+      // Otherwise, the next vector will be fetched as you might suspect was
+      // necessary.
 
       // We might be able to reuse the permutation generation from
       // a different base address offset from this one by an aligned amount.
       // The INTRINSIC_WO_CHAIN DAG combine will attempt to perform this
       // optimization later.
-      SDValue PermCntl = BuildIntrinsicOp(Intrinsic::ppc_altivec_lvsl, Ptr,
-                                          DAG, dl, MVT::v16i8);
+      Intrinsic::ID Intr = (isLittleEndian ?
+                            Intrinsic::ppc_altivec_lvsr :
+                            Intrinsic::ppc_altivec_lvsl);
+      SDValue PermCntl = BuildIntrinsicOp(Intr, Ptr, DAG, dl, MVT::v16i8);
 
       // Refine the alignment of the original load (a "new" load created here
       // which was identical to the first except for the alignment would be
@@ -8157,8 +8173,18 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       if (ExtraLoad.getValueType() != MVT::v4i32)
         ExtraLoad = DAG.getNode(ISD::BITCAST, dl, MVT::v4i32, ExtraLoad);
 
-      SDValue Perm = BuildIntrinsicOp(Intrinsic::ppc_altivec_vperm,
-                                      BaseLoad, ExtraLoad, PermCntl, DAG, dl);
+      // Because vperm has a big-endian bias, we must reverse the order
+      // of the input vectors and complement the permute control vector
+      // when generating little endian code.  We have already handled the
+      // latter by using lvsr instead of lvsl, so just reverse BaseLoad
+      // and ExtraLoad here.
+      SDValue Perm;
+      if (isLittleEndian)
+        Perm = BuildIntrinsicOp(Intrinsic::ppc_altivec_vperm,
+                                ExtraLoad, BaseLoad, PermCntl, DAG, dl);
+      else
+        Perm = BuildIntrinsicOp(Intrinsic::ppc_altivec_vperm,
+                                BaseLoad, ExtraLoad, PermCntl, DAG, dl);
 
       if (VT != MVT::v4i32)
         Perm = DAG.getNode(ISD::BITCAST, dl, VT, Perm);
@@ -8198,9 +8224,12 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     }
     }
     break;
-  case ISD::INTRINSIC_WO_CHAIN:
-    if (cast<ConstantSDNode>(N->getOperand(0))->getZExtValue() ==
-          Intrinsic::ppc_altivec_lvsl &&
+  case ISD::INTRINSIC_WO_CHAIN: {
+    bool isLittleEndian = PPCSubTarget.isLittleEndian();
+    Intrinsic::ID Intr = (isLittleEndian ?
+                          Intrinsic::ppc_altivec_lvsr :
+                          Intrinsic::ppc_altivec_lvsl);
+    if (cast<ConstantSDNode>(N->getOperand(0))->getZExtValue() == Intr &&
         N->getOperand(1)->getOpcode() == ISD::ADD) {
       SDValue Add = N->getOperand(1);
 
@@ -8212,8 +8241,8 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
              UE = BasePtr->use_end(); UI != UE; ++UI) {
           if (UI->getOpcode() == ISD::INTRINSIC_WO_CHAIN &&
               cast<ConstantSDNode>(UI->getOperand(0))->getZExtValue() ==
-                Intrinsic::ppc_altivec_lvsl) {
-            // We've found another LVSL, and this address if an aligned
+                Intr) {
+            // We've found another LVSL/LVSR, and this address is an aligned
             // multiple of that one. The results will be the same, so use the
             // one we've just found instead.
 
@@ -8221,6 +8250,7 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
           }
         }
       }
+    }
     }
 
     break;

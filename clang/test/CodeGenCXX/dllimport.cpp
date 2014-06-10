@@ -581,12 +581,22 @@ namespace Vtordisp {
 }
 
 namespace ClassTemplateStaticDef {
+  // Regular template static field:
   template <typename T> struct __declspec(dllimport) S {
     static int x;
   };
   template <typename T> int S<T>::x;
-  // CHECK-DAG: @"\01?x@?$S@H@ClassTemplateStaticDef@@2HA" = available_externally dllimport global i32 0
+  // MSC-DAG: @"\01?x@?$S@H@ClassTemplateStaticDef@@2HA" = available_externally dllimport global i32 0
   int f() { return S<int>::x; }
+
+  // Partial class template specialization static field:
+  template <typename A> struct T;
+  template <typename A> struct __declspec(dllimport) T<A*> {
+    static int x;
+  };
+  template <typename A> int T<A*>::x;
+  // M32-DAG: @"\01?x@?$T@PAX@ClassTemplateStaticDef@@2HA" = available_externally dllimport global i32 0
+  int g() { return T<void*>::x; }
 }
 
 namespace PR19933 {
@@ -611,4 +621,11 @@ namespace PR19933 {
   template <typename T> int C<T>::x = g();
   template struct __declspec(dllimport) C<int>;
   // MSC-DAG: @"\01?x@?$C@H@PR19933@@2HA" = available_externally dllimport global i32 42
+
+  template <int I> struct D { static int x, y; };
+  template <int I> int D<I>::x = I + 1;
+  template <int I> int D<I>::y = I + f();
+  template struct __declspec(dllimport) D<42>;
+  // MSC-DAG: @"\01?x@?$D@$0CK@@PR19933@@2HA" = available_externally dllimport global i32 43
+  // MSC-DAG: @"\01?y@?$D@$0CK@@PR19933@@2HA" = available_externally dllimport global i32 0
 }
