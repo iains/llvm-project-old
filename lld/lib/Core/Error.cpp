@@ -18,9 +18,9 @@
 
 using namespace lld;
 
-class _NativeReaderErrorCategory : public llvm::_do_message {
+class _NativeReaderErrorCategory : public llvm::error_category {
 public:
-  const char* name() const override {
+  const char* name() const LLVM_NOEXCEPT override {
     return "lld.native.reader";
   }
 
@@ -41,7 +41,8 @@ public:
                      "message defined.");
   }
 
-  llvm::error_condition default_error_condition(int ev) const override {
+  llvm::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override {
     if (NativeReaderError(ev) == NativeReaderError::success)
       return llvm::error_condition();
     return llvm::errc::invalid_argument;
@@ -53,9 +54,9 @@ const llvm::error_category &lld::native_reader_category() {
   return o;
 }
 
-class _YamlReaderErrorCategory : public llvm::_do_message {
+class _YamlReaderErrorCategory : public llvm::error_category {
 public:
-  const char* name() const override {
+  const char* name() const LLVM_NOEXCEPT override {
     return "lld.yaml.reader";
   }
 
@@ -70,7 +71,8 @@ public:
                      "message defined.");
   }
 
-  llvm::error_condition default_error_condition(int ev) const override {
+  llvm::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override {
     if (YamlReaderError(ev) == YamlReaderError::success)
       return llvm::error_condition();
     return llvm::errc::invalid_argument;
@@ -82,9 +84,11 @@ const llvm::error_category &lld::YamlReaderCategory() {
   return o;
 }
 
-class _LinkerScriptReaderErrorCategory : public llvm::_do_message {
+class _LinkerScriptReaderErrorCategory : public llvm::error_category {
 public:
-  const char *name() const override { return "lld.linker-script.reader"; }
+  const char *name() const LLVM_NOEXCEPT override {
+    return "lld.linker-script.reader";
+  }
 
   std::string message(int ev) const override {
     LinkerScriptReaderError e = LinkerScriptReaderError(ev);
@@ -97,7 +101,8 @@ public:
         "message defined.");
   }
 
-  llvm::error_condition default_error_condition(int ev) const override {
+  llvm::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override {
     LinkerScriptReaderError e = LinkerScriptReaderError(ev);
     if (e == LinkerScriptReaderError::success)
       return llvm::error_condition();
@@ -110,9 +115,11 @@ const llvm::error_category &lld::LinkerScriptReaderCategory() {
   return o;
 }
 
-class _InputGraphErrorCategory : public llvm::_do_message {
+class _InputGraphErrorCategory : public llvm::error_category {
 public:
-  const char *name() const override { return "lld.inputGraph.parse"; }
+  const char *name() const LLVM_NOEXCEPT override {
+    return "lld.inputGraph.parse";
+  }
 
   std::string message(int ev) const override {
     if (InputGraphError(ev) == InputGraphError::success)
@@ -121,7 +128,8 @@ public:
                      "message defined.");
   }
 
-  llvm::error_condition default_error_condition(int ev) const override {
+  llvm::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override {
     if (InputGraphError(ev) == InputGraphError::success)
       return llvm::error_condition();
     return llvm::errc::invalid_argument;
@@ -133,9 +141,11 @@ const llvm::error_category &lld::InputGraphErrorCategory() {
   return i;
 }
 
-class _ReaderErrorCategory : public llvm::_do_message {
+class _ReaderErrorCategory : public llvm::error_category {
 public:
-  const char *name() const override { return "lld.inputGraph.parse"; }
+  const char *name() const LLVM_NOEXCEPT override {
+    return "lld.inputGraph.parse";
+  }
 
   std::string message(int ev) const override {
     if (ReaderError(ev) == ReaderError::success)
@@ -147,7 +157,8 @@ public:
                      "message defined.");
   }
 
-  llvm::error_condition default_error_condition(int ev) const override {
+  llvm::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override {
     if (ReaderError(ev) == ReaderError::success)
       return llvm::error_condition();
     return llvm::errc::invalid_argument;
@@ -168,9 +179,11 @@ namespace lld {
 /// Temporary class to enable make_dynamic_error_code() until
 /// llvm::ErrorOr<> is updated to work with error encapsulations 
 /// other than error_code.
-class dynamic_error_category : public llvm::_do_message {
+class dynamic_error_category : public llvm::error_category {
 public:
-  const char *name() const override { return "lld.dynamic_error"; }
+  const char *name() const LLVM_NOEXCEPT override {
+    return "lld.dynamic_error";
+  }
 
   std::string message(int ev) const override {
     assert(ev >= 0);

@@ -84,6 +84,25 @@ static bool allocateStack(unsigned ValNo, MVT ValVT, MVT LocVT,
 
 #include "AMDGPUGenCallingConv.inc"
 
+// Find a larger type to do a load / store of a vector with.
+EVT AMDGPUTargetLowering::getEquivalentMemType(LLVMContext &Ctx, EVT VT) {
+  unsigned StoreSize = VT.getStoreSizeInBits();
+  if (StoreSize <= 32)
+    return EVT::getIntegerVT(Ctx, StoreSize);
+
+  assert(StoreSize % 32 == 0 && "Store size not a multiple of 32");
+  return EVT::getVectorVT(Ctx, MVT::i32, StoreSize / 32);
+}
+
+// Type for a vector that will be loaded to.
+EVT AMDGPUTargetLowering::getEquivalentLoadRegType(LLVMContext &Ctx, EVT VT) {
+  unsigned StoreSize = VT.getStoreSizeInBits();
+  if (StoreSize <= 32)
+    return EVT::getIntegerVT(Ctx, 32);
+
+  return EVT::getVectorVT(Ctx, MVT::i32, StoreSize / 32);
+}
+
 AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   TargetLowering(TM, new TargetLoweringObjectFileELF()) {
 
@@ -214,12 +233,30 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::UDIVREM, MVT::i64, Custom);
   setOperationAction(ISD::UREM, MVT::i32, Expand);
 
+  if (!Subtarget->hasBFI()) {
+    // fcopysign can be done in a single instruction with BFI.
+    setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
+    setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+  }
+
+  if (!Subtarget->hasBCNT(32))
+    setOperationAction(ISD::CTPOP, MVT::i32, Expand);
+
+  if (!Subtarget->hasBCNT(64))
+    setOperationAction(ISD::CTPOP, MVT::i64, Expand);
+
+  MVT VTs[] = { MVT::i32, MVT::i64 };
+  for (MVT VT : VTs) {
+    setOperationAction(ISD::CTTZ, VT, Expand);
+    setOperationAction(ISD::CTLZ, VT, Expand);
+  }
+
   static const MVT::SimpleValueType IntTypes[] = {
     MVT::v2i32, MVT::v4i32
   };
 
   for (MVT VT : IntTypes) {
-    //Expand the following operations for the current type by default
+    // Expand the following operations for the current type by default.
     setOperationAction(ISD::ADD,  VT, Expand);
     setOperationAction(ISD::AND,  VT, Expand);
     setOperationAction(ISD::FP_TO_SINT, VT, Expand);
@@ -238,6 +275,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::VSELECT, VT, Expand);
     setOperationAction(ISD::XOR,  VT, Expand);
     setOperationAction(ISD::BSWAP, VT, Expand);
+    setOperationAction(ISD::CTPOP, VT, Expand);
+    setOperationAction(ISD::CTTZ, VT, Expand);
+    setOperationAction(ISD::CTLZ, VT, Expand);
   }
 
   static const MVT::SimpleValueType FloatTypes[] = {
@@ -260,6 +300,7 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FNEG, VT, Expand);
     setOperationAction(ISD::SELECT, VT, Expand);
     setOperationAction(ISD::VSELECT, VT, Expand);
+    setOperationAction(ISD::FCOPYSIGN, VT, Expand);
   }
 
   setTargetDAGCombine(ISD::MUL);
@@ -686,8 +727,7 @@ SDValue AMDGPUTargetLowering::LowerFrameIndex(SDValue Op,
   const AMDGPUFrameLowering *TFL =
    static_cast<const AMDGPUFrameLowering*>(getTargetMachine().getFrameLowering());
 
-  FrameIndexSDNode *FIN = dyn_cast<FrameIndexSDNode>(Op);
-  assert(FIN);
+  FrameIndexSDNode *FIN = cast<FrameIndexSDNode>(Op);
 
   unsigned FrameIndex = FIN->getIndex();
   unsigned Offset = TFL->getFrameIndexOffset(MF, FrameIndex);
@@ -881,7 +921,7 @@ SDValue AMDGPUTargetLowering::SplitVectorLoad(const SDValue &Op,
 
 SDValue AMDGPUTargetLowering::MergeVectorStore(const SDValue &Op,
                                                SelectionDAG &DAG) const {
-  StoreSDNode *Store = dyn_cast<StoreSDNode>(Op);
+  StoreSDNode *Store = cast<StoreSDNode>(Op);
   EVT MemVT = Store->getMemoryVT();
   unsigned MemBits = MemVT.getSizeInBits();
 

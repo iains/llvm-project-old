@@ -72,8 +72,20 @@ public:
     return (getGeneration() >= EVERGREEN);
   }
 
+  bool hasBFI() const {
+    return (getGeneration() >= EVERGREEN);
+  }
+
   bool hasBFM() const {
     return hasBFE();
+  }
+
+  bool hasBCNT(unsigned Size) const {
+    if (Size == 32)
+      return (getGeneration() >= EVERGREEN);
+
+    assert(Size == 64);
+    return (getGeneration() >= SOUTHERN_ISLANDS);
   }
 
   bool hasMulU24() const {

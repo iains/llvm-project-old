@@ -1762,7 +1762,7 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         // TODO: fixit for inserting 'Base<T>::' in the other cases.
         // Actually quite difficult!
         if (getLangOpts().MSVCCompat)
-          diagnostic = diag::warn_found_via_dependent_bases_lookup;
+          diagnostic = diag::ext_found_via_dependent_bases_lookup;
         if (isInstance) {
           Diag(R.getNameLoc(), diagnostic) << Name
             << FixItHint::CreateInsertion(R.getNameLoc(), "this->");
@@ -1927,6 +1927,54 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
   return true;
 }
 
+/// In Microsoft mode, if we are inside a template class whose parent class has
+/// dependent base classes, and we can't resolve an unqualified identifier, then
+/// assume the identifier is a member of a dependent base class.  We can only
+/// recover successfully in static methods, instance methods, and other contexts
+/// where 'this' is available.  This doesn't precisely match MSVC's
+/// instantiation model, but it's close enough.
+static Expr *
+recoverFromMSUnqualifiedLookup(Sema &S, ASTContext &Context,
+                               DeclarationNameInfo &NameInfo,
+                               SourceLocation TemplateKWLoc,
+                               const TemplateArgumentListInfo *TemplateArgs) {
+  // Only try to recover from lookup into dependent bases in static methods or
+  // contexts where 'this' is available.
+  QualType ThisType = S.getCurrentThisType();
+  const CXXRecordDecl *RD = nullptr;
+  if (!ThisType.isNull())
+    RD = ThisType->getPointeeType()->getAsCXXRecordDecl();
+  else if (auto *MD = dyn_cast<CXXMethodDecl>(S.CurContext))
+    RD = MD->getParent();
+  if (!RD || !RD->hasAnyDependentBases())
+    return nullptr;
+
+  // Diagnose this as unqualified lookup into a dependent base class.  If 'this'
+  // is available, suggest inserting 'this->' as a fixit.
+  SourceLocation Loc = NameInfo.getLoc();
+  DiagnosticBuilder DB =
+      S.Diag(Loc, diag::ext_undeclared_unqual_id_with_dependent_base)
+      << NameInfo.getName() << RD;
+
+  if (!ThisType.isNull()) {
+    DB << FixItHint::CreateInsertion(Loc, "this->");
+    return CXXDependentScopeMemberExpr::Create(
+        Context, /*This=*/nullptr, ThisType, /*IsArrow=*/true,
+        /*Op=*/SourceLocation(), NestedNameSpecifierLoc(), TemplateKWLoc,
+        /*FirstQualifierInScope=*/nullptr, NameInfo, TemplateArgs);
+  }
+
+  // Synthesize a fake NNS that points to the derived class.  This will
+  // perform name lookup during template instantiation.
+  CXXScopeSpec SS;
+  auto *NNS =
+      NestedNameSpecifier::Create(Context, nullptr, true, RD->getTypeForDecl());
+  SS.MakeTrivial(Context, NNS, SourceRange(Loc, Loc));
+  return DependentScopeDeclRefExpr::Create(
+      Context, SS.getWithLocInContext(Context), TemplateKWLoc, NameInfo,
+      TemplateArgs);
+}
+
 ExprResult Sema::ActOnIdExpression(Scope *S,
                                    CXXScopeSpec &SS,
                                    SourceLocation TemplateKWLoc,
@@ -2034,28 +2082,10 @@ ExprResult Sema::ActOnIdExpression(Scope *S,
   bool ADL = UseArgumentDependentLookup(SS, R, HasTrailingLParen);
 
   if (R.empty() && !ADL) {
-    // In Microsoft mode, if we are inside a template class member function
-    // whose parent class has dependent base classes, and we can't resolve
-    // an unqualified identifier, then assume the identifier is a member of a
-    // dependent base class.  The goal is to postpone name lookup to
-    // instantiation time to be able to search into the type dependent base
-    // classes.
-    // FIXME: If we want 100% compatibility with MSVC, we will have delay all
-    // unqualified name lookup.  Any name lookup during template parsing means
-    // clang might find something that MSVC doesn't.  For now, we only handle
-    // the common case of members of a dependent base class.
     if (SS.isEmpty() && getLangOpts().MSVCCompat) {
-      CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(CurContext);
-      if (MD && MD->isInstance() && MD->getParent()->hasAnyDependentBases()) {
-        QualType ThisType = MD->getThisType(Context);
-        // Since the 'this' expression is synthesized, we don't need to
-        // perform the double-lookup check.
-        NamedDecl *FirstQualifierInScope = nullptr;
-        return CXXDependentScopeMemberExpr::Create(
-            Context, /*This=*/nullptr, ThisType, /*IsArrow=*/true,
-            /*Op=*/SourceLocation(), SS.getWithLocInContext(Context),
-            TemplateKWLoc, FirstQualifierInScope, NameInfo, TemplateArgs);
-      }
+      if (Expr *E = recoverFromMSUnqualifiedLookup(*this, Context, NameInfo,
+                                                   TemplateKWLoc, TemplateArgs))
+        return E;
     }
 
     // Don't diagnose an empty lookup for inline assmebly.
@@ -2178,6 +2208,17 @@ Sema::BuildQualifiedDeclarationNameExpr(CXXScopeSpec &SS,
   if (R.empty()) {
     Diag(NameInfo.getLoc(), diag::err_no_member)
       << NameInfo.getName() << DC << SS.getRange();
+    return ExprError();
+  }
+
+  if (R.isSingleResult() && R.getAsSingle<TypeDecl>()) {
+    // Diagnose a missing typename if this resolved unambiguously to a type in a
+    // dependent context.
+    // FIXME: Issue a fixit and recover as though the user had written
+    // 'typename'.
+    Diag(SS.getBeginLoc(), diag::err_typename_missing)
+        << SS.getScopeRep() << NameInfo.getName().getAsString()
+        << SourceRange(SS.getBeginLoc(), NameInfo.getEndLoc());
     return ExprError();
   }
 
@@ -3330,10 +3371,21 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(Expr *E,
                                       E->getSourceRange(), ExprKind))
     return false;
 
-  if (RequireCompleteExprType(E,
-                              diag::err_sizeof_alignof_incomplete_type,
-                              ExprKind, E->getSourceRange()))
-    return true;
+  // 'alignof' applied to an expression only requires the base element type of
+  // the expression to be complete. 'sizeof' requires the expression's type to
+  // be complete (and will attempt to complete it if it's an array of unknown
+  // bound).
+  if (ExprKind == UETT_AlignOf) {
+    if (RequireCompleteType(E->getExprLoc(),
+                            Context.getBaseElementType(E->getType()),
+                            diag::err_sizeof_alignof_incomplete_type, ExprKind,
+                            E->getSourceRange()))
+      return true;
+  } else {
+    if (RequireCompleteExprType(E, diag::err_sizeof_alignof_incomplete_type,
+                                ExprKind, E->getSourceRange()))
+      return true;
+  }
 
   // Completing the expression's type may have changed it.
   ExprTy = E->getType();
@@ -3398,12 +3450,20 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(QualType ExprType,
   if (ExprType->isDependentType())
     return false;
 
-  // C++ [expr.sizeof]p2: "When applied to a reference or a reference type,
-  //   the result is the size of the referenced type."
-  // C++ [expr.alignof]p3: "When alignof is applied to a reference type, the
-  //   result shall be the alignment of the referenced type."
+  // C++ [expr.sizeof]p2:
+  //     When applied to a reference or a reference type, the result
+  //     is the size of the referenced type.
+  // C++11 [expr.alignof]p3:
+  //     When alignof is applied to a reference type, the result
+  //     shall be the alignment of the referenced type.
   if (const ReferenceType *Ref = ExprType->getAs<ReferenceType>())
     ExprType = Ref->getPointeeType();
+
+  // C11 6.5.3.4/3, C++11 [expr.alignof]p3:
+  //   When alignof or _Alignof is applied to an array type, the result
+  //   is the alignment of the element type.
+  if (ExprKind == UETT_AlignOf)
+    ExprType = Context.getBaseElementType(ExprType);
 
   if (ExprKind == UETT_VecStep)
     return CheckVecStepTraitOperandType(*this, ExprType, OpLoc, ExprRange);
@@ -3454,21 +3514,10 @@ static bool CheckAlignOfExpr(Sema &S, Expr *E) {
   // If it's a field, require the containing struct to have a
   // complete definition so that we can compute the layout.
   //
-  // This requires a very particular set of circumstances.  For a
-  // field to be contained within an incomplete type, we must in the
-  // process of parsing that type.  To have an expression refer to a
-  // field, it must be an id-expression or a member-expression, but
-  // the latter are always ill-formed when the base type is
-  // incomplete, including only being partially complete.  An
-  // id-expression can never refer to a field in C because fields
-  // are not in the ordinary namespace.  In C++, an id-expression
-  // can implicitly be a member access, but only if there's an
-  // implicit 'this' value, and all such contexts are subject to
-  // delayed parsing --- except for trailing return types in C++11.
-  // And if an id-expression referring to a field occurs in a
-  // context that lacks a 'this' value, it's ill-formed --- except,
-  // again, in C++11, where such references are allowed in an
-  // unevaluated context.  So C++11 introduces some new complexity.
+  // This can happen in C++11 onwards, either by naming the member
+  // in a way that is not transformed into a member access expression
+  // (in an unevaluated operand, for instance), or by naming the member
+  // in a trailing-return-type.
   //
   // For the record, since __alignof__ on expressions is a GCC
   // extension, GCC seems to permit this but always gives the

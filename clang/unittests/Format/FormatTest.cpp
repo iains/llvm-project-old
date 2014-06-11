@@ -1900,6 +1900,10 @@ TEST_F(FormatTest, FormatsEnum) {
                    "\n"
                    "  THREE\n"
                    "}"));
+  verifyFormat("enum E { // comment\n"
+               "  ONE,\n"
+               "  TWO\n"
+               "};");
 }
 
 TEST_F(FormatTest, FormatsEnumsWithErrors) {
@@ -4736,6 +4740,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("auto a = [](int **&, int ***) {};");
   verifyFormat("auto PointerBinding = [](const char *S) {};");
   verifyFormat("typedef typeof(int(int, int)) *MyFunc;");
+  verifyFormat("[](const decltype(*a) &value) {}");
   verifyIndependentOfContext("typedef void (*f)(int *a);");
   verifyIndependentOfContext("int i{a * b};");
   verifyIndependentOfContext("aaa && aaa->f();");
@@ -5106,6 +5111,10 @@ TEST_F(FormatTest, FormatsArrays) {
 
   verifyGoogleFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<int>\n"
                      "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[aaaaaaaaaaaa];");
+  verifyFormat(
+      "aaaaaaaaaaa aaaaaaaaaaaaaaa = aaaaaaaaaaaaaaaaaaaaaaaaaa->aaaaaaaaa[0]\n"
+      "                                  .aaaaaaa[0]\n"
+      "                                  .aaaaaaaaaaaaaaaaaaaaaa();");
 }
 
 TEST_F(FormatTest, LineStartsWithSpecialCharacter) {
@@ -5410,7 +5419,8 @@ TEST_F(FormatTest, LayoutCxx11BraceInitializers) {
       "             BracedList{ // comment 1 (Forcing interesting break)\n"
       "                         param1, param2,\n"
       "                         // comment 2\n"
-      "                         param3, param4 });",
+      "                         param3, param4\n"
+      "             });",
       ExtraSpaces);
   verifyFormat(
       "std::this_thread::sleep_for(\n"

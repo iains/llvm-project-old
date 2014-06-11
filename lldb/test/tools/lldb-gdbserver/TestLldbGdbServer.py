@@ -49,7 +49,7 @@ class LldbGdbServerTestCase(TestBase):
         self.set_inferior_startup_launch()
 
         # Uncomment this code to force only a single test to run (by name).
-        # if not re.search(r"(single_step|break)", self._testMethodName):
+        # if not re.search(r"written_M", self._testMethodName):
         #     self.skipTest("focusing on one test")
 
     def reset_test_sequence(self):
@@ -395,6 +395,51 @@ class LldbGdbServerTestCase(TestBase):
              # Verify the stub could unset it.
              "send packet: $OK#00",
             ], True)
+
+    def add_qSupported_packets(self):
+        self.test_sequence.add_log_lines(
+            ["read packet: $qSupported#00",
+             {"direction":"send", "regex":r"^\$(.*)#[0-9a-fA-F]{2}", "capture":{1: "qSupported_response"}},
+            ], True)
+
+    _KNOWN_QSUPPORTED_STUB_FEATURES = [
+        "augmented-libraries-svr4-read",
+        "PacketSize",
+        "QStartNoAckMode",
+        "qXfer:auxv:read",
+        "qXfer:libraries:read",
+        "qXfer:libraries-svr4:read",
+    ]
+
+    def parse_qSupported_response(self, context):
+        self.assertIsNotNone(context)
+
+        raw_response = context.get("qSupported_response")
+        self.assertIsNotNone(raw_response)
+
+        # For values with key=val, the dict key and vals are set as expected.  For feature+, feature- and feature?, the
+        # +,-,? is stripped from the key and set as the value.
+        supported_dict = {}
+        for match in re.finditer(r";?([^=;]+)(=([^;]+))?", raw_response):
+            key = match.group(1)
+            val = match.group(3)
+            
+            # key=val: store as is
+            if val and len(val) > 0:
+                supported_dict[key] = val
+            else:
+                if len(key) < 2:
+                    raise Exception("singular stub feature is too short: must be stub_feature{+,-,?}")
+                supported_type = key[-1]
+                key = key[:-1]
+                if not supported_type in ["+", "-", "?"]:
+                    raise Exception("malformed stub feature: final character {} not in expected set (+,-,?)".format(supported_type))
+                supported_dict[key] = supported_type 
+            # Ensure we know the supported element
+            if not key in self._KNOWN_QSUPPORTED_STUB_FEATURES:
+                raise Exception("unknown qSupported stub feature reported: %s" % key)
+
+        return supported_dict
 
     def run_process_then_stop(self, run_seconds=1):
         # Tell the stub to continue.
@@ -1881,6 +1926,98 @@ class LldbGdbServerTestCase(TestBase):
         self.buildDwarf()
         self.set_inferior_startup_launch()
         self.single_step_only_steps_one_instruction()
+
+    def qSupported_returns_known_stub_features(self):
+        # Start up the stub and start/prep the inferior.
+        procs = self.prep_debug_monitor_and_inferior()
+        self.add_qSupported_packets()
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Retrieve the qSupported features.
+        supported_dict = self.parse_qSupported_response(context)
+        self.assertIsNotNone(supported_dict)
+        self.assertTrue(len(supported_dict) > 0)
+
+    @debugserver_test
+    @dsym_test
+    def test_qSupported_returns_known_stub_features_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.qSupported_returns_known_stub_features()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qSupported_returns_known_stub_features_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.qSupported_returns_known_stub_features()
+
+    def written_M_content_reads_back_correctly(self):
+        TEST_MESSAGE = "Hello, memory"
+
+        # Start up the stub and start/prep the inferior.
+        procs = self.prep_debug_monitor_and_inferior(inferior_args=["set-message:xxxxxxxxxxxxxX", "get-data-address-hex:g_message", "sleep:1", "print-message:"])
+        self.test_sequence.add_log_lines(
+            [
+             # Start running after initial stop.
+             "read packet: $c#00",
+             # Match output line that prints the memory address of the message buffer within the inferior. 
+             # Note we require launch-only testing so we can get inferior otuput.
+             { "type":"output_match", "regex":r"^data address: 0x([0-9a-fA-F]+)\r\n$", "capture":{ 1:"message_address"} },
+             # Now stop the inferior.
+             "read packet: {}".format(chr(03)),
+             # And wait for the stop notification.
+             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
+            True)
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Grab the message address.
+        self.assertIsNotNone(context.get("message_address"))
+        message_address = int(context.get("message_address"), 16)
+
+        # Hex-encode the test message, adding null termination.
+        hex_encoded_message = TEST_MESSAGE.encode("hex")
+
+        # Write the message to the inferior.
+        self.reset_test_sequence()
+        self.test_sequence.add_log_lines(
+            ["read packet: $M{0:x},{1:x}:{2}#00".format(message_address, len(hex_encoded_message)/2, hex_encoded_message),
+             "send packet: $OK#00",
+             "read packet: $c#00",
+             { "type":"output_match", "regex":r"^message: (.+)\r\n$", "capture":{ 1:"printed_message"} },
+             "send packet: $W00#00",
+            ], True)
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Ensure what we read from inferior memory is what we wrote.
+        printed_message = context.get("printed_message")
+        self.assertIsNotNone(printed_message)
+        self.assertEquals(printed_message, TEST_MESSAGE + "X")
+
+    @debugserver_test
+    @dsym_test
+    def test_written_M_content_reads_back_correctly_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.written_M_content_reads_back_correctly()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_written_M_content_reads_back_correctly_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.written_M_content_reads_back_correctly()
 
 
 if __name__ == '__main__':

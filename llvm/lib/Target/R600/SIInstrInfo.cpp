@@ -19,6 +19,7 @@
 #include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/IR/Function.h"
 #include "llvm/MC/MCInstrDesc.h"
 
 using namespace llvm;
@@ -187,18 +188,25 @@ void SIInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                       int FrameIndex,
                                       const TargetRegisterClass *RC,
                                       const TargetRegisterInfo *TRI) const {
-  SIMachineFunctionInfo *MFI = MBB.getParent()->getInfo<SIMachineFunctionInfo>();
+  MachineFunction *MF = MBB.getParent();
+  SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
   DebugLoc DL = MBB.findDebugLoc(MI);
   unsigned KillFlag = isKill ? RegState::Kill : 0;
-  MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
 
-  if (TRI->getCommonSubClass(RC, &AMDGPU::SGPR_32RegClass)) {
-    unsigned Lane = MFI->SpillTracker.reserveLanes(MRI, MBB.getParent());
+  if (RI.hasVGPRs(RC)) {
+    LLVMContext &Ctx = MF->getFunction()->getContext();
+    Ctx.emitError("SIInstrInfo::storeRegToStackSlot - Can't spill VGPR!");
+    BuildMI(MBB, MI, DL, get(AMDGPU::V_MOV_B32_e32), AMDGPU::VGPR0)
+            .addReg(SrcReg);
+  } else if (TRI->getCommonSubClass(RC, &AMDGPU::SGPR_32RegClass)) {
+    unsigned Lane = MFI->SpillTracker.reserveLanes(MRI, MF);
+    unsigned TgtReg = MFI->SpillTracker.LaneVGPR;
 
-    BuildMI(MBB, MI, DL, get(AMDGPU::V_WRITELANE_B32), MFI->SpillTracker.LaneVGPR)
+    BuildMI(MBB, MI, DL, get(AMDGPU::V_WRITELANE_B32), TgtReg)
             .addReg(SrcReg, KillFlag)
             .addImm(Lane);
-    MFI->SpillTracker.addSpilledReg(FrameIndex, MFI->SpillTracker.LaneVGPR, Lane);
+    MFI->SpillTracker.addSpilledReg(FrameIndex, TgtReg, Lane);
   } else if (RI.isSGPRClass(RC)) {
     // We are only allowed to create one new instruction when spilling
     // registers, so we need to use pseudo instruction for vector
@@ -207,8 +215,7 @@ void SIInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     // Reserve a spot in the spill tracker for each sub-register of
     // the vector register.
     unsigned NumSubRegs = RC->getSize() / 4;
-    unsigned FirstLane = MFI->SpillTracker.reserveLanes(MRI, MBB.getParent(),
-                                                        NumSubRegs);
+    unsigned FirstLane = MFI->SpillTracker.reserveLanes(MRI, MF, NumSubRegs);
     MFI->SpillTracker.addSpilledReg(FrameIndex, MFI->SpillTracker.LaneVGPR,
                                     FirstLane);
 
@@ -234,19 +241,19 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                        unsigned DestReg, int FrameIndex,
                                        const TargetRegisterClass *RC,
                                        const TargetRegisterInfo *TRI) const {
-  SIMachineFunctionInfo *MFI = MBB.getParent()->getInfo<SIMachineFunctionInfo>();
+  MachineFunction *MF = MBB.getParent();
+  SIMachineFunctionInfo *MFI = MF->getInfo<SIMachineFunctionInfo>();
   DebugLoc DL = MBB.findDebugLoc(MI);
-  if (TRI->getCommonSubClass(RC, &AMDGPU::SReg_32RegClass)) {
-    SIMachineFunctionInfo::SpilledReg Spill =
-        MFI->SpillTracker.getSpilledReg(FrameIndex);
-    assert(Spill.VGPR);
-    BuildMI(MBB, MI, DL, get(AMDGPU::V_READLANE_B32), DestReg)
-            .addReg(Spill.VGPR)
-            .addImm(Spill.Lane);
-    insertNOPs(MI, 3);
+
+  if (RI.hasVGPRs(RC)) {
+    LLVMContext &Ctx = MF->getFunction()->getContext();
+    Ctx.emitError("SIInstrInfo::loadRegToStackSlot - Can't retrieve spilled VGPR!");
+    BuildMI(MBB, MI, DL, get(AMDGPU::V_MOV_B32_e32), DestReg)
+            .addImm(0);
   } else if (RI.isSGPRClass(RC)){
     unsigned Opcode;
     switch(RC->getSize() * 8) {
+    case 32:  Opcode = AMDGPU::SI_SPILL_S32_RESTORE; break;
     case 64:  Opcode = AMDGPU::SI_SPILL_S64_RESTORE;  break;
     case 128: Opcode = AMDGPU::SI_SPILL_S128_RESTORE; break;
     case 256: Opcode = AMDGPU::SI_SPILL_S256_RESTORE; break;
@@ -260,7 +267,6 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
     BuildMI(MBB, MI, DL, get(Opcode), DestReg)
             .addReg(Spill.VGPR)
             .addImm(FrameIndex);
-    insertNOPs(MI, 3);
   } else {
     llvm_unreachable("VGPR spilling not supported");
   }
@@ -281,6 +287,8 @@ static unsigned getNumSubRegsForSpillOp(unsigned Op) {
   case AMDGPU::SI_SPILL_S64_SAVE:
   case AMDGPU::SI_SPILL_S64_RESTORE:
     return 2;
+  case AMDGPU::SI_SPILL_S32_RESTORE:
+    return 1;
   default: llvm_unreachable("Invalid spill opcode");
   }
 }
@@ -334,7 +342,8 @@ bool SIInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   case AMDGPU::SI_SPILL_S512_RESTORE:
   case AMDGPU::SI_SPILL_S256_RESTORE:
   case AMDGPU::SI_SPILL_S128_RESTORE:
-  case AMDGPU::SI_SPILL_S64_RESTORE: {
+  case AMDGPU::SI_SPILL_S64_RESTORE:
+  case AMDGPU::SI_SPILL_S32_RESTORE: {
     unsigned NumSubRegs = getNumSubRegsForSpillOp(MI->getOpcode());
 
     for (unsigned i = 0, e = NumSubRegs; i < e; ++i) {
@@ -348,6 +357,7 @@ bool SIInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
               .addReg(MI->getOperand(1).getReg())
               .addImm(Spill.Lane + i);
     }
+    insertNOPs(MI, 3);
     MI->eraseFromParent();
     break;
   }
@@ -668,6 +678,7 @@ unsigned SIInstrInfo::getVALUOp(const MachineInstr &MI) {
   case AMDGPU::S_LOAD_DWORDX2_SGPR: return AMDGPU::BUFFER_LOAD_DWORDX2_ADDR64;
   case AMDGPU::S_LOAD_DWORDX4_IMM:
   case AMDGPU::S_LOAD_DWORDX4_SGPR: return AMDGPU::BUFFER_LOAD_DWORDX4_ADDR64;
+  case AMDGPU::S_BCNT1_I32_B32: return AMDGPU::V_BCNT_U32_B32_e32;
   }
 }
 
@@ -1177,6 +1188,11 @@ void SIInstrInfo::moveToVALU(MachineInstr &TopInst) const {
       Inst->eraseFromParent();
       continue;
 
+    case AMDGPU::S_BCNT1_I32_B64:
+      splitScalar64BitBCNT(Worklist, Inst);
+      Inst->eraseFromParent();
+      continue;
+
     case AMDGPU::S_BFE_U64:
     case AMDGPU::S_BFE_I64:
     case AMDGPU::S_BFM_B64:
@@ -1217,6 +1233,10 @@ void SIInstrInfo::moveToVALU(MachineInstr &TopInst) const {
       // XXX - Other pointless operands. There are 4, but it seems you only need
       // 3 to not hit an assertion later in MCInstLower.
       Inst->addOperand(MachineOperand::CreateImm(0));
+      Inst->addOperand(MachineOperand::CreateImm(0));
+    } else if (Opcode == AMDGPU::S_BCNT1_I32_B32) {
+      // The VALU version adds the second operand to the result, so insert an
+      // extra 0 operand.
       Inst->addOperand(MachineOperand::CreateImm(0));
     }
 
@@ -1412,6 +1432,46 @@ void SIInstrInfo::splitScalar64BitBinaryOp(
   // valid.
   Worklist.push_back(LoHalf);
   Worklist.push_back(HiHalf);
+}
+
+void SIInstrInfo::splitScalar64BitBCNT(SmallVectorImpl<MachineInstr *> &Worklist,
+                                       MachineInstr *Inst) const {
+  MachineBasicBlock &MBB = *Inst->getParent();
+  MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+
+  MachineBasicBlock::iterator MII = Inst;
+  DebugLoc DL = Inst->getDebugLoc();
+
+  MachineOperand &Dest = Inst->getOperand(0);
+  MachineOperand &Src = Inst->getOperand(1);
+
+  const MCInstrDesc &InstDesc = get(AMDGPU::V_BCNT_U32_B32_e32);
+  const TargetRegisterClass *SrcRC = Src.isReg() ?
+    MRI.getRegClass(Src.getReg()) :
+    &AMDGPU::SGPR_32RegClass;
+
+  unsigned MidReg = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+  unsigned ResultReg = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+
+  const TargetRegisterClass *SrcSubRC = RI.getSubRegClass(SrcRC, AMDGPU::sub0);
+
+  MachineOperand SrcRegSub0 = buildExtractSubRegOrImm(MII, MRI, Src, SrcRC,
+                                                      AMDGPU::sub0, SrcSubRC);
+  MachineOperand SrcRegSub1 = buildExtractSubRegOrImm(MII, MRI, Src, SrcRC,
+                                                      AMDGPU::sub1, SrcSubRC);
+
+  MachineInstr *First = BuildMI(MBB, MII, DL, InstDesc, MidReg)
+    .addOperand(SrcRegSub0)
+    .addImm(0);
+
+  MachineInstr *Second = BuildMI(MBB, MII, DL, InstDesc, ResultReg)
+    .addOperand(SrcRegSub1)
+    .addReg(MidReg);
+
+  MRI.replaceRegWith(Dest.getReg(), ResultReg);
+
+  Worklist.push_back(First);
+  Worklist.push_back(Second);
 }
 
 void SIInstrInfo::addDescImplicitUseDef(const MCInstrDesc &NewDesc,

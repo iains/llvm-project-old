@@ -3111,6 +3111,10 @@ def err_template_arg_must_be_type : Error<
   "template argument for template type parameter must be a type">;
 def err_template_arg_must_be_type_suggest : Error<
   "template argument for template type parameter must be a type; did you forget 'typename'?">;
+def ext_ms_template_type_arg_missing_typename : ExtWarn<
+  "template argument for template type parameter must be a type; "
+  "omitted 'typename' is a Microsoft extension">,
+  InGroup<Microsoft>;
 def err_template_arg_must_be_expr : Error<
   "template argument for non-type template parameter must be an expression">;
 def err_template_arg_nontype_ambig : Error<
@@ -3658,9 +3662,13 @@ def err_unexpected_typedef : Error<
 def err_unexpected_namespace : Error<
   "unexpected namespace name %0: expected expression">;
 def err_undeclared_var_use : Error<"use of undeclared identifier %0">;
-def warn_found_via_dependent_bases_lookup : ExtWarn<"use of identifier %0 "
-   "found via unqualified lookup into dependent bases of class templates is a "
-   "Microsoft extension">, InGroup<Microsoft>;
+def ext_undeclared_unqual_id_with_dependent_base : ExtWarn<
+  "use of undeclared identifier %0; "
+  "unqualified lookup into dependent bases of class template %1 is a Microsoft extension">,
+  InGroup<Microsoft>;
+def ext_found_via_dependent_bases_lookup : ExtWarn<"use of identifier %0 "
+  "found via unqualified lookup into dependent bases of class templates is a "
+  "Microsoft extension">, InGroup<Microsoft>;
 def note_dependent_var_use : Note<"must qualify identifier to find this "
     "declaration in dependent base class">;
 def err_not_found_by_two_phase_lookup : Error<"call to function %0 that is neither "

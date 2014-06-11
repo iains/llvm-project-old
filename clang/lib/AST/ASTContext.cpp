@@ -1309,13 +1309,14 @@ CharUnits ASTContext::getDeclAlign(const Decl *D, bool ForAlignof) const {
 
   } else if (const ValueDecl *VD = dyn_cast<ValueDecl>(D)) {
     QualType T = VD->getType();
-    if (const ReferenceType* RT = T->getAs<ReferenceType>()) {
+    if (const ReferenceType *RT = T->getAs<ReferenceType>()) {
       if (ForAlignof)
         T = RT->getPointeeType();
       else
         T = getPointerType(RT->getPointeeType());
     }
-    if (!T->isIncompleteType() && !T->isFunctionType()) {
+    QualType BaseT = getBaseElementType(T);
+    if (!BaseT->isIncompleteType() && !T->isFunctionType()) {
       // Adjust alignments of declarations with array type by the
       // large-array alignment on the target.
       if (const ArrayType *arrayType = getAsArrayType(T)) {
@@ -1327,11 +1328,6 @@ CharUnits ASTContext::getDeclAlign(const Decl *D, bool ForAlignof) const {
                    MinWidth <= getTypeSize(cast<ConstantArrayType>(arrayType)))
             Align = std::max(Align, Target->getLargeArrayAlign());
         }
-
-        // Keep track of extra alignment requirements on the array itself, then
-        // work with the element type.
-        Align = std::max(Align, getPreferredTypeAlign(T.getTypePtr()));
-        T = getBaseElementType(arrayType);
       }
       Align = std::max(Align, getPreferredTypeAlign(T.getTypePtr()));
       if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
@@ -1783,6 +1779,7 @@ unsigned ASTContext::getPreferredTypeAlign(const Type *T) const {
   const TypedefType *TT = T->getAs<TypedefType>();
 
   // Double and long long should be naturally aligned if possible.
+  T = T->getBaseElementTypeUnsafe();
   if (const ComplexType *CT = T->getAs<ComplexType>())
     T = CT->getElementType().getTypePtr();
   if (T->isSpecificBuiltinType(BuiltinType::Double) ||
@@ -7845,14 +7842,6 @@ static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
     return StaticLocalLinkage == GVA_StrongODR ? GVA_DiscardableODR
                                                : StaticLocalLinkage;
   }
-
-  // On Darwin, the backing variable for a C++11 thread_local variable always
-  // has internal linkage; all accesses should just be calls to the
-  // Itanium-specified entry point, which has the normal linkage of the
-  // variable.
-  if (VD->getTLSKind() == VarDecl::TLS_Dynamic &&
-      Context.getTargetInfo().getTriple().isMacOSX())
-    return GVA_Internal;
 
   switch (VD->getTemplateSpecializationKind()) {
   case TSK_Undeclared:

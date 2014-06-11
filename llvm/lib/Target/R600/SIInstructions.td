@@ -107,8 +107,11 @@ def S_BREV_B64 : SOP1_64 <0x0000000c, "S_BREV_B64", []>;
 
 ////def S_BCNT0_I32_B32 : SOP1_BCNT0 <0x0000000d, "S_BCNT0_I32_B32", []>;
 ////def S_BCNT0_I32_B64 : SOP1_BCNT0 <0x0000000e, "S_BCNT0_I32_B64", []>;
-////def S_BCNT1_I32_B32 : SOP1_BCNT1 <0x0000000f, "S_BCNT1_I32_B32", []>;
-////def S_BCNT1_I32_B64 : SOP1_BCNT1 <0x00000010, "S_BCNT1_I32_B64", []>;
+def S_BCNT1_I32_B32 : SOP1_32 <0x0000000f, "S_BCNT1_I32_B32",
+  [(set i32:$dst, (ctpop i32:$src0))]
+>;
+def S_BCNT1_I32_B64 : SOP1_32_64 <0x00000010, "S_BCNT1_I32_B64", []>;
+
 ////def S_FF0_I32_B32 : SOP1_FF0 <0x00000011, "S_FF0_I32_B32", []>;
 ////def S_FF0_I32_B64 : SOP1_FF0 <0x00000012, "S_FF0_I32_B64", []>;
 ////def S_FF1_I32_B32 : SOP1_FF1 <0x00000013, "S_FF1_I32_B32", []>;
@@ -1217,7 +1220,7 @@ defm V_BFM_B32 : VOP2_32 <0x0000001e, "V_BFM_B32",
 defm V_MAC_F32 : VOP2_32 <0x0000001f, "V_MAC_F32", []>;
 defm V_MADMK_F32 : VOP2_32 <0x00000020, "V_MADMK_F32", []>;
 defm V_MADAK_F32 : VOP2_32 <0x00000021, "V_MADAK_F32", []>;
-//defm V_BCNT_U32_B32 : VOP2_32 <0x00000022, "V_BCNT_U32_B32", []>;
+defm V_BCNT_U32_B32 : VOP2_32 <0x00000022, "V_BCNT_U32_B32", []>;
 defm V_MBCNT_LO_U32_B32 : VOP2_32 <0x00000023, "V_MBCNT_LO_U32_B32", []>;
 defm V_MBCNT_HI_U32_B32 : VOP2_32 <0x00000024, "V_MBCNT_HI_U32_B32", []>;
 
@@ -1535,6 +1538,7 @@ multiclass SI_SPILL_SGPR <RegisterClass sgpr_class> {
 
 }
 
+defm SI_SPILL_S32  : SI_SPILL_SGPR <SReg_32>;
 defm SI_SPILL_S64  : SI_SPILL_SGPR <SReg_64>;
 defm SI_SPILL_S128 : SI_SPILL_SGPR <SReg_128>;
 defm SI_SPILL_S256 : SI_SPILL_SGPR <SReg_256>;
@@ -2112,7 +2116,7 @@ def : Pat <
   (V_MUL_HI_I32 $src0, $src1, (i32 0))
 >;
 
-defm : BFIPatterns <V_BFI_B32>;
+defm : BFIPatterns <V_BFI_B32, S_MOV_B32>;
 def : ROTRPattern <V_ALIGNBIT_B32>;
 
 /********** ======================= **********/
@@ -2431,6 +2435,42 @@ def : Pat <
     (S_MOV_B32 -1), sub1)
 >;
 
+class ZExt_i64_i32_Pat <SDNode ext> : Pat <
+  (i64 (ext i32:$src)),
+  (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)), $src, sub0),
+    (S_MOV_B32 0), sub1)
+>;
+
+class ZExt_i64_i1_Pat <SDNode ext> : Pat <
+  (i64 (ext i1:$src)),
+  (INSERT_SUBREG
+    (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+      (V_CNDMASK_B32_e64 (i32 0), (i32 1), $src), sub0),
+    (S_MOV_B32 0), sub1)
+>;
+
+
+def : ZExt_i64_i32_Pat<zext>;
+def : ZExt_i64_i32_Pat<anyext>;
+def : ZExt_i64_i1_Pat<zext>;
+def : ZExt_i64_i1_Pat<anyext>;
+
+def : Pat <
+  (i64 (sext i32:$src)),
+    (INSERT_SUBREG
+      (INSERT_SUBREG (i64 (IMPLICIT_DEF)), $src, sub0),
+      (S_ASHR_I32 $src, 31), sub1)
+>;
+
+def : Pat <
+  (i64 (sext i1:$src)),
+  (INSERT_SUBREG
+    (INSERT_SUBREG
+      (i64 (IMPLICIT_DEF)),
+      (V_CNDMASK_B32_e64 0, -1, $src), sub0),
+    (V_CNDMASK_B32_e64 0, -1, $src), sub1)
+>;
+
 def : Pat <
   (f32 (sint_to_fp i1:$src)),
   (V_CNDMASK_B32_e64 (i32 0), CONST.FP32_NEG_ONE, $src)
@@ -2470,6 +2510,18 @@ def : Pat <
 def : Pat <
   (i32 (addc i32:$src0, i32:$src1)),
   (S_ADD_I32 $src0, $src1)
+>;
+
+def : Pat <
+  (i32 (add (i32 (ctpop i32:$popcnt)), i32:$val)),
+  (V_BCNT_U32_B32_e32 $popcnt, $val)
+>;
+
+def : Pat <
+  (i64 (ctpop i64:$src)),
+  (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+    (S_BCNT1_I32_B64 $src), sub0),
+    (S_MOV_B32 0), sub1)
 >;
 
 //============================================================================//
