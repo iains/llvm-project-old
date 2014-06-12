@@ -1950,8 +1950,10 @@ bool X86FastISel::FastLowerArguments() {
   // Only handle simple cases. i.e. Up to 6 i32/i64 scalar arguments.
   unsigned GPRCnt = 0;
   unsigned FPRCnt = 0;
-  unsigned Idx = 1;
+  unsigned Idx = 0;
   for (auto const &Arg : F->args()) {
+    // The first argument is at index 1.
+    ++Idx;
     if (F->getAttributes().hasAttribute(Idx, Attribute::ByVal) ||
         F->getAttributes().hasAttribute(Idx, Attribute::InReg) ||
         F->getAttributes().hasAttribute(Idx, Attribute::StructRet) ||
@@ -1972,8 +1974,10 @@ bool X86FastISel::FastLowerArguments() {
       break;
     case MVT::f32:
     case MVT::f64:
+      if (!Subtarget->hasSSE1())
+        return false;
       ++FPRCnt;
-        break;
+      break;
     }
 
     if (GPRCnt > 6)
