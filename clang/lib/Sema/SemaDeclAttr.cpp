@@ -3348,6 +3348,11 @@ static void handleTypeTagForDatatypeAttr(Sema &S, Decl *D,
 // Checker-specific attribute handlers.
 //===----------------------------------------------------------------------===//
 
+static bool isValidSubjectOfNSReturnsRetainedAttribute(QualType type) {
+  return type->isDependentType() ||
+         type->isObjCRetainableType();
+}
+
 static bool isValidSubjectOfNSAttribute(Sema &S, QualType type) {
   return type->isDependentType() || 
          type->isObjCObjectPointerType() || 
@@ -3412,8 +3417,12 @@ static void handleNSReturnsRetainedAttr(Sema &S, Decl *D,
   bool cf;
   switch (Attr.getKind()) {
   default: llvm_unreachable("invalid ownership attribute");
-  case AttributeList::AT_NSReturnsAutoreleased:
   case AttributeList::AT_NSReturnsRetained:
+    typeOK = isValidSubjectOfNSReturnsRetainedAttribute(returnType);
+    cf = false;
+    break;
+      
+  case AttributeList::AT_NSReturnsAutoreleased:
   case AttributeList::AT_NSReturnsNotRetained:
     typeOK = isValidSubjectOfNSAttribute(S, returnType);
     cf = false;

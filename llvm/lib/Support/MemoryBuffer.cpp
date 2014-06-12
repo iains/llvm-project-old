@@ -20,13 +20,13 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/system_error.h"
 #include <cassert>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <new>
 #include <sys/types.h>
+#include <system_error>
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <unistd.h>
 #else
@@ -222,7 +222,7 @@ static error_code getMemoryBufferForStream(int FD,
     ReadBytes = read(FD, Buffer.end(), ChunkSize);
     if (ReadBytes == -1) {
       if (errno == EINTR) continue;
-      return error_code(errno, generic_category());
+      return error_code(errno, std::generic_category());
     }
     Buffer.set_size(Buffer.size() + ReadBytes);
   } while (ReadBytes != 0);
@@ -361,7 +361,7 @@ static error_code getOpenFileImpl(int FD, const char *Filename,
   if (!Buf) {
     // Failed to create a buffer. The only way it can fail is if
     // new(std::nothrow) returns 0.
-    return make_error_code(errc::not_enough_memory);
+    return std::make_error_code(std::errc::not_enough_memory);
   }
 
   std::unique_ptr<MemoryBuffer> SB(Buf);
@@ -370,7 +370,7 @@ static error_code getOpenFileImpl(int FD, const char *Filename,
   size_t BytesLeft = MapSize;
 #ifndef HAVE_PREAD
   if (lseek(FD, Offset, SEEK_SET) == -1)
-    return error_code(errno, generic_category());
+    return error_code(errno, std::generic_category());
 #endif
 
   while (BytesLeft) {
@@ -383,7 +383,7 @@ static error_code getOpenFileImpl(int FD, const char *Filename,
       if (errno == EINTR)
         continue;
       // Error while reading.
-      return error_code(errno, generic_category());
+      return error_code(errno, std::generic_category());
     }
     if (NumRead == 0) {
       memset(BufPtr, 0, BytesLeft); // zero-initialize rest of the buffer.

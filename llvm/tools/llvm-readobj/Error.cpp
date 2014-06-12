@@ -17,11 +17,12 @@
 using namespace llvm;
 
 namespace {
-class _readobj_error_category : public error_category {
+class _readobj_error_category : public std::error_category {
 public:
   const char* name() const LLVM_NOEXCEPT override;
   std::string message(int ev) const override;
-  error_condition default_error_condition(int ev) const LLVM_NOEXCEPT override;
+  std::error_condition
+  default_error_condition(int ev) const LLVM_NOEXCEPT override;
 };
 } // namespace
 
@@ -47,14 +48,15 @@ std::string _readobj_error_category::message(int EV) const {
                    "defined.");
 }
 
-error_condition _readobj_error_category::default_error_condition(int EV) const {
+std::error_condition
+_readobj_error_category::default_error_condition(int EV) const {
   if (static_cast<readobj_error>(EV) == readobj_error::success)
-    return error_condition();
-  return errc::invalid_argument;
+    return std::error_condition();
+  return std::errc::invalid_argument;
 }
 
 namespace llvm {
-const error_category &readobj_category() {
+const std::error_category &readobj_category() {
   static _readobj_error_category o;
   return o;
 }

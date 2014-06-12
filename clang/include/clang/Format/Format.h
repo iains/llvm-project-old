@@ -17,7 +17,7 @@
 
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Tooling/Refactoring.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 namespace clang {
 
@@ -26,6 +26,15 @@ class SourceManager;
 class DiagnosticConsumer;
 
 namespace format {
+
+enum class ParseError { Success = 0, Error, Unsuitable };
+class ParseErrorCategory final : public std::error_category {
+public:
+  const char *name() const LLVM_NOEXCEPT override;
+  std::string message(int EV) const override;
+};
+const std::error_category &getParseCategory();
+std::error_code make_error_code(ParseError e);
 
 /// \brief The \c FormatStyle is used to configure the formatting to follow
 /// specific guidelines.
@@ -444,7 +453,7 @@ bool getPredefinedStyle(StringRef Name, FormatStyle::LanguageKind Language,
 ///
 /// When \c BasedOnStyle is not present, options not present in the YAML
 /// document, are retained in \p Style.
-llvm::error_code parseConfiguration(StringRef Text, FormatStyle *Style);
+std::error_code parseConfiguration(StringRef Text, FormatStyle *Style);
 
 /// \brief Gets configuration in a YAML string.
 std::string configurationAsText(const FormatStyle &Style);
@@ -505,5 +514,10 @@ FormatStyle getStyle(StringRef StyleName, StringRef FileName,
 
 } // end namespace format
 } // end namespace clang
+
+namespace std {
+template <>
+struct is_error_code_enum<clang::format::ParseError> : std::true_type {};
+}
 
 #endif // LLVM_CLANG_FORMAT_FORMAT_H

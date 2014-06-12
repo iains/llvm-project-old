@@ -40,14 +40,15 @@
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/WindowsError.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
 #include "llvm/Support/type_traits.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <system_error>
 
 // These includes must be last.
 #include <Windows.h>
@@ -169,9 +170,7 @@ namespace {
   typedef ScopedHandle<FileHandle>              FileScopedHandle;
 }
 
-static error_code windows_error(unsigned E) {
-  return error_code(E, system_category());
-}
+static error_code windows_error(DWORD E) { return mapWindowsError(E); }
 
 static error_code GetFileNameFromHandle(HANDLE FileHandle,
                                         std::string& Name) {
@@ -426,7 +425,7 @@ int main(int argc, char **argv) {
     if (!success) {
       ec = windows_error(::GetLastError());
 
-      if (ec == errc::timed_out) {
+      if (ec == std::errc::timed_out) {
         errs() << ToolName << ": Process timed out.\n";
         ::TerminateProcess(ProcessInfo.hProcess, -1);
         // Otherwise other stuff starts failing...

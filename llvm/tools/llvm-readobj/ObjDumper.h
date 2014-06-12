@@ -11,14 +11,13 @@
 #define LLVM_READOBJ_OBJDUMPER_H
 
 #include <memory>
+#include <system_error>
 
 namespace llvm {
-
+using std::error_code;
 namespace object {
   class ObjectFile;
 }
-
-class error_code;
 
 class StreamWriter;
 

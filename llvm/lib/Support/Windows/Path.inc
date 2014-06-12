@@ -17,6 +17,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/WindowsError.h"
 #include <fcntl.h>
 #include <io.h>
 #include <sys/stat.h>
@@ -45,7 +46,7 @@ using llvm::sys::windows::UTF8ToUTF16;
 using llvm::sys::windows::UTF16ToUTF8;
 
 static error_code windows_error(DWORD E) {
-  return error_code(E, system_category());
+  return mapWindowsError(E);
 }
 
 static error_code TempDir(SmallVectorImpl<char> &Result) {
@@ -193,7 +194,7 @@ error_code remove(const Twine &path, bool IgnoreNonExisting) {
 
   file_status ST;
   if (error_code EC = status(path, ST)) {
-    if (EC != errc::no_such_file_or_directory || !IgnoreNonExisting)
+    if (EC != std::errc::no_such_file_or_directory || !IgnoreNonExisting)
       return EC;
     return error_code();
   }
@@ -205,14 +206,14 @@ error_code remove(const Twine &path, bool IgnoreNonExisting) {
   if (ST.type() == file_type::directory_file) {
     if (!::RemoveDirectoryW(c_str(path_utf16))) {
       error_code EC = windows_error(::GetLastError());
-      if (EC != errc::no_such_file_or_directory || !IgnoreNonExisting)
+      if (EC != std::errc::no_such_file_or_directory || !IgnoreNonExisting)
         return EC;
     }
     return error_code();
   }
   if (!::DeleteFileW(c_str(path_utf16))) {
     error_code EC = windows_error(::GetLastError());
-    if (EC != errc::no_such_file_or_directory || !IgnoreNonExisting)
+    if (EC != std::errc::no_such_file_or_directory || !IgnoreNonExisting)
       return EC;
   }
   return error_code();
@@ -258,14 +259,14 @@ error_code resize_file(const Twine &path, uint64_t size) {
 
   int fd = ::_wopen(path_utf16.begin(), O_BINARY | _O_RDWR, S_IWRITE);
   if (fd == -1)
-    return error_code(errno, generic_category());
+    return error_code(errno, std::generic_category());
 #ifdef HAVE__CHSIZE_S
   errno_t error = ::_chsize_s(fd, size);
 #else
   errno_t error = ::_chsize(fd, size);
 #endif
   ::close(fd);
-  return error_code(error, generic_category());
+  return error_code(error, std::generic_category());
 }
 
 error_code exists(const Twine &path, bool &result) {
@@ -465,48 +466,6 @@ error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
   return error_code();
 }
 
-error_code get_magic(const Twine &path, uint32_t len,
-                     SmallVectorImpl<char> &result) {
-  SmallString<128> path_storage;
-  SmallVector<wchar_t, 128> path_utf16;
-  result.set_size(0);
-
-  // Convert path to UTF-16.
-  if (error_code ec = UTF8ToUTF16(path.toStringRef(path_storage),
-                                  path_utf16))
-    return ec;
-
-  // Open file.
-  HANDLE file = ::CreateFileW(c_str(path_utf16),
-                              GENERIC_READ,
-                              FILE_SHARE_READ,
-                              NULL,
-                              OPEN_EXISTING,
-                              FILE_ATTRIBUTE_READONLY,
-                              NULL);
-  if (file == INVALID_HANDLE_VALUE)
-    return windows_error(::GetLastError());
-
-  // Allocate buffer.
-  result.reserve(len);
-
-  // Get magic!
-  DWORD bytes_read = 0;
-  BOOL read_success = ::ReadFile(file, result.data(), len, &bytes_read, NULL);
-  error_code ec = windows_error(::GetLastError());
-  ::CloseHandle(file);
-  if (!read_success || (bytes_read != len)) {
-    // Set result size to the number of bytes read if it's valid.
-    if (bytes_read <= len)
-      result.set_size(bytes_read);
-    // ERROR_HANDLE_EOF is mapped to errc::value_too_large.
-    return ec;
-  }
-
-  result.set_size(len);
-  return error_code();
-}
-
 error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) {
   FileDescriptor = FD;
   // Make sure that the requested size fits within SIZE_T.
@@ -516,7 +475,7 @@ error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) {
         _close(FileDescriptor);
     } else
       ::CloseHandle(FileHandle);
-    return make_error_code(errc::invalid_argument);
+    return std::make_error_code(std::errc::invalid_argument);
   }
 
   DWORD flprotect;
@@ -652,7 +611,7 @@ mapped_file_region::mapped_file_region(int fd,
     if (closefd)
       _close(FileDescriptor);
     FileDescriptor = 0;
-    ec = make_error_code(errc::bad_file_descriptor);
+    ec = std::make_error_code(std::errc::bad_file_descriptor);
     return;
   }
 
@@ -815,7 +774,7 @@ error_code openFileForRead(const Twine &Name, int &ResultFD) {
     if (LastError != ERROR_ACCESS_DENIED)
       return EC;
     if (is_directory(Name))
-      return make_error_code(errc::is_a_directory);
+      return std::make_error_code(std::errc::is_a_directory);
     return EC;
   }
 
@@ -867,7 +826,7 @@ error_code openFileForWrite(const Twine &Name, int &ResultFD,
     if (LastError != ERROR_ACCESS_DENIED)
       return EC;
     if (is_directory(Name))
-      return make_error_code(errc::is_a_directory);
+      return std::make_error_code(std::errc::is_a_directory);
     return EC;
   }
 
@@ -906,7 +865,7 @@ bool home_directory(SmallVectorImpl<char> &result) {
 } // end namespace path
 
 namespace windows {
-llvm::error_code UTF8ToUTF16(llvm::StringRef utf8,
+std::error_code UTF8ToUTF16(llvm::StringRef utf8,
                              llvm::SmallVectorImpl<wchar_t> &utf16) {
   if (!utf8.empty()) {
     int len = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.begin(),
@@ -929,10 +888,10 @@ llvm::error_code UTF8ToUTF16(llvm::StringRef utf8,
   utf16.push_back(0);
   utf16.pop_back();
 
-  return llvm::error_code();
+  return std::error_code();
 }
 
-llvm::error_code UTF16ToUTF8(const wchar_t *utf16, size_t utf16_len,
+std::error_code UTF16ToUTF8(const wchar_t *utf16, size_t utf16_len,
                              llvm::SmallVectorImpl<char> &utf8) {
   if (utf16_len) {
     // Get length.
@@ -957,7 +916,7 @@ llvm::error_code UTF16ToUTF8(const wchar_t *utf16, size_t utf16_len,
   utf8.push_back(0);
   utf8.pop_back();
 
-  return llvm::error_code();
+  return std::error_code();
 }
 } // end namespace windows
 } // end namespace sys

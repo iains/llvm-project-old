@@ -481,11 +481,47 @@ class DS_Store2_Helper <bits<8> op, string asm, RegisterClass regClass> : DS_1A 
   let vdst = 0;
 }
 
+// 1 address, 1 data.
 class DS_1A1D_RET <bits<8> op, string asm, RegisterClass rc> : DS_1A <
   op,
   (outs rc:$vdst),
-  (ins i1imm:$gds, VReg_32:$addr, VReg_32:$data0, u16imm:$offset),
+  (ins i1imm:$gds, VReg_32:$addr, rc:$data0, u16imm:$offset),
   asm#" $vdst, $addr, $data0, $offset, [M0]",
+  []> {
+
+  let data1 = 0;
+  let mayStore = 1;
+  let mayLoad = 1;
+}
+
+// 1 address, 2 data.
+class DS_1A2D_RET <bits<8> op, string asm, RegisterClass rc> : DS_1A <
+  op,
+  (outs rc:$vdst),
+  (ins i1imm:$gds, VReg_32:$addr, rc:$data0, rc:$data1, u16imm:$offset),
+  asm#" $vdst, $addr, $data0, $data1, $offset, [M0]",
+  []> {
+  let mayStore = 1;
+  let mayLoad = 1;
+}
+
+// 1 address, 2 data.
+class DS_1A2D_NORET <bits<8> op, string asm, RegisterClass rc> : DS_1A <
+  op,
+  (outs),
+  (ins i1imm:$gds, VReg_32:$addr, rc:$data0, rc:$data1, u16imm:$offset),
+  asm#" $addr, $data0, $data1, $offset, [M0]",
+  []> {
+  let mayStore = 1;
+  let mayLoad = 1;
+}
+
+// 1 address, 1 data.
+class DS_1A1D_NORET <bits<8> op, string asm, RegisterClass rc> : DS_1A <
+  op,
+  (outs),
+  (ins i1imm:$gds, VReg_32:$addr, rc:$data0, u16imm:$offset),
+  asm#" $addr, $data0, $offset, [M0]",
   []> {
 
   let data1 = 0;

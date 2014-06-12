@@ -6,9 +6,10 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+
 #include "lld/Core/Instrumentation.h"
+#include "lld/Core/Simple.h"
 #include "lld/Passes/RoundTripYAMLPass.h"
-#include "lld/ReaderWriter/Simple.h"
 #include "lld/ReaderWriter/Writer.h"
 
 #include "llvm/Support/Debug.h"
@@ -40,7 +41,7 @@ void RoundTripYAMLPass::perform(std::unique_ptr<MutableFile> &mergedFile) {
   if (MemoryBuffer::getFile(tmpYAMLFile.str(), mb))
     return;
 
-  error_code ec = _context.registry().parseFile(mb, _yamlFile);
+  std::error_code ec = _context.registry().parseFile(mb, _yamlFile);
   if (ec) {
     // Note: we need a way for Passes to report errors.
     llvm_unreachable("yaml reader not registered or read error");

@@ -24,10 +24,8 @@
 #include "MachONormalizedFile.h"
 #include "MachONormalizedFileBinaryUtils.h"
 #include "ReferenceKinds.h"
-
 #include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
-
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -39,9 +37,8 @@
 #include "llvm/Support/MachO.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
-
 #include <functional>
+#include <system_error>
 
 using namespace llvm::MachO;
 
@@ -50,10 +47,9 @@ namespace mach_o {
 namespace normalized {
 
 // Utility to call a lambda expression on each load command.
-static error_code
-forEachLoadCommand(StringRef lcRange, unsigned lcCount, bool swap, bool is64,
-                   std::function<bool (uint32_t cmd, uint32_t size,
-                                                      const char* lc)> func) {
+static std::error_code forEachLoadCommand(
+    StringRef lcRange, unsigned lcCount, bool swap, bool is64,
+    std::function<bool(uint32_t cmd, uint32_t size, const char *lc)> func) {
   const char* p = lcRange.begin();
   for (unsigned i=0; i < lcCount; ++i) {
     const load_command *lc = reinterpret_cast<const load_command*>(p);
@@ -65,47 +61,46 @@ forEachLoadCommand(StringRef lcRange, unsigned lcCount, bool swap, bool is64,
       slc = &lcCopy;
     }
     if ( (p + slc->cmdsize) > lcRange.end() )
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return std::make_error_code(std::errc::executable_format_error);
 
     if (func(slc->cmd, slc->cmdsize, p))
-      return error_code();
+      return std::error_code();
 
     p += slc->cmdsize;
   }
 
-  return error_code();
+  return std::error_code();
 }
 
-
-static error_code
-appendRelocations(Relocations &relocs, StringRef buffer, bool swap,
-                             bool bigEndian, uint32_t reloff, uint32_t nreloc) {
+static std::error_code appendRelocations(Relocations &relocs, StringRef buffer,
+                                         bool swap, bool bigEndian,
+                                         uint32_t reloff, uint32_t nreloc) {
   if ((reloff + nreloc*8) > buffer.size())
-    return llvm::make_error_code(llvm::errc::executable_format_error);
+    return std::make_error_code(std::errc::executable_format_error);
   const any_relocation_info* relocsArray =
             reinterpret_cast<const any_relocation_info*>(buffer.begin()+reloff);
 
   for(uint32_t i=0; i < nreloc; ++i) {
     relocs.push_back(unpackRelocation(relocsArray[i], swap, bigEndian));
   }
-  return error_code();
+  return std::error_code();
 }
 
-static error_code
+static std::error_code
 appendIndirectSymbols(IndirectSymbols &isyms, StringRef buffer, bool swap,
                       bool bigEndian, uint32_t istOffset, uint32_t istCount,
                       uint32_t startIndex, uint32_t count) {
   if ((istOffset + istCount*4) > buffer.size())
-    return llvm::make_error_code(llvm::errc::executable_format_error);
+    return std::make_error_code(std::errc::executable_format_error);
   if (startIndex+count  > istCount)
-    return llvm::make_error_code(llvm::errc::executable_format_error);
+    return std::make_error_code(std::errc::executable_format_error);
   const uint32_t *indirectSymbolArray =
             reinterpret_cast<const uint32_t*>(buffer.begin()+istOffset);
 
   for(uint32_t i=0; i < count; ++i) {
     isyms.push_back(read32(swap, indirectSymbolArray[startIndex+i]));
   }
-  return error_code();
+  return std::error_code();
 }
 
 
@@ -146,12 +141,12 @@ readBinary(std::unique_ptr<MemoryBuffer> &mb,
       fa++;
     }
     if (!foundArch) {
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return std::make_error_code(std::errc::executable_format_error);
     }
     objSize = readBigEndian(fa->size);
     uint32_t offset = readBigEndian(fa->offset);
     if ((offset + objSize) > mb->getBufferSize())
-      return llvm::make_error_code(llvm::errc::executable_format_error);
+      return std::make_error_code(std::errc::executable_format_error);
     start += offset;
     mh = reinterpret_cast<const mach_header *>(start);
   }
@@ -175,7 +170,7 @@ readBinary(std::unique_ptr<MemoryBuffer> &mb,
     swap = true;
     break;
   default:
-    return llvm::make_error_code(llvm::errc::executable_format_error);
+    return std::make_error_code(std::errc::executable_format_error);
   }
 
   // Endian swap header, if needed.
@@ -193,7 +188,7 @@ readBinary(std::unique_ptr<MemoryBuffer> &mb,
       start + (is64 ? sizeof(mach_header_64) : sizeof(mach_header));
   StringRef lcRange(lcStart, smh->sizeofcmds);
   if (lcRange.end() > (start + objSize))
-    return llvm::make_error_code(llvm::errc::executable_format_error);
+    return std::make_error_code(std::errc::executable_format_error);
 
   // Normalize architecture
   f->arch = MachOLinkingContext::archFromCpuType(smh->cputype, smh->cpusubtype);
@@ -206,8 +201,9 @@ readBinary(std::unique_ptr<MemoryBuffer> &mb,
   // Pre-scan load commands looking for indirect symbol table.
   uint32_t indirectSymbolTableOffset = 0;
   uint32_t indirectSymbolTableCount = 0;
-  error_code ec = forEachLoadCommand(lcRange, lcCount, swap, is64,
-                    [&] (uint32_t cmd, uint32_t size, const char* lc) -> bool {
+  std::error_code ec = forEachLoadCommand(lcRange, lcCount, swap, is64,
+                                          [&](uint32_t cmd, uint32_t size,
+                                              const char *lc) -> bool {
     if (cmd == LC_DYSYMTAB) {
       const dysymtab_command *d = reinterpret_cast<const dysymtab_command*>(lc);
       indirectSymbolTableOffset = read32(swap, d->indirectsymoff);
@@ -412,21 +408,21 @@ public:
     return true;
   }
 
-  error_code
+  std::error_code
   parseFile(std::unique_ptr<MemoryBuffer> &mb, const Registry &registry,
-            std::vector<std::unique_ptr<File> > &result) const override {
+            std::vector<std::unique_ptr<File>> &result) const override {
     // Convert binary file to normalized mach-o.
     auto normFile = readBinary(mb, _arch);
-    if (error_code ec = normFile.getError())
+    if (std::error_code ec = normFile.getError())
       return ec;
     // Convert normalized mach-o to atoms.
     auto file = normalizedToAtoms(**normFile, mb->getBufferIdentifier(), false);
-    if (error_code ec = file.getError())
+    if (std::error_code ec = file.getError())
       return ec;
 
     result.push_back(std::move(*file));
 
-    return error_code();
+    return std::error_code();
   }
 private:
   MachOLinkingContext::Arch _arch;

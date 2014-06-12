@@ -8,14 +8,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "lld/ReaderWriter/Reader.h"
-
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/system_error.h"
-
 #include <memory>
+#include <system_error>
 
 namespace lld {
 
@@ -29,7 +27,7 @@ void Registry::add(std::unique_ptr<YamlIOTaggedDocumentHandler> handler) {
   _yamlHandlers.push_back(std::move(handler));
 }
 
-error_code
+std::error_code
 Registry::parseFile(std::unique_ptr<MemoryBuffer> &mb,
                     std::vector<std::unique_ptr<File>> &result) const {
   // Get file type.
@@ -44,7 +42,7 @@ Registry::parseFile(std::unique_ptr<MemoryBuffer> &mb,
       return reader->parseFile(mb, *this, result);
 
   // No Reader could parse this file.
-  return llvm::make_error_code(llvm::errc::executable_format_error);
+  return std::make_error_code(std::errc::executable_format_error);
 }
 
 static const Registry::KindStrings kindStrings[] = {

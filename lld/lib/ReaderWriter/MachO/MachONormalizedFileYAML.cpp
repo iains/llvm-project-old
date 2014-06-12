@@ -16,11 +16,9 @@
 ///                  +------------+         +------+
 
 #include "MachONormalizedFile.h"
-
 #include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
 #include "lld/ReaderWriter/YamlContext.h"
-
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -29,14 +27,14 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MachO.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/system_error.h"
 #include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/raw_ostream.h"
+#include <system_error>
 
 
 using llvm::StringRef;
-using llvm::error_code;
+using std::error_code;
 using namespace llvm::yaml;
 using namespace llvm::MachO;
 using namespace lld::mach_o::normalized;

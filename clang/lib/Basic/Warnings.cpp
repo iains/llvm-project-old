@@ -107,7 +107,7 @@ void clang::ProcessWarningOptions(DiagnosticsEngine &Diags,
       // Figure out how this option affects the warning.  If -Wfoo, map the
       // diagnostic to a warning, if -Wno-foo, map it to ignore.
       diag::Severity Mapping =
-          isPositive ? diag::MAP_WARNING : diag::MAP_IGNORE;
+          isPositive ? diag::Severity::Warning : diag::Severity::Ignored;
 
       // -Wsystem-headers is a special case, not driven by the option table.  It
       // cannot be controlled with -Werror.
@@ -125,7 +125,7 @@ void clang::ProcessWarningOptions(DiagnosticsEngine &Diags,
             Diags.setEnableAllWarnings(true);
           } else {
             Diags.setEnableAllWarnings(false);
-            Diags.setMappingForAllDiagnostics(diag::MAP_IGNORE);
+            Diags.setSeverityForAll(diag::Severity::Ignored);
           }
         }
         continue;
@@ -194,7 +194,7 @@ void clang::ProcessWarningOptions(DiagnosticsEngine &Diags,
           EmitUnknownDiagWarning(Diags, isPositive ? "-W" : "-Wno-", Opt,
                                  isPositive);
       } else {
-        Diags.setDiagnosticGroupMapping(Opt, Mapping);
+        Diags.setSeverityForGroup(Opt, Mapping);
       }
     }
   }

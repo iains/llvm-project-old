@@ -232,20 +232,47 @@ def local_load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
     return isLocalLoad(dyn_cast<LoadSDNode>(N));
 }]>;
 
-def atomic_load_add_local : PatFrag<(ops node:$ptr, node:$value),
-                                    (atomic_load_add node:$ptr, node:$value), [{
-  return dyn_cast<MemSDNode>(N)->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
+
+class local_binary_atomic_op<SDNode atomic_op> :
+  PatFrag<(ops node:$ptr, node:$value),
+    (atomic_op node:$ptr, node:$value), [{
+  return cast<MemSDNode>(N)->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
 }]>;
 
-def atomic_load_sub_local : PatFrag<(ops node:$ptr, node:$value),
-                                    (atomic_load_sub node:$ptr, node:$value), [{
-  return dyn_cast<MemSDNode>(N)->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
-}]>;
+
+def atomic_swap_local : local_binary_atomic_op<atomic_swap>;
+def atomic_load_add_local : local_binary_atomic_op<atomic_load_add>;
+def atomic_load_sub_local : local_binary_atomic_op<atomic_load_sub>;
+def atomic_load_and_local : local_binary_atomic_op<atomic_load_and>;
+def atomic_load_or_local : local_binary_atomic_op<atomic_load_or>;
+def atomic_load_xor_local : local_binary_atomic_op<atomic_load_xor>;
+def atomic_load_nand_local : local_binary_atomic_op<atomic_load_nand>;
+def atomic_load_min_local : local_binary_atomic_op<atomic_load_min>;
+def atomic_load_max_local : local_binary_atomic_op<atomic_load_max>;
+def atomic_load_umin_local : local_binary_atomic_op<atomic_load_umin>;
+def atomic_load_umax_local : local_binary_atomic_op<atomic_load_umax>;
 
 def mskor_global : PatFrag<(ops node:$val, node:$ptr),
                             (AMDGPUstore_mskor node:$val, node:$ptr), [{
   return dyn_cast<MemSDNode>(N)->getAddressSpace() == AMDGPUAS::GLOBAL_ADDRESS;
 }]>;
+
+def atomic_cmp_swap_32_local :
+  PatFrag<(ops node:$ptr, node:$cmp, node:$swap),
+          (atomic_cmp_swap node:$ptr, node:$cmp, node:$swap), [{
+  AtomicSDNode *AN = cast<AtomicSDNode>(N);
+  return AN->getMemoryVT() == MVT::i32 &&
+         AN->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
+}]>;
+
+def atomic_cmp_swap_64_local :
+  PatFrag<(ops node:$ptr, node:$cmp, node:$swap),
+          (atomic_cmp_swap node:$ptr, node:$cmp, node:$swap), [{
+  AtomicSDNode *AN = cast<AtomicSDNode>(N);
+  return AN->getMemoryVT() == MVT::i64 &&
+         AN->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
+}]>;
+
 
 class Constants {
 int TWO_PI = 0x40c90fdb;

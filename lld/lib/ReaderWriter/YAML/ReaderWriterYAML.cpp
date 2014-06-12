@@ -7,18 +7,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "lld/ReaderWriter/Reader.h"
-#include "lld/ReaderWriter/Simple.h"
-#include "lld/ReaderWriter/Writer.h"
-#include "lld/ReaderWriter/YamlContext.h"
-
 #include "lld/Core/ArchiveLibraryFile.h"
 #include "lld/Core/DefinedAtom.h"
 #include "lld/Core/Error.h"
 #include "lld/Core/File.h"
 #include "lld/Core/LLVM.h"
 #include "lld/Core/Reference.h"
-
+#include "lld/Core/Simple.h"
+#include "lld/ReaderWriter/Reader.h"
+#include "lld/ReaderWriter/Writer.h"
+#include "lld/ReaderWriter/YamlContext.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
@@ -28,10 +26,9 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
-
 #include <memory>
 #include <string>
+#include <system_error>
 
 using llvm::yaml::MappingTraits;
 using llvm::yaml::ScalarEnumerationTraits;
@@ -636,9 +633,9 @@ template <> struct MappingTraits<const lld::File *> {
       return nullptr;
     }
 
-    virtual error_code
+    virtual std::error_code
     parseAllMembers(std::vector<std::unique_ptr<File>> &result) const override {
-      return error_code();
+      return std::error_code();
     }
 
     StringRef               _path;
@@ -1247,12 +1244,12 @@ class Writer : public lld::Writer {
 public:
   Writer(const LinkingContext &context) : _context(context) {}
 
-  error_code writeFile(const lld::File &file, StringRef outPath) override {
+  std::error_code writeFile(const lld::File &file, StringRef outPath) override {
     // Create stream to path.
     std::string errorInfo;
     llvm::raw_fd_ostream out(outPath.data(), errorInfo, llvm::sys::fs::F_Text);
     if (!errorInfo.empty())
-      return llvm::make_error_code(llvm::errc::no_such_file_or_directory);
+      return std::make_error_code(std::errc::no_such_file_or_directory);
 
     // Create yaml Output writer, using yaml options for context.
     YamlContext yamlContext;
@@ -1264,7 +1261,7 @@ public:
     const lld::File *fileRef = &file;
     yout << fileRef;
 
-    return error_code();
+    return std::error_code();
   }
 
 private:
@@ -1308,7 +1305,7 @@ public:
     return (ext.equals(".objtxt") || ext.equals(".yaml"));
   }
 
-  error_code
+  std::error_code
   parseFile(std::unique_ptr<MemoryBuffer> &mb, const class Registry &,
             std::vector<std::unique_ptr<File>> &result) const override {
     // Note: we do not take ownership of the MemoryBuffer.  That is

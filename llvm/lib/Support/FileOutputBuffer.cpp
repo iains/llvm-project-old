@@ -14,7 +14,7 @@
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 using llvm::sys::fs::mapped_file_region;
 
@@ -51,7 +51,7 @@ error_code FileOutputBuffer::create(StringRef FilePath,
       if (EC)
         return EC;
       else
-        return make_error_code(errc::operation_not_permitted);
+        return std::make_error_code(std::errc::operation_not_permitted);
   }
 
   // Delete target file.

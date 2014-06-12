@@ -11,6 +11,12 @@
         addi      $13,$9,26322
         addu      $9,$a0,$a2
         and       $s7,$v0,$12
+        bc1f      $fcc0, 4             # CHECK: bc1f 4        # encoding: [0x45,0x00,0x00,0x01]
+        bc1f      $fcc1, 4             # CHECK: bc1f $fcc1, 4 # encoding: [0x45,0x04,0x00,0x01]
+        bc1f      4                    # CHECK: bc1f 4        # encoding: [0x45,0x00,0x00,0x01]
+        bc1t      $fcc0, 4             # CHECK: bc1t 4        # encoding: [0x45,0x01,0x00,0x01]
+        bc1t      $fcc1, 4             # CHECK: bc1t $fcc1, 4 # encoding: [0x45,0x05,0x00,0x01]
+        bc1t      4                    # CHECK: bc1t 4        # encoding: [0x45,0x01,0x00,0x01]
         c.ngl.d   $f29,$f29
         c.ngle.d  $f0,$f16
         c.sf.d    $f30,$f0
@@ -40,6 +46,9 @@
         eret
         floor.w.d $f14,$f11
         floor.w.s $f8,$f9
+        jr.hb     $4                   # CHECK: jr.hb  $4 # encoding: [0x00,0x80,0x04,0x08]
+        jalr.hb   $4                   # CHECK: jalr.hb  $4 # encoding: [0x00,0x80,0xfc,0x09]
+        jalr.hb   $4, $5               # CHECK: jalr.hb  $4, $5 # encoding: [0x00,0xa0,0x24,0x09]
         lb        $24,-14515($10)
         lbu       $8,30195($v1)
         ldc1      $f11,16391($s0)

@@ -57,8 +57,8 @@ void insertCUDescriptor(Module *M, StringRef File, StringRef Dir,
 bool removeIfExists(StringRef Path) {
   // This is an approximation, on error we don't know in general if the file
   // existed or not.
-  llvm::error_code EC = sys::fs::remove(Path, false);
-  return EC != llvm::errc::no_such_file_or_directory;
+  std::error_code EC = sys::fs::remove(Path, false);
+  return EC != std::errc::no_such_file_or_directory;
 }
 
 char * current_dir() {

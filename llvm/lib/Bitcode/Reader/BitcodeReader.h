@@ -22,7 +22,7 @@
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/ValueHandle.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 #include <vector>
 
 namespace llvm {
@@ -193,7 +193,7 @@ class BitcodeReader : public GVMaterializer {
   /// not need this flag.
   bool UseRelativeIDs;
 
-  static const error_category &BitcodeErrorCategory();
+  static const std::error_category &BitcodeErrorCategory();
 
 public:
   enum ErrorType {

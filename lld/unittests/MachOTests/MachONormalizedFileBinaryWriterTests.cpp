@@ -8,15 +8,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
-
 #include "../../lib/ReaderWriter/MachO/MachONormalizedFile.h"
-#include <llvm/ADT/Twine.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/MachO.h>
-#include <llvm/Support/system_error.h>
-
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MachO.h"
 #include <cassert>
 #include <memory>
+#include <system_error>
 #include <vector>
 
 using llvm::StringRef;
@@ -24,7 +22,7 @@ using llvm::MemoryBuffer;
 using llvm::SmallString;
 using llvm::Twine;
 using llvm::ErrorOr;
-using llvm::error_code;
+using std::error_code;
 using namespace llvm::MachO;
 using namespace lld::mach_o::normalized;
 

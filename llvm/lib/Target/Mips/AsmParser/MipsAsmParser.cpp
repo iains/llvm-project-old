@@ -72,6 +72,8 @@ class MipsAsmParser : public MCTargetAsmParser {
 #define GET_ASSEMBLER_HEADER
 #include "MipsGenAsmMatcher.inc"
 
+  unsigned checkTargetMatchPredicate(MCInst &Inst) override;
+
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands, MCStreamer &Out,
                                unsigned &ErrorInfo,
@@ -172,6 +174,9 @@ class MipsAsmParser : public MCTargetAsmParser {
     return STI.getFeatureBits() & Mips::FeatureMicroMips;
   }
 
+  bool hasMips4() const { return STI.getFeatureBits() & Mips::FeatureMips4; }
+  bool hasMips32() const { return STI.getFeatureBits() & Mips::FeatureMips32; }
+
   bool parseRegister(unsigned &RegNum);
 
   bool eatComma(StringRef ErrorStr);
@@ -219,6 +224,14 @@ class MipsAsmParser : public MCTargetAsmParser {
   }
 
 public:
+  enum MipsMatchResultTy {
+    Match_RequiresDifferentSrcAndDst = FIRST_TARGET_MATCH_RESULT_TY
+#define GET_OPERAND_DIAGNOSTIC_TYPES
+#include "MipsGenAsmMatcher.inc"
+#undef GET_OPERAND_DIAGNOSTIC_TYPES
+
+  };
+
   MipsAsmParser(MCSubtargetInfo &sti, MCAsmParser &parser,
                 const MCInstrInfo &MII,
                 const MCTargetOptions &Options)
@@ -235,6 +248,9 @@ public:
 
   MCAsmParser &getParser() const { return Parser; }
   MCAsmLexer &getLexer() const { return Parser.getLexer(); }
+
+  /// True if all of $fcc0 - $fcc7 exist for the current ISA.
+  bool hasEightFccRegisters() const { return hasMips4() || hasMips32(); }
 
   /// Warn if RegNo is the current assembler temporary.
   void WarnIfAssemblerTemporary(int RegNo, SMLoc Loc);
@@ -749,7 +765,11 @@ public:
     return isRegIdx() && RegIdx.Kind & RegKind_CCR && RegIdx.Index <= 31;
   }
   bool isFCCAsmReg() const {
-    return isRegIdx() && RegIdx.Kind & RegKind_FCC && RegIdx.Index <= 7;
+    if (!(isRegIdx() && RegIdx.Kind & RegKind_FCC))
+      return false;
+    if (!AsmParser.hasEightFccRegisters())
+      return RegIdx.Index == 0;
+    return RegIdx.Index <= 7;
   }
   bool isACCAsmReg() const {
     return isRegIdx() && RegIdx.Kind & RegKind_ACC && RegIdx.Index <= 3;
@@ -1157,11 +1177,24 @@ void MipsAsmParser::expandMemInst(MCInst &Inst, SMLoc IDLoc,
   TempInst.clear();
 }
 
+unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
+  // As described by the Mips32r2 spec, the registers Rd and Rs for
+  // jalr.hb must be different.
+  unsigned Opcode = Inst.getOpcode();
+
+  if (Opcode == Mips::JALR_HB &&
+      (Inst.getOperand(0).getReg() == Inst.getOperand(1).getReg()))
+    return Match_RequiresDifferentSrcAndDst;
+
+  return Match_Success;
+}
+
 bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                             OperandVector &Operands,
                                             MCStreamer &Out,
                                             unsigned &ErrorInfo,
                                             bool MatchingInlineAsm) {
+
   MCInst Inst;
   SmallVector<MCInst, 8> Instructions;
   unsigned MatchResult =
@@ -1195,6 +1228,8 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   }
   case Match_MnemonicFail:
     return Error(IDLoc, "invalid instruction");
+  case Match_RequiresDifferentSrcAndDst:
+    return Error(IDLoc, "source and destination must be different");
   }
   return true;
 }

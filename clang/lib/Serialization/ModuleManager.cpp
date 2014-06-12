@@ -18,7 +18,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 #ifndef NDEBUG
 #include "llvm/Support/GraphWriter.h"
@@ -104,7 +104,7 @@ ModuleManager::addModule(StringRef FileName, ModuleKind Type,
       New->Buffer.reset(Buffer);
     } else {
       // Open the AST file.
-      llvm::error_code ec;
+      std::error_code ec;
       if (FileName == "-") {
         ec = llvm::MemoryBuffer::getSTDIN(New->Buffer);
         if (ec)

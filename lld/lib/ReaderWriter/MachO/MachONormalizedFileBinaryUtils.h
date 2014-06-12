@@ -9,16 +9,14 @@
 
 
 #include "MachONormalizedFile.h"
-
 #include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
-
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MachO.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 #ifndef LLD_READER_WRITER_MACHO_NORMALIZED_FILE_BINARY_UTILS_H
 #define LLD_READER_WRITER_MACHO_NORMALIZED_FILE_BINARY_UTILS_H

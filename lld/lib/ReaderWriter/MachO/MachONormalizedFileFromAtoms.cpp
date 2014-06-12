@@ -23,10 +23,8 @@
 #include "MachONormalizedFile.h"
 #include "MachONormalizedFileBinaryUtils.h"
 #include "ReferenceKinds.h"
-
 #include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
-
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -34,9 +32,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MachO.h"
-#include "llvm/Support/system_error.h"
-
 #include <map>
+#include <system_error>
 
 using llvm::StringRef;
 using llvm::isa;

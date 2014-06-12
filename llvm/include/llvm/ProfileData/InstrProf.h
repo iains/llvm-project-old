@@ -16,11 +16,11 @@
 #ifndef LLVM_PROFILEDATA_INSTRPROF_H_
 #define LLVM_PROFILEDATA_INSTRPROF_H_
 
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 namespace llvm {
-
-const error_category &instrprof_category();
+using std::error_code;
+const std::error_category &instrprof_category();
 
 enum class instrprof_error {
     success = 0,
@@ -42,8 +42,11 @@ inline error_code make_error_code(instrprof_error E) {
   return error_code(static_cast<int>(E), instrprof_category());
 }
 
-template <> struct is_error_code_enum<instrprof_error> : std::true_type {};
-
 } // end namespace llvm
+
+namespace std {
+template <>
+struct is_error_code_enum<llvm::instrprof_error> : std::true_type {};
+}
 
 #endif // LLVM_PROFILEDATA_INSTRPROF_H_

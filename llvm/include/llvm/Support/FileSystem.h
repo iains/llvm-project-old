@@ -33,11 +33,11 @@
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TimeValue.h"
-#include "llvm/Support/system_error.h"
 #include <ctime>
 #include <iterator>
 #include <stack>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <vector>
 
@@ -46,6 +46,7 @@
 #endif
 
 namespace llvm {
+using std::error_code;
 namespace sys {
 namespace fs {
 
@@ -602,27 +603,6 @@ error_code openFileForWrite(const Twine &Name, int &ResultFD, OpenFlags Flags,
                             unsigned Mode = 0666);
 
 error_code openFileForRead(const Twine &Name, int &ResultFD);
-
-/// @brief Are \a path's first bytes \a magic?
-///
-/// @param path Input path.
-/// @param magic Byte sequence to compare \a path's first len(magic) bytes to.
-/// @returns errc::success if result has been successfully set, otherwise a
-///          platform specific error_code.
-error_code has_magic(const Twine &path, const Twine &magic, bool &result);
-
-/// @brief Get \a path's first \a len bytes.
-///
-/// @param path Input path.
-/// @param len Number of magic bytes to get.
-/// @param result Set to the first \a len bytes in the file pointed to by
-///               \a path. Or the entire file if file_size(path) < len, in which
-///               case result.size() returns the size of the file.
-/// @returns errc::success if result has been successfully set,
-///          errc::value_too_large if len is larger then the file pointed to by
-///          \a path, otherwise a platform specific error_code.
-error_code get_magic(const Twine &path, uint32_t len,
-                     SmallVectorImpl<char> &result);
 
 /// @brief Identify the type of a binary file based on how magical it is.
 file_magic identify_magic(StringRef magic);

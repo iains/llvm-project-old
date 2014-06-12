@@ -10,8 +10,8 @@
 #include "Atoms.h"
 
 #include "lld/Core/ArchiveLibraryFile.h"
+#include "lld/Core/Simple.h"
 #include "lld/ReaderWriter/PECOFFLinkingContext.h"
-#include "lld/ReaderWriter/Simple.h"
 #include "llvm/Support/Allocator.h"
 
 #include <mutex>
@@ -76,9 +76,9 @@ public:
     return _absoluteAtoms;
   }
 
-  error_code
+  std::error_code
   parseAllMembers(std::vector<std::unique_ptr<File>> &result) const override {
-    return error_code();
+    return std::error_code();
   }
 
 private:

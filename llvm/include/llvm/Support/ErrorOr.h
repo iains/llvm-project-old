@@ -18,11 +18,12 @@
 
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/Support/AlignOf.h"
-#include "llvm/Support/system_error.h"
 #include <cassert>
+#include <system_error>
 #include <type_traits>
 
 namespace llvm {
+using std::error_code;
 template<class T, class V>
 typename std::enable_if< std::is_constructible<T, V>::value
                        , typename std::remove_reference<V>::type>::type &&
@@ -94,14 +95,16 @@ private:
 
 public:
   template <class E>
-  ErrorOr(E ErrorCode, typename std::enable_if<is_error_code_enum<E>::value ||
-                                               is_error_condition_enum<E>::value,
-                                               void *>::type = 0)
+  ErrorOr(E ErrorCode,
+          typename std::enable_if<std::is_error_code_enum<E>::value ||
+                                      std::is_error_condition_enum<E>::value,
+                                  void *>::type = 0)
       : HasError(true) {
+    using std::make_error_code;
     new (getErrorStorage()) error_code(make_error_code(ErrorCode));
   }
 
-  ErrorOr(llvm::error_code EC) : HasError(true) {
+  ErrorOr(std::error_code EC) : HasError(true) {
     new (getErrorStorage()) error_code(EC);
   }
 
@@ -264,10 +267,11 @@ private:
   bool HasError : 1;
 };
 
-template<class T, class E>
-typename std::enable_if<is_error_code_enum<E>::value ||
-                        is_error_condition_enum<E>::value, bool>::type
-operator ==(ErrorOr<T> &Err, E Code) {
+template <class T, class E>
+typename std::enable_if<std::is_error_code_enum<E>::value ||
+                            std::is_error_condition_enum<E>::value,
+                        bool>::type
+operator==(ErrorOr<T> &Err, E Code) {
   return error_code(Err) == Code;
 }
 } // end namespace llvm
