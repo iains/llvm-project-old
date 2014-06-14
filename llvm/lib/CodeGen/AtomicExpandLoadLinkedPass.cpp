@@ -243,19 +243,26 @@ bool AtomicExpandLoadLinked::expandAtomicCmpXchg(AtomicCmpXchgInst *CI) {
   //     %loaded = @load.linked(%addr)
   //     %should_store = icmp eq %loaded, %desired
   //     br i1 %should_store, label %cmpxchg.trystore,
-  //                          label %cmpxchg.end/%cmpxchg.barrier
+  //                          label %cmpxchg.failure
   // cmpxchg.trystore:
   //     %stored = @store_conditional(%new, %addr)
-  //     %try_again = icmp i32 ne %stored, 0
-  //     br i1 %try_again, label %loop, label %cmpxchg.end
-  // cmpxchg.barrier:
+  //     %success = icmp eq i32 %stored, 0
+  //     br i1 %success, label %cmpxchg.success, label %loop/%cmpxchg.failure
+  // cmpxchg.success:
+  //     fence?
+  //     br label %cmpxchg.end
+  // cmpxchg.failure:
   //     fence?
   //     br label %cmpxchg.end
   // cmpxchg.end:
+  //     %success = phi i1 [true, %cmpxchg.success], [false, %cmpxchg.failure]
+  //     %restmp = insertvalue { iN, i1 } undef, iN %loaded, 0
+  //     %res = insertvalue { iN, i1 } %restmp, i1 %success, 1
   //     [...]
   BasicBlock *ExitBB = BB->splitBasicBlock(CI, "cmpxchg.end");
-  auto BarrierBB = BasicBlock::Create(Ctx, "cmpxchg.barrier", F, ExitBB);
-  auto TryStoreBB = BasicBlock::Create(Ctx, "cmpxchg.trystore", F, BarrierBB);
+  auto FailureBB = BasicBlock::Create(Ctx, "cmpxchg.failure", F, ExitBB);
+  auto SuccessBB = BasicBlock::Create(Ctx, "cmpxchg.success", F, FailureBB);
+  auto TryStoreBB = BasicBlock::Create(Ctx, "cmpxchg.trystore", F, SuccessBB);
   auto LoopBB = BasicBlock::Create(Ctx, "cmpxchg.start", F, TryStoreBB);
 
   // This grabs the DebugLoc from CI
@@ -277,19 +284,23 @@ bool AtomicExpandLoadLinked::expandAtomicCmpXchg(AtomicCmpXchgInst *CI) {
 
   // If the the cmpxchg doesn't actually need any ordering when it fails, we can
   // jump straight past that fence instruction (if it exists).
-  BasicBlock *FailureBB = FailureOrder == Monotonic ? ExitBB : BarrierBB;
   Builder.CreateCondBr(ShouldStore, TryStoreBB, FailureBB);
 
   Builder.SetInsertPoint(TryStoreBB);
   Value *StoreSuccess = TLI->emitStoreConditional(
       Builder, CI->getNewValOperand(), Addr, MemOpOrder);
-  Value *TryAgain = Builder.CreateICmpNE(
+  StoreSuccess = Builder.CreateICmpEQ(
       StoreSuccess, ConstantInt::get(Type::getInt32Ty(Ctx), 0), "success");
-  Builder.CreateCondBr(TryAgain, LoopBB, BarrierBB);
+  Builder.CreateCondBr(StoreSuccess, SuccessBB,
+                       CI->isWeak() ? FailureBB : LoopBB);
 
   // Make sure later instructions don't get reordered with a fence if necessary.
-  Builder.SetInsertPoint(BarrierBB);
+  Builder.SetInsertPoint(SuccessBB);
   insertTrailingFence(Builder, SuccessOrder);
+  Builder.CreateBr(ExitBB);
+
+  Builder.SetInsertPoint(FailureBB);
+  insertTrailingFence(Builder, FailureOrder);
   Builder.CreateBr(ExitBB);
 
   // Finally, we have control-flow based knowledge of whether the cmpxchg
@@ -297,43 +308,45 @@ bool AtomicExpandLoadLinked::expandAtomicCmpXchg(AtomicCmpXchgInst *CI) {
   // subsequent "icmp eq/ne %loaded, %oldval" into a use of an appropriate PHI.
 
   // Setup the builder so we can create any PHIs we need.
-  Builder.SetInsertPoint(FailureBB, FailureBB->begin());
-  BasicBlock *SuccessBB = FailureOrder == Monotonic ? BarrierBB : TryStoreBB;
-  PHINode *Success = nullptr, *Failure = nullptr;
+  Builder.SetInsertPoint(ExitBB, ExitBB->begin());
+  PHINode *Success = Builder.CreatePHI(Type::getInt1Ty(Ctx), 2);
+  Success->addIncoming(ConstantInt::getTrue(Ctx), SuccessBB);
+  Success->addIncoming(ConstantInt::getFalse(Ctx), FailureBB);
 
   // Look for any users of the cmpxchg that are just comparing the loaded value
   // against the desired one, and replace them with the CFG-derived version.
+  SmallVector<ExtractValueInst *, 2> PrunedInsts;
   for (auto User : CI->users()) {
-    ICmpInst *ICmp = dyn_cast<ICmpInst>(User);
-    if (!ICmp)
+    ExtractValueInst *EV = dyn_cast<ExtractValueInst>(User);
+    if (!EV)
       continue;
 
-    // Because we know ICmp uses CI, we only need one operand to be the old
-    // value.
-    if (ICmp->getOperand(0) != CI->getCompareOperand() &&
-        ICmp->getOperand(1) != CI->getCompareOperand())
-      continue;
+    assert(EV->getNumIndices() == 1 && EV->getIndices()[0] <= 1 &&
+           "weird extraction from { iN, i1 }");
 
-    if (ICmp->getPredicate() == CmpInst::ICMP_EQ) {
-      if (!Success) {
-        Success = Builder.CreatePHI(Type::getInt1Ty(Ctx), 2);
-        Success->addIncoming(ConstantInt::getTrue(Ctx), SuccessBB);
-        Success->addIncoming(ConstantInt::getFalse(Ctx), LoopBB);
-      }
-      ICmp->replaceAllUsesWith(Success);
-    } else if (ICmp->getPredicate() == CmpInst::ICMP_NE) {
-      if (!Failure) {
-        Failure = Builder.CreatePHI(Type::getInt1Ty(Ctx), 2);
-        Failure->addIncoming(ConstantInt::getFalse(Ctx), SuccessBB);
-        Failure->addIncoming(ConstantInt::getTrue(Ctx), LoopBB);
-      }
-      ICmp->replaceAllUsesWith(Failure);
-    }
+    if (EV->getIndices()[0] == 0)
+      EV->replaceAllUsesWith(Loaded);
+    else
+      EV->replaceAllUsesWith(Success);
+
+    PrunedInsts.push_back(EV);
   }
 
-  CI->replaceAllUsesWith(Loaded);
-  CI->eraseFromParent();
+  // We can remove the instructions now we're no longer iterating through them.
+  for (auto EV : PrunedInsts)
+    EV->eraseFromParent();
 
+  if (!CI->use_empty()) {
+    // Some use of the full struct return that we don't understand has happened,
+    // so we've got to reconstruct it properly.
+    Value *Res;
+    Res = Builder.CreateInsertValue(UndefValue::get(CI->getType()), Loaded, 0);
+    Res = Builder.CreateInsertValue(Res, Success, 1);
+
+    CI->replaceAllUsesWith(Res);
+  }
+
+  CI->eraseFromParent();
   return true;
 }
 

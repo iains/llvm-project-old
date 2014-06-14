@@ -177,13 +177,13 @@ int llvm::DiffFilesWithTolerance(StringRef NameA,
   // Now its safe to mmap the files into memory because both files
   // have a non-zero size.
   std::unique_ptr<MemoryBuffer> F1;
-  if (error_code ec = MemoryBuffer::getFile(NameA, F1)) {
+  if (std::error_code ec = MemoryBuffer::getFile(NameA, F1)) {
     if (Error)
       *Error = ec.message();
     return 2;
   }
   std::unique_ptr<MemoryBuffer> F2;
-  if (error_code ec = MemoryBuffer::getFile(NameB, F2)) {
+  if (std::error_code ec = MemoryBuffer::getFile(NameB, F2)) {
     if (Error)
       *Error = ec.message();
     return 2;

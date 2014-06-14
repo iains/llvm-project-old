@@ -19,7 +19,7 @@ namespace llvm {
   }
 
   // Various helper functions.
-  bool error(error_code ec);
+  bool error(std::error_code ec);
   bool relocAddressLess(object::RelocationRef A,
                         object::RelocationRef B);
 } // namespace llvm

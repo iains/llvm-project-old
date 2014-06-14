@@ -157,8 +157,8 @@ static int printLineInfoForInput() {
     // Load the input memory buffer.
     std::unique_ptr<MemoryBuffer> InputBuffer;
     std::unique_ptr<ObjectImage> LoadedObject;
-    if (error_code ec = MemoryBuffer::getFileOrSTDIN(InputFileList[i],
-                                                     InputBuffer))
+    if (std::error_code ec =
+            MemoryBuffer::getFileOrSTDIN(InputFileList[i], InputBuffer))
       return Error("unable to read input: '" + ec.message() + "'");
 
     // Load the object file
@@ -218,8 +218,8 @@ static int executeInput() {
     // Load the input memory buffer.
     std::unique_ptr<MemoryBuffer> InputBuffer;
     std::unique_ptr<ObjectImage> LoadedObject;
-    if (error_code ec = MemoryBuffer::getFileOrSTDIN(InputFileList[i],
-                                                     InputBuffer))
+    if (std::error_code ec =
+            MemoryBuffer::getFileOrSTDIN(InputFileList[i], InputBuffer))
       return Error("unable to read input: '" + ec.message() + "'");
 
     // Load the object file

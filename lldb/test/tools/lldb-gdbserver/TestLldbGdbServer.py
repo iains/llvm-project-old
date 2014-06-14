@@ -1,493 +1,35 @@
 """
-Test lldb-gdbserver operation
+Test case for testing the gdbremote protocol.
+
+Tests run against debugserver and lldb-gdbserver (llgs).
+lldb-gdbserver tests run where the lldb-gdbserver exe is
+available.
+
+This class will be broken into smaller test case classes by
+gdb remote packet functional areas.  For now it contains
+the initial set of tests implemented.
 """
 
-import unittest2
-import pexpect
+import gdbremote_testcase
+import lldbgdbserverutils
 import platform
-import signal
-import socket
-import subprocess
-import sys
-import time
+import unittest2
 from lldbtest import *
-from lldbgdbserverutils import *
-import logging
-import os.path
 
-class LldbGdbServerTestCase(TestBase):
-
-    mydir = TestBase.compute_mydir(__file__)
-
-    port = 12345
-
-    _TIMEOUT_SECONDS = 5
-
-    _GDBREMOTE_KILL_PACKET = "$k#6b"
-
-    _LOGGING_LEVEL = logging.WARNING
-    # _LOGGING_LEVEL = logging.DEBUG
-
-    _STARTUP_ATTACH = "attach"
-    _STARTUP_LAUNCH = "launch"
-
-    # GDB Signal numbers that are not target-specific used for common exceptions
-    TARGET_EXC_BAD_ACCESS      = 0x91
-    TARGET_EXC_BAD_INSTRUCTION = 0x92
-    TARGET_EXC_ARITHMETIC      = 0x93
-    TARGET_EXC_EMULATION       = 0x94
-    TARGET_EXC_SOFTWARE        = 0x95
-    TARGET_EXC_BREAKPOINT      = 0x96
-
-    def setUp(self):
-        TestBase.setUp(self)
-        FORMAT = '%(asctime)-15s %(levelname)-8s %(message)s'
-        logging.basicConfig(format=FORMAT)
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(self._LOGGING_LEVEL)
-        self.test_sequence = GdbRemoteTestSequence(self.logger)
-        self.set_inferior_startup_launch()
-
-        # Uncomment this code to force only a single test to run (by name).
-        # if not re.search(r"P_writes", self._testMethodName):
-        #     self.skipTest("focusing on one test")
-
-    def reset_test_sequence(self):
-        self.test_sequence = GdbRemoteTestSequence(self.logger)
-
-    def init_llgs_test(self):
-        self.debug_monitor_exe = get_lldb_gdbserver_exe()
-        if not self.debug_monitor_exe:
-            self.skipTest("lldb_gdbserver exe not found")
-        self.debug_monitor_extra_args = ""
-
-    def init_debugserver_test(self):
-        self.debug_monitor_exe = get_debugserver_exe()
-        if not self.debug_monitor_exe:
-            self.skipTest("debugserver exe not found")
-        self.debug_monitor_extra_args = " --log-file=/tmp/packets-{}.log --log-flags=0x800000".format(self._testMethodName)
-
-    def create_socket(self):
-        sock = socket.socket()
-        logger = self.logger
-
-        def shutdown_socket():
-            if sock:
-                try:
-                    # send the kill packet so lldb-gdbserver shuts down gracefully
-                    sock.sendall(LldbGdbServerTestCase._GDBREMOTE_KILL_PACKET)
-                except:
-                    logger.warning("failed to send kill packet to debug monitor: {}; ignoring".format(sys.exc_info()[0]))
-
-                try:
-                    sock.close()
-                except:
-                    logger.warning("failed to close socket to debug monitor: {}; ignoring".format(sys.exc_info()[0]))
-
-        self.addTearDownHook(shutdown_socket)
-
-        sock.connect(('localhost', self.port))
-        return sock
-
-    def set_inferior_startup_launch(self):
-        self._inferior_startup = self._STARTUP_LAUNCH
-
-    def set_inferior_startup_attach(self):
-        self._inferior_startup = self._STARTUP_ATTACH
-
-    def start_server(self, attach_pid=None):
-        # Create the command line
-        commandline = "{}{} localhost:{}".format(self.debug_monitor_exe, self.debug_monitor_extra_args, self.port)
-        if attach_pid:
-            commandline += " --attach=%d" % attach_pid
-            
-        # start the server
-        server = pexpect.spawn(commandline)
-
-        # Turn on logging for what the child sends back.
-        if self.TraceOn():
-            server.logfile_read = sys.stdout
-
-        # Schedule debug monitor to be shut down during teardown.
-        logger = self.logger
-        def shutdown_debug_monitor():
-            try:
-                server.close()
-            except:
-                logger.warning("failed to close pexpect server for debug monitor: {}; ignoring".format(sys.exc_info()[0]))
-
-        self.addTearDownHook(shutdown_debug_monitor)
-
-        # Wait until we receive the server ready message before continuing.
-        server.expect_exact('Listening to port {} for a connection from localhost'.format(self.port))
-
-        # Create a socket to talk to the server
-        self.sock = self.create_socket()
-
-        return server
-
-    def launch_process_for_attach(self,inferior_args=None, sleep_seconds=3):
-        # We're going to start a child process that the debug monitor stub can later attach to.
-        # This process needs to be started so that it just hangs around for a while.  We'll
-        # have it sleep.
-        exe_path = os.path.abspath("a.out")
-
-        args = [exe_path]
-        if inferior_args:
-            args.extend(inferior_args)
-        if sleep_seconds:
-            args.append("sleep:%d" % sleep_seconds)
-
-        return subprocess.Popen(args)
-
-    def prep_debug_monitor_and_inferior(self, inferior_args=None, inferior_sleep_seconds=3):
-        """Prep the debug monitor, the inferior, and the expected packet stream.
-
-        Handle the separate cases of using the debug monitor in attach-to-inferior mode
-        and in launch-inferior mode.
-
-        For attach-to-inferior mode, the inferior process is first started, then
-        the debug monitor is started in attach to pid mode (using --attach on the
-        stub command line), and the no-ack-mode setup is appended to the packet
-        stream.  The packet stream is not yet executed, ready to have more expected
-        packet entries added to it.
-
-        For launch-inferior mode, the stub is first started, then no ack mode is
-        setup on the expected packet stream, then the verified launch packets are added
-        to the expected socket stream.  The packet stream is not yet executed, ready
-        to have more expected packet entries added to it.
-
-        The return value is:
-        {inferior:<inferior>, server:<server>}
-        """
-        inferior = None
-        attach_pid = None
-
-        if self._inferior_startup == self._STARTUP_ATTACH:
-            # Launch the process that we'll use as the inferior.
-            inferior = self.launch_process_for_attach(inferior_args=inferior_args, sleep_seconds=inferior_sleep_seconds)
-            self.assertIsNotNone(inferior)
-            self.assertTrue(inferior.pid > 0)
-            attach_pid = inferior.pid
-
-        # Launch the debug monitor stub, attaching to the inferior.
-        server = self.start_server(attach_pid=attach_pid)
-        self.assertIsNotNone(server)
-
-        if self._inferior_startup == self._STARTUP_LAUNCH:
-            # Build launch args
-            launch_args = [os.path.abspath('a.out')]
-            if inferior_args:
-                launch_args.extend(inferior_args)
-
-        # Build the expected protocol stream
-        self.add_no_ack_remote_stream()
-        if self._inferior_startup == self._STARTUP_LAUNCH:
-            self.add_verified_launch_packets(launch_args)
-
-        return {"inferior":inferior, "server":server}
-
-    def add_no_ack_remote_stream(self):
-        self.test_sequence.add_log_lines(
-            ["read packet: +",
-             "read packet: $QStartNoAckMode#b0",
-             "send packet: +",
-             "send packet: $OK#9a",
-             "read packet: +"],
-            True)
-
-    def add_verified_launch_packets(self, launch_args):
-        self.test_sequence.add_log_lines(
-            ["read packet: %s" % build_gdbremote_A_packet(launch_args),
-             "send packet: $OK#00",
-             "read packet: $qLaunchSuccess#a5",
-             "send packet: $OK#00"],
-            True)
-
-    def add_process_info_collection_packets(self):
-        self.test_sequence.add_log_lines(
-            ["read packet: $qProcessInfo#00",
-              { "direction":"send", "regex":r"^\$(.+)#00", "capture":{1:"process_info_raw"} }],
-            True)
-
-    _KNOWN_PROCESS_INFO_KEYS = [
-        "pid",
-        "parent-pid",
-        "real-uid",
-        "real-gid",
-        "effective-uid",
-        "effective-gid",
-        "cputype",
-        "cpusubtype",
-        "ostype",
-        "vendor",
-        "endian",
-        "ptrsize"
-        ]
-
-    def parse_process_info_response(self, context):
-        # Ensure we have a process info response.
-        self.assertIsNotNone(context)
-        process_info_raw = context.get("process_info_raw")
-        self.assertIsNotNone(process_info_raw)
-
-        # Pull out key:value; pairs.
-        process_info_dict = { match.group(1):match.group(2) for match in re.finditer(r"([^:]+):([^;]+);", process_info_raw) }
-
-        # Validate keys are known.
-        for (key, val) in process_info_dict.items():
-            self.assertTrue(key in self._KNOWN_PROCESS_INFO_KEYS)
-            self.assertIsNotNone(val)
-
-        return process_info_dict
-
-    def add_register_info_collection_packets(self):
-        self.test_sequence.add_log_lines(
-            [ { "type":"multi_response", "query":"qRegisterInfo", "append_iteration_suffix":True,
-              "end_regex":re.compile(r"^\$(E\d+)?#[0-9a-fA-F]{2}$"),
-              "save_key":"reg_info_responses" } ],
-            True)
-
-    def parse_register_info_packets(self, context):
-        """Return an array of register info dictionaries, one per register info."""
-        reg_info_responses = context.get("reg_info_responses")
-        self.assertIsNotNone(reg_info_responses)
-
-        # Parse register infos.
-        return [parse_reg_info_response(reg_info_response) for reg_info_response in reg_info_responses]
-
-    def expect_gdbremote_sequence(self):
-        return expect_lldb_gdbserver_replay(self, self.sock, self.test_sequence, self._TIMEOUT_SECONDS, self.logger)
-
-    _KNOWN_REGINFO_KEYS = [
-        "name",
-        "alt-name",
-        "bitsize",
-        "offset",
-        "encoding",
-        "format",
-        "set",
-        "gcc",
-        "dwarf",
-        "generic",
-        "container-regs",
-        "invalidate-regs"
-    ]
-
-    def assert_valid_reg_info(self, reg_info):
-        # Assert we know about all the reginfo keys parsed.
-        for key in reg_info:
-            self.assertTrue(key in self._KNOWN_REGINFO_KEYS)
-        
-        # Check the bare-minimum expected set of register info keys.
-        self.assertTrue("name" in reg_info)
-        self.assertTrue("bitsize" in reg_info)
-        self.assertTrue("offset" in reg_info)
-        self.assertTrue("encoding" in reg_info)
-        self.assertTrue("format" in reg_info)
-
-    def find_pc_reg_info(self, reg_infos):
-        lldb_reg_index = 0
-        for reg_info in reg_infos:
-            if ("generic" in reg_info) and (reg_info["generic"] == "pc"):
-                return (lldb_reg_index, reg_info)
-            lldb_reg_index += 1
-
-        return (None, None)
-
-    def add_lldb_register_index(self, reg_infos):
-        """Add a "lldb_register_index" key containing the 0-baed index of each reg_infos entry.
-
-        We'll use this when we want to call packets like P/p with a register index but do so
-        on only a subset of the full register info set.
-        """
-        self.assertIsNotNone(reg_infos)
-
-        reg_index = 0
-        for reg_info in reg_infos:
-            reg_info["lldb_register_index"] = reg_index
-            reg_index += 1
-
-    def add_query_memory_region_packets(self, address):
-        self.test_sequence.add_log_lines(
-            ["read packet: $qMemoryRegionInfo:{0:x}#00".format(address),
-             {"direction":"send", "regex":r"^\$(.+)#[0-9a-fA-F]{2}$", "capture":{1:"memory_region_response"} }],
-            True)
-        
-    def parse_memory_region_packet(self, context):
-        # Ensure we have a context.
-        self.assertIsNotNone(context.get("memory_region_response"))
-        
-        # Pull out key:value; pairs.
-        mem_region_dict = {match.group(1):match.group(2) for match in re.finditer(r"([^:]+):([^;]+);", context.get("memory_region_response"))}
-
-        # Validate keys are known.
-        for (key, val) in mem_region_dict.items():
-            self.assertTrue(key in ["start", "size", "permissions", "error"])
-            self.assertIsNotNone(val)
-
-        # Return the dictionary of key-value pairs for the memory region.
-        return mem_region_dict
-
-    def assert_address_within_memory_region(self, test_address, mem_region_dict):
-        self.assertIsNotNone(mem_region_dict)
-        self.assertTrue("start" in mem_region_dict)
-        self.assertTrue("size" in mem_region_dict)
-        
-        range_start = int(mem_region_dict["start"], 16)
-        range_size = int(mem_region_dict["size"], 16)
-        range_end = range_start + range_size
-
-        if test_address < range_start:
-            self.fail("address 0x{0:x} comes before range 0x{1:x} - 0x{2:x} (size 0x{3:x})".format(test_address, range_start, range_end, range_size))
-        elif test_address >= range_end:
-            self.fail("address 0x{0:x} comes after range 0x{1:x} - 0x{2:x} (size 0x{3:x})".format(test_address, range_start, range_end, range_size))
-
-    def add_threadinfo_collection_packets(self):
-        self.test_sequence.add_log_lines(
-            [ { "type":"multi_response", "first_query":"qfThreadInfo", "next_query":"qsThreadInfo",
-                "append_iteration_suffix":False, "end_regex":re.compile(r"^\$(l)?#[0-9a-fA-F]{2}$"),
-              "save_key":"threadinfo_responses" } ],
-            True)
-
-    def parse_threadinfo_packets(self, context):
-        """Return an array of thread ids (decimal ints), one per thread."""
-        threadinfo_responses = context.get("threadinfo_responses")
-        self.assertIsNotNone(threadinfo_responses)
-
-        thread_ids = []
-        for threadinfo_response in threadinfo_responses:
-            new_thread_infos = parse_threadinfo_response(threadinfo_response)
-            thread_ids.extend(new_thread_infos)
-        return thread_ids
-
-    def wait_for_thread_count(self, thread_count, timeout_seconds=3):
-        start_time = time.time()
-        timeout_time = start_time + timeout_seconds
-
-        actual_thread_count = 0
-        while actual_thread_count < thread_count:
-            self.reset_test_sequence()
-            self.add_threadinfo_collection_packets()
-
-            context = self.expect_gdbremote_sequence()
-            self.assertIsNotNone(context)
-
-            threads = self.parse_threadinfo_packets(context)
-            self.assertIsNotNone(threads)
-
-            actual_thread_count = len(threads)
-
-            if time.time() > timeout_time:
-                raise Exception(
-                    'timed out after {} seconds while waiting for theads: waiting for at least {} threads, found {}'.format(
-                        timeout_seconds, thread_count, actual_thread_count))
-
-        return threads
-
-    def add_set_breakpoint_packets(self, address, do_continue=True, breakpoint_kind=1):
-        self.test_sequence.add_log_lines(
-            [# Set the breakpoint.
-             "read packet: $Z0,{0:x},{1}#00".format(address, breakpoint_kind),
-             # Verify the stub could set it.
-             "send packet: $OK#00",
-             ], True)
-        
-        if (do_continue):
-            self.test_sequence.add_log_lines(
-                [# Continue the inferior.
-                 "read packet: $c#00",
-                 # Expect a breakpoint stop report.
-                 {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} },
-                 ], True)        
-
-    def add_remove_breakpoint_packets(self, address, breakpoint_kind=1):
-        self.test_sequence.add_log_lines(
-            [# Remove the breakpoint.
-             "read packet: $z0,{0:x},{1}#00".format(address, breakpoint_kind),
-             # Verify the stub could unset it.
-             "send packet: $OK#00",
-            ], True)
-
-    def add_qSupported_packets(self):
-        self.test_sequence.add_log_lines(
-            ["read packet: $qSupported#00",
-             {"direction":"send", "regex":r"^\$(.*)#[0-9a-fA-F]{2}", "capture":{1: "qSupported_response"}},
-            ], True)
-
-    _KNOWN_QSUPPORTED_STUB_FEATURES = [
-        "augmented-libraries-svr4-read",
-        "PacketSize",
-        "QStartNoAckMode",
-        "qXfer:auxv:read",
-        "qXfer:libraries:read",
-        "qXfer:libraries-svr4:read",
-    ]
-
-    def parse_qSupported_response(self, context):
-        self.assertIsNotNone(context)
-
-        raw_response = context.get("qSupported_response")
-        self.assertIsNotNone(raw_response)
-
-        # For values with key=val, the dict key and vals are set as expected.  For feature+, feature- and feature?, the
-        # +,-,? is stripped from the key and set as the value.
-        supported_dict = {}
-        for match in re.finditer(r";?([^=;]+)(=([^;]+))?", raw_response):
-            key = match.group(1)
-            val = match.group(3)
-            
-            # key=val: store as is
-            if val and len(val) > 0:
-                supported_dict[key] = val
-            else:
-                if len(key) < 2:
-                    raise Exception("singular stub feature is too short: must be stub_feature{+,-,?}")
-                supported_type = key[-1]
-                key = key[:-1]
-                if not supported_type in ["+", "-", "?"]:
-                    raise Exception("malformed stub feature: final character {} not in expected set (+,-,?)".format(supported_type))
-                supported_dict[key] = supported_type 
-            # Ensure we know the supported element
-            if not key in self._KNOWN_QSUPPORTED_STUB_FEATURES:
-                raise Exception("unknown qSupported stub feature reported: %s" % key)
-
-        return supported_dict
-
-    def run_process_then_stop(self, run_seconds=1):
-        # Tell the stub to continue.
-        self.test_sequence.add_log_lines(
-             ["read packet: $vCont;c#00"],
-             True)
-        context = self.expect_gdbremote_sequence()
-
-        # Wait for run_seconds.
-        time.sleep(run_seconds)
-
-        # Send an interrupt, capture a T response.
-        self.reset_test_sequence()
-        self.test_sequence.add_log_lines(
-            ["read packet: {}".format(chr(03)),
-             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]+)([^#]+)#[0-9a-fA-F]{2}$", "capture":{1:"stop_result"} }],
-            True)
-        context = self.expect_gdbremote_sequence()
-        self.assertIsNotNone(context)
-        self.assertIsNotNone(context.get("stop_result"))
-        
-        return context
+class LldbGdbServerTestCase(gdbremote_testcase.GdbRemoteTestCaseBase):
 
     @debugserver_test
     def test_exe_starts_debugserver(self):
         self.init_debugserver_test()
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
 
     @llgs_test
     def test_exe_starts_llgs(self):
         self.init_llgs_test()
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
 
     def start_no_ack_mode(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         self.add_no_ack_remote_stream()
@@ -504,7 +46,7 @@ class LldbGdbServerTestCase(TestBase):
         self.start_no_ack_mode()
 
     def thread_suffix_supported(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         self.add_no_ack_remote_stream()
@@ -527,7 +69,7 @@ class LldbGdbServerTestCase(TestBase):
         self.thread_suffix_supported()
 
     def list_threads_in_stop_reply_supported(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         self.add_no_ack_remote_stream()
@@ -549,7 +91,7 @@ class LldbGdbServerTestCase(TestBase):
         self.list_threads_in_stop_reply_supported()
 
     def start_inferior(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # build launch args
@@ -557,7 +99,7 @@ class LldbGdbServerTestCase(TestBase):
 
         self.add_no_ack_remote_stream()
         self.test_sequence.add_log_lines(
-            ["read packet: %s" % build_gdbremote_A_packet(launch_args),
+            ["read packet: %s" % lldbgdbserverutils.build_gdbremote_A_packet(launch_args),
              "send packet: $OK#9a"],
             True)
         self.expect_gdbremote_sequence()
@@ -577,7 +119,7 @@ class LldbGdbServerTestCase(TestBase):
         self.start_inferior()
 
     def inferior_exit_0(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # build launch args
@@ -608,7 +150,7 @@ class LldbGdbServerTestCase(TestBase):
         self.inferior_exit_0()
 
     def inferior_exit_42(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         RETVAL = 42
@@ -640,8 +182,39 @@ class LldbGdbServerTestCase(TestBase):
         self.buildDwarf()
         self.inferior_exit_42()
 
+    def c_packet_works(self):
+        server = self.connect_to_debug_monitor()
+        self.assertIsNotNone(server)
+
+        # build launch args
+        launch_args = [os.path.abspath('a.out')]
+
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.test_sequence.add_log_lines(
+            ["read packet: $c#00",
+             "send packet: $W00#00"],
+            True)
+
+        self.expect_gdbremote_sequence()
+
+    @debugserver_test
+    @dsym_test
+    def test_c_packet_works_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.c_packet_works()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_c_packet_works_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.c_packet_works()
+
     def inferior_print_exit(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # build launch args
@@ -654,13 +227,9 @@ class LldbGdbServerTestCase(TestBase):
              {"type":"output_match", "regex":r"^hello, world\r\n$" },
              "send packet: $W00#00"],
             True)
-            
+
         context = self.expect_gdbremote_sequence()
         self.assertIsNotNone(context)
-        
-        # O_content = context.get("O_content")
-        # self.assertIsNotNone(O_content)
-        # self.assertEquals(O_content, "hello, world\r\n")
 
     @debugserver_test
     @dsym_test
@@ -678,7 +247,7 @@ class LldbGdbServerTestCase(TestBase):
         self.inferior_print_exit()
 
     def first_launch_stop_reply_thread_matches_first_qC(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # build launch args
@@ -728,7 +297,7 @@ class LldbGdbServerTestCase(TestBase):
         self.assertNotEqual(0, pid)
 
         # If possible, verify that the process is running.
-        self.assertTrue(process_is_running(pid, True))
+        self.assertTrue(lldbgdbserverutils.process_is_running(pid, True))
 
     @debugserver_test
     @dsym_test
@@ -821,12 +390,15 @@ class LldbGdbServerTestCase(TestBase):
             True)
         self.expect_gdbremote_sequence()
 
+        # Wait a moment for completed and now-detached inferior process to clear.
+        time.sleep(1)
+
         # Process should be dead now.  Reap results.
         poll_result = procs["inferior"].poll()
         self.assertIsNotNone(poll_result)
 
         # Where possible, verify at the system level that the process is not running.
-        self.assertFalse(process_is_running(procs["inferior"].pid, False))
+        self.assertFalse(lldbgdbserverutils.process_is_running(procs["inferior"].pid, False))
 
     @debugserver_test
     @dsym_test
@@ -853,12 +425,15 @@ class LldbGdbServerTestCase(TestBase):
             True)
         self.expect_gdbremote_sequence()
 
+        # Wait a moment for completed and now-detached inferior process to clear.
+        time.sleep(1)
+
         # Process should be dead now.  Reap results.
         poll_result = procs["inferior"].poll()
         self.assertIsNotNone(poll_result)
 
         # Where possible, verify at the system level that the process is not running.
-        self.assertFalse(process_is_running(procs["inferior"].pid, False))
+        self.assertFalse(lldbgdbserverutils.process_is_running(procs["inferior"].pid, False))
 
     @debugserver_test
     @dsym_test
@@ -878,7 +453,7 @@ class LldbGdbServerTestCase(TestBase):
         self.attach_commandline_kill_after_initial_stop()
 
     def qRegisterInfo_returns_one_valid_result(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # Build launch args
@@ -889,7 +464,7 @@ class LldbGdbServerTestCase(TestBase):
         self.add_verified_launch_packets(launch_args)
         self.test_sequence.add_log_lines(
             ["read packet: $qRegisterInfo0#00",
-             { "direction":"send", "regex":r"^\$(.+);#\d{2}", "capture":{1:"reginfo_0"} }],
+             { "direction":"send", "regex":r"^\$(.+);#[0-9A-Fa-f]{2}", "capture":{1:"reginfo_0"} }],
             True)
 
         # Run the stream
@@ -898,7 +473,7 @@ class LldbGdbServerTestCase(TestBase):
 
         reg_info_packet = context.get("reginfo_0")
         self.assertIsNotNone(reg_info_packet)
-        self.assert_valid_reg_info(parse_reg_info_response(reg_info_packet))
+        self.assert_valid_reg_info(lldbgdbserverutils.parse_reg_info_response(reg_info_packet))
 
     @debugserver_test
     @dsym_test
@@ -916,7 +491,7 @@ class LldbGdbServerTestCase(TestBase):
         self.qRegisterInfo_returns_one_valid_result()
 
     def qRegisterInfo_returns_all_valid_results(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # Build launch args.
@@ -951,7 +526,7 @@ class LldbGdbServerTestCase(TestBase):
         self.qRegisterInfo_returns_all_valid_results()
 
     def qRegisterInfo_contains_required_generics(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # Build launch args
@@ -1000,7 +575,7 @@ class LldbGdbServerTestCase(TestBase):
         self.qRegisterInfo_contains_required_generics()
 
     def qRegisterInfo_contains_at_least_one_register_set(self):
-        server = self.start_server()
+        server = self.connect_to_debug_monitor()
         self.assertIsNotNone(server)
 
         # Build launch args
@@ -1036,6 +611,42 @@ class LldbGdbServerTestCase(TestBase):
         self.init_llgs_test()
         self.buildDwarf()
         self.qRegisterInfo_contains_at_least_one_register_set()
+
+    def qRegisterInfo_contains_avx_registers_on_linux_x86_64(self):
+        server = self.connect_to_debug_monitor()
+        self.assertIsNotNone(server)
+
+        # Build launch args
+        launch_args = [os.path.abspath('a.out')]
+
+        # Build the expected protocol stream
+        self.add_no_ack_remote_stream()
+        self.add_verified_launch_packets(launch_args)
+        self.add_register_info_collection_packets()
+
+        # Run the packet stream.
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        # Gather register info entries.
+        reg_infos = self.parse_register_info_packets(context)
+
+        # Collect all generics found.
+        register_sets = { reg_info['set']:1 for reg_info in reg_infos if 'set' in reg_info }
+        self.assertTrue("Advanced Vector Extensions" in register_sets)
+
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_qRegisterInfo_contains_avx_registers_on_linux_x86_64_llgs_dwarf(self):
+        # Skip this test if not Linux x86_64.
+        if platform.system() != "Linux" or platform.processor() != "x86_64":
+            self.skipTest("linux x86_64 test")
+
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.qRegisterInfo_contains_avx_registers_on_linux_x86_64()
 
     def qThreadInfo_contains_thread(self):
         procs = self.prep_debug_monitor_and_inferior()
@@ -1164,6 +775,12 @@ class LldbGdbServerTestCase(TestBase):
         # Read value for each register.
         reg_index = 0
         for reg_info in reg_infos:
+            # Skip registers that don't have a register set.  For x86, these are
+            # the DRx registers, which have no LLDB-kind register number and thus
+            # cannot be read via normal NativeRegisterContext::ReadRegister(reg_info,...) calls.
+            if not "set" in reg_info:
+                continue
+
             # Clear existing packet expectations.
             self.reset_test_sequence()
 
@@ -1179,7 +796,6 @@ class LldbGdbServerTestCase(TestBase):
             p_response = context.get("p_response")
             self.assertIsNotNone(p_response)
             self.assertEquals(len(p_response), 2 * int(reg_info["bitsize"]) / 8)
-            # print "register {} ({}): {}".format(reg_index, reg_info["name"], p_response)
 
             # Increment loop
             reg_index += 1
@@ -1221,7 +837,7 @@ class LldbGdbServerTestCase(TestBase):
     def Hg_switches_to_3_threads(self):
         # Startup the inferior with three threads (main + 2 new ones).
         procs = self.prep_debug_monitor_and_inferior(inferior_args=["thread:new", "thread:new"])
-        
+
         # Let the inferior process have a few moments to start up the thread when launched.  (The launch scenario has no time to run, so threads won't be there yet.)
         self.run_process_then_stop(run_seconds=1)
 
@@ -1239,10 +855,10 @@ class LldbGdbServerTestCase(TestBase):
                  "read packet: $qC#00",
                  { "direction":"send", "regex":r"^\$QC([0-9a-fA-F]+)#", "capture":{1:"thread_id"} }],
                 True)
-            
+
             context = self.expect_gdbremote_sequence()
             self.assertIsNotNone(context)
-            
+
             # Verify the thread id.
             self.assertIsNotNone(context.get("thread_id"))
             self.assertEquals(int(context.get("thread_id"), 16), thread)
@@ -1286,7 +902,7 @@ class LldbGdbServerTestCase(TestBase):
         # and the test requires getting stdout from the exe.
 
         NUM_THREADS = 3
-        
+
         # Startup the inferior with three threads (main + NUM_THREADS-1 worker threads).
         # inferior_args=["thread:print-ids"]
         inferior_args=["thread:segfault"]
@@ -1310,63 +926,78 @@ class LldbGdbServerTestCase(TestBase):
         # self.assertEquals(len(threads), NUM_THREADS)
 
         signaled_tids = {}
+        print_thread_ids = {}
 
         # Switch to each thread, deliver a signal, and verify signal delivery
         for i in range(NUM_THREADS - 1):
             # Run until SIGSEGV comes in.
             self.reset_test_sequence()
             self.test_sequence.add_log_lines(
-                [ # "read packet: $c#00",
-                 {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"signo", 2:"thread_id"} }
+                [{"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"signo", 2:"thread_id"} }
                  ], True)
-            context = self.expect_gdbremote_sequence()
-            
+
+            context = self.expect_gdbremote_sequence(timeout_seconds=10)
             self.assertIsNotNone(context)
             signo = context.get("signo")
             self.assertEqual(int(signo, 16), self.TARGET_EXC_BAD_ACCESS)
-            
+
             # Ensure we haven't seen this tid yet.
             thread_id = int(context.get("thread_id"), 16)
             self.assertFalse(thread_id in signaled_tids)
             signaled_tids[thread_id] = 1
-            
+
             # Send SIGUSR1 to the thread that signaled the SIGSEGV.
             self.reset_test_sequence()
             self.test_sequence.add_log_lines(
                 [
+                # Set the continue thread.
                  "read packet: $Hc{0:x}#00".format(thread_id),  # Set current thread.
                  "send packet: $OK#00",
+
+                 # Continue sending the signal number to the continue thread.
+                 # The commented out packet is a way to do this same operation without using
+                 # a $Hc (but this test is testing $Hc, so we'll stick with the former).
                  "read packet: $C{0:x}#00".format(signal.SIGUSR1),
                  # "read packet: $vCont;C{0:x}:{1:x};c#00".format(signal.SIGUSR1, thread_id),
-                 # "read packet: $c#00",
-                 {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} },
-                  "read packet: $c#00",
-                 # { "type":"output_match", "regex":r"^received SIGUSR1 on thread id: ([0-9a-fA-F]+)\r\n$", "capture":{ 1:"print_thread_id"} },
-                 # "read packet: {}".format(chr(03)),
+
+                 # FIXME: Linux does not report the thread stop on the delivered signal (SIGUSR1 here).  MacOSX debugserver does.
+                 # But MacOSX debugserver isn't guaranteeing the thread the signal handler runs on, so currently its an XFAIL.
+                 # Need to rectify behavior here.  The linux behavior is more intuitive to me since we're essentially swapping out
+                 # an about-to-be-delivered signal (for which we already sent a stop packet) to a different signal.
+                 # {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} },
+                 #  "read packet: $c#00",
+                 { "type":"output_match", "regex":r"^received SIGUSR1 on thread id: ([0-9a-fA-F]+)\r\nthread ([0-9a-fA-F]+): past SIGSEGV\r\n", "capture":{ 1:"print_thread_id", 2:"post_handle_thread_id" } },
                 ],
                 True)
 
             # Run the sequence.
-            context = self.expect_gdbremote_sequence()
+            context = self.expect_gdbremote_sequence(timeout_seconds=10)
             self.assertIsNotNone(context)
 
             # Ensure the stop signal is the signal we delivered.
-            stop_signo = context.get("stop_signo")
-            self.assertIsNotNone(stop_signo)
-            self.assertEquals(int(stop_signo,16), signal.SIGUSR1)
+            # stop_signo = context.get("stop_signo")
+            # self.assertIsNotNone(stop_signo)
+            # self.assertEquals(int(stop_signo,16), signal.SIGUSR1)
             
             # Ensure the stop thread is the thread to which we delivered the signal.
-            stop_thread_id = context.get("stop_thread_id")
-            self.assertIsNotNone(stop_thread_id)
-            self.assertEquals(int(stop_thread_id,16), thread_id)
+            # stop_thread_id = context.get("stop_thread_id")
+            # self.assertIsNotNone(stop_thread_id)
+            # self.assertEquals(int(stop_thread_id,16), thread_id)
 
             # Ensure we haven't seen this thread id yet.  The inferior's self-obtained thread ids are not guaranteed to match the stub tids (at least on MacOSX).
-            # print_thread_id = context.get("print_thread_id")
-            # self.assertIsNotNone(print_thread_id)
-            # self.assertFalse(print_thread_id in print_thread_ids)
+            print_thread_id = context.get("print_thread_id")
+            self.assertIsNotNone(print_thread_id)
+            print_thread_id = int(print_thread_id, 16)
+            self.assertFalse(print_thread_id in print_thread_ids)
             
             # Now remember this print (i.e. inferior-reflected) thread id and ensure we don't hit it again.
-            # print_thread_ids[print_thread_id] = 1
+            print_thread_ids[print_thread_id] = 1
+
+            # Ensure post signal-handle thread id matches the thread that initially raised the SIGSEGV.
+            post_handle_thread_id = context.get("post_handle_thread_id")
+            self.assertIsNotNone(post_handle_thread_id)
+            post_handle_thread_id = int(post_handle_thread_id, 16)
+            self.assertEquals(post_handle_thread_id, print_thread_id)
 
     @debugserver_test
     @dsym_test
@@ -1431,7 +1062,7 @@ class LldbGdbServerTestCase(TestBase):
         self.assertIsNotNone(context.get("read_contents"))
         read_contents = context.get("read_contents").decode("hex")
         self.assertEquals(read_contents, MEMORY_CONTENTS)
-        
+
     @debugserver_test
     @dsym_test
     def test_m_packet_reads_memory_debugserver_dsym(self):
@@ -1513,14 +1144,16 @@ class LldbGdbServerTestCase(TestBase):
         self.assertIsNotNone(context)
         mem_region_dict = self.parse_memory_region_packet(context)
 
+        # Ensure there are no errors reported.
+        self.assertFalse("error" in mem_region_dict)
+
         # Ensure code address is readable and executable.
         self.assertTrue("permissions" in mem_region_dict)
         self.assertTrue("r" in mem_region_dict["permissions"])
         self.assertTrue("x" in mem_region_dict["permissions"])
-        
+
         # Ensure the start address and size encompass the address we queried.
         self.assert_address_within_memory_region(code_address, mem_region_dict)
-        
 
     @debugserver_test
     @dsym_test
@@ -1575,6 +1208,9 @@ class LldbGdbServerTestCase(TestBase):
         self.assertIsNotNone(context)
         mem_region_dict = self.parse_memory_region_packet(context)
 
+        # Ensure there are no errors reported.
+        self.assertFalse("error" in mem_region_dict)
+
         # Ensure address is readable and executable.
         self.assertTrue("permissions" in mem_region_dict)
         self.assertTrue("r" in mem_region_dict["permissions"])
@@ -1582,7 +1218,6 @@ class LldbGdbServerTestCase(TestBase):
 
         # Ensure the start address and size encompass the address we queried.
         self.assert_address_within_memory_region(stack_address, mem_region_dict)
-
 
     @debugserver_test
     @dsym_test
@@ -1636,6 +1271,9 @@ class LldbGdbServerTestCase(TestBase):
         context = self.expect_gdbremote_sequence()
         self.assertIsNotNone(context)
         mem_region_dict = self.parse_memory_region_packet(context)
+
+        # Ensure there are no errors reported.
+        self.assertFalse("error" in mem_region_dict)
 
         # Ensure address is readable and executable.
         self.assertTrue("permissions" in mem_region_dict)
@@ -1732,16 +1370,16 @@ class LldbGdbServerTestCase(TestBase):
              # Capture $p results.
              { "direction":"send", "regex":r"^\$([0-9a-fA-F]+)#", "capture":{1:"p_response"} },
              ], True)
-
+ 
         context = self.expect_gdbremote_sequence()
         self.assertIsNotNone(context)
-
+         
         # Verify the PC is where we expect.  Note response is in endianness of the inferior.
         p_response = context.get("p_response")
         self.assertIsNotNone(p_response)
 
         # Convert from target endian to int.
-        returned_pc = unpack_register_hex_unsigned(endian, p_response)
+        returned_pc = lldbgdbserverutils.unpack_register_hex_unsigned(endian, p_response)
         self.assertEquals(returned_pc, function_address)
 
         # Verify that a breakpoint remove and continue gets us the expected output.
@@ -1757,7 +1395,7 @@ class LldbGdbServerTestCase(TestBase):
             # We should now receive the output from the call.
             { "type":"output_match", "regex":r"^hello, world\r\n$" },
             # And wait for program completion.
-            {"direction":"send", "regex":r"^\$W00(.*)#00" },
+            {"direction":"send", "regex":r"^\$W00(.*)#[0-9a-fA-F]{2}$" },
             ], True)
 
         context = self.expect_gdbremote_sequence()
@@ -1785,7 +1423,7 @@ class LldbGdbServerTestCase(TestBase):
         g_c2_address = args["g_c2_address"]
         expected_g_c1 = args["expected_g_c1"]
         expected_g_c2 = args["expected_g_c2"]
-        
+
         # Read g_c1 and g_c2 contents.
         self.reset_test_sequence()
         self.test_sequence.add_log_lines(
@@ -1825,13 +1463,13 @@ class LldbGdbServerTestCase(TestBase):
             self.assertIsNotNone(context)
             self.assertIsNotNone(context.get("stop_signo"))
             self.assertEquals(int(context.get("stop_signo"), 16), signal.SIGTRAP)
-           
+
             single_step_count += 1
-            
+
             # See if the predicate is true.  If so, we're done.
             if predicate(args):
                 return (True, single_step_count)
-        
+
         # The predicate didn't return true within the runaway step count.
         return (False, single_step_count)
 
@@ -1895,7 +1533,7 @@ class LldbGdbServerTestCase(TestBase):
         args["expected_g_c2"] = "1"
 
         self.assertTrue(self.g_c1_c2_contents_are(args))
-        
+
         # Verify we take only a small number of steps to hit the first state.  Might need to work through function entry prologue code.
         args["expected_g_c1"] = "1"
         args["expected_g_c2"] = "1"
@@ -2032,7 +1670,7 @@ class LldbGdbServerTestCase(TestBase):
         self.set_inferior_startup_launch()
         self.written_M_content_reads_back_correctly()
 
-    def flip_all_bits_in_each_register_value(self, reg_infos):
+    def flip_all_bits_in_each_register_value(self, reg_infos, endian):
         self.assertIsNotNone(reg_infos)
 
         successful_writes = 0
@@ -2043,6 +1681,9 @@ class LldbGdbServerTestCase(TestBase):
             # working off a full set of register infos, so an inferred register index could be wrong. 
             reg_index = reg_info["lldb_register_index"]
             self.assertIsNotNone(reg_index)
+
+            reg_byte_size = int(reg_info["bitsize"])/8
+            self.assertTrue(reg_byte_size > 0)
 
             # Read the existing value.
             self.reset_test_sequence()
@@ -2056,23 +1697,25 @@ class LldbGdbServerTestCase(TestBase):
             # Verify the response length.
             p_response = context.get("p_response")
             self.assertIsNotNone(p_response)
-            self.assertEquals(len(p_response), 2 * int(reg_info["bitsize"]) / 8)
+            initial_reg_value = lldbgdbserverutils.unpack_register_hex_unsigned(endian, p_response)
 
             # Flip the value by xoring with all 1s
             all_one_bits_raw = "ff" * (int(reg_info["bitsize"]) / 8)
-            flipped_bits_int = int(p_response, 16) ^ int(all_one_bits_raw, 16)
-            # print "reg (index={}, name={}): val={}, flipped bits (int={}, hex={:x})".format(reg_index, reg_info["name"], p_response, flipped_bits_int, flipped_bits_int)
+            flipped_bits_int = initial_reg_value ^ int(all_one_bits_raw, 16)
+            # print "reg (index={}, name={}): val={}, flipped bits (int={}, hex={:x})".format(reg_index, reg_info["name"], initial_reg_value, flipped_bits_int, flipped_bits_int)
 
             # Write the flipped value to the register.
             self.reset_test_sequence()
             self.test_sequence.add_log_lines(
-                ["read packet: $P{0:x}={1:x}#00".format(reg_index, flipped_bits_int),
+                ["read packet: $P{0:x}={1}#00".format(reg_index, lldbgdbserverutils.pack_register_hex(endian, flipped_bits_int, byte_size=reg_byte_size)),
                 { "direction":"send", "regex":r"^\$(OK|E[0-9a-fA-F]+)#[0-9a-fA-F]{2}", "capture":{1:"P_response"} },
                 ], True)
             context = self.expect_gdbremote_sequence()
             self.assertIsNotNone(context)
 
-            # Determine if the write succeeded.  There are a handful of registers that can fail.
+            # Determine if the write succeeded.  There are a handful of registers that can fail, or partially fail
+            # (e.g. flags, segment selectors, etc.) due to register value restrictions.  Don't worry about them
+            # all flipping perfectly.
             P_response = context.get("P_response")
             self.assertIsNotNone(P_response)
             if P_response == "OK":
@@ -2091,40 +1734,60 @@ class LldbGdbServerTestCase(TestBase):
                 context = self.expect_gdbremote_sequence()
                 self.assertIsNotNone(context)
 
-                verify_p_response = context.get("p_response")
-                self.assertIsNotNone(verify_p_response)
-                if verify_p_response != "{:x}".format(flipped_bits_int):
+                verify_p_response_raw = context.get("p_response")
+                self.assertIsNotNone(verify_p_response_raw)
+                verify_bits = lldbgdbserverutils.unpack_register_hex_unsigned(endian, verify_p_response_raw)
+
+                if verify_bits != flipped_bits_int:
                     # Some registers, like mxcsrmask and others, will permute what's written.  Adjust succeed/fail counts.
-                    # print "reg (index={}, name={}): read verify FAILED: wrote {:x}, verify read back {}".format(reg_index, reg_info["name"], flipped_bits_int, verify_p_response)
+                    # print "reg (index={}, name={}): read verify FAILED: wrote {:x}, verify read back {:x}".format(reg_index, reg_info["name"], flipped_bits_int, verify_bits)
                     successful_writes -= 1
                     failed_writes +=1
 
         return (successful_writes, failed_writes)
 
+    def is_bit_flippable_register(self, reg_info):
+        if not reg_info:
+            return False
+        if not "set" in reg_info:
+            return False
+        if reg_info["set"] != "General Purpose Registers":
+            return False
+        if ("container-regs" in reg_info) and (len(reg_info["container-regs"]) > 0):
+            # Don't try to bit flip registers contained in another register.
+            return False
+        if re.match("^.s$", reg_info["name"]):
+            # This is a 2-letter register name that ends in "s", like a segment register.
+            # Don't try to bit flip these.
+            return False
+        # Okay, this looks fine-enough.
+        return True
+
     def P_writes_all_gpr_registers(self):
         # Start inferior debug session, grab all register info.
         procs = self.prep_debug_monitor_and_inferior(inferior_args=["sleep:2"])
         self.add_register_info_collection_packets()
-        self.test_sequence.add_log_lines(
-            [# Start running for a bit.
-             "read packet: $c#00",
-             "read packet: {}".format(chr(03)),
-             {"direction":"send", "regex":r"^\$T([0-9a-fA-F]{2})thread:([0-9a-fA-F]+);", "capture":{1:"stop_signo", 2:"stop_thread_id"} }],
-            True)
+        self.add_process_info_collection_packets()
 
         context = self.expect_gdbremote_sequence()
         self.assertIsNotNone(context)
 
+        # Process register infos.
         reg_infos = self.parse_register_info_packets(context)
         self.assertIsNotNone(reg_infos)
         self.add_lldb_register_index(reg_infos)
 
-        # Pull out the general purpose register infos
-        gpr_reg_infos = [reg_info for reg_info in reg_infos if reg_info["set"] == "General Purpose Registers"]
+        # Process endian.
+        process_info = self.parse_process_info_response(context)
+        endian = process_info.get("endian")
+        self.assertIsNotNone(endian)
+
+        # Pull out the register infos that we think we can bit flip successfully,.
+        gpr_reg_infos = [reg_info for reg_info in reg_infos if self.is_bit_flippable_register(reg_info)]
         self.assertIsNotNone(len(gpr_reg_infos) > 0)
 
         # Write flipped bit pattern of existing value to each register.
-        (successful_writes, failed_writes) = self.flip_all_bits_in_each_register_value(gpr_reg_infos)
+        (successful_writes, failed_writes) = self.flip_all_bits_in_each_register_value(gpr_reg_infos, endian)
         # print "successful writes: {}, failed writes: {}".format(successful_writes, failed_writes)
         self.assertTrue(successful_writes > 0)
 
@@ -2146,6 +1809,115 @@ class LldbGdbServerTestCase(TestBase):
         self.buildDwarf()
         self.set_inferior_startup_launch()
         self.P_writes_all_gpr_registers()
+
+    def P_and_p_thread_suffix_work(self):
+        # Startup the inferior with three threads.
+        procs = self.prep_debug_monitor_and_inferior(inferior_args=["thread:new", "thread:new"])
+        self.add_thread_suffix_request_packets()
+        self.add_register_info_collection_packets()
+        self.add_process_info_collection_packets()
+
+        context = self.expect_gdbremote_sequence()
+        self.assertIsNotNone(context)
+
+        process_info = self.parse_process_info_response(context)
+        self.assertIsNotNone(process_info)
+        endian = process_info.get("endian")
+        self.assertIsNotNone(endian)
+
+        reg_infos = self.parse_register_info_packets(context)
+        self.assertIsNotNone(reg_infos)
+        self.add_lldb_register_index(reg_infos)
+
+        reg_index = self.select_modifiable_register(reg_infos)
+        self.assertIsNotNone(reg_index)
+        reg_byte_size = int(reg_infos[reg_index]["bitsize"]) / 8
+        self.assertTrue(reg_byte_size > 0)
+
+        # Run the process a bit so threads can start up, and collect register info.
+        context = self.run_process_then_stop(run_seconds=1)
+        self.assertIsNotNone(context)
+
+        # Wait for 3 threads to be present.
+        threads = self.wait_for_thread_count(3, timeout_seconds=5)
+        self.assertEquals(len(threads), 3)
+
+        expected_reg_values = []
+        register_increment = 1
+        next_value = None
+
+        # Set the same register in each of 3 threads to a different value.
+        # Verify each one has the unique value.
+        for thread in threads:
+            # If we don't have a next value yet, start it with the initial read value + 1
+            if not next_value:
+                # Read pre-existing register value.
+                self.reset_test_sequence()
+                self.test_sequence.add_log_lines(
+                    ["read packet: $p{0:x};thread:{1:x}#00".format(reg_index, thread),
+                     { "direction":"send", "regex":r"^\$([0-9a-fA-F]+)#", "capture":{1:"p_response"} },
+                    ], True)
+                context = self.expect_gdbremote_sequence()
+                self.assertIsNotNone(context)
+
+                # Set the next value to use for writing as the increment plus current value.
+                p_response = context.get("p_response")
+                self.assertIsNotNone(p_response)
+                next_value = lldbgdbserverutils.unpack_register_hex_unsigned(endian, p_response)
+
+            # Set new value using P and thread suffix.
+            self.reset_test_sequence()
+            self.test_sequence.add_log_lines(
+                ["read packet: $P{0:x}={1};thread:{2:x}#00".format(reg_index, lldbgdbserverutils.pack_register_hex(endian, next_value, byte_size=reg_byte_size), thread),
+                 "send packet: $OK#00",
+                ], True)
+            context = self.expect_gdbremote_sequence()
+            self.assertIsNotNone(context)
+
+            # Save the value we set.
+            expected_reg_values.append(next_value)
+
+            # Increment value for next thread to use (we want them all different so we can verify they wrote to each thread correctly next.)
+            next_value += register_increment
+
+        # Revisit each thread and verify they have the expected value set for the register we wrote.
+        thread_index = 0
+        for thread in threads:
+            # Read pre-existing register value.
+            self.reset_test_sequence()
+            self.test_sequence.add_log_lines(
+                ["read packet: $p{0:x};thread:{1:x}#00".format(reg_index, thread),
+                 { "direction":"send", "regex":r"^\$([0-9a-fA-F]+)#", "capture":{1:"p_response"} },
+                ], True)
+            context = self.expect_gdbremote_sequence()
+            self.assertIsNotNone(context)
+
+            # Get the register value.
+            p_response = context.get("p_response")
+            self.assertIsNotNone(p_response)
+            read_value = lldbgdbserverutils.unpack_register_hex_unsigned(endian, p_response)
+
+            # Make sure we read back what we wrote.
+            self.assertEquals(read_value, expected_reg_values[thread_index])
+            thread_index += 1
+
+    # Note: as of this moment, a hefty number of the GPR writes are failing with E32 (everything except rax-rdx, rdi, rsi, rbp).
+    @debugserver_test
+    @dsym_test
+    def test_P_and_p_thread_suffix_work_debugserver_dsym(self):
+        self.init_debugserver_test()
+        self.buildDsym()
+        self.set_inferior_startup_launch()
+        self.P_and_p_thread_suffix_work()
+
+    @llgs_test
+    @dwarf_test
+    @unittest2.expectedFailure()
+    def test_P_and_p_thread_suffix_work_llgs_dwarf(self):
+        self.init_llgs_test()
+        self.buildDwarf()
+        self.set_inferior_startup_launch()
+        self.P_and_p_thread_suffix_work()
 
 
 if __name__ == '__main__':

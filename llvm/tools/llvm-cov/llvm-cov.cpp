@@ -13,6 +13,7 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/GCOV.h"
 #include "llvm/Support/ManagedStatic.h"
@@ -104,7 +105,7 @@ int main(int argc, char **argv) {
   GCOVFile GF;
 
   std::unique_ptr<MemoryBuffer> GCNO_Buff;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(InputGCNO, GCNO_Buff)) {
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(InputGCNO, GCNO_Buff)) {
     errs() << InputGCNO << ": " << ec.message() << "\n";
     return 1;
   }
@@ -115,8 +116,8 @@ int main(int argc, char **argv) {
   }
 
   std::unique_ptr<MemoryBuffer> GCDA_Buff;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(InputGCDA, GCDA_Buff)) {
-    if (ec != std::errc::no_such_file_or_directory) {
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(InputGCDA, GCDA_Buff)) {
+    if (ec != errc::no_such_file_or_directory) {
       errs() << InputGCDA << ": " << ec.message() << "\n";
       return 1;
     }

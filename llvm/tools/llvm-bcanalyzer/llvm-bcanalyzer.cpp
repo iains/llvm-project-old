@@ -480,8 +480,7 @@ static int AnalyzeBitcode() {
   // Read the input file.
   std::unique_ptr<MemoryBuffer> MemBuf;
 
-  if (error_code ec =
-        MemoryBuffer::getFileOrSTDIN(InputFilename, MemBuf))
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(InputFilename, MemBuf))
     return Error("Error reading '" + InputFilename + "': " + ec.message());
 
   if (MemBuf->getBufferSize() & 3)

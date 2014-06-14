@@ -20,6 +20,7 @@
 #include "X86RegisterInfo.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
@@ -78,12 +79,14 @@ public:
 private:
   bool X86FastEmitCompare(const Value *LHS, const Value *RHS, EVT VT);
 
-  bool X86FastEmitLoad(EVT VT, const X86AddressMode &AM, unsigned &RR);
+  bool X86FastEmitLoad(EVT VT, const X86AddressMode &AM, MachineMemOperand *MMO,
+                       unsigned &ResultReg);
 
   bool X86FastEmitStore(EVT VT, const Value *Val, const X86AddressMode &AM,
-                        bool Aligned = false);
-  bool X86FastEmitStore(EVT VT, unsigned ValReg, const X86AddressMode &AM,
-                        bool Aligned = false);
+                        MachineMemOperand *MMO = nullptr, bool Aligned = false);
+  bool X86FastEmitStore(EVT VT, unsigned ValReg, bool ValIsKill,
+                        const X86AddressMode &AM,
+                        MachineMemOperand *MMO = nullptr, bool Aligned = false);
 
   bool X86FastEmitExtend(ISD::NodeType Opc, EVT DstVT, unsigned Src, EVT SrcVT,
                          unsigned &ResultReg);
@@ -180,7 +183,7 @@ bool X86FastISel::isTypeLegal(Type *Ty, MVT &VT, bool AllowI1) {
 /// The address is either pre-computed, i.e. Ptr, or a GlobalAddress, i.e. GV.
 /// Return true and the result register by reference if it is possible.
 bool X86FastISel::X86FastEmitLoad(EVT VT, const X86AddressMode &AM,
-                                  unsigned &ResultReg) {
+                                  MachineMemOperand *MMO, unsigned &ResultReg) {
   // Get opcode and regclass of the output for the given load instruction.
   unsigned Opc = 0;
   const TargetRegisterClass *RC = nullptr;
@@ -228,8 +231,11 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, const X86AddressMode &AM,
   }
 
   ResultReg = createResultReg(RC);
-  addFullAddress(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt,
-                         DbgLoc, TII.get(Opc), ResultReg), AM);
+  MachineInstrBuilder MIB =
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc), ResultReg);
+  addFullAddress(MIB, AM);
+  if (MMO)
+    MIB->addMemOperand(*FuncInfo.MF, MMO);
   return true;
 }
 
@@ -237,9 +243,9 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, const X86AddressMode &AM,
 /// type VT. The address is either pre-computed, consisted of a base ptr, Ptr
 /// and a displacement offset, or a GlobalAddress,
 /// i.e. V. Return true if it is possible.
-bool
-X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg,
-                              const X86AddressMode &AM, bool Aligned) {
+bool X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg, bool ValIsKill,
+                                   const X86AddressMode &AM,
+                                   MachineMemOperand *MMO, bool Aligned) {
   // Get opcode and regclass of the output for the given store instruction.
   unsigned Opc = 0;
   switch (VT.getSimpleVT().SimpleTy) {
@@ -249,7 +255,8 @@ X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg,
     // Mask out all but lowest bit.
     unsigned AndResult = createResultReg(&X86::GR8RegClass);
     BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc,
-            TII.get(X86::AND8ri), AndResult).addReg(ValReg).addImm(1);
+            TII.get(X86::AND8ri), AndResult)
+      .addReg(ValReg, getKillRegState(ValIsKill)).addImm(1);
     ValReg = AndResult;
   }
   // FALLTHROUGH, handling i1 as i8.
@@ -288,13 +295,18 @@ X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg,
     break;
   }
 
-  addFullAddress(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt,
-                         DbgLoc, TII.get(Opc)), AM).addReg(ValReg);
+  MachineInstrBuilder MIB =
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc));
+  addFullAddress(MIB, AM).addReg(ValReg, getKillRegState(ValIsKill));
+  if (MMO)
+    MIB->addMemOperand(*FuncInfo.MF, MMO);
+
   return true;
 }
 
 bool X86FastISel::X86FastEmitStore(EVT VT, const Value *Val,
-                                   const X86AddressMode &AM, bool Aligned) {
+                                   const X86AddressMode &AM,
+                                   MachineMemOperand *MMO, bool Aligned) {
   // Handle 'null' like i32/i64 0.
   if (isa<ConstantPointerNull>(Val))
     Val = Constant::getNullValue(DL.getIntPtrType(Val->getContext()));
@@ -317,10 +329,12 @@ bool X86FastISel::X86FastEmitStore(EVT VT, const Value *Val,
     }
 
     if (Opc) {
-      addFullAddress(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt,
-                             DbgLoc, TII.get(Opc)), AM)
-                             .addImm(Signed ? (uint64_t) CI->getSExtValue() :
-                                              CI->getZExtValue());
+      MachineInstrBuilder MIB =
+        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc));
+      addFullAddress(MIB, AM).addImm(Signed ? (uint64_t) CI->getSExtValue()
+                                            : CI->getZExtValue());
+      if (MMO)
+        MIB->addMemOperand(*FuncInfo.MF, MMO);
       return true;
     }
   }
@@ -329,7 +343,8 @@ bool X86FastISel::X86FastEmitStore(EVT VT, const Value *Val,
   if (ValReg == 0)
     return false;
 
-  return X86FastEmitStore(VT, ValReg, AM, Aligned);
+  bool ValKill = hasTrivialKill(Val);
+  return X86FastEmitStore(VT, ValReg, ValKill, AM, MMO, Aligned);
 }
 
 /// X86FastEmitExtend - Emit a machine instruction to extend a value Src of
@@ -740,19 +755,24 @@ bool X86FastISel::X86SelectStore(const Instruction *I) {
   if (S->isAtomic())
     return false;
 
-  unsigned SABIAlignment =
-    DL.getABITypeAlignment(S->getValueOperand()->getType());
-  bool Aligned = S->getAlignment() == 0 || S->getAlignment() >= SABIAlignment;
+  const Value *Val = S->getValueOperand();
+  const Value *Ptr = S->getPointerOperand();
 
   MVT VT;
-  if (!isTypeLegal(I->getOperand(0)->getType(), VT, /*AllowI1=*/true))
+  if (!isTypeLegal(Val->getType(), VT, /*AllowI1=*/true))
     return false;
+
+  unsigned Alignment = S->getAlignment();
+  unsigned ABIAlignment = DL.getABITypeAlignment(Val->getType());
+  if (Alignment == 0)  // Ensure that codegen never sees alignment 0
+    Alignment = ABIAlignment;
+  bool Aligned = Alignment >= ABIAlignment;
 
   X86AddressMode AM;
-  if (!X86SelectAddress(I->getOperand(1), AM))
+  if (!X86SelectAddress(Ptr, AM))
     return false;
 
-  return X86FastEmitStore(VT, I->getOperand(0), AM, Aligned);
+  return X86FastEmitStore(VT, Val, AM, createMachineMemOperandFor(I), Aligned);
 }
 
 /// X86SelectRet - Select and emit code to implement ret instructions.
@@ -887,25 +907,29 @@ bool X86FastISel::X86SelectRet(const Instruction *I) {
 
 /// X86SelectLoad - Select and emit code to implement load instructions.
 ///
-bool X86FastISel::X86SelectLoad(const Instruction *I)  {
+bool X86FastISel::X86SelectLoad(const Instruction *I) {
+  const LoadInst *LI = cast<LoadInst>(I);
+
   // Atomic loads need special handling.
-  if (cast<LoadInst>(I)->isAtomic())
+  if (LI->isAtomic())
     return false;
 
   MVT VT;
-  if (!isTypeLegal(I->getType(), VT, /*AllowI1=*/true))
+  if (!isTypeLegal(LI->getType(), VT, /*AllowI1=*/true))
     return false;
 
+  const Value *Ptr = LI->getPointerOperand();
+
   X86AddressMode AM;
-  if (!X86SelectAddress(I->getOperand(0), AM))
+  if (!X86SelectAddress(Ptr, AM))
     return false;
 
   unsigned ResultReg = 0;
-  if (X86FastEmitLoad(VT, AM, ResultReg)) {
-    UpdateValueMap(I, ResultReg);
-    return true;
-  }
-  return false;
+  if (!X86FastEmitLoad(VT, AM, createMachineMemOperandFor(LI), ResultReg))
+    return false;
+
+  UpdateValueMap(I, ResultReg);
+  return true;
 }
 
 static unsigned X86ChooseCmpOpcode(EVT VT, const X86Subtarget *Subtarget) {
@@ -1183,7 +1207,11 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
       }
 
       FastEmitBranch(FalseMBB, DbgLoc);
-      FuncInfo.MBB->addSuccessor(TrueMBB);
+      uint32_t BranchWeight = 0;
+      if (FuncInfo.BPI)
+        BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                   TrueMBB->getBasicBlock());
+      FuncInfo.MBB->addSuccessor(TrueMBB, BranchWeight);
       return true;
     }
   } else if (TruncInst *TI = dyn_cast<TruncInst>(BI->getCondition())) {
@@ -1215,7 +1243,11 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
         BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(JmpOpc))
           .addMBB(TrueMBB);
         FastEmitBranch(FalseMBB, DbgLoc);
-        FuncInfo.MBB->addSuccessor(TrueMBB);
+        uint32_t BranchWeight = 0;
+        if (FuncInfo.BPI)
+          BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                     TrueMBB->getBasicBlock());
+        FuncInfo.MBB->addSuccessor(TrueMBB, BranchWeight);
         return true;
       }
     }
@@ -1232,7 +1264,11 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
   BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::JNE_4))
     .addMBB(TrueMBB);
   FastEmitBranch(FalseMBB, DbgLoc);
-  FuncInfo.MBB->addSuccessor(TrueMBB);
+  uint32_t BranchWeight = 0;
+  if (FuncInfo.BPI)
+    BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                               TrueMBB->getBasicBlock());
+  FuncInfo.MBB->addSuccessor(TrueMBB, BranchWeight);
   return true;
 }
 
@@ -1624,8 +1660,8 @@ bool X86FastISel::TryEmitSmallMemcpy(X86AddressMode DestAM,
     }
 
     unsigned Reg;
-    bool RV = X86FastEmitLoad(VT, SrcAM, Reg);
-    RV &= X86FastEmitStore(VT, Reg, DestAM);
+    bool RV = X86FastEmitLoad(VT, SrcAM, nullptr, Reg);
+    RV &= X86FastEmitStore(VT, Reg, /*Kill=*/true, DestAM);
     assert(RV && "Failed to emit load or store??");
 
     unsigned Size = VT.getSizeInBits()/8;
@@ -1924,6 +1960,72 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
             ResultReg2);
 
     UpdateValueMap(&I, ResultReg, 2);
+    return true;
+  }
+  case Intrinsic::x86_sse_cvttss2si:
+  case Intrinsic::x86_sse_cvttss2si64:
+  case Intrinsic::x86_sse2_cvttsd2si:
+  case Intrinsic::x86_sse2_cvttsd2si64: {
+    bool IsInputDouble;
+    switch (I.getIntrinsicID()) {
+    default: llvm_unreachable("Unexpected intrinsic.");
+    case Intrinsic::x86_sse_cvttss2si:
+    case Intrinsic::x86_sse_cvttss2si64:
+      if (!Subtarget->hasSSE1())
+        return false;
+      IsInputDouble = false;
+      break;
+    case Intrinsic::x86_sse2_cvttsd2si:
+    case Intrinsic::x86_sse2_cvttsd2si64:
+      if (!Subtarget->hasSSE2())
+        return false;
+      IsInputDouble = true;
+      break;
+    }
+
+    Type *RetTy = I.getCalledFunction()->getReturnType();
+    MVT VT;
+    if (!isTypeLegal(RetTy, VT))
+      return false;
+
+    static const unsigned CvtOpc[2][2][2] = {
+      { { X86::CVTTSS2SIrr,   X86::VCVTTSS2SIrr   },
+        { X86::CVTTSS2SI64rr, X86::VCVTTSS2SI64rr }  },
+      { { X86::CVTTSD2SIrr,   X86::VCVTTSD2SIrr   },
+        { X86::CVTTSD2SI64rr, X86::VCVTTSD2SI64rr }  }
+    };
+    bool HasAVX = Subtarget->hasAVX();
+    unsigned Opc;
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected result type.");
+    case MVT::i32: Opc = CvtOpc[IsInputDouble][0][HasAVX]; break;
+    case MVT::i64: Opc = CvtOpc[IsInputDouble][1][HasAVX]; break;
+    }
+
+    // Check if we can fold insertelement instructions into the convert.
+    const Value *Op = I.getArgOperand(0);
+    while (auto *IE = dyn_cast<InsertElementInst>(Op)) {
+      const Value *Index = IE->getOperand(2);
+      if (!isa<ConstantInt>(Index))
+        break;
+      unsigned Idx = cast<ConstantInt>(Index)->getZExtValue();
+
+      if (Idx == 0) {
+        Op = IE->getOperand(1);
+        break;
+      }
+      Op = IE->getOperand(0);
+    }
+
+    unsigned Reg = getRegForValue(Op);
+    if (Reg == 0)
+      return false;
+
+    unsigned ResultReg = createResultReg(TLI.getRegClassFor(VT));
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(Opc), ResultReg)
+      .addReg(Reg);
+
+    UpdateValueMap(&I, ResultReg);
     return true;
   }
   }
@@ -2322,7 +2424,7 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
         if (!X86FastEmitStore(ArgVT, ArgVal, AM))
           return false;
       } else {
-        if (!X86FastEmitStore(ArgVT, Arg, AM))
+        if (!X86FastEmitStore(ArgVT, Arg, /*ValIsKill=*/false, AM))
           return false;
       }
     }
@@ -2719,8 +2821,9 @@ unsigned X86FastISel::TargetMaterializeFloatZero(const ConstantFP *CF) {
 
 bool X86FastISel::tryToFoldLoadIntoMI(MachineInstr *MI, unsigned OpNo,
                                       const LoadInst *LI) {
+  const Value *Ptr = LI->getPointerOperand();
   X86AddressMode AM;
-  if (!X86SelectAddress(LI->getOperand(0), AM))
+  if (!X86SelectAddress(Ptr, AM))
     return false;
 
   const X86InstrInfo &XII = (const X86InstrInfo&)TII;
@@ -2728,13 +2831,18 @@ bool X86FastISel::tryToFoldLoadIntoMI(MachineInstr *MI, unsigned OpNo,
   unsigned Size = DL.getTypeAllocSize(LI->getType());
   unsigned Alignment = LI->getAlignment();
 
+  if (Alignment == 0)  // Ensure that codegen never sees alignment 0
+    Alignment = DL.getABITypeAlignment(LI->getType());
+
   SmallVector<MachineOperand, 8> AddrOps;
   AM.getFullAddress(AddrOps);
 
   MachineInstr *Result =
     XII.foldMemoryOperandImpl(*FuncInfo.MF, MI, OpNo, AddrOps, Size, Alignment);
-  if (!Result) return false;
+  if (!Result)
+    return false;
 
+  Result->addMemOperand(*FuncInfo.MF, createMachineMemOperandFor(LI));
   FuncInfo.MBB->insert(FuncInfo.InsertPt, Result);
   MI->eraseFromParent();
   return true;

@@ -29,12 +29,6 @@ namespace llvm {
 ///
 class PPCTargetMachine : public LLVMTargetMachine {
   PPCSubtarget        Subtarget;
-  const DataLayout    DL;       // Calculates type size & alignment
-  PPCInstrInfo        InstrInfo;
-  PPCFrameLowering    FrameLowering;
-  PPCJITInfo          JITInfo;
-  PPCTargetLowering   TLInfo;
-  PPCSelectionDAGInfo TSInfo;
 
 public:
   PPCTargetMachine(const Target &T, StringRef TT,
@@ -42,22 +36,26 @@ public:
                    Reloc::Model RM, CodeModel::Model CM,
                    CodeGenOpt::Level OL, bool is64Bit);
 
-  const PPCInstrInfo      *getInstrInfo() const override { return &InstrInfo; }
-  const PPCFrameLowering  *getFrameLowering() const override {
-    return &FrameLowering;
+  const PPCInstrInfo *getInstrInfo() const override {
+    return getSubtargetImpl()->getInstrInfo();
   }
-        PPCJITInfo        *getJITInfo() override         { return &JITInfo; }
+  const PPCFrameLowering *getFrameLowering() const override {
+    return getSubtargetImpl()->getFrameLowering();
+  }
+  PPCJITInfo *getJITInfo() override { return Subtarget.getJITInfo(); }
   const PPCTargetLowering *getTargetLowering() const override {
-   return &TLInfo;
+    return getSubtargetImpl()->getTargetLowering();
   }
   const PPCSelectionDAGInfo* getSelectionDAGInfo() const override {
-    return &TSInfo;
+    return getSubtargetImpl()->getSelectionDAGInfo();
   }
-  const PPCRegisterInfo   *getRegisterInfo() const override {
-    return &InstrInfo.getRegisterInfo();
+  const PPCRegisterInfo *getRegisterInfo() const override {
+    return &getInstrInfo()->getRegisterInfo();
   }
 
-  const DataLayout    *getDataLayout() const override    { return &DL; }
+  const DataLayout *getDataLayout() const override {
+    return getSubtargetImpl()->getDataLayout();
+  }
   const PPCSubtarget  *getSubtargetImpl() const override { return &Subtarget; }
   const InstrItineraryData *getInstrItineraryData() const override {
     return &getSubtargetImpl()->getInstrItineraryData();

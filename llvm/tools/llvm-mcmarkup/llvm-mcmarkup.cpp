@@ -136,7 +136,7 @@ MarkupTag MarkupParser::parseTag() {
 
 static void parseMCMarkup(StringRef Filename) {
   std::unique_ptr<MemoryBuffer> BufferPtr;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(Filename, BufferPtr)) {
+  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(Filename, BufferPtr)) {
     errs() << ToolName << ": " << ec.message() << '\n';
     return;
   }

@@ -42,6 +42,7 @@
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
@@ -981,7 +982,6 @@ FastISel::SelectInstruction(const Instruction *I) {
 /// the CFG.
 void
 FastISel::FastEmitBranch(MachineBasicBlock *MSucc, DebugLoc DbgLoc) {
-
   if (FuncInfo.MBB->getBasicBlock()->size() > 1 &&
       FuncInfo.MBB->isLayoutSuccessor(MSucc)) {
     // For more accurate line information if this is the only instruction
@@ -992,7 +992,11 @@ FastISel::FastEmitBranch(MachineBasicBlock *MSucc, DebugLoc DbgLoc) {
     TII.InsertBranch(*FuncInfo.MBB, MSucc, nullptr,
                      SmallVector<MachineOperand, 0>(), DbgLoc);
   }
-  FuncInfo.MBB->addSuccessor(MSucc);
+  uint32_t BranchWeight = 0;
+  if (FuncInfo.BPI)
+    BranchWeight = FuncInfo.BPI->getEdgeWeight(FuncInfo.MBB->getBasicBlock(),
+                                               MSucc->getBasicBlock());
+  FuncInfo.MBB->addSuccessor(MSucc, BranchWeight);
 }
 
 /// SelectFNeg - Emit an FNeg operation.
@@ -1737,3 +1741,47 @@ bool FastISel::canFoldAddIntoGEP(const User *GEP, const Value *Add) {
   return isa<ConstantInt>(cast<AddOperator>(Add)->getOperand(1));
 }
 
+MachineMemOperand *
+FastISel::createMachineMemOperandFor(const Instruction *I) const {
+  const Value *Ptr;
+  Type *ValTy;
+  unsigned Alignment;
+  unsigned Flags;
+  bool IsVolatile;
+
+  if (const auto *LI = dyn_cast<LoadInst>(I)) {
+    Alignment = LI->getAlignment();
+    IsVolatile = LI->isVolatile();
+    Flags = MachineMemOperand::MOLoad;
+    Ptr = LI->getPointerOperand();
+    ValTy = LI->getType();
+  } else if (const auto *SI = dyn_cast<StoreInst>(I)) {
+    Alignment = SI->getAlignment();
+    IsVolatile = SI->isVolatile();
+    Flags = MachineMemOperand::MOStore;
+    Ptr = SI->getPointerOperand();
+    ValTy = SI->getValueOperand()->getType();
+  } else {
+    return nullptr;
+  }
+
+  bool IsNonTemporal = I->getMetadata("nontemporal") != nullptr;
+  bool IsInvariant = I->getMetadata("invariant.load") != nullptr;
+  const MDNode *TBAAInfo = I->getMetadata(LLVMContext::MD_tbaa);
+  const MDNode *Ranges = I->getMetadata(LLVMContext::MD_range);
+
+  if (Alignment == 0)  // Ensure that codegen never sees alignment 0.
+    Alignment = DL.getABITypeAlignment(ValTy);
+
+  unsigned Size = TM.getDataLayout()->getTypeStoreSize(ValTy);
+
+  if (IsVolatile)
+    Flags |= MachineMemOperand::MOVolatile;
+  if (IsNonTemporal)
+    Flags |= MachineMemOperand::MONonTemporal;
+  if (IsInvariant)
+    Flags |= MachineMemOperand::MOInvariant;
+
+  return FuncInfo.MF->getMachineMemOperand(MachinePointerInfo(Ptr), Flags, Size,
+                                           Alignment, TBAAInfo, Ranges);
+}

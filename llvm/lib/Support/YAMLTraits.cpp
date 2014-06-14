@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Casting.h"
@@ -56,9 +57,7 @@ Input::Input(StringRef InputContent,
 Input::~Input() {
 }
 
-error_code Input::error() {
-  return EC;
-}
+std::error_code Input::error() { return EC; }
 
 // Pin the vtables to this file.
 void Input::HNode::anchor() {}
@@ -74,7 +73,7 @@ bool Input::setCurrentDocument() {
     Node *N = DocIterator->getRoot();
     if (!N) {
       assert(Strm->failed() && "Root is NULL iff parsing failed");
-      EC = std::make_error_code(std::errc::invalid_argument);
+      EC = make_error_code(errc::invalid_argument);
       return false;
     }
 
@@ -124,7 +123,7 @@ bool Input::preflightKey(const char *Key, bool Required, bool, bool &UseDefault,
   // nodes are present.
   if (!CurrentNode) {
     if (Required)
-      EC = std::make_error_code(std::errc::invalid_argument);
+      EC = make_error_code(errc::invalid_argument);
     return false;
   }
 
@@ -300,7 +299,7 @@ void Input::setError(HNode *hnode, const Twine &message) {
 
 void Input::setError(Node *node, const Twine &message) {
   Strm->printError(node, message);
-  EC = std::make_error_code(std::errc::invalid_argument);
+  EC = make_error_code(errc::invalid_argument);
 }
 
 Input::HNode *Input::createHNodes(Node *N) {

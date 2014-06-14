@@ -55,7 +55,7 @@ SpecialCaseList *SpecialCaseList::create(
   if (Path.empty())
     return new SpecialCaseList();
   std::unique_ptr<MemoryBuffer> File;
-  if (error_code EC = MemoryBuffer::getFile(Path, File)) {
+  if (std::error_code EC = MemoryBuffer::getFile(Path, File)) {
     Error = (Twine("Can't open file '") + Path + "': " + EC.message()).str();
     return nullptr;
   }

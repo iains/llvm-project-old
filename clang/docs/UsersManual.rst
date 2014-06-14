@@ -938,10 +938,6 @@ are listed below.
       ``-fsanitize=address``:
       :doc:`AddressSanitizer`, a memory error
       detector.
-   -  ``-fsanitize=init-order``: Make AddressSanitizer check for
-      dynamic initialization order problems. Implied by ``-fsanitize=address``.
-   -  ``-fsanitize=address-full``: AddressSanitizer with all the
-      experimental features listed below.
    -  ``-fsanitize=integer``: Enables checks for undefined or
       suspicious integer behavior.
    -  .. _opt_fsanitize_thread:
@@ -1023,14 +1019,6 @@ are listed below.
       :doc:`SanitizerSpecialCaseList` for file format description.
    -  ``-fno-sanitize-blacklist``: don't use blacklist file, if it was
       specified earlier in the command line.
-
-   Experimental features of AddressSanitizer (not ready for widespread
-   use, require explicit ``-fsanitize=address``):
-
-   -  ``-fsanitize=use-after-return``: Check for use-after-return
-      errors (accessing local variable after the function exit).
-   -  ``-fsanitize=use-after-scope``: Check for use-after-scope errors
-      (accesing local variable after it went out of scope).
 
    Extra features of MemorySanitizer (require explicit
    ``-fsanitize=memory``):
@@ -1309,6 +1297,28 @@ below. If multiple flags are present, the last one is used.
   file names and line numbers (by such tools as ``gdb`` or ``addr2line``).  It
   doesn't contain any other data (e.g. description of local variables or
   function parameters).
+
+.. option:: -fstandalone-debug
+
+  Clang supports a number of optimizations to reduce the size of debug
+  information in the binary. They work based on the assumption that
+  the debug type information can be spread out over multiple
+  compilation units.  For instance, Clang will not emit type
+  definitions for types that are not needed by a module and could be
+  replaced with a forward declaration.  Further, Clang will only emit
+  type info for a dynamic C++ class in the module that contains the
+  vtable for the class.
+
+  The **-fstandalone-debug** option turns off these optimizations.
+  This is useful when working with 3rd-party libraries that don't come
+  with debug information.  Note that Clang will never emit type
+  information for types that are not referenced at all by the program.
+
+.. option:: -fno-standalone-debug
+
+   On Darwin **-fstandalone-debug** is enabled by default. The
+   **-fno-standalone-debug** option can be used to get to turn on the
+   vtable-based optimization described above.
 
 .. option:: -g
 

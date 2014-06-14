@@ -247,6 +247,12 @@ class ISA_MIPS64R6 { list<Predicate> InsnPredicates = [HasMips64r6]; }
 // The portions of MIPS-III that were also added to MIPS32
 class INSN_MIPS3_32 { list<Predicate> InsnPredicates = [HasMips3_32]; }
 
+// The portions of MIPS-III that were also added to MIPS32 but were removed in
+// MIPS32r6 and MIPS64r6.
+class INSN_MIPS3_32_NOT_32R6_64R6 {
+  list<Predicate> InsnPredicates = [HasMips3_32, NotMips32r6, NotMips64r6];
+}
+
 // The portions of MIPS-III that were also added to MIPS32
 class INSN_MIPS3_32R2 { list<Predicate> InsnPredicates = [HasMips3_32r2]; }
 
@@ -343,6 +349,7 @@ def calltarget  : Operand<iPTR> {
   let ParserMatchClass = MipsJumpTargetAsmOperand;
 }
 
+def simm9 : Operand<i32>;
 def simm10 : Operand<i32>;
 
 def simm16      : Operand<i32> {
@@ -358,6 +365,7 @@ def simm19_lsl2 : Operand<i32> {
 def simm18_lsl3 : Operand<i32> {
   let EncoderMethod = "getSimm18Lsl3Encoding";
   let DecoderMethod = "DecodeSimm18Lsl3";
+  let ParserMatchClass = MipsJumpTargetAsmOperand;
 }
 
 def simm20      : Operand<i32> {
@@ -436,6 +444,11 @@ def mem : mem_generic;
 def mem_msa : mem_generic {
   let MIOperandInfo = (ops ptr_rc, simm10);
   let EncoderMethod = "getMSAMemEncoding";
+}
+
+def mem_simm9 : mem_generic {
+  let MIOperandInfo = (ops ptr_rc, simm9);
+  let EncoderMethod = "getMemEncoding";
 }
 
 def mem_ea : Operand<iPTR> {
@@ -1188,8 +1201,10 @@ let AdditionalPredicates = [NotInMicroMips] in {
 
 // FIXME: JALX really requires either MIPS16 or microMIPS in addition to MIPS32.
 def JALX  : JumpLink<"jalx", calltarget>, FJ<0x1D>, ISA_MIPS32_NOT_32R6_64R6;
-def BGEZAL : MMRel, BGEZAL_FT<"bgezal", brtarget, GPR32Opnd>, BGEZAL_FM<0x11>;
-def BLTZAL : MMRel, BGEZAL_FT<"bltzal", brtarget, GPR32Opnd>, BGEZAL_FM<0x10>;
+def BGEZAL : MMRel, BGEZAL_FT<"bgezal", brtarget, GPR32Opnd>, BGEZAL_FM<0x11>,
+             ISA_MIPS1_NOT_32R6_64R6;
+def BLTZAL : MMRel, BGEZAL_FT<"bltzal", brtarget, GPR32Opnd>, BGEZAL_FM<0x10>,
+             ISA_MIPS1_NOT_32R6_64R6;
 def BAL_BR : BAL_BR_Pseudo<BGEZAL>;
 def TAILCALL : TailCall<J>;
 def TAILCALL_R : TailCallReg<GPR32Opnd, JR>;
@@ -1358,6 +1373,15 @@ def TLBR : TLB<"tlbr">, COP0_TLB_FM<0x01>;
 def TLBWI : TLB<"tlbwi">, COP0_TLB_FM<0x02>;
 def TLBWR : TLB<"tlbwr">, COP0_TLB_FM<0x06>;
 
+class CacheOp<string instr_asm, Operand MemOpnd, RegisterOperand GPROpnd> :
+    InstSE<(outs), (ins  MemOpnd:$addr, uimm5:$hint),
+           !strconcat(instr_asm, "\t$hint, $addr"), [], NoItinerary, FrmOther>;
+
+def CACHE : CacheOp<"cache", mem, GPR32Opnd>, CACHEOP_FM<0b101111>,
+            INSN_MIPS3_32_NOT_32R6_64R6;
+def PREF :  CacheOp<"pref", mem, GPR32Opnd>, CACHEOP_FM<0b110011>,
+            INSN_MIPS3_32_NOT_32R6_64R6;
+
 //===----------------------------------------------------------------------===//
 // Instruction aliases
 //===----------------------------------------------------------------------===//
@@ -1366,7 +1390,8 @@ def : MipsInstAlias<"move $dst, $src",
       GPR_32 {
   let AdditionalPredicates = [NotInMicroMips];
 }
-def : MipsInstAlias<"bal $offset", (BGEZAL ZERO, brtarget:$offset), 0>;
+def : MipsInstAlias<"bal $offset", (BGEZAL ZERO, brtarget:$offset), 0>,
+      ISA_MIPS1_NOT_32R6_64R6;
 def : MipsInstAlias<"addu $rs, $rt, $imm",
                     (ADDiu GPR32Opnd:$rs, GPR32Opnd:$rt, simm16:$imm), 0>;
 def : MipsInstAlias<"add $rs, $rt, $imm",

@@ -2601,7 +2601,7 @@ LLVMBool LLVMCreateMemoryBufferWithContentsOfFile(
     char **OutMessage) {
 
   std::unique_ptr<MemoryBuffer> MB;
-  error_code ec;
+  std::error_code ec;
   if (!(ec = MemoryBuffer::getFile(Path, MB))) {
     *OutMemBuf = wrap(MB.release());
     return 0;
@@ -2614,7 +2614,7 @@ LLVMBool LLVMCreateMemoryBufferWithContentsOfFile(
 LLVMBool LLVMCreateMemoryBufferWithSTDIN(LLVMMemoryBufferRef *OutMemBuf,
                                          char **OutMessage) {
   std::unique_ptr<MemoryBuffer> MB;
-  error_code ec;
+  std::error_code ec;
   if (!(ec = MemoryBuffer::getSTDIN(MB))) {
     *OutMemBuf = wrap(MB.release());
     return 0;

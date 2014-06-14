@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
     M.reset(getStreamedBitcodeModule(DisplayFilename, streamer, Context,
                                      &ErrorMessage));
     if(M.get()) {
-      if (error_code EC = M->materializeAllPermanently()) {
+      if (std::error_code EC = M->materializeAllPermanently()) {
         ErrorMessage = EC.message();
         M.reset();
       }

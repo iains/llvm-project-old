@@ -15,7 +15,6 @@ include "Mips32r6InstrFormats.td"
 
 // Notes about removals/changes from MIPS32r6:
 // Unclear: ssnop
-// Reencoded: cache, pref
 // Reencoded: clo, clz
 // Reencoded: jr -> jalr
 // Reencoded: jr.hb -> jalr.hb
@@ -25,9 +24,6 @@ include "Mips32r6InstrFormats.td"
 // Reencoded: sdbbp
 // Reencoded: sdc2
 // Reencoded: swc2
-// Removed: bc1any2, bc1any4
-// Removed: bgezal
-// Removed: bltzal
 // Rencoded: [ls][wd]c2
 
 def brtarget21 : Operand<OtherVT> {
@@ -66,6 +62,7 @@ class ALUIPC_ENC : PCREL16_FM<OPCODE5_ALUIPC>;
 class AUI_ENC    : AUI_FM;
 class AUIPC_ENC  : PCREL16_FM<OPCODE5_AUIPC>;
 
+class BAL_ENC   : BAL_FM;
 class BALC_ENC  : BRANCH_OFF26_FM<0b111010>;
 class BC_ENC    : BRANCH_OFF26_FM<0b110010>;
 class BEQC_ENC  : CMP_BRANCH_2R_OFF16_FM<OPGROUP_ADDI>,
@@ -157,6 +154,9 @@ class RINT_S_ENC : COP1_2R_FM<0b011010, FIELD_FMT_S>;
 class RINT_D_ENC : COP1_2R_FM<0b011010, FIELD_FMT_D>;
 class CLASS_S_ENC : COP1_2R_FM<0b011011, FIELD_FMT_S>;
 class CLASS_D_ENC : COP1_2R_FM<0b011011, FIELD_FMT_D>;
+
+class CACHE_ENC : SPECIAL3_MEM_FM<OPCODE6_CACHE>;
+class PREF_ENC : SPECIAL3_MEM_FM<OPCODE6_PREF>;
 
 class CMP_CONDN_DESC_BASE<string CondStr, string Typestr,
                           RegisterOperand FGROpnd,
@@ -307,6 +307,12 @@ class CMP_CBR_RT_Z_DESC_BASE<string instr_asm, DAGOperand opnd,
   dag OutOperandList = (outs);
   string AsmString = !strconcat(instr_asm, "\t$rt, $offset");
   list<Register> Defs = [AT];
+}
+
+class BAL_DESC : BC_DESC_BASE<"bal", brtarget> {
+  bit isCall = 1;
+  bit hasDelaySlot = 1;
+  list<Register> Defs = [RA];
 }
 
 class BALC_DESC : BC_DESC_BASE<"balc", brtarget26> {
@@ -524,6 +530,17 @@ class RINT_D_DESC : CLASS_RINT_DESC_BASE<"rint.d", FGR64Opnd>;
 class CLASS_S_DESC : CLASS_RINT_DESC_BASE<"class.s", FGR32Opnd>;
 class CLASS_D_DESC : CLASS_RINT_DESC_BASE<"class.d", FGR64Opnd>;
 
+class CACHE_HINT_DESC<string instr_asm, Operand MemOpnd,
+                      RegisterOperand GPROpnd> {
+  dag OutOperandList = (outs);
+  dag InOperandList = (ins MemOpnd:$addr, uimm5:$hint);
+  string AsmString = !strconcat(instr_asm, "\t$hint, $addr");
+  list<dag> Pattern = [];
+}
+
+class CACHE_DESC : CACHE_HINT_DESC<"cache", mem_simm9, GPR32Opnd>;
+class PREF_DESC : CACHE_HINT_DESC<"pref", mem_simm9, GPR32Opnd>;
+
 //===----------------------------------------------------------------------===//
 //
 // Instruction Definitions
@@ -535,6 +552,7 @@ def ALIGN : ALIGN_ENC, ALIGN_DESC, ISA_MIPS32R6;
 def ALUIPC : ALUIPC_ENC, ALUIPC_DESC, ISA_MIPS32R6;
 def AUI : AUI_ENC, AUI_DESC, ISA_MIPS32R6;
 def AUIPC : AUIPC_ENC, AUIPC_DESC, ISA_MIPS32R6;
+def BAL : BAL_ENC, BAL_DESC, ISA_MIPS32R6;
 def BALC : BALC_ENC, BALC_DESC, ISA_MIPS32R6;
 def BC1EQZ : BC1EQZ_ENC, BC1EQZ_DESC, ISA_MIPS32R6;
 def BC1NEZ : BC1NEZ_ENC, BC1NEZ_DESC, ISA_MIPS32R6;
@@ -562,6 +580,7 @@ def BNEZALC : BNEZALC_ENC, BNEZALC_DESC, ISA_MIPS32R6;
 def BNEZC : BNEZC_ENC, BNEZC_DESC, ISA_MIPS32R6;
 def BNVC : BNVC_ENC, BNVC_DESC, ISA_MIPS32R6;
 def BOVC : BOVC_ENC, BOVC_DESC, ISA_MIPS32R6;
+def CACHE_R6 : CACHE_ENC, CACHE_DESC, ISA_MIPS32R6;
 def CLASS_D : CLASS_D_ENC, CLASS_D_DESC, ISA_MIPS32R6;
 def CLASS_S : CLASS_S_ENC, CLASS_S_DESC, ISA_MIPS32R6;
 defm S : CMP_CC_M<FIELD_CMP_FORMAT_S, "s", FGR32Opnd>;
@@ -593,6 +612,7 @@ def MUHU   : MUHU_ENC, MUHU_DESC, ISA_MIPS32R6;
 def MUL_R6 : MUL_R6_ENC, MUL_R6_DESC, ISA_MIPS32R6;
 def MULU   : MULU_ENC, MULU_DESC, ISA_MIPS32R6;
 def NAL; // BAL with rd=0
+def PREF_R6 : PREF_ENC, PREF_DESC, ISA_MIPS32R6;
 def RINT_D : RINT_D_ENC, RINT_D_DESC, ISA_MIPS32R6;
 def RINT_S : RINT_S_ENC, RINT_S_DESC, ISA_MIPS32R6;
 def SELEQZ : SELEQZ_ENC, SELEQZ_DESC, ISA_MIPS32R6, GPR_32;

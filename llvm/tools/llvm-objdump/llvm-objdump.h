@@ -16,7 +16,6 @@
 #include "llvm/Support/StringRefMemoryObject.h"
 
 namespace llvm {
-
 namespace object {
   class COFFObjectFile;
   class ObjectFile;
@@ -27,7 +26,7 @@ extern cl::opt<std::string> TripleName;
 extern cl::opt<std::string> ArchName;
 
 // Various helper functions.
-bool error(error_code ec);
+bool error(std::error_code ec);
 bool RelocAddressLess(object::RelocationRef a, object::RelocationRef b);
 void DumpBytes(StringRef bytes);
 void DisassembleInputMachO(StringRef Filename);

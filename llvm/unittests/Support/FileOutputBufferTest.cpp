@@ -17,12 +17,13 @@
 using namespace llvm;
 using namespace llvm::sys;
 
-#define ASSERT_NO_ERROR(x) \
-  if (error_code ASSERT_NO_ERROR_ec = x) { \
-    errs() << #x ": did not return errc::success.\n" \
-            << "error number: " << ASSERT_NO_ERROR_ec.value() << "\n" \
-            << "error message: " << ASSERT_NO_ERROR_ec.message() << "\n"; \
-  } else {}
+#define ASSERT_NO_ERROR(x)                                                     \
+  if (std::error_code ASSERT_NO_ERROR_ec = x) {                                \
+    errs() << #x ": did not return errc::success.\n"                           \
+           << "error number: " << ASSERT_NO_ERROR_ec.value() << "\n"           \
+           << "error message: " << ASSERT_NO_ERROR_ec.message() << "\n";       \
+  } else {                                                                     \
+  }
 
 namespace {
 TEST(FileOutputBuffer, Test) {

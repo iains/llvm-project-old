@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -21,15 +22,16 @@
 using namespace llvm;
 using namespace llvm::sys;
 
-#define ASSERT_NO_ERROR(x) \
-  if (error_code ASSERT_NO_ERROR_ec = x) { \
-    SmallString<128> MessageStorage; \
-    raw_svector_ostream Message(MessageStorage); \
-    Message << #x ": did not return errc::success.\n" \
-            << "error number: " << ASSERT_NO_ERROR_ec.value() << "\n" \
-            << "error message: " << ASSERT_NO_ERROR_ec.message() << "\n"; \
-    GTEST_FATAL_FAILURE_(MessageStorage.c_str()); \
-  } else {}
+#define ASSERT_NO_ERROR(x)                                                     \
+  if (std::error_code ASSERT_NO_ERROR_ec = x) {                                \
+    SmallString<128> MessageStorage;                                           \
+    raw_svector_ostream Message(MessageStorage);                               \
+    Message << #x ": did not return errc::success.\n"                          \
+            << "error number: " << ASSERT_NO_ERROR_ec.value() << "\n"          \
+            << "error message: " << ASSERT_NO_ERROR_ec.message() << "\n";      \
+    GTEST_FATAL_FAILURE_(MessageStorage.c_str());                              \
+  } else {                                                                     \
+  }
 
 namespace {
 
@@ -354,10 +356,10 @@ TEST_F(FileSystemTest, TempFiles) {
   ASSERT_NO_ERROR(fs::remove(Twine(TempPath2)));
   ASSERT_NO_ERROR(fs::remove(Twine(TempPath2)));
   ASSERT_EQ(fs::remove(Twine(TempPath2), false),
-            std::errc::no_such_file_or_directory);
+            errc::no_such_file_or_directory);
 
-  error_code EC = fs::status(TempPath2.c_str(), B);
-  EXPECT_EQ(EC, std::errc::no_such_file_or_directory);
+  std::error_code EC = fs::status(TempPath2.c_str(), B);
+  EXPECT_EQ(EC, errc::no_such_file_or_directory);
   EXPECT_EQ(B.type(), fs::file_type::file_not_found);
 
   // Make sure Temp2 doesn't exist.
@@ -397,7 +399,7 @@ TEST_F(FileSystemTest, TempFiles) {
     "abcdefghijklmnopqrstuvwxyz3abcdefghijklmnopqrstuvwxyz2"
     "abcdefghijklmnopqrstuvwxyz1abcdefghijklmnopqrstuvwxyz0";
   EXPECT_EQ(fs::createUniqueFile(Twine(Path270), FileDescriptor, TempPath),
-            std::errc::no_such_file_or_directory);
+            errc::no_such_file_or_directory);
 #endif
 }
 
@@ -405,12 +407,12 @@ TEST_F(FileSystemTest, CreateDir) {
   ASSERT_NO_ERROR(fs::create_directory(Twine(TestDirectory) + "foo"));
   ASSERT_NO_ERROR(fs::create_directory(Twine(TestDirectory) + "foo"));
   ASSERT_EQ(fs::create_directory(Twine(TestDirectory) + "foo", false),
-            std::errc::file_exists);
+            errc::file_exists);
   ASSERT_NO_ERROR(fs::remove(Twine(TestDirectory) + "foo"));
 }
 
 TEST_F(FileSystemTest, DirectoryIteration) {
-  error_code ec;
+  std::error_code ec;
   for (fs::directory_iterator i(".", ec), e; i != e; i.increment(ec))
     ASSERT_NO_ERROR(ec);
 
@@ -582,7 +584,7 @@ TEST_F(FileSystemTest, FileMapping) {
   ASSERT_NO_ERROR(
       fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
   // Map in temp file and add some content
-  error_code EC;
+  std::error_code EC;
   StringRef Val("hello there");
   {
     fs::mapped_file_region mfr(FileDescriptor,

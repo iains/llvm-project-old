@@ -70,8 +70,8 @@ namespace sys {
 MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
                                          const MemoryBlock *const NearBlock,
                                          unsigned Flags,
-                                         error_code &EC) {
-  EC = error_code();
+                                         std::error_code &EC) {
+  EC = std::error_code();
   if (NumBytes == 0)
     return MemoryBlock();
 
@@ -114,9 +114,9 @@ MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
   return Result;
 }
 
-error_code Memory::releaseMappedMemory(MemoryBlock &M) {
+  std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
   if (M.Address == 0 || M.Size == 0)
-    return error_code();
+    return std::error_code();
 
   if (!VirtualFree(M.Address, 0, MEM_RELEASE))
     return mapWindowsError(::GetLastError());
@@ -124,13 +124,13 @@ error_code Memory::releaseMappedMemory(MemoryBlock &M) {
   M.Address = 0;
   M.Size = 0;
 
-  return error_code();
+  return std::error_code();
 }
 
-error_code Memory::protectMappedMemory(const MemoryBlock &M,
+  std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
                                        unsigned Flags) {
   if (M.Address == 0 || M.Size == 0)
-    return error_code();
+    return std::error_code();
 
   DWORD Protect = getWindowsProtectionFlags(Flags);
 
@@ -141,7 +141,7 @@ error_code Memory::protectMappedMemory(const MemoryBlock &M,
   if (Flags & MF_EXEC)
     Memory::InvalidateInstructionCache(M.Address, M.Size);
 
-  return error_code();
+  return std::error_code();
 }
 
 /// InvalidateInstructionCache - Before the JIT can run a block of code
@@ -157,18 +157,18 @@ MemoryBlock Memory::AllocateRWX(size_t NumBytes,
                                 const MemoryBlock *NearBlock,
                                 std::string *ErrMsg) {
   MemoryBlock MB;
-  error_code EC;
+  std::error_code EC;
   MB = allocateMappedMemory(NumBytes, NearBlock,
                             MF_READ|MF_WRITE|MF_EXEC, EC);
-  if (EC != error_code() && ErrMsg) {
+  if (EC != std::error_code() && ErrMsg) {
     MakeErrMsg(ErrMsg, EC.message());
   }
   return MB;
 }
 
 bool Memory::ReleaseRWX(MemoryBlock &M, std::string *ErrMsg) {
-  error_code EC = releaseMappedMemory(M);
-  if (EC == error_code())
+  std::error_code EC = releaseMappedMemory(M);
+  if (EC == std::error_code())
     return false;
   MakeErrMsg(ErrMsg, EC.message());
   return true;

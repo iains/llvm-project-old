@@ -39,7 +39,7 @@ MCContext::MCContext(const MCAsmInfo *mai, const MCRegisterInfo *mri,
       AllowTemporaryLabels(true), DwarfCompileUnitID(0),
       AutoReset(DoAutoReset) {
 
-  error_code EC = llvm::sys::fs::current_path(CompilationDir);
+  std::error_code EC = llvm::sys::fs::current_path(CompilationDir);
   if (EC)
     CompilationDir.clear();
 
