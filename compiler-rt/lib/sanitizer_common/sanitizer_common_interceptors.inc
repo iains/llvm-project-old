@@ -1812,7 +1812,7 @@ INTERCEPTOR(int, getsockopt, int sockfd, int level, int optname, void *optval,
 INTERCEPTOR(int, accept, int fd, void *addr, unsigned *addrlen) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, accept, fd, addr, addrlen);
-  unsigned addrlen0;
+  unsigned addrlen0 = 0;
   if (addrlen) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, addrlen, sizeof(*addrlen));
     addrlen0 = *addrlen;
@@ -1834,7 +1834,7 @@ INTERCEPTOR(int, accept, int fd, void *addr, unsigned *addrlen) {
 INTERCEPTOR(int, accept4, int fd, void *addr, unsigned *addrlen, int f) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, accept4, fd, addr, addrlen, f);
-  unsigned addrlen0;
+  unsigned addrlen0 = 0;
   if (addrlen) {
     COMMON_INTERCEPTOR_READ_RANGE(ctx, addrlen, sizeof(*addrlen));
     addrlen0 = *addrlen;
@@ -2031,7 +2031,7 @@ INTERCEPTOR(uptr, ptrace, int request, int pid, void *addr, void *data) {
   uptr res = REAL(ptrace)(request, pid, addr, data);
 
   if (!res && data) {
-    // Note that PEEK* requests assing different meaning to the return value.
+    // Note that PEEK* requests assign different meaning to the return value.
     // This function does not handle them (nor does it need to).
     if (request == ptrace_getregs)
       COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, struct_user_regs_struct_sz);
@@ -2041,6 +2041,8 @@ INTERCEPTOR(uptr, ptrace, int request, int pid, void *addr, void *data) {
       COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, struct_user_fpxregs_struct_sz);
     else if (request == ptrace_getsiginfo)
       COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, siginfo_t_sz);
+    else if (request == ptrace_geteventmsg)
+      COMMON_INTERCEPTOR_WRITE_RANGE(ctx, data, sizeof(unsigned long));
     else if (request == ptrace_getregset) {
       __sanitizer_iovec *iov = (__sanitizer_iovec *)data;
       COMMON_INTERCEPTOR_WRITE_RANGE(ctx, iov->iov_base, iov->iov_len);

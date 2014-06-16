@@ -10,7 +10,8 @@
 #   rs > rt
 # appropriately for each branch instruction
 #
-# RUN: llvm-mc %s -triple=mips-unknown-linux -show-encoding -mcpu=mips32r6 | FileCheck %s
+# RUN: llvm-mc %s -triple=mips-unknown-linux -show-encoding -mcpu=mips32r6 2> %t0 | FileCheck %s
+# RUN: FileCheck %s -check-prefix=WARNING < %t0
 
         .set noat
         # FIXME: Add the instructions carried forward from older ISA's
@@ -132,3 +133,13 @@
         jr.hb   $4               # CHECK: jr.hb $4               # encoding: [0x00,0x80,0x04,0x09]
         jalr.hb $4               # CHECK: jalr.hb $4             # encoding: [0x00,0x80,0xfc,0x09]
         jalr.hb $4, $5           # CHECK: jalr.hb $4, $5         # encoding: [0x00,0xa0,0x24,0x09]
+        ldc2    $8, -701($at)    # CHECK: ldc2 $8, -701($1)      # encoding: [0x49,0xc8,0x0d,0x43]
+        lwc2    $18,-841($a2)    # CHECK: lwc2 $18, -841($6)     # encoding: [0x49,0x52,0x34,0xb7]
+        sdc2    $20,629($s2)     # CHECK: sdc2 $20, 629($18)     # encoding: [0x49,0xf4,0x92,0x75]
+        swc2    $25,304($s0)     # CHECK: swc2 $25, 304($16)     # encoding: [0x49,0x79,0x81,0x30]
+        ll      $v0,-153($s2)    # CHECK: ll $2, -153($18)       # encoding: [0x7e,0x42,0xb3,0xb6]
+        sc      $15,-40($s3)     # CHECK: sc $15, -40($19)       # encoding: [0x7e,0x6f,0xec,0x26]
+        clo     $11,$a1          # CHECK: clo $11, $5            # encoding: [0x00,0xa0,0x58,0x51]
+        clz     $sp,$gp          # CHECK: clz $sp, $gp           # encoding: [0x03,0x80,0xe8,0x50]
+        ssnop                    # WARNING: [[@LINE]]:9: warning: ssnop is deprecated for MIPS32r6 and is equivalent to a nop instruction
+        ssnop                    # CHECK: ssnop                  # encoding: [0x00,0x00,0x00,0x40]

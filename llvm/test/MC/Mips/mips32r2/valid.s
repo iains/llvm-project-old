@@ -29,8 +29,8 @@
         ceil.w.d  $f11,$f25
         ceil.w.s  $f6,$f20
         cfc1      $s1,$21
-        clo       $11,$a1
-        clz       $sp,$gp
+        clo       $11,$a1              # CHECK: clo $11, $5   # encoding: [0x70,0xab,0x58,0x21]
+        clz       $sp,$gp              # CHECK: clz $sp, $gp  # encoding: [0x73,0x9d,0xe8,0x20]
         ctc1      $a2,$26
         cvt.d.s   $f22,$f28
         cvt.d.w   $f26,$f11
@@ -57,17 +57,17 @@
         lb        $24,-14515($10)
         lbu       $8,30195($v1)
         ldc1      $f11,16391($s0)
-        ldc2      $8,-21181($at)
+        ldc2      $8,-21181($at)        # CHECK: ldc2 $8, -21181($1)   # encoding: [0xd8,0x28,0xad,0x43]
         ldxc1     $f8,$s7($15)
         lh        $11,-8556($s5)
         lhu       $s3,-22851($v0)
         li        $at,-29773
         li        $zero,-29889
-        ll        $v0,-7321($s2)
+        ll        $v0,-7321($s2)       # CHECK: ll $2, -7321($18)     # encoding: [0xc2,0x42,0xe3,0x67]
         luxc1     $f19,$s6($s5)
         lw        $8,5674($a1)
         lwc1      $f16,10225($k0)
-        lwc2      $18,-841($a2)
+        lwc2      $18,-841($a2)        # CHECK: lwc2 $18, -841($6)     # encoding: [0xc8,0xd2,0xfc,0xb7]
         lwl       $s4,-4231($15)
         lwr       $zero,-19147($gp)
         lwxc1     $f12,$s1($s8)
@@ -136,9 +136,9 @@
         round.w.d $f6,$f4
         round.w.s $f27,$f28
         sb        $s6,-19857($14)
-        sc        $15,18904($s3)
+        sc        $15,18904($s3)       # CHECK: sc $15, 18904($19)     # encoding: [0xe2,0x6f,0x49,0xd8]
         sdc1      $f31,30574($13)
-        sdc2      $20,23157($s2)
+        sdc2      $20,23157($s2)       # CHECK: sdc2 $20, 23157($18)   # encoding: [0xfa,0x54,0x5a,0x75]
         sdxc1     $f11,$10($14)
         seb       $25,$15
         seh       $v1,$12
@@ -170,7 +170,7 @@
         suxc1     $f12,$k1($13)
         sw        $ra,-10160($sp)
         swc1      $f6,-8465($24)
-        swc2      $25,24880($s0)
+        swc2      $25,24880($s0)       # CHECK: swc2 $25, 24880($16)   # encoding: [0xea,0x19,0x61,0x30]
         swl       $15,13694($s3)
         swr       $s1,-26590($14)
         swxc1     $f19,$12($k0)

@@ -176,6 +176,12 @@ class MipsAsmParser : public MCTargetAsmParser {
 
   bool hasMips4() const { return STI.getFeatureBits() & Mips::FeatureMips4; }
   bool hasMips32() const { return STI.getFeatureBits() & Mips::FeatureMips32; }
+  bool hasMips32r6() const {
+    return STI.getFeatureBits() & Mips::FeatureMips32r6;
+  }
+  bool hasMips64r6() const {
+    return STI.getFeatureBits() & Mips::FeatureMips64r6;
+  }
 
   bool parseRegister(unsigned &RegNum);
 
@@ -620,6 +626,12 @@ public:
     return Kind == k_Token;
   }
   bool isMem() const override { return Kind == k_Memory; }
+  bool isConstantMemOff() const {
+    return isMem() && dyn_cast<MCConstantExpr>(getMemOff());
+  }
+  template <unsigned Bits> bool isMemWithSimmOffset() const {
+    return isMem() && isConstantMemOff() && isInt<Bits>(getConstantMemOff());
+  }
   bool isInvNum() const { return Kind == k_Immediate; }
   bool isLSAImm() const {
     if (!isConstantImm())
@@ -662,6 +674,10 @@ public:
   const MCExpr *getMemOff() const {
     assert((Kind == k_Memory) && "Invalid access!");
     return Mem.Off;
+  }
+
+  int64_t getConstantMemOff() const {
+    return static_cast<const MCConstantExpr *>(getMemOff())->getValue();
   }
 
   static std::unique_ptr<MipsOperand> CreateToken(StringRef Str, SMLoc S,
@@ -893,6 +909,14 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
         return Error(IDLoc, "branch to misaligned address");
       break;
     }
+  }
+
+  // SSNOP is deprecated on MIPS32r6/MIPS64r6
+  // We still accept it but it is a normal nop.
+  if (hasMips32r6() && Inst.getOpcode() == Mips::SSNOP) {
+    std::string ISA = hasMips64r6() ? "MIPS64r6" : "MIPS32r6";
+    Warning(IDLoc, "ssnop is deprecated for " + ISA + " and is equivalent to a "
+                                                      "nop instruction");
   }
 
   if (MCID.hasDelaySlot() && Options.isReorder()) {

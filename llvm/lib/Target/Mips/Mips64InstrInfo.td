@@ -167,8 +167,8 @@ def SDR   : StoreLeftRight<"sdr", MipsSDR, GPR64Opnd, II_SDR>, LW_FM<0x2d>,
             ISA_MIPS3_NOT_32R6_64R6;
 
 /// Load-linked, Store-conditional
-def LLD : LLBase<"lld", GPR64Opnd>, LW_FM<0x34>, ISA_MIPS3;
-def SCD : SCBase<"scd", GPR64Opnd>, LW_FM<0x3c>, ISA_MIPS3;
+def LLD : LLBase<"lld", GPR64Opnd>, LW_FM<0x34>, ISA_MIPS3_NOT_32R6_64R6;
+def SCD : SCBase<"scd", GPR64Opnd>, LW_FM<0x3c>, ISA_MIPS3_NOT_32R6_64R6;
 
 /// Jump and Branch Instructions
 let isCodeGenOnly = 1 in {
@@ -225,8 +225,8 @@ def SEH64 : SignExtInReg<"seh", i16, GPR64Opnd, II_SEH>, SEB_FM<0x18, 0x20>,
 }
 
 /// Count Leading
-def DCLZ : CountLeading0<"dclz", GPR64Opnd>, CLO_FM<0x24>, ISA_MIPS64;
-def DCLO : CountLeading1<"dclo", GPR64Opnd>, CLO_FM<0x25>, ISA_MIPS64;
+def DCLZ : CountLeading0<"dclz", GPR64Opnd>, CLO_FM<0x24>, ISA_MIPS64_NOT_64R6;
+def DCLO : CountLeading1<"dclo", GPR64Opnd>, CLO_FM<0x25>, ISA_MIPS64_NOT_64R6;
 
 /// Double Word Swap Bytes/HalfWords
 def DSBH : SubwordSwap<"dsbh", GPR64Opnd>, SEB_FM<2, 0x24>, ISA_MIPS64R2;

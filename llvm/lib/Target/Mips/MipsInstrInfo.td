@@ -240,6 +240,9 @@ class ISA_MIPS32R2_NOT_32R6_64R6 {
   list<Predicate> InsnPredicates = [HasMips32r2, NotMips32r6, NotMips64r6];
 }
 class ISA_MIPS64   { list<Predicate> InsnPredicates = [HasMips64]; }
+class ISA_MIPS64_NOT_64R6 {
+  list<Predicate> InsnPredicates = [HasMips64, NotMips64r6];
+}
 class ISA_MIPS64R2 { list<Predicate> InsnPredicates = [HasMips64r2]; }
 class ISA_MIPS32R6 { list<Predicate> InsnPredicates = [HasMips32r6]; }
 class ISA_MIPS64R6 { list<Predicate> InsnPredicates = [HasMips64r6]; }
@@ -351,6 +354,7 @@ def calltarget  : Operand<iPTR> {
 
 def simm9 : Operand<i32>;
 def simm10 : Operand<i32>;
+def simm11 : Operand<i32>;
 
 def simm16      : Operand<i32> {
   let DecoderMethod= "DecodeSimm16";
@@ -415,6 +419,15 @@ def MipsMemAsmOperand : AsmOperandClass {
   let ParserMethod = "parseMemOperand";
 }
 
+def MipsMemSimm11AsmOperand : AsmOperandClass {
+  let Name = "MemOffsetSimm11";
+  let SuperClasses = [MipsMemAsmOperand];
+  let RenderMethod = "addMemOperands";
+  let ParserMethod = "parseMemOperand";
+  let PredicateMethod = "isMemWithSimmOffset<11>";
+  //let DiagnosticType = "Simm11";
+}
+
 def MipsInvertedImmoperand : AsmOperandClass {
   let Name = "InvNum";
   let RenderMethod = "addImmOperands";
@@ -449,6 +462,12 @@ def mem_msa : mem_generic {
 def mem_simm9 : mem_generic {
   let MIOperandInfo = (ops ptr_rc, simm9);
   let EncoderMethod = "getMemEncoding";
+}
+
+def mem_simm11 : mem_generic {
+  let MIOperandInfo = (ops ptr_rc, simm11);
+  let EncoderMethod = "getMemEncoding";
+  let ParserMatchClass = MipsMemSimm11AsmOperand;
 }
 
 def mem_ea : Operand<iPTR> {
@@ -1173,8 +1192,8 @@ let EncodingPredicates = []<Predicate>, // FIXME: Lack of HasStdEnc is probably 
 def WAIT : WAIT_FT<"wait">, WAIT_FM;
 
 /// Load-linked, Store-conditional
-def LL : LLBase<"ll", GPR32Opnd>, LW_FM<0x30>, ISA_MIPS2;
-def SC : SCBase<"sc", GPR32Opnd>, LW_FM<0x38>, ISA_MIPS2;
+def LL : LLBase<"ll", GPR32Opnd>, LW_FM<0x30>, ISA_MIPS2_NOT_32R6_64R6;
+def SC : SCBase<"sc", GPR32Opnd>, LW_FM<0x38>, ISA_MIPS2_NOT_32R6_64R6;
 }
 
 /// Jump and Branch Instructions
@@ -1261,8 +1280,10 @@ def SEH : MMRel, SignExtInReg<"seh", i16, GPR32Opnd, II_SEH>,
           SEB_FM<0x18, 0x20>, ISA_MIPS32R2;
 
 /// Count Leading
-def CLZ : MMRel, CountLeading0<"clz", GPR32Opnd>, CLO_FM<0x20>, ISA_MIPS32;
-def CLO : MMRel, CountLeading1<"clo", GPR32Opnd>, CLO_FM<0x21>, ISA_MIPS32;
+def CLZ : MMRel, CountLeading0<"clz", GPR32Opnd>, CLO_FM<0x20>,
+          ISA_MIPS32_NOT_32R6_64R6;
+def CLO : MMRel, CountLeading1<"clo", GPR32Opnd>, CLO_FM<0x21>,
+          ISA_MIPS32_NOT_32R6_64R6;
 
 /// Word Swap Bytes Within Halfwords
 def WSBH : MMRel, SubwordSwap<"wsbh", GPR32Opnd>, SEB_FM<2, 0x20>, ISA_MIPS32R2;

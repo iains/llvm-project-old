@@ -13,7 +13,6 @@
 
 // Notes about removals/changes from MIPS32r6:
 // Reencoded: dclo, dclz
-// Reencoded: lld, scd
 
 //===----------------------------------------------------------------------===//
 //
@@ -26,6 +25,8 @@ class DAUI_ENC    : DAUI_FM;
 class DAHI_ENC    : REGIMM_FM<OPCODE5_DAHI>;
 class DATI_ENC    : REGIMM_FM<OPCODE5_DATI>;
 class DBITSWAP_ENC : SPECIAL3_2R_FM<OPCODE6_DBITSWAP>;
+class DCLO_R6_ENC : SPECIAL_2R_FM<OPCODE6_DCLO>;
+class DCLZ_R6_ENC : SPECIAL_2R_FM<OPCODE6_DCLZ>;
 class DDIV_ENC    : SPECIAL_3R_FM<0b00010, 0b011110>;
 class DDIVU_ENC   : SPECIAL_3R_FM<0b00010, 0b011111>;
 class DMOD_ENC    : SPECIAL_3R_FM<0b00011, 0b011110>;
@@ -35,6 +36,8 @@ class DMUHU_ENC   : SPECIAL_3R_FM<0b00011, 0b111001>;
 class DMUL_R6_ENC : SPECIAL_3R_FM<0b00010, 0b111000>;
 class DMULU_ENC   : SPECIAL_3R_FM<0b00010, 0b111001>;
 class LDPC_ENC    : PCREL18_FM<OPCODE3_LDPC>;
+class LLD_R6_ENC : SPECIAL3_LL_SC_FM<OPCODE6_LLD>;
+class SCD_R6_ENC : SPECIAL3_LL_SC_FM<OPCODE6_SCD>;
 
 //===----------------------------------------------------------------------===//
 //
@@ -54,6 +57,8 @@ class DAHI_DESC    : AHI_ATI_DESC_BASE<"dahi", GPR64Opnd>;
 class DATI_DESC    : AHI_ATI_DESC_BASE<"dati", GPR64Opnd>;
 class DAUI_DESC    : AUI_DESC_BASE<"daui", GPR64Opnd>;
 class DBITSWAP_DESC : BITSWAP_DESC_BASE<"dbitswap", GPR64Opnd>;
+class DCLO_R6_DESC : CLO_R6_DESC_BASE<"dclo", GPR64Opnd>;
+class DCLZ_R6_DESC : CLZ_R6_DESC_BASE<"dclz", GPR64Opnd>;
 class DDIV_DESC    : DIVMOD_DESC_BASE<"ddiv", GPR64Opnd, sdiv>;
 class DDIVU_DESC   : DIVMOD_DESC_BASE<"ddivu", GPR64Opnd, udiv>;
 class DMOD_DESC    : DIVMOD_DESC_BASE<"dmod", GPR64Opnd, srem>;
@@ -63,7 +68,8 @@ class DMUHU_DESC   : MUL_R6_DESC_BASE<"dmuhu", GPR64Opnd, mulhu>;
 class DMUL_R6_DESC : MUL_R6_DESC_BASE<"dmul", GPR64Opnd, mul>;
 class DMULU_DESC   : MUL_R6_DESC_BASE<"dmulu", GPR64Opnd>;
 class LDPC_DESC    : PCREL_DESC_BASE<"ldpc", GPR64Opnd, simm18_lsl3>;
-
+class LLD_R6_DESC   : LL_R6_DESC_BASE<"lld", GPR64Opnd>;
+class SCD_R6_DESC   : SC_R6_DESC_BASE<"scd", GPR64Opnd>;
 class SELEQZ64_DESC : SELEQNE_Z_DESC_BASE<"seleqz", GPR64Opnd>;
 class SELNEZ64_DESC : SELEQNE_Z_DESC_BASE<"selnez", GPR64Opnd>;
 
@@ -78,6 +84,8 @@ def DALIGN : DALIGN_ENC, DALIGN_DESC, ISA_MIPS64R6;
 def DATI : DATI_ENC, DATI_DESC, ISA_MIPS64R6;
 def DAUI : DAUI_ENC, DAUI_DESC, ISA_MIPS64R6;
 def DBITSWAP : DBITSWAP_ENC, DBITSWAP_DESC, ISA_MIPS64R6;
+def DCLO_R6 : DCLO_R6_ENC, DCLO_R6_DESC, ISA_MIPS64R6;
+def DCLZ_R6 : DCLZ_R6_ENC, DCLZ_R6_DESC, ISA_MIPS64R6;
 def DDIV : DDIV_ENC, DDIV_DESC, ISA_MIPS64R6;
 def DDIVU : DDIVU_ENC, DDIVU_DESC, ISA_MIPS64R6;
 // def DLSA; // See MSA
@@ -88,6 +96,8 @@ def DMUHU: DMUHU_ENC, DMUHU_DESC, ISA_MIPS64R6;
 def DMUL_R6: DMUL_R6_ENC, DMUL_R6_DESC, ISA_MIPS64R6;
 def DMULU: DMULU_ENC, DMULU_DESC, ISA_MIPS64R6;
 def LDPC: LDPC_ENC, LDPC_DESC, ISA_MIPS64R6;
+def LLD_R6 : LLD_R6_ENC, LLD_R6_DESC, ISA_MIPS32R6;
+def SCD_R6 : SCD_R6_ENC, SCD_R6_DESC, ISA_MIPS32R6;
 let DecoderNamespace = "Mips32r6_64r6_GP64" in {
   def SELEQZ64 : SELEQZ_ENC, SELEQZ64_DESC, ISA_MIPS32R6, GPR_64;
   def SELNEZ64 : SELNEZ_ENC, SELNEZ64_DESC, ISA_MIPS32R6, GPR_64;
