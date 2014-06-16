@@ -1387,24 +1387,22 @@ static SDValue LowerVectorFP_TO_INT(SDValue Op, SelectionDAG &DAG) {
   EVT InVT = Op.getOperand(0).getValueType();
   EVT VT = Op.getValueType();
 
-  // FP_TO_XINT conversion from the same type are legal.
-  if (VT.getSizeInBits() == InVT.getSizeInBits())
-    return Op;
-
-  if (InVT == MVT::v2f64 || InVT == MVT::v4f32) {
+  if (VT.getSizeInBits() < InVT.getSizeInBits()) {
     SDLoc dl(Op);
     SDValue Cv =
         DAG.getNode(Op.getOpcode(), dl, InVT.changeVectorElementTypeToInteger(),
                     Op.getOperand(0));
     return DAG.getNode(ISD::TRUNCATE, dl, VT, Cv);
-  } else if (InVT == MVT::v2f32) {
+  }
+
+  if (VT.getSizeInBits() > InVT.getSizeInBits()) {
     SDLoc dl(Op);
     SDValue Ext = DAG.getNode(ISD::FP_EXTEND, dl, MVT::v2f64, Op.getOperand(0));
     return DAG.getNode(Op.getOpcode(), dl, VT, Ext);
   }
 
   // Type changing conversions are illegal.
-  return SDValue();
+  return Op;
 }
 
 SDValue AArch64TargetLowering::LowerFP_TO_INT(SDValue Op,
@@ -1440,32 +1438,23 @@ static SDValue LowerVectorINT_TO_FP(SDValue Op, SelectionDAG &DAG) {
   SDValue In = Op.getOperand(0);
   EVT InVT = In.getValueType();
 
-  // v2i32 to v2f32 is legal.
-  if (VT == MVT::v2f32 && InVT == MVT::v2i32)
-    return Op;
-
-  // This function only handles v2f64 outputs.
-  if (VT == MVT::v2f64) {
-    // Extend the input argument to a v2i64 that we can feed into the
-    // floating point conversion. Zero or sign extend based on whether
-    // we're doing a signed or unsigned float conversion.
-    unsigned Opc =
-        Op.getOpcode() == ISD::UINT_TO_FP ? ISD::ZERO_EXTEND : ISD::SIGN_EXTEND;
-    assert(Op.getNumOperands() == 1 && "FP conversions take one argument");
-    SDValue Promoted = DAG.getNode(Opc, dl, MVT::v2i64, Op.getOperand(0));
-    return DAG.getNode(Op.getOpcode(), dl, Op.getValueType(), Promoted);
+  if (VT.getSizeInBits() < InVT.getSizeInBits()) {
+    MVT CastVT =
+        MVT::getVectorVT(MVT::getFloatingPointVT(InVT.getScalarSizeInBits()),
+                         InVT.getVectorNumElements());
+    In = DAG.getNode(Op.getOpcode(), dl, CastVT, In);
+    return DAG.getNode(ISD::FP_ROUND, dl, VT, In, DAG.getIntPtrConstant(0));
   }
 
-  // Scalarize v2i64 to v2f32 conversions.
-  std::vector<SDValue> BuildVectorOps;
-  for (unsigned i = 0; i < VT.getVectorNumElements(); ++i) {
-    SDValue Sclr = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::i64, In,
-                               DAG.getConstant(i, MVT::i64));
-    Sclr = DAG.getNode(Op->getOpcode(), dl, MVT::f32, Sclr);
-    BuildVectorOps.push_back(Sclr);
+  if (VT.getSizeInBits() > InVT.getSizeInBits()) {
+    unsigned CastOpc =
+        Op.getOpcode() == ISD::SINT_TO_FP ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND;
+    EVT CastVT = VT.changeVectorElementTypeToInteger();
+    In = DAG.getNode(CastOpc, dl, CastVT, In);
+    return DAG.getNode(Op.getOpcode(), dl, VT, In);
   }
 
-  return DAG.getNode(ISD::BUILD_VECTOR, dl, VT, BuildVectorOps);
+  return Op;
 }
 
 SDValue AArch64TargetLowering::LowerINT_TO_FP(SDValue Op,
