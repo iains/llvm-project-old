@@ -2285,6 +2285,11 @@ DEF_TRAVERSE_STMT(OMPSimdDirective, {
     return false;
 })
 
+DEF_TRAVERSE_STMT(OMPForDirective, {
+  if (!TraverseOMPExecutableDirective(S))
+    return false;
+})
+
 // OpenMP clauses.
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::TraverseOMPClause(OMPClause *C) {
@@ -2392,8 +2397,8 @@ bool RecursiveASTVisitor<Derived>::VisitOMPCopyinClause(OMPCopyinClause *C) {
 }
 
 template <typename Derived>
-bool DataRecursiveASTVisitor<Derived>::VisitOMPReductionClause(
-    OMPReductionClause *C) {
+bool
+RecursiveASTVisitor<Derived>::VisitOMPReductionClause(OMPReductionClause *C) {
   TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
   TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
   VisitOMPClauseList(C);

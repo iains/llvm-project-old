@@ -51,6 +51,7 @@
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <mutex>
 
 #ifdef __APPLE__
 #include <pthread.h>
@@ -1851,6 +1852,7 @@ public:
   void VisitOMPExecutableDirective(const OMPExecutableDirective *D);
   void VisitOMPParallelDirective(const OMPParallelDirective *D);
   void VisitOMPSimdDirective(const OMPSimdDirective *D);
+  void VisitOMPForDirective(const OMPForDirective *D);
 
 private:
   void AddDeclarationNameInfo(const Stmt *S);
@@ -2274,6 +2276,10 @@ void EnqueueVisitor::VisitOMPSimdDirective(const OMPSimdDirective *D) {
   VisitOMPExecutableDirective(D);
 }
 
+void EnqueueVisitor::VisitOMPForDirective(const OMPForDirective *D) {
+  VisitOMPExecutableDirective(D);
+}
+
 void CursorVisitor::EnqueueWorkList(VisitorWorkList &WL, const Stmt *S) {
   EnqueueVisitor(WL, MakeCXCursor(S, StmtParent, TU,RegionOfInterest)).Visit(S);
 }
@@ -2559,8 +2565,8 @@ buildPieces(unsigned NameFlags, bool IsMemberRefExpr,
 // Misc. API hooks.
 //===----------------------------------------------------------------------===//               
 
-static llvm::sys::Mutex EnableMultithreadingMutex;
-static bool EnabledMultithreading;
+static llvm::sys::Mutex LoggingMutex;
+static std::once_flag LibclangGlobalInitFlag;
 
 static void fatal_error_handler(void *user_data, const std::string& reason,
                                 bool gen_crash_diag) {
@@ -2568,6 +2574,12 @@ static void fatal_error_handler(void *user_data, const std::string& reason,
   // call report_fatal_error.
   fprintf(stderr, "LIBCLANG FATAL ERROR: %s\n", reason.c_str());
   ::abort();
+}
+
+static void initializeLibClang() {
+  // Install our error handler, and make sure multi-threading is enabled.
+  llvm::llvm_start_multithreaded();
+  llvm::install_fatal_error_handler(fatal_error_handler, nullptr);
 }
 
 extern "C" {
@@ -2578,15 +2590,7 @@ CXIndex clang_createIndex(int excludeDeclarationsFromPCH,
   if (!getenv("LIBCLANG_DISABLE_CRASH_RECOVERY"))
     llvm::CrashRecoveryContext::Enable();
 
-  // Enable support for multithreading in LLVM.
-  {
-    llvm::sys::ScopedLock L(EnableMultithreadingMutex);
-    if (!EnabledMultithreading) {
-      llvm::install_fatal_error_handler(fatal_error_handler, nullptr);
-      llvm::llvm_start_multithreaded();
-      EnabledMultithreading = true;
-    }
-  }
+  std::call_once(LibclangGlobalInitFlag, initializeLibClang);
 
   CIndexer *CIdxr = new CIndexer();
   if (excludeDeclarationsFromPCH)
@@ -3950,6 +3954,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPParallelDirective");
   case CXCursor_OMPSimdDirective:
     return cxstring::createRef("OMPSimdDirective");
+  case CXCursor_OMPForDirective:
+    return cxstring::createRef("OMPForDirective");
   }
 
   llvm_unreachable("Unhandled CXCursorKind");
@@ -6962,7 +6968,7 @@ Logger &cxindex::Logger::operator<<(const llvm::format_object_base &Fmt) {
 cxindex::Logger::~Logger() {
   LogOS.flush();
 
-  llvm::sys::ScopedLock L(EnableMultithreadingMutex);
+  llvm::sys::ScopedLock L(LoggingMutex);
 
   static llvm::TimeRecord sBeginTR = llvm::TimeRecord::getCurrentTime();
 

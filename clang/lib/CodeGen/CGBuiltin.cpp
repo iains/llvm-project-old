@@ -1516,6 +1516,35 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
                                     E->getArg(0), true);
   case Builtin::BI__noop:
     return RValue::get(nullptr);
+  case Builtin::BI_InterlockedExchange:
+  case Builtin::BI_InterlockedExchangePointer:
+    return EmitBinaryAtomic(*this, llvm::AtomicRMWInst::Xchg, E);
+  case Builtin::BI_InterlockedCompareExchangePointer: {
+    llvm::Type *RTy;
+    llvm::IntegerType *IntType =
+      IntegerType::get(getLLVMContext(),
+                       getContext().getTypeSize(E->getType()));
+    llvm::Type *IntPtrType = IntType->getPointerTo();
+
+    llvm::Value *Destination =
+      Builder.CreateBitCast(EmitScalarExpr(E->getArg(0)), IntPtrType);
+
+    llvm::Value *Exchange = EmitScalarExpr(E->getArg(1));
+    RTy = Exchange->getType();
+    Exchange = Builder.CreatePtrToInt(Exchange, IntType);
+
+    llvm::Value *Comparand =
+      Builder.CreatePtrToInt(EmitScalarExpr(E->getArg(2)), IntType);
+
+    auto Result = Builder.CreateAtomicCmpXchg(Destination, Comparand, Exchange,
+                                              SequentiallyConsistent,
+                                              SequentiallyConsistent);
+    Result->setVolatile(true);
+
+    return RValue::get(Builder.CreateIntToPtr(Builder.CreateExtractValue(Result,
+                                                                         0),
+                                              RTy));
+  }
   case Builtin::BI_InterlockedCompareExchange: {
     AtomicCmpXchgInst *CXI = Builder.CreateAtomicCmpXchg(
         EmitScalarExpr(E->getArg(0)),
@@ -3054,6 +3083,12 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
     return Builder.CreateCall(F, llvm::ConstantInt::get(Int32Ty, HintID));
   }
 
+  if (BuiltinID == ARM::BI__builtin_arm_rbit) {
+    return Builder.CreateCall(CGM.getIntrinsic(Intrinsic::arm_rbit),
+                                               EmitScalarExpr(E->getArg(0)),
+                              "rbit");
+  }
+
   if (BuiltinID == ARM::BI__clear_cache) {
     assert(E->getNumArgs() == 2 && "__clear_cache takes 2 arguments");
     const FunctionDecl *FD = E->getDirectCallee();
@@ -3757,6 +3792,21 @@ emitVectorWrappedScalar16Intrinsic(unsigned Int, SmallVectorImpl<Value*> &Ops,
 
 Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
                                                const CallExpr *E) {
+  if (BuiltinID == AArch64::BI__builtin_arm_rbit) {
+    assert((getContext().getTypeSize(E->getType()) == 32) &&
+           "rbit of unusual size!");
+    llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
+    return Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::aarch64_rbit, Arg->getType()), Arg, "rbit");
+  }
+  if (BuiltinID == AArch64::BI__builtin_arm_rbit64) {
+    assert((getContext().getTypeSize(E->getType()) == 64) &&
+           "rbit of unusual size!");
+    llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
+    return Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::aarch64_rbit, Arg->getType()), Arg, "rbit");
+  }
+
   if (BuiltinID == AArch64::BI__clear_cache) {
     assert(E->getNumArgs() == 2 && "__clear_cache takes 2 arguments");
     const FunctionDecl *FD = E->getDirectCallee();

@@ -86,3 +86,134 @@ define i16 @test9(i16 %a) {
 ; CHECK-NEXT:  %d = mul i16 %a, -32767
 ; CHECK-NEXT:  ret i16 %d
 }
+
+define i32 @test10(i32 %x) {
+  %x.not = or i32 %x, -1431655766
+  %neg = xor i32 %x.not, 1431655765
+  %add = add i32 %x, 1
+  %add1 = add i32 %add, %neg
+  ret i32 %add1
+; CHECK-LABEL: @test10(
+; CHECK-NEXT: [[AND:%[a-z0-9]+]] = and i32 %x, -1431655766
+; CHECK-NEXT: ret i32 [[AND]]
+}
+
+define i32 @test11(i32 %x, i32 %y) {
+  %x.not = or i32 %x, -1431655766
+  %neg = xor i32 %x.not, 1431655765
+  %add = add i32 %y, 1
+  %add1 = add i32 %add, %neg
+  ret i32 %add1
+; CHECK-LABEL: @test11(
+; CHECK-NEXT: [[AND:%[a-z0-9]+]] = and i32 %x, 1431655765
+; CHECK-NEXT: [[SUB:%[a-z0-9]+]] = sub i32 %y, [[AND]]
+; CHECK-NEXT: ret i32 [[SUB]]
+}
+
+define i32 @test12(i32 %x, i32 %y) {
+  %shr = ashr i32 %x, 3
+  %shr.not = or i32 %shr, -1431655766
+  %neg = xor i32 %shr.not, 1431655765
+  %add = add i32 %y, 1
+  %add1 = add i32 %add, %neg
+  ret i32 %add1
+; CHECK-LABEL: @test12(
+; CHECK-NEXT: [[SHR:%[a-z0-9]+]] = ashr i32 %x, 3
+; CHECK-NEXT: [[AND:%[a-z0-9]+]] = and i32 [[SHR]], 1431655765
+; CHECK-NEXT: [[SUB:%[a-z0-9]+]] = sub i32 %y, [[AND]]
+; CHECK-NEXT: ret i32 [[SUB]]
+}
+
+define i32 @test13(i32 %x, i32 %y) {
+  %x.not = or i32 %x, -1431655767
+  %neg = xor i32 %x.not, 1431655766
+  %add = add i32 %y, 1
+  %add1 = add i32 %add, %neg
+  ret i32 %add1
+; CHECK-LABEL: @test13(
+; CHECK-NEXT: [[AND:%[a-z0-9]+]] = and i32 %x, 1431655766
+; CHECK-NEXT: [[SUB:%[a-z0-9]+]] = sub i32 %y, [[AND]]
+; CHECK-NEXT: ret i32 [[SUB]]
+}
+
+define i32 @test14(i32 %x, i32 %y) {
+  %shr = ashr i32 %x, 3
+  %shr.not = or i32 %shr, -1431655767
+  %neg = xor i32 %shr.not, 1431655766
+  %add = add i32 %y, 1
+  %add1 = add i32 %add, %neg
+  ret i32 %add1
+; CHECK-LABEL: @test14(
+; CHECK-NEXT: [[SHR:%[a-z0-9]+]] = ashr i32 %x, 3
+; CHECK-NEXT: [[AND:%[a-z0-9]+]] = and i32 [[SHR]], 1431655766
+; CHECK-NEXT: [[SUB:%[a-z0-9]+]] = sub i32 %y, [[AND]]
+; CHECK-NEXT: ret i32 [[SUB]]
+}
+
+define i16 @add_nsw_mul_nsw(i16 %x) {
+ %add1 = add nsw i16 %x, %x
+ %add2 = add nsw i16 %add1, %x
+ ret i16 %add2
+; CHECK-LABEL: @add_nsw_mul_nsw(
+; CHECK-NEXT: %add2 = mul nsw i16 %x, 3
+; CHECK-NEXT: ret i16 %add2
+}
+
+define i16 @mul_add_to_mul_1(i16 %x) {
+ %mul1 = mul nsw i16 %x, 8
+ %add2 = add nsw i16 %x, %mul1
+ ret i16 %add2
+; CHECK-LABEL: @mul_add_to_mul_1(
+; CHECK-NEXT: %add2 = mul nsw i16 %x, 9
+; CHECK-NEXT: ret i16 %add2
+}
+
+define i16 @mul_add_to_mul_2(i16 %x) {
+ %mul1 = mul nsw i16 %x, 8
+ %add2 = add nsw i16 %mul1, %x
+ ret i16 %add2
+; CHECK-LABEL: @mul_add_to_mul_2(
+; CHECK-NEXT: %add2 = mul nsw i16 %x, 9
+; CHECK-NEXT: ret i16 %add2
+}
+
+define i16 @mul_add_to_mul_3(i16 %a) {
+ %mul1 = mul i16 %a, 2
+ %mul2 = mul i16 %a, 3
+ %add = add nsw i16 %mul1, %mul2
+ ret i16 %add
+; CHECK-LABEL: @mul_add_to_mul_3(
+; CHECK-NEXT: %add = mul i16 %a, 5
+; CHECK-NEXT: ret i16 %add
+}
+
+define i16 @mul_add_to_mul_4(i16 %a) {
+ %mul1 = mul nsw i16 %a, 2
+ %mul2 = mul nsw i16 %a, 7
+ %add = add nsw i16 %mul1, %mul2
+ ret i16 %add
+; CHECK-LABEL: @mul_add_to_mul_4(
+; CHECK-NEXT: %add = mul nsw i16 %a, 9
+; CHECK-NEXT: ret i16 %add
+}
+
+define i16 @mul_add_to_mul_5(i16 %a) {
+ %mul1 = mul nsw i16 %a, 3
+ %mul2 = mul nsw i16 %a, 7
+ %add = add nsw i16 %mul1, %mul2
+ ret i16 %add
+; CHECK-LABEL: @mul_add_to_mul_5(
+; CHECK-NEXT: %add = mul nsw i16 %a, 10
+; CHECK-NEXT: ret i16 %add
+}
+
+define i32 @mul_add_to_mul_6(i32 %x, i32 %y) {
+  %mul1 = mul nsw i32 %x, %y
+  %mul2 = mul nsw i32 %mul1, 5
+  %add = add nsw i32 %mul1, %mul2
+  ret i32 %add
+; CHECK-LABEL: @mul_add_to_mul_6(
+; CHECK-NEXT: %mul1 = mul nsw i32 %x, %y
+; CHECK-NEXT: %add = mul nsw i32 %mul1, 6
+; CHECK-NEXT: ret i32 %add
+}

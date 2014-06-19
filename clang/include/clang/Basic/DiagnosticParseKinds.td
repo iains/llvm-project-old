@@ -277,6 +277,13 @@ def ext_for_range : ExtWarn<
 def warn_cxx98_compat_for_range : Warning<
   "range-based for loop is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
+def ext_for_range_identifier : ExtWarn<
+  "range-based for loop with implicit deduced type is a C++1z extension">,
+  InGroup<CXX1z>;
+def warn_cxx1y_compat_for_range_identifier : Warning<
+  "range-based for loop with implicit deduced type is incompatible with "
+  "C++ standards before C++1z">,
+  InGroup<CXXPre1zCompat>, DefaultIgnore;
 def err_for_range_expected_decl : Error<
   "for range declaration must declare a variable">;
 def err_argument_required_after_attribute : Error<
@@ -333,8 +340,6 @@ def warn_vector_long_decl_spec_combination : Warning<
   "Use of 'long' with '__vector' is deprecated">, InGroup<Deprecated>;
 def err_friend_invalid_in_context : Error<
   "'friend' used outside of class">;
-def err_unknown_typename : Error<
-  "unknown type name %0">;
 def err_use_of_tag_name_without_tag : Error<
   "must use '%1' tag to refer to type %0%select{| in this scope}2">;
 def err_templated_using_directive : Error<

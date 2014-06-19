@@ -4085,8 +4085,7 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
 /// \brief Check whether the declarations found for a typo correction are
 /// visible, and if none of them are, convert the correction to an 'import
 /// a module' correction.
-static void checkCorrectionVisibility(Sema &SemaRef, TypoCorrection &TC,
-                                      DeclarationName TypoName) {
+static void checkCorrectionVisibility(Sema &SemaRef, TypoCorrection &TC) {
   if (TC.begin() == TC.end())
     return;
 
@@ -4385,7 +4384,7 @@ TypoCorrection Sema::CorrectTypo(const DeclarationNameInfo &TypoName,
 
     TypoCorrection TC = Result;
     TC.setCorrectionRange(SS, TypoName);
-    checkCorrectionVisibility(*this, TC, TypoName.getName());
+    checkCorrectionVisibility(*this, TC);
     return TC;
   }
   // Ugly hack equivalent to CTC == CTC_ObjCMessageReceiver;
