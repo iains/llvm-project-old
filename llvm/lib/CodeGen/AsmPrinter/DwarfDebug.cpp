@@ -209,6 +209,8 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   DwarfVersion = DwarfVersionNumber ? DwarfVersionNumber
                                     : MMI->getModule()->getDwarfVersion();
 
+  Asm->OutStreamer.getContext().setDwarfVersion(DwarfVersion);
+
   {
     NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
     beginModule();
@@ -1036,9 +1038,9 @@ void DwarfDebug::endModule() {
     emitDebugInfoDWO();
     emitDebugAbbrevDWO();
     emitDebugLineDWO();
+    emitDebugLocDWO();
     // Emit DWO addresses.
     AddrPool.emit(*Asm, Asm->getObjFileLowering().getDwarfAddrSection());
-    emitDebugLocDWO();
   } else
     // Emit info into a debug loc section.
     emitDebugLoc();
