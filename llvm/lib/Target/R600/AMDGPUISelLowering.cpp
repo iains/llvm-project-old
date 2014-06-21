@@ -320,6 +320,8 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FCEIL, VT, Expand);
     setOperationAction(ISD::FCOS, VT, Expand);
     setOperationAction(ISD::FDIV, VT, Expand);
+    setOperationAction(ISD::FEXP2, VT, Expand);
+    setOperationAction(ISD::FLOG2, VT, Expand);
     setOperationAction(ISD::FPOW, VT, Expand);
     setOperationAction(ISD::FFLOOR, VT, Expand);
     setOperationAction(ISD::FTRUNC, VT, Expand);
@@ -936,6 +938,8 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
     case AMDGPUIntrinsic::AMDIL_round_nearest: // Legacy name.
       return DAG.getNode(ISD::FRINT, DL, VT, Op.getOperand(1));
+    case AMDGPUIntrinsic::AMDGPU_trunc:
+      return DAG.getNode(ISD::FTRUNC, DL, VT, Op.getOperand(1));
   }
 }
 

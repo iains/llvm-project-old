@@ -628,6 +628,24 @@ void OMPClausePrinter::VisitOMPProcBindClause(OMPProcBindClause *Node) {
      << ")";
 }
 
+void OMPClausePrinter::VisitOMPScheduleClause(OMPScheduleClause *Node) {
+  OS << "schedule("
+     << getOpenMPSimpleClauseTypeName(OMPC_schedule, Node->getScheduleKind());
+  if (Node->getChunkSize()) {
+    OS << ", ";
+    Node->getChunkSize()->printPretty(OS, nullptr, Policy);
+  }
+  OS << ")";
+}
+
+void OMPClausePrinter::VisitOMPOrderedClause(OMPOrderedClause *) {
+  OS << "ordered";
+}
+
+void OMPClausePrinter::VisitOMPNowaitClause(OMPNowaitClause *) {
+  OS << "nowait";
+}
+
 template<typename T>
 void OMPClausePrinter::VisitOMPClauseList(T *Node, char StartSym) {
   for (typename T::varlist_iterator I = Node->varlist_begin(),
@@ -929,8 +947,10 @@ void StmtPrinter::VisitIntegerLiteral(IntegerLiteral *Node) {
   // FIXME: The Short and UShort cases are to handle cases where a short
   // integeral literal is formed during template instantiation.  They should
   // be removed when template instantiation no longer needs integer literals.
-  case BuiltinType::Short:
-  case BuiltinType::UShort:
+  case BuiltinType::SChar:     OS << "i8"; break;
+  case BuiltinType::UChar:     OS << "Ui8"; break;
+  case BuiltinType::Short:     OS << "i16"; break;
+  case BuiltinType::UShort:    OS << "Ui16"; break;
   case BuiltinType::Int:       break; // no suffix.
   case BuiltinType::UInt:      OS << 'U'; break;
   case BuiltinType::Long:      OS << 'L'; break;
@@ -1256,10 +1276,12 @@ void StmtPrinter::VisitDesignatedInitExpr(DesignatedInitExpr *Node) {
                       DEnd = Node->designators_end();
        D != DEnd; ++D) {
     if (D->isFieldDesignator()) {
-      if (D->getDotLoc().isInvalid())
-        OS << D->getFieldName()->getName() << ":";
-      else
+      if (D->getDotLoc().isInvalid()) {
+        if (IdentifierInfo *II = D->getFieldName())
+          OS << II->getName() << ":";
+      } else {
         OS << "." << D->getFieldName()->getName();
+      }
     } else {
       OS << "[";
       if (D->isArrayDesignator()) {

@@ -22,6 +22,7 @@
 #include "llvm/Support/BlockFrequency.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ScaledNumber.h"
 #include "llvm/Support/raw_ostream.h"
 #include <deque>
 #include <list>
@@ -65,19 +66,6 @@ public:
       return IsNeg ? INT64_MIN : INT64_MAX;
     return IsNeg ? -int64_t(U) : int64_t(U);
   }
-
-  static int32_t extractLg(const std::pair<int32_t, int> &Lg) {
-    return Lg.first;
-  }
-  static int32_t extractLgFloor(const std::pair<int32_t, int> &Lg) {
-    return Lg.first - (Lg.second > 0);
-  }
-  static int32_t extractLgCeiling(const std::pair<int32_t, int> &Lg) {
-    return Lg.first + (Lg.second < 0);
-  }
-
-  static std::pair<uint64_t, int16_t> divide64(uint64_t L, uint64_t R);
-  static std::pair<uint64_t, int16_t> multiply64(uint64_t L, uint64_t R);
 
   static int compare(uint64_t L, uint64_t R, int Shift) {
     assert(Shift >= 0);
@@ -197,17 +185,21 @@ public:
   /// \brief The log base 2, rounded.
   ///
   /// Get the lg of the scalar.  lg 0 is defined to be INT32_MIN.
-  int32_t lg() const { return extractLg(lgImpl()); }
+  int32_t lg() const { return ScaledNumbers::getLg(Digits, Exponent); }
 
   /// \brief The log base 2, rounded towards INT32_MIN.
   ///
   /// Get the lg floor.  lg 0 is defined to be INT32_MIN.
-  int32_t lgFloor() const { return extractLgFloor(lgImpl()); }
+  int32_t lgFloor() const {
+    return ScaledNumbers::getLgFloor(Digits, Exponent);
+  }
 
   /// \brief The log base 2, rounded towards INT32_MAX.
   ///
   /// Get the lg ceiling.  lg 0 is defined to be INT32_MIN.
-  int32_t lgCeiling() const { return extractLgCeiling(lgImpl()); }
+  int32_t lgCeiling() const {
+    return ScaledNumbers::getLgCeiling(Digits, Exponent);
+  }
 
   bool operator==(const UnsignedFloat &X) const { return compare(X) == 0; }
   bool operator<(const UnsignedFloat &X) const { return compare(X) < 0; }
@@ -314,10 +306,13 @@ public:
   UnsignedFloat inverse() const { return UnsignedFloat(*this).invert(); }
 
 private:
-  static UnsignedFloat getProduct(DigitsType L, DigitsType R);
-  static UnsignedFloat getQuotient(DigitsType Dividend, DigitsType Divisor);
+  static UnsignedFloat getProduct(DigitsType LHS, DigitsType RHS) {
+    return ScaledNumbers::getProduct(LHS, RHS);
+  }
+  static UnsignedFloat getQuotient(DigitsType Dividend, DigitsType Divisor) {
+    return ScaledNumbers::getQuotient(Dividend, Divisor);
+  }
 
-  std::pair<int32_t, int> lgImpl() const;
   static int countLeadingZerosWidth(DigitsType Digits) {
     if (Width == 64)
       return countLeadingZeros64(Digits);
@@ -326,29 +321,24 @@ private:
     return countLeadingZeros32(Digits) + Width - 32;
   }
 
-  static UnsignedFloat adjustToWidth(uint64_t N, int32_t S) {
-    assert(S >= MinExponent);
-    assert(S <= MaxExponent);
-    if (Width == 64 || N <= DigitsLimits::max())
-      return UnsignedFloat(N, S);
-
-    // Shift right.
-    int Shift = 64 - Width - countLeadingZeros64(N);
-    DigitsType Shifted = N >> Shift;
-
-    // Round.
-    assert(S + Shift <= MaxExponent);
-    return getRounded(UnsignedFloat(Shifted, S + Shift),
-                      N & UINT64_C(1) << (Shift - 1));
+  /// \brief Adjust a number to width, rounding up if necessary.
+  ///
+  /// Should only be called for \c Shift close to zero.
+  ///
+  /// \pre Shift >= MinExponent && Shift + 64 <= MaxExponent.
+  static UnsignedFloat adjustToWidth(uint64_t N, int32_t Shift) {
+    assert(Shift >= MinExponent && "Shift should be close to 0");
+    assert(Shift <= MaxExponent - 64 && "Shift should be close to 0");
+    auto Adjusted = ScaledNumbers::getAdjusted<DigitsT>(N, Shift);
+    return Adjusted;
   }
 
   static UnsignedFloat getRounded(UnsignedFloat P, bool Round) {
-    if (!Round)
+    // Saturate.
+    if (P.isLargest())
       return P;
-    if (P.Digits == DigitsLimits::max())
-      // Careful of overflow in the exponent.
-      return UnsignedFloat(1, P.Exponent) <<= Width;
-    return UnsignedFloat(P.Digits + 1, P.Exponent);
+
+    return ScaledNumbers::getRounded(P.Digits, P.Exponent, Round);
   }
 };
 
@@ -404,46 +394,6 @@ uint64_t UnsignedFloat<DigitsT>::scale(uint64_t N) const {
 }
 
 template <class DigitsT>
-UnsignedFloat<DigitsT> UnsignedFloat<DigitsT>::getProduct(DigitsType L,
-                                                          DigitsType R) {
-  // Check for zero.
-  if (!L || !R)
-    return getZero();
-
-  // Check for numbers that we can compute with 64-bit math.
-  if (Width <= 32 || (L <= UINT32_MAX && R <= UINT32_MAX))
-    return adjustToWidth(uint64_t(L) * uint64_t(R), 0);
-
-  // Do the full thing.
-  return UnsignedFloat(multiply64(L, R));
-}
-template <class DigitsT>
-UnsignedFloat<DigitsT> UnsignedFloat<DigitsT>::getQuotient(DigitsType Dividend,
-                                                           DigitsType Divisor) {
-  // Check for zero.
-  if (!Dividend)
-    return getZero();
-  if (!Divisor)
-    return getLargest();
-
-  if (Width == 64)
-    return UnsignedFloat(divide64(Dividend, Divisor));
-
-  // We can compute this with 64-bit math.
-  int Shift = countLeadingZeros64(Dividend);
-  uint64_t Shifted = uint64_t(Dividend) << Shift;
-  uint64_t Quotient = Shifted / Divisor;
-
-  // If Quotient needs to be shifted, then adjustToWidth will round.
-  if (Quotient > DigitsLimits::max())
-    return adjustToWidth(Quotient, -Shift);
-
-  // Round based on the value of the next bit.
-  return getRounded(UnsignedFloat(Quotient, -Shift),
-                    Shifted % Divisor >= getHalf(Divisor));
-}
-
-template <class DigitsT>
 template <class IntT>
 IntT UnsignedFloat<DigitsT>::toInt() const {
   typedef std::numeric_limits<IntT> Limits;
@@ -462,25 +412,6 @@ IntT UnsignedFloat<DigitsT>::toInt() const {
     return N >> -Exponent;
   }
   return N;
-}
-
-template <class DigitsT>
-std::pair<int32_t, int> UnsignedFloat<DigitsT>::lgImpl() const {
-  if (isZero())
-    return std::make_pair(INT32_MIN, 0);
-
-  // Get the floor of the lg of Digits.
-  int32_t LocalFloor = Width - countLeadingZerosWidth(Digits) - 1;
-
-  // Get the floor of the lg of this.
-  int32_t Floor = Exponent + LocalFloor;
-  if (Digits == UINT64_C(1) << LocalFloor)
-    return std::make_pair(Floor, 0);
-
-  // Round based on the next digit.
-  assert(LocalFloor >= 1);
-  bool Round = Digits & UINT64_C(1) << (LocalFloor - 1);
-  return std::make_pair(Floor + Round, Round ? 1 : -1);
 }
 
 template <class DigitsT>

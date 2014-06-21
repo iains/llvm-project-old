@@ -46,6 +46,7 @@ static cl::opt<OutputFormatTy>
        OutputFormatShort(cl::desc("Specify output format"),
          cl::values(clEnumValN(sysv, "A", "System V format"),
                     clEnumValN(berkeley, "B", "Berkeley format"),
+                    clEnumValN(darwin, "m", "Darwin -m format"),
                     clEnumValEnd),
          cl::init(berkeley));
 
@@ -469,13 +470,20 @@ static void PrintFileSectionSizes(StringRef file) {
       std::unique_ptr<Archive> UA;
       if (!I->getAsObjectFile(UO)) {
         if (ObjectFile *o = dyn_cast<ObjectFile>(&*UO.get())) {
+          MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o);
           if (OutputFormat == sysv)
             outs() << o->getFileName() << "  :\n";
+          else if(MachO && OutputFormat == darwin) {
+            if (moreThanOneFile || moreThanOneArch)
+              outs() << o->getFileName() << " (for architecture "
+                     << I->getArchTypeName() << "):";
+            outs() << "\n";
+          }
           PrintObjectSectionSizes(o);
           if (OutputFormat == berkeley) {
-            MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o);
             if (!MachO || moreThanOneFile || moreThanOneArch)
-              outs() << o->getFileName();
+              outs() << o->getFileName() << " (for architecture "
+                     << I->getArchTypeName() << ")";
             outs() << "\n";
           }
         }
@@ -495,11 +503,15 @@ static void PrintFileSectionSizes(StringRef file) {
               outs() << o->getFileName() << "   (ex " << UA->getFileName()
                      << "):\n";
             else if(MachO && OutputFormat == darwin)
-              outs() << UA->getFileName() << "(" << o->getFileName() << "):\n";
+              outs() << UA->getFileName() << "(" << o->getFileName() << ")"
+                     << " (for architecture " << I->getArchTypeName()
+                     << "):\n";
             PrintObjectSectionSizes(o);
             if (OutputFormat == berkeley) {
               if (MachO)
-                outs() << UA->getFileName() << "(" << o->getFileName() << ")\n";
+                outs() << UA->getFileName() << "(" << o->getFileName() << ")"
+                       << " (for architecture " << I->getArchTypeName()
+                       << ")\n";
               else
                 outs() << o->getFileName() << " (ex " << UA->getFileName()
                        << ")\n";

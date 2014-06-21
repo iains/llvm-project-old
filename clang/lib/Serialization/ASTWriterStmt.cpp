@@ -1707,6 +1707,18 @@ void OMPClauseWriter::VisitOMPProcBindClause(OMPProcBindClause *C) {
   Writer->Writer.AddSourceLocation(C->getProcBindKindKwLoc(), Record);
 }
 
+void OMPClauseWriter::VisitOMPScheduleClause(OMPScheduleClause *C) {
+  Record.push_back(C->getScheduleKind());
+  Writer->Writer.AddStmt(C->getChunkSize());
+  Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);
+  Writer->Writer.AddSourceLocation(C->getScheduleKindLoc(), Record);
+  Writer->Writer.AddSourceLocation(C->getCommaLoc(), Record);
+}
+
+void OMPClauseWriter::VisitOMPOrderedClause(OMPOrderedClause *) {}
+
+void OMPClauseWriter::VisitOMPNowaitClause(OMPNowaitClause *) {}
+
 void OMPClauseWriter::VisitOMPPrivateClause(OMPPrivateClause *C) {
   Record.push_back(C->varlist_size());
   Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);

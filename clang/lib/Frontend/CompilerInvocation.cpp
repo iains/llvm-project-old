@@ -20,6 +20,7 @@
 #include "clang/Serialization/ASTReader.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
@@ -1167,7 +1168,8 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
 
   // Mimicing gcc's behavior, trigraphs are only enabled if -trigraphs
   // is specified, or -std is set to a conforming mode.
-  Opts.Trigraphs = !Opts.GNUMode;
+  // Trigraphs are disabled by default in c++1z onwards.
+  Opts.Trigraphs = !Opts.GNUMode && !Opts.CPlusPlus1z;
 
   Opts.DollarIdents = !Opts.AsmPreprocessor;
 
@@ -1191,6 +1193,56 @@ static Visibility parseVisibility(Arg *arg, ArgList &args,
   diags.Report(diag::err_drv_invalid_value)
     << arg->getAsString(args) << value;
   return DefaultVisibility;
+}
+
+static unsigned parseMSCVersion(ArgList &Args, DiagnosticsEngine &Diags) {
+  auto Arg = Args.getLastArg(OPT_fmsc_version);
+  if (!Arg)
+    return 0;
+
+  // The MSC versioning scheme involves four versioning components:
+  //  - Major
+  //  - Minor
+  //  - Build
+  //  - Patch
+  //
+  // We accept either the old style (_MSC_VER) value, or a _MSC_FULL_VER value.
+  // Additionally, the value may be provided in the form of a more readable
+  // MM.mm.bbbbb.pp version.
+  //
+  // Unfortunately, due to the bit-width limitations, we cannot currently encode
+  // the value for the patch level.
+
+  StringRef Value = Arg->getValue();
+
+  // parse the compatible old form of _MSC_VER or the newer _MSC_FULL_VER
+  if (Value.find('.') == StringRef::npos) {
+    unsigned Version = 0;
+    if (Value.getAsInteger(10, Version)) {
+      Diags.Report(diag::err_drv_invalid_value)
+        << Arg->getAsString(Args) << Value;
+      return 0;
+    }
+    return (Version < 100000) ? Version * 100000 : Version;
+  }
+
+  // parse the dot-delimited component version
+  unsigned VC[4] = {0};
+  SmallVector<StringRef, 4> Components;
+
+  Value.split(Components, ".", llvm::array_lengthof(VC));
+  for (unsigned CI = 0,
+                CE = std::min(Components.size(), llvm::array_lengthof(VC));
+       CI < CE; ++CI) {
+    if (Components[CI].getAsInteger(10, VC[CI])) {
+      Diags.Report(diag::err_drv_invalid_value)
+        << Arg->getAsString(Args) << Value;
+      return 0;
+    }
+  }
+
+  // FIXME we cannot encode the patch level
+  return VC[0] * 10000000 + VC[1] * 100000 + VC[2];
 }
 
 static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
@@ -1362,7 +1414,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.MSVCCompat = Args.hasArg(OPT_fms_compatibility);
   Opts.MicrosoftExt = Opts.MSVCCompat || Args.hasArg(OPT_fms_extensions);
   Opts.AsmBlocks = Args.hasArg(OPT_fasm_blocks) || Opts.MicrosoftExt;
-  Opts.MSCVersion = getLastArgIntValue(Args, OPT_fmsc_version, 0, Diags);
+  Opts.MSCVersion = parseMSCVersion(Args, Diags);
   Opts.VtorDispMode = getLastArgIntValue(Args, OPT_vtordisp_mode_EQ, 1, Diags);
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
   Opts.WritableStrings = Args.hasArg(OPT_fwritable_strings);

@@ -2327,8 +2327,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  // The make clang go fast button.
-  CmdArgs.push_back("-disable-free");
+  // We normally speed up the clang process a bit by skipping destructors at
+  // exit, but when we're generating diagnostics we can rely on some of the
+  // cleanup.
+  if (!C.isForDiagnostics())
+    CmdArgs.push_back("-disable-free");
 
   // Disable the verification pass in -asserts builds.
 #ifdef NDEBUG
@@ -3339,10 +3342,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.getLastArg(options::OPT_fapple_kext))
     CmdArgs.push_back("-fapple-kext");
 
-  if (Args.hasFlag(options::OPT_frewrite_includes,
-                   options::OPT_fno_rewrite_includes, false))
-    CmdArgs.push_back("-frewrite-includes");
-
   Args.AddLastArg(CmdArgs, options::OPT_fobjc_sender_dependent_dispatch);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_print_source_range_info);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_parseable_fixits);
@@ -3570,43 +3569,50 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -fmodule-name specifies the module that is currently being built (or
   // used for header checking by -fmodule-maps).
-  if (Arg *A = Args.getLastArg(options::OPT_fmodule_name)) {
-    A->claim();
+  if (Arg *A = Args.getLastArg(options::OPT_fmodule_name))
     A->render(Args, CmdArgs);
-  }
 
   // -fmodule-map-file can be used to specify a file containing module
   // definitions.
-  if (Arg *A = Args.getLastArg(options::OPT_fmodule_map_file)) {
-    A->claim();
+  if (Arg *A = Args.getLastArg(options::OPT_fmodule_map_file))
     A->render(Args, CmdArgs);
-  }
 
-  // If a module path was provided, pass it along. Otherwise, use a temporary
-  // directory.
-  if (Arg *A = Args.getLastArg(options::OPT_fmodules_cache_path)) {
-    A->claim();
-    if (HaveModules) {
-      A->render(Args, CmdArgs);
+  // -fmodule-cache-path specifies where our module files should be written.
+  SmallString<128> ModuleCachePath;
+  if (Arg *A = Args.getLastArg(options::OPT_fmodules_cache_path))
+    ModuleCachePath = A->getValue();
+  if (HaveModules) {
+    if (C.isForDiagnostics()) {
+      // When generating crash reports, we want to emit the modules along with
+      // the reproduction sources, so we ignore any provided module path.
+      ModuleCachePath = Output.getFilename();
+      llvm::sys::path::replace_extension(ModuleCachePath, ".cache");
+      llvm::sys::path::append(ModuleCachePath, "modules");
+    } else if (ModuleCachePath.empty()) {
+      // No module path was provided: use the default.
+      llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false,
+                                             ModuleCachePath);
+      llvm::sys::path::append(ModuleCachePath, "org.llvm.clang");
+      llvm::sys::path::append(ModuleCachePath, "ModuleCache");
     }
-  } else if (HaveModules) {
-    SmallString<128> DefaultModuleCache;
-    llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false,
-                                           DefaultModuleCache);
-    llvm::sys::path::append(DefaultModuleCache, "org.llvm.clang");
-    llvm::sys::path::append(DefaultModuleCache, "ModuleCache");
     const char Arg[] = "-fmodules-cache-path=";
-    DefaultModuleCache.insert(DefaultModuleCache.begin(),
-                              Arg, Arg + strlen(Arg));
-    CmdArgs.push_back(Args.MakeArgString(DefaultModuleCache));
+    ModuleCachePath.insert(ModuleCachePath.begin(), Arg, Arg + strlen(Arg));
+    CmdArgs.push_back(Args.MakeArgString(ModuleCachePath));
   }
 
-  if (Arg *A = Args.getLastArg(options::OPT_fmodules_user_build_path)) {
-    A->claim();
-    if (HaveModules) {
-      A->render(Args, CmdArgs);
-    }
+  // When building modules and generating crashdumps, we need to dump a module
+  // dependency VFS alongside the output.
+  if (HaveModules && C.isForDiagnostics()) {
+    SmallString<128> VFSDir(Output.getFilename());
+    llvm::sys::path::replace_extension(VFSDir, ".cache");
+    llvm::sys::path::append(VFSDir, "vfs");
+    CmdArgs.push_back("-module-dependency-dir");
+    CmdArgs.push_back(Args.MakeArgString(VFSDir));
   }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fmodules_user_build_path))
+    if (HaveModules)
+      A->render(Args, CmdArgs);
 
   // Pass through all -fmodules-ignore-macro arguments.
   Args.AddAllArgs(CmdArgs, options::OPT_fmodules_ignore_macro);
@@ -4045,6 +4051,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fno-builtin-strcpy");
   }
 #endif
+
+  // Enable rewrite includes if the user's asked for it or if we're generating
+  // diagnostics.
+  // TODO: Once -module-dependency-dir works with -frewrite-includes it'd be
+  // nice to enable this when doing a crashdump for modules as well.
+  if (Args.hasFlag(options::OPT_frewrite_includes,
+                   options::OPT_fno_rewrite_includes, false) ||
+      (C.isForDiagnostics() && !HaveModules))
+    CmdArgs.push_back("-frewrite-includes");
 
   // Only allow -traditional or -traditional-cpp outside in preprocessing modes.
   if (Arg *A = Args.getLastArg(options::OPT_traditional,
@@ -6917,9 +6932,10 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
   } else if (ToolChain.getArch() == llvm::Triple::ppc)
     return "/lib/ld.so.1";
   else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
-           ToolChain.getArch() == llvm::Triple::ppc64le ||
            ToolChain.getArch() == llvm::Triple::systemz)
     return "/lib64/ld64.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::ppc64le)
+    return "/lib64/ld64.so.2";
   else if (ToolChain.getArch() == llvm::Triple::sparcv9)
     return "/lib64/ld-linux.so.2";
   else

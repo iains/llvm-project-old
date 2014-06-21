@@ -1098,7 +1098,7 @@ defm V_FRACT_F32 : VOP1_32 <0x00000020, "V_FRACT_F32",
   [(set f32:$dst, (AMDGPUfract f32:$src0))]
 >;
 defm V_TRUNC_F32 : VOP1_32 <0x00000021, "V_TRUNC_F32",
-  [(set f32:$dst, (int_AMDGPU_trunc f32:$src0))]
+  [(set f32:$dst, (ftrunc f32:$src0))]
 >;
 defm V_CEIL_F32 : VOP1_32 <0x00000022, "V_CEIL_F32",
   [(set f32:$dst, (fceil f32:$src0))]
@@ -1742,6 +1742,24 @@ def : Pat <
   (S_BUFFER_LOAD_DWORD_SGPR $sbase, (S_MOV_B32 imm:$offset))
 >;
 
+} // Predicates = [isSI] in {
+
+//===----------------------------------------------------------------------===//
+// SOP1 Patterns
+//===----------------------------------------------------------------------===//
+
+let Predicates = [isSI, isCFDepth0] in {
+
+def : Pat <
+  (i64 (ctpop i64:$src)),
+  (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+    (S_BCNT1_I32_B64 $src), sub0),
+    (S_MOV_B32 0), sub1)
+>;
+
+} // Predicates = [isSI, isCFDepth0]
+
+let  Predicates = [isSI] in {
 //===----------------------------------------------------------------------===//
 // SOP2 Patterns
 //===----------------------------------------------------------------------===//
@@ -1773,14 +1791,17 @@ def : RsqPat<V_RSQ_F64_e32, f64>;
 // VOP2 Patterns
 //===----------------------------------------------------------------------===//
 
-def : Pat <
-  (or i64:$src0, i64:$src1),
+class BinOp64Pat <SDNode node, Instruction inst> : Pat <
+  (node i64:$src0, i64:$src1),
   (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
-    (V_OR_B32_e32 (EXTRACT_SUBREG i64:$src0, sub0),
+    (inst  (EXTRACT_SUBREG i64:$src0, sub0),
                   (EXTRACT_SUBREG i64:$src1, sub0)), sub0),
-    (V_OR_B32_e32 (EXTRACT_SUBREG i64:$src0, sub1),
+    (inst (EXTRACT_SUBREG i64:$src0, sub1),
                   (EXTRACT_SUBREG i64:$src1, sub1)), sub1)
 >;
+
+def : BinOp64Pat <or, V_OR_B32_e32>;
+def : BinOp64Pat <xor, V_XOR_B32_e32>;
 
 class SextInReg <ValueType vt, int ShiftAmt> : Pat <
   (sext_inreg i32:$src0, vt),
@@ -1789,6 +1810,26 @@ class SextInReg <ValueType vt, int ShiftAmt> : Pat <
 
 def : SextInReg <i8, 24>;
 def : SextInReg <i16, 16>;
+
+def : Pat <
+  (i32 (add (i32 (ctpop i32:$popcnt)), i32:$val)),
+  (V_BCNT_U32_B32_e32 $popcnt, $val)
+>;
+
+def : Pat <
+   (i32 (ctpop i32:$popcnt)),
+   (V_BCNT_U32_B32_e64 $popcnt, 0, 0, 0)
+>;
+
+def : Pat <
+  (i64 (ctpop i64:$src)),
+  (INSERT_SUBREG
+    (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+      (V_BCNT_U32_B32_e32 (EXTRACT_SUBREG $src, sub1),
+        (V_BCNT_U32_B32_e64 (EXTRACT_SUBREG $src, sub0), 0, 0, 0)),
+      sub0),
+    (V_MOV_B32_e32 0), sub1)
+>;
 
 /********** ======================= **********/
 /********** Image sampling patterns **********/
@@ -2781,18 +2822,6 @@ def : Pat <
 def : Pat <
   (i32 (addc i32:$src0, i32:$src1)),
   (S_ADD_I32 $src0, $src1)
->;
-
-def : Pat <
-  (i32 (add (i32 (ctpop i32:$popcnt)), i32:$val)),
-  (V_BCNT_U32_B32_e32 $popcnt, $val)
->;
-
-def : Pat <
-  (i64 (ctpop i64:$src)),
-  (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
-    (S_BCNT1_I32_B64 $src), sub0),
-    (S_MOV_B32 0), sub1)
 >;
 
 //============================================================================//

@@ -931,7 +931,12 @@ def warning_multiple_selectors: Warning<
 // C++ declarations
 def err_static_assert_expression_is_not_constant : Error<
   "static_assert expression is not an integral constant expression">;
-def err_static_assert_failed : Error<"static_assert failed %0">;
+def err_static_assert_failed : Error<"static_assert failed%select{ %1|}0">;
+def ext_static_assert_no_message : ExtWarn<
+  "static_assert with no message is a C++1z extension">, InGroup<CXX1z>;
+def warn_cxx1y_compat_static_assert_no_message : Warning<
+  "static_assert with no message is incompatible with C++ standards before C++1z">,
+  DefaultIgnore, InGroup<CXXPre1zCompat>;
 
 def warn_inline_namespace_reopened_noninline : Warning<
   "inline namespace cannot be reopened as a non-inline namespace">;
@@ -5491,6 +5496,8 @@ def err_typecheck_missing_return_type_incompatible : Error<
   "return type must match previous return type}0,1 when %select{block "
   "literal|lambda expression}2 has unspecified explicit return type">;
 
+def not_incomplete_class_and_qualified_id : Note<
+  "conformance of forward class %0 to protocol %1 can not be confirmed">;
 def warn_incompatible_qualified_id : Warning<
   "%select{%diff{assigning to $ from incompatible type $|"
   "assigning to type from incompatible type}0,1"
@@ -6727,6 +6734,16 @@ def err_invalid_neon_type_code : Error<
   "incompatible constant for this __builtin_neon function">; 
 def err_argument_invalid_range : Error<
   "argument should be a value from %0 to %1">;
+def warn_neon_vector_initializer_non_portable : Warning<
+  "vector initializers are not compatible with NEON intrinsics in big endian "
+  "mode">, InGroup<DiagGroup<"nonportable-vector-initialization">>;
+def note_neon_vector_initializer_non_portable : Note<
+  "consider using vld1_%0%1() to initialize a vector from memory, or "
+  "vcreate_%0%1() to initialize from an integer constant">;
+def note_neon_vector_initializer_non_portable_q : Note<
+  "consider using vld1q_%0%1() to initialize a vector from memory, or "
+  "vcombine_%0%1(vcreate_%0%1(), vcreate_%0%1()) to initialize from integer "
+  "constants">;
 
 def err_builtin_longjmp_invalid_val : Error<
   "argument to __builtin_longjmp must be a constant 1">;
