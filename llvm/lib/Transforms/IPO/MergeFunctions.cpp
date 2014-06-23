@@ -9,13 +9,24 @@
 //
 // This pass looks for equivalent functions that are mergable and folds them.
 //
-// A hash is computed from the function, based on its type and number of
-// basic blocks.
+// Order relation is defined on set of functions. It was made through
+// special function comparison procedure that returns
+// 0 when functions are equal,
+// -1 when Left function is less than right function, and
+// 1 for opposite case. We need total-ordering, so we need to maintain
+// four properties on the functions set:
+// a <= a (reflexivity)
+// if a <= b and b <= a then a = b (antisymmetry)
+// if a <= b and b <= c then a <= c (transitivity).
+// for all a and b: a <= b or b <= a (totality).
 //
-// Once all hashes are computed, we perform an expensive equality comparison
-// on each function pair. This takes n^2/2 comparisons per bucket, so it's
-// important that the hash function be high quality. The equality comparison
-// iterates through each instruction in each basic block.
+// Comparison iterates through each instruction in each basic block.
+// Functions are kept on binary tree. For each new function F we perform
+// lookup in binary tree.
+// In practice it works the following way:
+// -- We define Function* container class with custom "operator<" (FunctionPtr).
+// -- "FunctionPtr" instances are stored in std::set collection, so every
+//    std::set::insert operation will give you result in log(N) time.
 //
 // When a match is found the functions are folded. If both functions are
 // overridable, we move the functionality into a new internal function and
@@ -31,15 +42,42 @@
 // the object they belong to. However, as long as it's only used for a lookup
 // and call, this is irrelevant, and we'd like to fold such functions.
 //
-// * switch from n^2 pair-wise comparisons to an n-way comparison for each
-// bucket.
-//
 // * be smarter about bitcasts.
 //
 // In order to fold functions, we will sometimes add either bitcast instructions
 // or bitcast constant expressions. Unfortunately, this can confound further
 // analysis since the two functions differ where one has a bitcast and the
 // other doesn't. We should learn to look through bitcasts.
+//
+// * Compare complex types with pointer types inside.
+// * Compare cross-reference cases.
+// * Compare complex expressions.
+//
+// All the three issues above could be described as ability to prove that
+// fA == fB == fC == fE == fF == fG in example below:
+//
+//  void fA() {
+//    fB();
+//  }
+//  void fB() {
+//    fA();
+//  }
+//
+//  void fE() {
+//    fF();
+//  }
+//  void fF() {
+//    fG();
+//  }
+//  void fG() {
+//    fE();
+//  }
+//
+// Simplest cross-reference case (fA <--> fB) was implemented in previous
+// versions of MergeFunctions, though it presented only in two function pairs
+// in test-suite (that counts >50k functions)
+// Though possibility to detect complex cross-referencing (e.g.: A->B->C->D->A)
+// could cover much more cases.
 //
 //===----------------------------------------------------------------------===//
 
@@ -60,6 +98,7 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -73,89 +112,12 @@ STATISTIC(NumThunksWritten, "Number of thunks generated");
 STATISTIC(NumAliasesWritten, "Number of aliases generated");
 STATISTIC(NumDoubleWeak, "Number of new functions created");
 
-/// Returns the type id for a type to be hashed. We turn pointer types into
-/// integers here because the actual compare logic below considers pointers and
-/// integers of the same size as equal.
-static Type::TypeID getTypeIDForHash(Type *Ty) {
-  if (Ty->isPointerTy())
-    return Type::IntegerTyID;
-  return Ty->getTypeID();
-}
-
-/// Creates a hash-code for the function which is the same for any two
-/// functions that will compare equal, without looking at the instructions
-/// inside the function.
-static unsigned profileFunction(const Function *F) {
-  FunctionType *FTy = F->getFunctionType();
-
-  FoldingSetNodeID ID;
-  ID.AddInteger(F->size());
-  ID.AddInteger(F->getCallingConv());
-  ID.AddBoolean(F->hasGC());
-  ID.AddBoolean(FTy->isVarArg());
-  ID.AddInteger(getTypeIDForHash(FTy->getReturnType()));
-  for (unsigned i = 0, e = FTy->getNumParams(); i != e; ++i)
-    ID.AddInteger(getTypeIDForHash(FTy->getParamType(i)));
-  return ID.ComputeHash();
-}
-
-namespace {
-
-/// ComparableFunction - A struct that pairs together functions with a
-/// DataLayout so that we can keep them together as elements in the DenseSet.
-class ComparableFunction {
-public:
-  static const ComparableFunction EmptyKey;
-  static const ComparableFunction TombstoneKey;
-  static DataLayout * const LookupOnly;
-
-  ComparableFunction(Function *Func, const DataLayout *DL)
-    : Func(Func), Hash(profileFunction(Func)), DL(DL) {}
-
-  Function *getFunc() const { return Func; }
-  unsigned getHash() const { return Hash; }
-  const DataLayout *getDataLayout() const { return DL; }
-
-  // Drops AssertingVH reference to the function. Outside of debug mode, this
-  // does nothing.
-  void release() {
-    assert(Func &&
-           "Attempted to release function twice, or release empty/tombstone!");
-    Func = nullptr;
-  }
-
-private:
-  explicit ComparableFunction(unsigned Hash)
-    : Func(nullptr), Hash(Hash), DL(nullptr) {}
-
-  AssertingVH<Function> Func;
-  unsigned Hash;
-  const DataLayout *DL;
-};
-
-const ComparableFunction ComparableFunction::EmptyKey = ComparableFunction(0);
-const ComparableFunction ComparableFunction::TombstoneKey =
-    ComparableFunction(1);
-DataLayout *const ComparableFunction::LookupOnly = (DataLayout*)(-1);
-
-}
-
-namespace llvm {
-  template <>
-  struct DenseMapInfo<ComparableFunction> {
-    static ComparableFunction getEmptyKey() {
-      return ComparableFunction::EmptyKey;
-    }
-    static ComparableFunction getTombstoneKey() {
-      return ComparableFunction::TombstoneKey;
-    }
-    static unsigned getHashValue(const ComparableFunction &CF) {
-      return CF.getHash();
-    }
-    static bool isEqual(const ComparableFunction &LHS,
-                        const ComparableFunction &RHS);
-  };
-}
+static cl::opt<unsigned> NumFunctionsForSanityCheck(
+    "mergefunc-sanity",
+    cl::desc("How many functions in module could be used for "
+             "MergeFunctions pass sanity check. "
+             "'0' disables this check. Works only with '-debug' key."),
+    cl::init(0), cl::Hidden);
 
 namespace {
 
@@ -300,10 +262,6 @@ private:
   ///          see comments for sn_mapL and sn_mapR.
   int cmpValues(const Value *L, const Value *R);
 
-  bool enumerate(const Value *V1, const Value *V2) {
-    return cmpValues(V1, V2) == 0;
-  }
-
   /// Compare two Instructions for equivalence, similar to
   /// Instruction::isSameOperationAs but with modifications to the type
   /// comparison.
@@ -330,11 +288,6 @@ private:
   /// strings for particular instruction, and could change sometimes.
   int cmpOperation(const Instruction *L, const Instruction *R) const;
 
-  bool isEquivalentOperation(const Instruction *I1,
-                             const Instruction *I2) const {
-    return cmpOperation(I1, I2) == 0;
-  }
-
   /// Compare two GEPs for equivalent pointer arithmetic.
   /// Parts to be compared for each comparison stage,
   /// most significant stage first:
@@ -347,14 +300,6 @@ private:
   int cmpGEP(const GEPOperator *GEPL, const GEPOperator *GEPR);
   int cmpGEP(const GetElementPtrInst *GEPL, const GetElementPtrInst *GEPR) {
     return cmpGEP(cast<GEPOperator>(GEPL), cast<GEPOperator>(GEPR));
-  }
-
-  bool isEquivalentGEP(const GEPOperator *GEP1, const GEPOperator *GEP2) {
-    return cmpGEP(GEP1, GEP2) == 0;
-  }
-  bool isEquivalentGEP(const GetElementPtrInst *GEP1,
-                       const GetElementPtrInst *GEP2) {
-    return isEquivalentGEP(cast<GEPOperator>(GEP1), cast<GEPOperator>(GEP2));
   }
 
   /// cmpType - compares two types,
@@ -398,10 +343,6 @@ private:
   /// Otherwise return 0.
   /// 6. For all other cases put llvm_unreachable.
   int cmpType(Type *TyL, Type *TyR) const;
-
-  bool isEquivalentType(Type *Ty1, Type *Ty2) const {
-    return cmpType(Ty1, Ty2) == 0;
-  }
 
   int cmpNumbers(uint64_t L, uint64_t R) const;
 
@@ -451,6 +392,18 @@ private:
   DenseMap<const Value*, int> sn_mapL, sn_mapR;
 };
 
+class FunctionPtr {
+  AssertingVH<Function> F;
+  const DataLayout *DL;
+
+public:
+  FunctionPtr(Function *F, const DataLayout *DL) : F(F), DL(DL) {}
+  Function *getFunc() const { return F; }
+  void release() { F = 0; }
+  bool operator<(const FunctionPtr &RHS) const {
+    return (FunctionComparator(DL, F, RHS.getFunc()).compare()) == -1;
+  }
+};
 }
 
 int FunctionComparator::cmpNumbers(uint64_t L, uint64_t R) const {
@@ -1115,21 +1068,25 @@ public:
   bool runOnModule(Module &M) override;
 
 private:
-  typedef DenseSet<ComparableFunction> FnSetType;
+  typedef std::set<FunctionPtr> FnTreeType;
 
   /// A work queue of functions that may have been modified and should be
   /// analyzed again.
   std::vector<WeakVH> Deferred;
 
-  /// Insert a ComparableFunction into the FnSet, or merge it away if it's
-  /// equal to one that's already present.
-  bool insert(ComparableFunction &NewF);
+  /// Checks the rules of order relation introduced among functions set.
+  /// Returns true, if sanity check has been passed, and false if failed.
+  bool doSanityCheck(std::vector<WeakVH> &Worklist);
 
-  /// Remove a Function from the FnSet and queue it up for a second sweep of
+  /// Insert a ComparableFunction into the FnTree, or merge it away if it's
+  /// equal to one that's already present.
+  bool insert(Function *NewFunction);
+
+  /// Remove a Function from the FnTree and queue it up for a second sweep of
   /// analysis.
   void remove(Function *F);
 
-  /// Find the functions that use this Value and remove them from FnSet and
+  /// Find the functions that use this Value and remove them from FnTree and
   /// queue the functions.
   void removeUsers(Value *V);
 
@@ -1154,7 +1111,7 @@ private:
 
   /// The set of all distinct functions. Use the insert() and remove() methods
   /// to modify it.
-  FnSetType FnSet;
+  FnTreeType FnTree;
 
   /// DataLayout for more accurate GEP comparisons. May be NULL.
   const DataLayout *DL;
@@ -1172,6 +1129,78 @@ ModulePass *llvm::createMergeFunctionsPass() {
   return new MergeFunctions();
 }
 
+bool MergeFunctions::doSanityCheck(std::vector<WeakVH> &Worklist) {
+  if (const unsigned Max = NumFunctionsForSanityCheck) {
+    unsigned TripleNumber = 0;
+    bool Valid = true;
+
+    dbgs() << "MERGEFUNC-SANITY: Started for first " << Max << " functions.\n";
+
+    unsigned i = 0;
+    for (std::vector<WeakVH>::iterator I = Worklist.begin(), E = Worklist.end();
+         I != E && i < Max; ++I, ++i) {
+      unsigned j = i;
+      for (std::vector<WeakVH>::iterator J = I; J != E && j < Max; ++J, ++j) {
+        Function *F1 = cast<Function>(*I);
+        Function *F2 = cast<Function>(*J);
+        int Res1 = FunctionComparator(DL, F1, F2).compare();
+        int Res2 = FunctionComparator(DL, F2, F1).compare();
+
+        // If F1 <= F2, then F2 >= F1, otherwise report failure.
+        if (Res1 != -Res2) {
+          dbgs() << "MERGEFUNC-SANITY: Non-symmetric; triple: " << TripleNumber
+                 << "\n";
+          F1->dump();
+          F2->dump();
+          Valid = false;
+        }
+
+        if (Res1 == 0)
+          continue;
+
+        unsigned k = j;
+        for (std::vector<WeakVH>::iterator K = J; K != E && k < Max;
+             ++k, ++K, ++TripleNumber) {
+          if (K == J)
+            continue;
+
+          Function *F3 = cast<Function>(*K);
+          int Res3 = FunctionComparator(DL, F1, F3).compare();
+          int Res4 = FunctionComparator(DL, F2, F3).compare();
+
+          bool Transitive = true;
+
+          if (Res1 != 0 && Res1 == Res4) {
+            // F1 > F2, F2 > F3 => F1 > F3
+            Transitive = Res3 == Res1;
+          } else if (Res3 != 0 && Res3 == -Res4) {
+            // F1 > F3, F3 > F2 => F1 > F2
+            Transitive = Res3 == Res1;
+          } else if (Res4 != 0 && -Res3 == Res4) {
+            // F2 > F3, F3 > F1 => F2 > F1
+            Transitive = Res4 == -Res1;
+          }
+
+          if (!Transitive) {
+            dbgs() << "MERGEFUNC-SANITY: Non-transitive; triple: "
+                   << TripleNumber << "\n";
+            dbgs() << "Res1, Res3, Res4: " << Res1 << ", " << Res3 << ", "
+                   << Res4 << "\n";
+            F1->dump();
+            F2->dump();
+            F3->dump();
+            Valid = false;
+          }
+        }
+      }
+    }
+
+    dbgs() << "MERGEFUNC-SANITY: " << (Valid ? "Passed." : "Failed.") << "\n";
+    return Valid;
+  }
+  return true;
+}
+
 bool MergeFunctions::runOnModule(Module &M) {
   bool Changed = false;
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
@@ -1181,11 +1210,12 @@ bool MergeFunctions::runOnModule(Module &M) {
     if (!I->isDeclaration() && !I->hasAvailableExternallyLinkage())
       Deferred.push_back(WeakVH(I));
   }
-  FnSet.resize(Deferred.size());
 
   do {
     std::vector<WeakVH> Worklist;
     Deferred.swap(Worklist);
+
+    DEBUG(doSanityCheck(Worklist));
 
     DEBUG(dbgs() << "size of module: " << M.size() << '\n');
     DEBUG(dbgs() << "size of worklist: " << Worklist.size() << '\n');
@@ -1198,8 +1228,7 @@ bool MergeFunctions::runOnModule(Module &M) {
       Function *F = cast<Function>(*I);
       if (!F->isDeclaration() && !F->hasAvailableExternallyLinkage() &&
           !F->mayBeOverridden()) {
-        ComparableFunction CF = ComparableFunction(F, DL);
-        Changed |= insert(CF);
+        Changed |= insert(F);
       }
     }
 
@@ -1213,36 +1242,15 @@ bool MergeFunctions::runOnModule(Module &M) {
       Function *F = cast<Function>(*I);
       if (!F->isDeclaration() && !F->hasAvailableExternallyLinkage() &&
           F->mayBeOverridden()) {
-        ComparableFunction CF = ComparableFunction(F, DL);
-        Changed |= insert(CF);
+        Changed |= insert(F);
       }
     }
-    DEBUG(dbgs() << "size of FnSet: " << FnSet.size() << '\n');
+    DEBUG(dbgs() << "size of FnTree: " << FnTree.size() << '\n');
   } while (!Deferred.empty());
 
-  FnSet.clear();
+  FnTree.clear();
 
   return Changed;
-}
-
-bool DenseMapInfo<ComparableFunction>::isEqual(const ComparableFunction &LHS,
-                                               const ComparableFunction &RHS) {
-  if (LHS.getFunc() == RHS.getFunc() &&
-      LHS.getHash() == RHS.getHash())
-    return true;
-  if (!LHS.getFunc() || !RHS.getFunc())
-    return false;
-
-  // One of these is a special "underlying pointer comparison only" object.
-  if (LHS.getDataLayout() == ComparableFunction::LookupOnly ||
-      RHS.getDataLayout() == ComparableFunction::LookupOnly)
-    return false;
-
-  assert(LHS.getDataLayout() == RHS.getDataLayout() &&
-         "Comparing functions for different targets");
-
-  return FunctionComparator(LHS.getDataLayout(), LHS.getFunc(), RHS.getFunc())
-             .compare() == 0;
 }
 
 // Replace direct callers of Old with New.
@@ -1399,54 +1407,57 @@ void MergeFunctions::mergeTwoFunctions(Function *F, Function *G) {
   ++NumFunctionsMerged;
 }
 
-// Insert a ComparableFunction into the FnSet, or merge it away if equal to one
+// Insert a ComparableFunction into the FnTree, or merge it away if equal to one
 // that was already inserted.
-bool MergeFunctions::insert(ComparableFunction &NewF) {
-  std::pair<FnSetType::iterator, bool> Result = FnSet.insert(NewF);
+bool MergeFunctions::insert(Function *NewFunction) {
+  std::pair<FnTreeType::iterator, bool> Result =
+      FnTree.insert(FunctionPtr(NewFunction, DL));
+
   if (Result.second) {
-    DEBUG(dbgs() << "Inserting as unique: " << NewF.getFunc()->getName() << '\n');
+    DEBUG(dbgs() << "Inserting as unique: " << NewFunction->getName() << '\n');
     return false;
   }
 
-  const ComparableFunction &OldF = *Result.first;
+  const FunctionPtr &OldF = *Result.first;
 
   // Don't merge tiny functions, since it can just end up making the function
   // larger.
   // FIXME: Should still merge them if they are unnamed_addr and produce an
   // alias.
-  if (NewF.getFunc()->size() == 1) {
-    if (NewF.getFunc()->front().size() <= 2) {
-      DEBUG(dbgs() << NewF.getFunc()->getName()
-            << " is to small to bother merging\n");
+  if (NewFunction->size() == 1) {
+    if (NewFunction->front().size() <= 2) {
+      DEBUG(dbgs() << NewFunction->getName()
+                   << " is to small to bother merging\n");
       return false;
     }
   }
 
   // Never thunk a strong function to a weak function.
-  assert(!OldF.getFunc()->mayBeOverridden() ||
-         NewF.getFunc()->mayBeOverridden());
+  assert(!OldF.getFunc()->mayBeOverridden() || NewFunction->mayBeOverridden());
 
-  DEBUG(dbgs() << "  " << OldF.getFunc()->getName() << " == "
-               << NewF.getFunc()->getName() << '\n');
+  DEBUG(dbgs() << "  " << OldF.getFunc()->getName()
+               << " == " << NewFunction->getName() << '\n');
 
-  Function *DeleteF = NewF.getFunc();
-  NewF.release();
+  Function *DeleteF = NewFunction;
   mergeTwoFunctions(OldF.getFunc(), DeleteF);
   return true;
 }
 
-// Remove a function from FnSet. If it was already in FnSet, add it to Deferred
-// so that we'll look at it in the next round.
+// Remove a function from FnTree. If it was already in FnTree, add
+// it to Deferred so that we'll look at it in the next round.
 void MergeFunctions::remove(Function *F) {
   // We need to make sure we remove F, not a function "equal" to F per the
   // function equality comparator.
-  //
-  // The special "lookup only" ComparableFunction bypasses the expensive
-  // function comparison in favour of a pointer comparison on the underlying
-  // Function*'s.
-  ComparableFunction CF = ComparableFunction(F, ComparableFunction::LookupOnly);
-  if (FnSet.erase(CF)) {
-    DEBUG(dbgs() << "Removed " << F->getName() << " from set and deferred it.\n");
+  FnTreeType::iterator found = FnTree.find(FunctionPtr(F, DL));
+  size_t Erased = 0;
+  if (found != FnTree.end() && found->getFunc() == F) {
+    Erased = 1;
+    FnTree.erase(found);
+  }
+
+  if (Erased) {
+    DEBUG(dbgs() << "Removed " << F->getName()
+                 << " from set and deferred it.\n");
     Deferred.push_back(F);
   }
 }

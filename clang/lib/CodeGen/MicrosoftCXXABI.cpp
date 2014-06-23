@@ -548,13 +548,10 @@ llvm::Value *MicrosoftCXXABI::EmitTypeid(CodeGenFunction &CGF,
                                          QualType SrcRecordTy,
                                          llvm::Value *ThisPtr,
                                          llvm::Type *StdTypeInfoPtrTy) {
-  const CXXRecordDecl *RD = SrcRecordTy->getAsCXXRecordDecl();
-  llvm::Value *CastPtr = CGF.Builder.CreateBitCast(ThisPtr, CGF.Int8PtrTy);
-  llvm::Value *AdjustedThisPtr = CGF.Builder.CreateInBoundsGEP(
-      CastPtr, getPolymorphicOffset(CGF, RD, CastPtr));
+  llvm::Value *Offset;
+  std::tie(ThisPtr, Offset) = performBaseAdjustment(CGF, ThisPtr, SrcRecordTy);
   return CGF.Builder.CreateBitCast(
-      emitRTtypeidCall(CGF, AdjustedThisPtr).getInstruction(),
-      StdTypeInfoPtrTy);
+      emitRTtypeidCall(CGF, ThisPtr).getInstruction(), StdTypeInfoPtrTy);
 }
 
 bool MicrosoftCXXABI::shouldDynamicCastCallBeNullChecked(bool SrcIsPtr,
