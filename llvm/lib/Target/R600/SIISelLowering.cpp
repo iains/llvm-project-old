@@ -14,8 +14,8 @@
 
 #include "SIISelLowering.h"
 #include "AMDGPU.h"
+#include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPUSubtarget.h"
-#include "AMDILIntrinsicInfo.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "SIRegisterInfo.h"
@@ -77,6 +77,8 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::ADD, MVT::i32, Legal);
   setOperationAction(ISD::ADDC, MVT::i32, Legal);
   setOperationAction(ISD::ADDE, MVT::i32, Legal);
+  setOperationAction(ISD::SUBC, MVT::i32, Legal);
+  setOperationAction(ISD::SUBE, MVT::i32, Legal);
 
   // We need to custom lower vector stores from local memory
   setOperationAction(ISD::LOAD, MVT::v2i32, Custom);
@@ -136,6 +138,7 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v4f32, Custom);
 
   setOperationAction(ISD::INTRINSIC_VOID, MVT::Other, Custom);
+  setOperationAction(ISD::BRCOND, MVT::Other, Custom);
 
   setLoadExtAction(ISD::SEXTLOAD, MVT::i1, Promote);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Custom);
@@ -212,9 +215,10 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FRINT, MVT::f64, Legal);
   }
 
-  // FIXME: This should be removed and handled the same was as f32 fneg. Source
+  // FIXME: These should be removed and handled the same was as f32 fneg. Source
   // modifiers also work for the double instructions.
   setOperationAction(ISD::FNEG, MVT::f64, Expand);
+  setOperationAction(ISD::FABS, MVT::f64, Expand);
 
   setTargetDAGCombine(ISD::SELECT_CC);
   setTargetDAGCombine(ISD::SETCC);

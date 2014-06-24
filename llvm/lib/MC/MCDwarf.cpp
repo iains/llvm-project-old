@@ -1297,7 +1297,7 @@ void FrameEmitterImpl::EmitCompactUnwind(MCStreamer &Streamer,
   unsigned FDEEncoding = MOFI->getFDEEncoding();
   unsigned Size = getSizeForEncoding(Streamer, FDEEncoding);
   if (VerboseAsm) Streamer.AddComment("Range Start");
-  Streamer.EmitSymbolValue(Frame.Function, Size);
+  Streamer.EmitSymbolValue(Frame.Begin, Size);
 
   // Range Length
   const MCExpr *Range = MakeStartMinusEndExpr(Streamer, *Frame.Begin,
@@ -1458,13 +1458,6 @@ MCSymbol *FrameEmitterImpl::EmitFDE(MCObjectStreamer &streamer,
   MCSymbol *fdeEnd = context.CreateTempSymbol();
   const MCObjectFileInfo *MOFI = context.getObjectFileInfo();
   bool verboseAsm = streamer.isVerboseAsm();
-
-  if (IsEH && frame.Function && !MOFI->isFunctionEHFrameSymbolPrivate()) {
-    MCSymbol *EHSym =
-      context.GetOrCreateSymbol(frame.Function->getName() + Twine(".eh"));
-    streamer.EmitEHSymAttributes(frame.Function, EHSym);
-    streamer.EmitLabel(EHSym);
-  }
 
   // Length
   const MCExpr *Length = MakeStartMinusEndExpr(streamer, *fdeStart, *fdeEnd, 0);

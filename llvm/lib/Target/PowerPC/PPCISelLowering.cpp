@@ -2130,6 +2130,15 @@ static unsigned CalculateStackSlotSize(EVT ArgVT, ISD::ArgFlagsTy Flags,
 
   return ArgSize;
 }
+/// EnsureStackAlignment - Round stack frame size up from NumBytes to
+/// ensure minimum alignment required for target.
+static unsigned EnsureStackAlignment(const TargetMachine &Target,
+                                     unsigned NumBytes) {
+  unsigned TargetAlign = Target.getFrameLowering()->getStackAlignment();
+  unsigned AlignMask = TargetAlign - 1;
+  NumBytes = (NumBytes + AlignMask) & ~AlignMask;
+  return NumBytes;
+}
 
 SDValue
 PPCTargetLowering::LowerFormalArguments(SDValue Chain,
@@ -2206,7 +2215,8 @@ PPCTargetLowering::LowerFormalArguments_32SVR4(
                  getTargetMachine(), ArgLocs, *DAG.getContext());
 
   // Reserve space for the linkage area on the stack.
-  CCInfo.AllocateStack(PPCFrameLowering::getLinkageSize(false, false), PtrByteSize);
+  unsigned LinkageSize = PPCFrameLowering::getLinkageSize(false, false);
+  CCInfo.AllocateStack(LinkageSize, PtrByteSize);
 
   CCInfo.AnalyzeFormalArguments(Ins, CC_PPC32_SVR4);
 
@@ -2285,23 +2295,14 @@ PPCTargetLowering::LowerFormalArguments_32SVR4(
 
   // Area that is at least reserved in the caller of this function.
   unsigned MinReservedArea = CCByValInfo.getNextStackOffset();
+  MinReservedArea = std::max(MinReservedArea, LinkageSize);
 
   // Set the size that is at least reserved in caller of this function.  Tail
   // call optimized function's reserved stack space needs to be aligned so that
   // taking the difference between two stack areas will result in an aligned
   // stack.
-  PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
-
-  MinReservedArea =
-    std::max(MinReservedArea,
-             PPCFrameLowering::getMinCallFrameSize(false, false));
-
-  unsigned TargetAlign = DAG.getMachineFunction().getTarget().getFrameLowering()->
-    getStackAlignment();
-  unsigned AlignMask = TargetAlign-1;
-  MinReservedArea = (MinReservedArea + AlignMask) & ~AlignMask;
-
-  FI->setMinReservedArea(MinReservedArea);
+  MinReservedArea = EnsureStackAlignment(MF.getTarget(), MinReservedArea);
+  FuncInfo->setMinReservedArea(MinReservedArea);
 
   SmallVector<SDValue, 8> MemOps;
 
@@ -2397,32 +2398,6 @@ PPCTargetLowering::extendArgForPPC64(ISD::ArgFlagsTy Flags, EVT ObjectVT,
   return DAG.getNode(ISD::TRUNCATE, dl, ObjectVT, ArgVal);
 }
 
-// Set the size that is at least reserved in caller of this function.  Tail
-// call optimized functions' reserved stack space needs to be aligned so that
-// taking the difference between two stack areas will result in an aligned
-// stack.
-void
-PPCTargetLowering::setMinReservedArea(MachineFunction &MF, SelectionDAG &DAG,
-                                      unsigned nAltivecParamsAtEnd,
-                                      unsigned MinReservedArea,
-                                      bool isPPC64) const {
-  PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
-  // Add the Altivec parameters at the end, if needed.
-  if (nAltivecParamsAtEnd) {
-    MinReservedArea = ((MinReservedArea+15)/16)*16;
-    MinReservedArea += 16*nAltivecParamsAtEnd;
-  }
-  MinReservedArea =
-    std::max(MinReservedArea,
-             PPCFrameLowering::getMinCallFrameSize(isPPC64, true));
-  unsigned TargetAlign
-    = DAG.getMachineFunction().getTarget().getFrameLowering()->
-        getStackAlignment();
-  unsigned AlignMask = TargetAlign-1;
-  MinReservedArea = (MinReservedArea + AlignMask) & ~AlignMask;
-  FI->setMinReservedArea(MinReservedArea);
-}
-
 SDValue
 PPCTargetLowering::LowerFormalArguments_64SVR4(
                                       SDValue Chain,
@@ -2444,7 +2419,8 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
                        (CallConv == CallingConv::Fast));
   unsigned PtrByteSize = 8;
 
-  unsigned ArgOffset = PPCFrameLowering::getLinkageSize(true, true);
+  unsigned LinkageSize = PPCFrameLowering::getLinkageSize(true, false);
+  unsigned ArgOffset = LinkageSize;
   // Area that is at least reserved in caller of this function.
   unsigned MinReservedArea = ArgOffset;
 
@@ -2475,7 +2451,6 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
   // although the first ones are often in registers.
 
   SmallVector<SDValue, 8> MemOps;
-  unsigned nAltivecParamsAtEnd = 0;
   Function::const_arg_iterator FuncArg = MF.getFunction()->arg_begin();
   unsigned CurArgIdx = 0;
   for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e; ++ArgNo) {
@@ -2490,22 +2465,14 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
 
     unsigned CurArgOffset = ArgOffset;
 
-    // Varargs or 64 bit Altivec parameters are padded to a 16 byte boundary.
+    // Altivec parameters are padded to a 16 byte boundary.
     if (ObjectVT==MVT::v4f32 || ObjectVT==MVT::v4i32 ||
         ObjectVT==MVT::v8i16 || ObjectVT==MVT::v16i8 ||
-        ObjectVT==MVT::v2f64 || ObjectVT==MVT::v2i64) {
-      if (isVarArg) {
-        MinReservedArea = ((MinReservedArea+15)/16)*16;
-        MinReservedArea += CalculateStackSlotSize(ObjectVT,
-                                                  Flags,
-                                                  PtrByteSize);
-      } else
-        nAltivecParamsAtEnd++;
-    } else
-      // Calculate min reserved area.
-      MinReservedArea += CalculateStackSlotSize(Ins[ArgNo].VT,
-                                                Flags,
-                                                PtrByteSize);
+        ObjectVT==MVT::v2f64 || ObjectVT==MVT::v2i64)
+      MinReservedArea = ((MinReservedArea+15)/16)*16;
+
+    // Calculate min reserved area.
+    MinReservedArea += CalculateStackSlotSize(ObjectVT, Flags, PtrByteSize);
 
     // FIXME the codegen can be much improved in some cases.
     // We do not have to keep everything in memory.
@@ -2654,30 +2621,24 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
     case MVT::v16i8:
     case MVT::v2f64:
     case MVT::v2i64:
-      // Note that vector arguments in registers don't reserve stack space,
-      // except in varargs functions.
+      // Vectors are aligned to a 16-byte boundary in the argument save area.
+      while ((ArgOffset % 16) != 0) {
+        ArgOffset += PtrByteSize;
+        if (GPR_idx != Num_GPR_Regs)
+          GPR_idx++;
+      }
       if (VR_idx != Num_VR_Regs) {
         unsigned VReg = (ObjectVT == MVT::v2f64 || ObjectVT == MVT::v2i64) ?
                         MF.addLiveIn(VSRH[VR_idx], &PPC::VSHRCRegClass) :
                         MF.addLiveIn(VR[VR_idx], &PPC::VRRCRegClass);
         ArgVal = DAG.getCopyFromReg(Chain, dl, VReg, ObjectVT);
-        if (isVarArg) {
-          while ((ArgOffset % 16) != 0) {
-            ArgOffset += PtrByteSize;
-            if (GPR_idx != Num_GPR_Regs)
-              GPR_idx++;
-          }
-          ArgOffset += 16;
-          GPR_idx = std::min(GPR_idx+4, Num_GPR_Regs); // FIXME correct for ppc64?
-        }
         ++VR_idx;
       } else {
-        // Vectors are aligned.
-        ArgOffset = ((ArgOffset+15)/16)*16;
         CurArgOffset = ArgOffset;
-        ArgOffset += 16;
         needsLoad = true;
       }
+      ArgOffset += 16;
+      GPR_idx = std::min(GPR_idx + 2, Num_GPR_Regs);
       break;
     }
 
@@ -2695,11 +2656,15 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
     InVals.push_back(ArgVal);
   }
 
+  // Area that is at least reserved in the caller of this function.
+  MinReservedArea = std::max(MinReservedArea, LinkageSize + 8 * PtrByteSize);
+
   // Set the size that is at least reserved in caller of this function.  Tail
   // call optimized functions' reserved stack space needs to be aligned so that
   // taking the difference between two stack areas will result in an aligned
   // stack.
-  setMinReservedArea(MF, DAG, nAltivecParamsAtEnd, MinReservedArea, true);
+  MinReservedArea = EnsureStackAlignment(MF.getTarget(), MinReservedArea);
+  FuncInfo->setMinReservedArea(MinReservedArea);
 
   // If the function takes variable number of arguments, make a frame index for
   // the start of the first vararg value... for expansion of llvm.va_start.
@@ -2752,7 +2717,8 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
                        (CallConv == CallingConv::Fast));
   unsigned PtrByteSize = isPPC64 ? 8 : 4;
 
-  unsigned ArgOffset = PPCFrameLowering::getLinkageSize(isPPC64, true);
+  unsigned LinkageSize = PPCFrameLowering::getLinkageSize(isPPC64, true);
+  unsigned ArgOffset = LinkageSize;
   // Area that is at least reserved in caller of this function.
   unsigned MinReservedArea = ArgOffset;
 
@@ -3043,11 +3009,21 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
     InVals.push_back(ArgVal);
   }
 
+  // Allow for Altivec parameters at the end, if needed.
+  if (nAltivecParamsAtEnd) {
+    MinReservedArea = ((MinReservedArea+15)/16)*16;
+    MinReservedArea += 16*nAltivecParamsAtEnd;
+  }
+
+  // Area that is at least reserved in the caller of this function.
+  MinReservedArea = std::max(MinReservedArea, LinkageSize + 8 * PtrByteSize);
+
   // Set the size that is at least reserved in caller of this function.  Tail
   // call optimized functions' reserved stack space needs to be aligned so that
   // taking the difference between two stack areas will result in an aligned
   // stack.
-  setMinReservedArea(MF, DAG, nAltivecParamsAtEnd, MinReservedArea, isPPC64);
+  MinReservedArea = EnsureStackAlignment(MF.getTarget(), MinReservedArea);
+  FuncInfo->setMinReservedArea(MinReservedArea);
 
   // If the function takes variable number of arguments, make a frame index for
   // the start of the first vararg value... for expansion of llvm.va_start.
@@ -3084,75 +3060,6 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
     Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOps);
 
   return Chain;
-}
-
-/// CalculateParameterAndLinkageAreaSize - Get the size of the parameter plus
-/// linkage area for the Darwin ABI, or the 64-bit SVR4 ABI.
-static unsigned
-CalculateParameterAndLinkageAreaSize(SelectionDAG &DAG,
-                                     bool isPPC64,
-                                     bool isVarArg,
-                                     unsigned CC,
-                                     const SmallVectorImpl<ISD::OutputArg>
-                                       &Outs,
-                                     const SmallVectorImpl<SDValue> &OutVals,
-                                     unsigned &nAltivecParamsAtEnd) {
-  // Count how many bytes are to be pushed on the stack, including the linkage
-  // area, and parameter passing area.  We start with 24/48 bytes, which is
-  // prereserved space for [SP][CR][LR][3 x unused].
-  unsigned NumBytes = PPCFrameLowering::getLinkageSize(isPPC64, true);
-  unsigned NumOps = Outs.size();
-  unsigned PtrByteSize = isPPC64 ? 8 : 4;
-
-  // Add up all the space actually used.
-  // In 32-bit non-varargs calls, Altivec parameters all go at the end; usually
-  // they all go in registers, but we must reserve stack space for them for
-  // possible use by the caller.  In varargs or 64-bit calls, parameters are
-  // assigned stack space in order, with padding so Altivec parameters are
-  // 16-byte aligned.
-  nAltivecParamsAtEnd = 0;
-  for (unsigned i = 0; i != NumOps; ++i) {
-    ISD::ArgFlagsTy Flags = Outs[i].Flags;
-    EVT ArgVT = Outs[i].VT;
-    // Varargs Altivec parameters are padded to a 16 byte boundary.
-    if (ArgVT==MVT::v4f32 || ArgVT==MVT::v4i32 ||
-        ArgVT==MVT::v8i16 || ArgVT==MVT::v16i8 ||
-        ArgVT==MVT::v2f64 || ArgVT==MVT::v2i64) {
-      if (!isVarArg && !isPPC64) {
-        // Non-varargs Altivec parameters go after all the non-Altivec
-        // parameters; handle those later so we know how much padding we need.
-        nAltivecParamsAtEnd++;
-        continue;
-      }
-      // Varargs and 64-bit Altivec parameters are padded to 16 byte boundary.
-      NumBytes = ((NumBytes+15)/16)*16;
-    }
-    NumBytes += CalculateStackSlotSize(ArgVT, Flags, PtrByteSize);
-  }
-
-   // Allow for Altivec parameters at the end, if needed.
-  if (nAltivecParamsAtEnd) {
-    NumBytes = ((NumBytes+15)/16)*16;
-    NumBytes += 16*nAltivecParamsAtEnd;
-  }
-
-  // The prolog code of the callee may store up to 8 GPR argument registers to
-  // the stack, allowing va_start to index over them in memory if its varargs.
-  // Because we cannot tell if this is needed on the caller side, we have to
-  // conservatively assume that it is needed.  As such, make sure we have at
-  // least enough stack space for the caller to store the 8 GPRs.
-  NumBytes = std::max(NumBytes,
-                      PPCFrameLowering::getMinCallFrameSize(isPPC64, true));
-
-  // Tail call needs the stack to be aligned.
-  if (CC == CallingConv::Fast && DAG.getTarget().Options.GuaranteedTailCallOpt){
-    unsigned TargetAlign = DAG.getMachineFunction().getTarget().
-      getFrameLowering()->getStackAlignment();
-    unsigned AlignMask = TargetAlign-1;
-    NumBytes = (NumBytes + AlignMask) & ~AlignMask;
-  }
-
-  return NumBytes;
 }
 
 /// CalculateTailCallSPDiff - Get the amount the stack pointer has to be
@@ -4052,16 +3959,37 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
       CallConv == CallingConv::Fast)
     MF.getInfo<PPCFunctionInfo>()->setHasFastCall();
 
-  unsigned nAltivecParamsAtEnd = 0;
-
   // Count how many bytes are to be pushed on the stack, including the linkage
   // area, and parameter passing area.  We start with at least 48 bytes, which
   // is reserved space for [SP][CR][LR][3 x unused].
-  // NOTE: For PPC64, nAltivecParamsAtEnd always remains zero as a result
-  // of this call.
-  unsigned NumBytes =
-    CalculateParameterAndLinkageAreaSize(DAG, true, isVarArg, CallConv,
-                                         Outs, OutVals, nAltivecParamsAtEnd);
+  unsigned LinkageSize = PPCFrameLowering::getLinkageSize(true, false);
+  unsigned NumBytes = LinkageSize;
+
+  // Add up all the space actually used.
+  for (unsigned i = 0; i != NumOps; ++i) {
+    ISD::ArgFlagsTy Flags = Outs[i].Flags;
+    EVT ArgVT = Outs[i].VT;
+
+    // Altivec parameters are padded to a 16 byte boundary.
+    if (ArgVT == MVT::v4f32 || ArgVT == MVT::v4i32 ||
+        ArgVT == MVT::v8i16 || ArgVT == MVT::v16i8 ||
+        ArgVT == MVT::v2f64 || ArgVT == MVT::v2i64)
+      NumBytes = ((NumBytes+15)/16)*16;
+
+    NumBytes += CalculateStackSlotSize(ArgVT, Flags, PtrByteSize);
+  }
+
+  // The prolog code of the callee may store up to 8 GPR argument registers to
+  // the stack, allowing va_start to index over them in memory if its varargs.
+  // Because we cannot tell if this is needed on the caller side, we have to
+  // conservatively assume that it is needed.  As such, make sure we have at
+  // least enough stack space for the caller to store the 8 GPRs.
+  NumBytes = std::max(NumBytes, LinkageSize + 8 * PtrByteSize);
+
+  // Tail call needs the stack to be aligned.
+  if (getTargetMachine().Options.GuaranteedTailCallOpt &&
+      CallConv == CallingConv::Fast)
+    NumBytes = EnsureStackAlignment(MF.getTarget(), NumBytes);
 
   // Calculate by how many bytes the stack has to be adjusted in case of tail
   // call optimization.
@@ -4093,7 +4021,7 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
   // memory.  Also, if this is a vararg function, floating point operations
   // must be stored to our stack, and loaded into integer regs as well, if
   // any integer regs are available for argument passing.
-  unsigned ArgOffset = PPCFrameLowering::getLinkageSize(true, true);
+  unsigned ArgOffset = LinkageSize;
   unsigned GPR_idx = 0, FPR_idx = 0, VR_idx = 0;
 
   static const MCPhysReg GPR[] = {
@@ -4326,17 +4254,18 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
     case MVT::v16i8:
     case MVT::v2f64:
     case MVT::v2i64:
+      // Vectors are aligned to a 16-byte boundary in the argument save area.
+      while (ArgOffset % 16 !=0) {
+        ArgOffset += PtrByteSize;
+        if (GPR_idx != NumGPRs)
+          GPR_idx++;
+      }
+
+      // For a varargs call, named arguments go into VRs or on the stack as
+      // usual; unnamed arguments always go to the stack or the corresponding
+      // GPRs when within range.  For now, we always put the value in both
+      // locations (or even all three).
       if (isVarArg) {
-        // These go aligned on the stack, or in the corresponding R registers
-        // when within range.  The Darwin PPC ABI doc claims they also go in
-        // V registers; in fact gcc does this only for arguments that are
-        // prototyped, not for those that match the ...  We do it for all
-        // arguments, seems to work.
-        while (ArgOffset % 16 !=0) {
-          ArgOffset += PtrByteSize;
-          if (GPR_idx != NumGPRs)
-            GPR_idx++;
-        }
         // We could elide this store in the case where the object fits
         // entirely in R registers.  Maybe later.
         PtrOff = DAG.getNode(ISD::ADD, dl, PtrVT, StackPtr,
@@ -4371,10 +4300,8 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
         break;
       }
 
-      // Non-varargs Altivec params generally go in registers, but have
-      // stack space allocated at the end.
+      // Non-varargs Altivec params go into VRs or on the stack.
       if (VR_idx != NumVRs) {
-        // Doesn't have GPR space allocated.
         unsigned VReg = (Arg.getSimpleValueType() == MVT::v2f64 ||
                          Arg.getSimpleValueType() == MVT::v2i64) ?
                         VSRH[VR_idx] : VR[VR_idx];
@@ -4385,8 +4312,9 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          true, isTailCall, true, MemOpChains,
                          TailCallArguments, dl);
-        ArgOffset += 16;
       }
+      ArgOffset += 16;
+      GPR_idx = std::min(GPR_idx + 2, NumGPRs);
       break;
     }
   }
@@ -4455,15 +4383,55 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
       CallConv == CallingConv::Fast)
     MF.getInfo<PPCFunctionInfo>()->setHasFastCall();
 
-  unsigned nAltivecParamsAtEnd = 0;
-
   // Count how many bytes are to be pushed on the stack, including the linkage
   // area, and parameter passing area.  We start with 24/48 bytes, which is
   // prereserved space for [SP][CR][LR][3 x unused].
-  unsigned NumBytes =
-    CalculateParameterAndLinkageAreaSize(DAG, isPPC64, isVarArg, CallConv,
-                                         Outs, OutVals,
-                                         nAltivecParamsAtEnd);
+  unsigned LinkageSize = PPCFrameLowering::getLinkageSize(isPPC64, true);
+  unsigned NumBytes = LinkageSize;
+
+  // Add up all the space actually used.
+  // In 32-bit non-varargs calls, Altivec parameters all go at the end; usually
+  // they all go in registers, but we must reserve stack space for them for
+  // possible use by the caller.  In varargs or 64-bit calls, parameters are
+  // assigned stack space in order, with padding so Altivec parameters are
+  // 16-byte aligned.
+  unsigned nAltivecParamsAtEnd = 0;
+  for (unsigned i = 0; i != NumOps; ++i) {
+    ISD::ArgFlagsTy Flags = Outs[i].Flags;
+    EVT ArgVT = Outs[i].VT;
+    // Varargs Altivec parameters are padded to a 16 byte boundary.
+    if (ArgVT == MVT::v4f32 || ArgVT == MVT::v4i32 ||
+        ArgVT == MVT::v8i16 || ArgVT == MVT::v16i8 ||
+        ArgVT == MVT::v2f64 || ArgVT == MVT::v2i64) {
+      if (!isVarArg && !isPPC64) {
+        // Non-varargs Altivec parameters go after all the non-Altivec
+        // parameters; handle those later so we know how much padding we need.
+        nAltivecParamsAtEnd++;
+        continue;
+      }
+      // Varargs and 64-bit Altivec parameters are padded to 16 byte boundary.
+      NumBytes = ((NumBytes+15)/16)*16;
+    }
+    NumBytes += CalculateStackSlotSize(ArgVT, Flags, PtrByteSize);
+  }
+
+  // Allow for Altivec parameters at the end, if needed.
+  if (nAltivecParamsAtEnd) {
+    NumBytes = ((NumBytes+15)/16)*16;
+    NumBytes += 16*nAltivecParamsAtEnd;
+  }
+
+  // The prolog code of the callee may store up to 8 GPR argument registers to
+  // the stack, allowing va_start to index over them in memory if its varargs.
+  // Because we cannot tell if this is needed on the caller side, we have to
+  // conservatively assume that it is needed.  As such, make sure we have at
+  // least enough stack space for the caller to store the 8 GPRs.
+  NumBytes = std::max(NumBytes, LinkageSize + 8 * PtrByteSize);
+
+  // Tail call needs the stack to be aligned.
+  if (getTargetMachine().Options.GuaranteedTailCallOpt &&
+      CallConv == CallingConv::Fast)
+    NumBytes = EnsureStackAlignment(MF.getTarget(), NumBytes);
 
   // Calculate by how many bytes the stack has to be adjusted in case of tail
   // call optimization.
@@ -4499,7 +4467,7 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
   // memory.  Also, if this is a vararg function, floating point operations
   // must be stored to our stack, and loaded into integer regs as well, if
   // any integer regs are available for argument passing.
-  unsigned ArgOffset = PPCFrameLowering::getLinkageSize(isPPC64, true);
+  unsigned ArgOffset = LinkageSize;
   unsigned GPR_idx = 0, FPR_idx = 0, VR_idx = 0;
 
   static const MCPhysReg GPR_32[] = {           // 32-bit registers.

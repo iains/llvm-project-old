@@ -13,8 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "R600ISelLowering.h"
-#include "AMDILIntrinsicInfo.h"
 #include "AMDGPUFrameLowering.h"
+#include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPUSubtarget.h"
 #include "R600Defines.h"
 #include "R600InstrInfo.h"
@@ -68,6 +68,7 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
 
   setOperationAction(ISD::BR_CC, MVT::i32, Expand);
   setOperationAction(ISD::BR_CC, MVT::f32, Expand);
+  setOperationAction(ISD::BRCOND, MVT::Other, Custom);
 
   setOperationAction(ISD::FSUB, MVT::f32, Expand);
 
@@ -152,6 +153,8 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setTargetDAGCombine(ISD::SELECT_CC);
   setTargetDAGCombine(ISD::INSERT_VECTOR_ELT);
 
+  setOperationAction(ISD::SUB, MVT::i64, Expand);
+
   // These should be replaced by UDVIREM, but it does not happen automatically
   // during Type Legalization
   setOperationAction(ISD::UDIV, MVT::i64, Custom);
@@ -166,6 +169,14 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::SRA_PARTS, MVT::i32, Custom);
 
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
+
+  const MVT ScalarIntVTs[] = { MVT::i32, MVT::i64 };
+  for (MVT VT : ScalarIntVTs) {
+    setOperationAction(ISD::ADDC, VT, Expand);
+    setOperationAction(ISD::SUBC, VT, Expand);
+    setOperationAction(ISD::ADDE, VT, Expand);
+    setOperationAction(ISD::SUBE, VT, Expand);
+  }
 
   setBooleanContents(ZeroOrNegativeOneBooleanContent);
   setBooleanVectorContents(ZeroOrNegativeOneBooleanContent);
@@ -568,6 +579,7 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
   case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
   case ISD::LOAD: return LowerLOAD(Op, DAG);
+  case ISD::BRCOND: return LowerBRCOND(Op, DAG);
   case ISD::GlobalAddress: return LowerGlobalAddress(MFI, Op, DAG);
   case ISD::INTRINSIC_VOID: {
     SDValue Chain = Op.getOperand(0);
@@ -1633,6 +1645,15 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
   };
 
   return DAG.getMergeValues(Ops, DL);
+}
+
+SDValue R600TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
+  SDValue Chain = Op.getOperand(0);
+  SDValue Cond  = Op.getOperand(1);
+  SDValue Jump  = Op.getOperand(2);
+
+  return DAG.getNode(AMDGPUISD::BRANCH_COND, SDLoc(Op), Op.getValueType(),
+                     Chain, Jump, Cond);
 }
 
 /// XXX Only kernel functions are supported, so we can assume for now that

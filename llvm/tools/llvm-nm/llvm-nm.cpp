@@ -726,9 +726,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     return;
 
   LLVMContext &Context = getGlobalContext();
-  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer.release(), &Context);
+  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer, &Context);
   if (error(BinaryOrErr.getError(), Filename))
     return;
+  Buffer.release();
   std::unique_ptr<Binary> Bin(BinaryOrErr.get());
 
   if (Archive *A = dyn_cast<Archive>(Bin.get())) {
@@ -773,9 +774,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     for (MachOUniversalBinary::object_iterator I = UB->begin_objects(),
                                                E = UB->end_objects();
          I != E; ++I) {
-      std::unique_ptr<ObjectFile> Obj;
+      ErrorOr<std::unique_ptr<ObjectFile>> ObjOrErr = I->getAsObjectFile();
       std::unique_ptr<Archive> A;
-      if (!I->getAsObjectFile(Obj)) {
+      if (ObjOrErr) {
+        std::unique_ptr<ObjectFile> Obj = std::move(ObjOrErr.get());
         if (moreThanOneArch)
           outs() << "\n";
         outs() << Obj->getFileName();
@@ -845,7 +847,7 @@ int main(int argc, char **argv) {
 
   switch (InputFilenames.size()) {
   case 0:
-    InputFilenames.push_back("-");
+    InputFilenames.push_back("a.out");
   case 1:
     break;
   default:

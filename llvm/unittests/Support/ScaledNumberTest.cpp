@@ -137,8 +137,8 @@ TEST(ScaledNumberHelpersTest, getQuotient) {
   EXPECT_EQ(SP32(0, 0), getQuotient32(0, 0));
   EXPECT_EQ(SP32(0, 0), getQuotient32(0, 1));
   EXPECT_EQ(SP32(0, 0), getQuotient32(0, 73));
-  EXPECT_EQ(SP32(UINT32_MAX, INT16_MAX), getQuotient32(1, 0));
-  EXPECT_EQ(SP32(UINT32_MAX, INT16_MAX), getQuotient32(6, 0));
+  EXPECT_EQ(SP32(UINT32_MAX, MaxScale), getQuotient32(1, 0));
+  EXPECT_EQ(SP32(UINT32_MAX, MaxScale), getQuotient32(6, 0));
 
   // Powers of two.
   EXPECT_EQ(SP32(1u << 31, -31), getQuotient32(1, 1));
@@ -171,8 +171,8 @@ TEST(ScaledNumberHelpersTest, getQuotient) {
   EXPECT_EQ(SP64(0, 0), getQuotient64(0, 0));
   EXPECT_EQ(SP64(0, 0), getQuotient64(0, 1));
   EXPECT_EQ(SP64(0, 0), getQuotient64(0, 73));
-  EXPECT_EQ(SP64(UINT64_MAX, INT16_MAX), getQuotient64(1, 0));
-  EXPECT_EQ(SP64(UINT64_MAX, INT16_MAX), getQuotient64(6, 0));
+  EXPECT_EQ(SP64(UINT64_MAX, MaxScale), getQuotient64(1, 0));
+  EXPECT_EQ(SP64(UINT64_MAX, MaxScale), getQuotient64(6, 0));
 
   // Powers of two.
   EXPECT_EQ(SP64(1, 0), getQuotient64(1, 1));
@@ -283,6 +283,257 @@ TEST(ScaledNumberHelpersTest, getLgCeiling) {
   EXPECT_EQ(INT32_MIN, getLgCeiling(UINT64_C(0), -1));
   EXPECT_EQ(INT32_MIN, getLgCeiling(UINT64_C(0), 0));
   EXPECT_EQ(INT32_MIN, getLgCeiling(UINT64_C(0), 1));
+}
+
+TEST(ScaledNumberHelpersTest, compare) {
+  EXPECT_EQ(0, compare(UINT32_C(0), 0, UINT32_C(0), 1));
+  EXPECT_EQ(0, compare(UINT32_C(0), 0, UINT32_C(0), -10));
+  EXPECT_EQ(0, compare(UINT32_C(0), 0, UINT32_C(0), 20));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(64), -3));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(32), -2));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(16), -1));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(8), 0));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(4), 1));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(2), 2));
+  EXPECT_EQ(0, compare(UINT32_C(8), 0, UINT32_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT32_C(0), 0, UINT32_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT32_C(7), 0, UINT32_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT32_C(7), 0, UINT32_C(64), -3));
+  EXPECT_EQ(1, compare(UINT32_C(9), 0, UINT32_C(1), 3));
+  EXPECT_EQ(1, compare(UINT32_C(9), 0, UINT32_C(64), -3));
+  EXPECT_EQ(1, compare(UINT32_C(9), 0, UINT32_C(0), 0));
+
+  EXPECT_EQ(0, compare(UINT64_C(0), 0, UINT64_C(0), 1));
+  EXPECT_EQ(0, compare(UINT64_C(0), 0, UINT64_C(0), -10));
+  EXPECT_EQ(0, compare(UINT64_C(0), 0, UINT64_C(0), 20));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(64), -3));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(32), -2));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(16), -1));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(8), 0));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(4), 1));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(2), 2));
+  EXPECT_EQ(0, compare(UINT64_C(8), 0, UINT64_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT64_C(0), 0, UINT64_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT64_C(7), 0, UINT64_C(1), 3));
+  EXPECT_EQ(-1, compare(UINT64_C(7), 0, UINT64_C(64), -3));
+  EXPECT_EQ(1, compare(UINT64_C(9), 0, UINT64_C(1), 3));
+  EXPECT_EQ(1, compare(UINT64_C(9), 0, UINT64_C(64), -3));
+  EXPECT_EQ(1, compare(UINT64_C(9), 0, UINT64_C(0), 0));
+  EXPECT_EQ(-1, compare(UINT64_MAX, 0, UINT64_C(1), 64));
+}
+
+TEST(ScaledNumberHelpersTest, matchScales) {
+  typedef std::tuple<uint32_t, int16_t, uint32_t, int16_t> Pair32;
+  typedef std::tuple<uint64_t, int16_t, uint64_t, int16_t> Pair64;
+
+#define MATCH_SCALES(T, LDIn, LSIn, RDIn, RSIn, LDOut, RDOut, SOut)            \
+  do {                                                                         \
+    T LDx = LDIn;                                                              \
+    T RDx = RDIn;                                                              \
+    T LDy = LDOut;                                                             \
+    T RDy = RDOut;                                                             \
+    int16_t LSx = LSIn;                                                        \
+    int16_t RSx = RSIn;                                                        \
+    int16_t Sy = SOut;                                                         \
+                                                                               \
+    EXPECT_EQ(SOut, matchScales(LDx, LSx, RDx, RSx));                          \
+    EXPECT_EQ(LDy, LDx);                                                       \
+    EXPECT_EQ(RDy, RDx);                                                       \
+    if (LDy)                                                                   \
+      EXPECT_EQ(Sy, LSx);                                                      \
+    if (RDy)                                                                   \
+      EXPECT_EQ(Sy, RSx);                                                      \
+  } while (false)
+
+  MATCH_SCALES(uint32_t, 0, 0, 0, 0, 0, 0, 0);
+  MATCH_SCALES(uint32_t, 0, 50, 7, 1, 0, 7, 1);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 31, 1, 9, 0, UINT32_C(1) << 31, 4, 1);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 31, 2, 9, 0, UINT32_C(1) << 31, 2, 2);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 31, 3, 9, 0, UINT32_C(1) << 31, 1, 3);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 31, 4, 9, 0, UINT32_C(1) << 31, 0, 4);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 30, 4, 9, 0, UINT32_C(1) << 31, 1, 3);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 29, 4, 9, 0, UINT32_C(1) << 31, 2, 2);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 28, 4, 9, 0, UINT32_C(1) << 31, 4, 1);
+  MATCH_SCALES(uint32_t, UINT32_C(1) << 27, 4, 9, 0, UINT32_C(1) << 31, 9, 0);
+  MATCH_SCALES(uint32_t, 7, 1, 0, 50, 7, 0, 1);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 31, 1, 4, UINT32_C(1) << 31, 1);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 31, 2, 2, UINT32_C(1) << 31, 2);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 31, 3, 1, UINT32_C(1) << 31, 3);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 31, 4, 0, UINT32_C(1) << 31, 4);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 30, 4, 1, UINT32_C(1) << 31, 3);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 29, 4, 2, UINT32_C(1) << 31, 2);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 28, 4, 4, UINT32_C(1) << 31, 1);
+  MATCH_SCALES(uint32_t, 9, 0, UINT32_C(1) << 27, 4, 9, UINT32_C(1) << 31, 0);
+
+  MATCH_SCALES(uint64_t, 0, 0, 0, 0, 0, 0, 0);
+  MATCH_SCALES(uint64_t, 0, 100, 7, 1, 0, 7, 1);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 63, 1, 9, 0, UINT64_C(1) << 63, 4, 1);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 63, 2, 9, 0, UINT64_C(1) << 63, 2, 2);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 63, 3, 9, 0, UINT64_C(1) << 63, 1, 3);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 63, 4, 9, 0, UINT64_C(1) << 63, 0, 4);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 62, 4, 9, 0, UINT64_C(1) << 63, 1, 3);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 61, 4, 9, 0, UINT64_C(1) << 63, 2, 2);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 60, 4, 9, 0, UINT64_C(1) << 63, 4, 1);
+  MATCH_SCALES(uint64_t, UINT64_C(1) << 59, 4, 9, 0, UINT64_C(1) << 63, 9, 0);
+  MATCH_SCALES(uint64_t, 7, 1, 0, 100, 7, 0, 1);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 63, 1, 4, UINT64_C(1) << 63, 1);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 63, 2, 2, UINT64_C(1) << 63, 2);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 63, 3, 1, UINT64_C(1) << 63, 3);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 63, 4, 0, UINT64_C(1) << 63, 4);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 62, 4, 1, UINT64_C(1) << 63, 3);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 61, 4, 2, UINT64_C(1) << 63, 2);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 60, 4, 4, UINT64_C(1) << 63, 1);
+  MATCH_SCALES(uint64_t, 9, 0, UINT64_C(1) << 59, 4, 9, UINT64_C(1) << 63, 0);
+}
+
+TEST(ScaledNumberHelpersTest, getSum) {
+  // Zero.
+  EXPECT_EQ(SP32(1, 0), getSum32(0, 0, 1, 0));
+  EXPECT_EQ(SP32(8, -3), getSum32(0, 0, 8, -3));
+  EXPECT_EQ(SP32(UINT32_MAX, 0), getSum32(0, 0, UINT32_MAX, 0));
+
+  // Basic.
+  EXPECT_EQ(SP32(2, 0), getSum32(1, 0, 1, 0));
+  EXPECT_EQ(SP32(3, 0), getSum32(1, 0, 2, 0));
+  EXPECT_EQ(SP32(67, 0), getSum32(7, 0, 60, 0));
+
+  // Different scales.
+  EXPECT_EQ(SP32(3, 0), getSum32(1, 0, 1, 1));
+  EXPECT_EQ(SP32(4, 0), getSum32(2, 0, 1, 1));
+
+  // Loss of precision.
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, 1), getSum32(1, 32, 1, 0));
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, -31), getSum32(1, -32, 1, 0));
+
+  // Not quite loss of precision.
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, 1), getSum32(1, 32, 1, 1));
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, -32), getSum32(1, -32, 1, -1));
+
+  // Overflow.
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, 1), getSum32(1, 0, UINT32_MAX, 0));
+
+  // Reverse operand order.
+  EXPECT_EQ(SP32(1, 0), getSum32(1, 0, 0, 0));
+  EXPECT_EQ(SP32(8, -3), getSum32(8, -3, 0, 0));
+  EXPECT_EQ(SP32(UINT32_MAX, 0), getSum32(UINT32_MAX, 0, 0, 0));
+  EXPECT_EQ(SP32(3, 0), getSum32(2, 0, 1, 0));
+  EXPECT_EQ(SP32(67, 0), getSum32(60, 0, 7, 0));
+  EXPECT_EQ(SP32(3, 0), getSum32(1, 1, 1, 0));
+  EXPECT_EQ(SP32(4, 0), getSum32(1, 1, 2, 0));
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, 1), getSum32(1, 0, 1, 32));
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, -31), getSum32(1, 0, 1, -32));
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, 1), getSum32(1, 1, 1, 32));
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, -32), getSum32(1, -1, 1, -32));
+  EXPECT_EQ(SP32(UINT32_C(1) << 31, 1), getSum32(UINT32_MAX, 0, 1, 0));
+
+  // Zero.
+  EXPECT_EQ(SP64(1, 0), getSum64(0, 0, 1, 0));
+  EXPECT_EQ(SP64(8, -3), getSum64(0, 0, 8, -3));
+  EXPECT_EQ(SP64(UINT64_MAX, 0), getSum64(0, 0, UINT64_MAX, 0));
+
+  // Basic.
+  EXPECT_EQ(SP64(2, 0), getSum64(1, 0, 1, 0));
+  EXPECT_EQ(SP64(3, 0), getSum64(1, 0, 2, 0));
+  EXPECT_EQ(SP64(67, 0), getSum64(7, 0, 60, 0));
+
+  // Different scales.
+  EXPECT_EQ(SP64(3, 0), getSum64(1, 0, 1, 1));
+  EXPECT_EQ(SP64(4, 0), getSum64(2, 0, 1, 1));
+
+  // Loss of precision.
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, 1), getSum64(1, 64, 1, 0));
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, -63), getSum64(1, -64, 1, 0));
+
+  // Not quite loss of precision.
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, 1), getSum64(1, 64, 1, 1));
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, -64), getSum64(1, -64, 1, -1));
+
+  // Overflow.
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, 1), getSum64(1, 0, UINT64_MAX, 0));
+
+  // Reverse operand order.
+  EXPECT_EQ(SP64(1, 0), getSum64(1, 0, 0, 0));
+  EXPECT_EQ(SP64(8, -3), getSum64(8, -3, 0, 0));
+  EXPECT_EQ(SP64(UINT64_MAX, 0), getSum64(UINT64_MAX, 0, 0, 0));
+  EXPECT_EQ(SP64(3, 0), getSum64(2, 0, 1, 0));
+  EXPECT_EQ(SP64(67, 0), getSum64(60, 0, 7, 0));
+  EXPECT_EQ(SP64(3, 0), getSum64(1, 1, 1, 0));
+  EXPECT_EQ(SP64(4, 0), getSum64(1, 1, 2, 0));
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, 1), getSum64(1, 0, 1, 64));
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, -63), getSum64(1, 0, 1, -64));
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, 1), getSum64(1, 1, 1, 64));
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, -64), getSum64(1, -1, 1, -64));
+  EXPECT_EQ(SP64(UINT64_C(1) << 63, 1), getSum64(UINT64_MAX, 0, 1, 0));
+}
+
+TEST(ScaledNumberHelpersTest, getDifference) {
+  // Basic.
+  EXPECT_EQ(SP32(0, 0), getDifference32(1, 0, 1, 0));
+  EXPECT_EQ(SP32(1, 0), getDifference32(2, 0, 1, 0));
+  EXPECT_EQ(SP32(53, 0), getDifference32(60, 0, 7, 0));
+
+  // Equals "0", different scales.
+  EXPECT_EQ(SP32(0, 0), getDifference32(2, 0, 1, 1));
+
+  // Subtract "0".
+  EXPECT_EQ(SP32(1, 0), getDifference32(1, 0, 0, 0));
+  EXPECT_EQ(SP32(8, -3), getDifference32(8, -3, 0, 0));
+  EXPECT_EQ(SP32(UINT32_MAX, 0), getDifference32(UINT32_MAX, 0, 0, 0));
+
+  // Loss of precision.
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, 1),
+            getDifference32((UINT32_C(1) << 31) + 1, 1, 1, 0));
+  EXPECT_EQ(SP32((UINT32_C(1) << 31) + 1, -31),
+            getDifference32((UINT32_C(1) << 31) + 1, -31, 1, -32));
+
+  // Not quite loss of precision.
+  EXPECT_EQ(SP32(UINT32_MAX, 0), getDifference32(1, 32, 1, 0));
+  EXPECT_EQ(SP32(UINT32_MAX, -32), getDifference32(1, 0, 1, -32));
+
+  // Saturate to "0".
+  EXPECT_EQ(SP32(0, 0), getDifference32(0, 0, 1, 0));
+  EXPECT_EQ(SP32(0, 0), getDifference32(0, 0, 8, -3));
+  EXPECT_EQ(SP32(0, 0), getDifference32(0, 0, UINT32_MAX, 0));
+  EXPECT_EQ(SP32(0, 0), getDifference32(7, 0, 60, 0));
+  EXPECT_EQ(SP32(0, 0), getDifference32(1, 0, 1, 1));
+  EXPECT_EQ(SP32(0, 0), getDifference32(1, -32, 1, 0));
+  EXPECT_EQ(SP32(0, 0), getDifference32(1, -32, 1, -1));
+
+  // Regression tests for cases that failed during bringup.
+  EXPECT_EQ(SP32(UINT32_C(1) << 26, -31),
+            getDifference32(1, 0, UINT32_C(31) << 27, -32));
+
+  // Basic.
+  EXPECT_EQ(SP64(0, 0), getDifference64(1, 0, 1, 0));
+  EXPECT_EQ(SP64(1, 0), getDifference64(2, 0, 1, 0));
+  EXPECT_EQ(SP64(53, 0), getDifference64(60, 0, 7, 0));
+
+  // Equals "0", different scales.
+  EXPECT_EQ(SP64(0, 0), getDifference64(2, 0, 1, 1));
+
+  // Subtract "0".
+  EXPECT_EQ(SP64(1, 0), getDifference64(1, 0, 0, 0));
+  EXPECT_EQ(SP64(8, -3), getDifference64(8, -3, 0, 0));
+  EXPECT_EQ(SP64(UINT64_MAX, 0), getDifference64(UINT64_MAX, 0, 0, 0));
+
+  // Loss of precision.
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, 1),
+            getDifference64((UINT64_C(1) << 63) + 1, 1, 1, 0));
+  EXPECT_EQ(SP64((UINT64_C(1) << 63) + 1, -63),
+            getDifference64((UINT64_C(1) << 63) + 1, -63, 1, -64));
+
+  // Not quite loss of precision.
+  EXPECT_EQ(SP64(UINT64_MAX, 0), getDifference64(1, 64, 1, 0));
+  EXPECT_EQ(SP64(UINT64_MAX, -64), getDifference64(1, 0, 1, -64));
+
+  // Saturate to "0".
+  EXPECT_EQ(SP64(0, 0), getDifference64(0, 0, 1, 0));
+  EXPECT_EQ(SP64(0, 0), getDifference64(0, 0, 8, -3));
+  EXPECT_EQ(SP64(0, 0), getDifference64(0, 0, UINT64_MAX, 0));
+  EXPECT_EQ(SP64(0, 0), getDifference64(7, 0, 60, 0));
+  EXPECT_EQ(SP64(0, 0), getDifference64(1, 0, 1, 1));
+  EXPECT_EQ(SP64(0, 0), getDifference64(1, -64, 1, 0));
+  EXPECT_EQ(SP64(0, 0), getDifference64(1, -64, 1, -1));
 }
 
 } // end namespace

@@ -16,9 +16,9 @@
 #include "AMDGPUISelLowering.h"
 #include "AMDGPU.h"
 #include "AMDGPUFrameLowering.h"
+#include "AMDGPUIntrinsicInfo.h"
 #include "AMDGPURegisterInfo.h"
 #include "AMDGPUSubtarget.h"
-#include "AMDILIntrinsicInfo.h"
 #include "R600MachineFunctionInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -108,8 +108,13 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
 
   Subtarget = &TM.getSubtarget<AMDGPUSubtarget>();
 
-  // Initialize target lowering borrowed from AMDIL
-  InitAMDILLowering();
+  setOperationAction(ISD::Constant, MVT::i32, Legal);
+  setOperationAction(ISD::Constant, MVT::i64, Legal);
+  setOperationAction(ISD::ConstantFP, MVT::f32, Legal);
+  setOperationAction(ISD::ConstantFP, MVT::f64, Legal);
+
+  setOperationAction(ISD::BR_JT, MVT::Other, Expand);
+  setOperationAction(ISD::BRIND, MVT::Other, Expand);
 
   // We need to custom lower some of the intrinsics
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
@@ -264,7 +269,6 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::MUL, MVT::i64, Expand);
   setOperationAction(ISD::MULHU, MVT::i64, Expand);
   setOperationAction(ISD::MULHS, MVT::i64, Expand);
-  setOperationAction(ISD::SUB, MVT::i64, Expand);
   setOperationAction(ISD::UDIV, MVT::i32, Expand);
   setOperationAction(ISD::UREM, MVT::i32, Expand);
   setOperationAction(ISD::UINT_TO_FP, MVT::i64, Custom);
@@ -299,8 +303,13 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::UMUL_LOHI, VT, Expand);
     setOperationAction(ISD::SDIVREM, VT, Custom);
     setOperationAction(ISD::UDIVREM, VT, Custom);
+    setOperationAction(ISD::ADDC, VT, Expand);
+    setOperationAction(ISD::SUBC, VT, Expand);
+    setOperationAction(ISD::ADDE, VT, Expand);
+    setOperationAction(ISD::SUBE, VT, Expand);
     setOperationAction(ISD::SELECT, VT, Expand);
     setOperationAction(ISD::VSELECT, VT, Expand);
+    setOperationAction(ISD::SELECT_CC, VT, Expand);
     setOperationAction(ISD::XOR,  VT, Expand);
     setOperationAction(ISD::BSWAP, VT, Expand);
     setOperationAction(ISD::CTPOP, VT, Expand);
@@ -308,6 +317,7 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::CTTZ_ZERO_UNDEF, VT, Expand);
     setOperationAction(ISD::CTLZ, VT, Expand);
     setOperationAction(ISD::CTLZ_ZERO_UNDEF, VT, Expand);
+    setOperationAction(ISD::VECTOR_SHUFFLE, VT, Expand);
   }
 
   static const MVT::SimpleValueType FloatVectorTypes[] = {
@@ -334,7 +344,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FNEG, VT, Expand);
     setOperationAction(ISD::SELECT, VT, Expand);
     setOperationAction(ISD::VSELECT, VT, Expand);
+    setOperationAction(ISD::SELECT_CC, VT, Expand);
     setOperationAction(ISD::FCOPYSIGN, VT, Expand);
+    setOperationAction(ISD::VECTOR_SHUFFLE, VT, Expand);
   }
 
   setOperationAction(ISD::FNEARBYINT, MVT::f32, Custom);
@@ -346,9 +358,13 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setSchedulingPreference(Sched::RegPressure);
   setJumpIsExpensive(true);
 
+  setSelectIsExpensive(false);
+  PredictableSelectIsExpensive = false;
+
   // There are no integer divide instructions, and these expand to a pretty
   // large sequence of instructions.
   setIntDivIsCheap(false);
+  setPow2DivIsCheap(false);
 
   // TODO: Investigate this when 64-bit divides are implemented.
   addBypassSlowDiv(64, 32);
@@ -365,6 +381,10 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
 
 MVT AMDGPUTargetLowering::getVectorIdxTy() const {
   return MVT::i32;
+}
+
+bool AMDGPUTargetLowering::isSelectSupported(SelectSupportKind SelType) const {
+  return true;
 }
 
 // The backend supports 32 and 64 bit floating point immediates.
@@ -495,7 +515,6 @@ SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op,
     llvm_unreachable("Custom lowering code for this"
                      "instruction is not implemented yet!");
     break;
-  // AMDGPU DAG lowering.
   case ISD::SIGN_EXTEND_INREG: return LowerSIGN_EXTEND_INREG(Op, DAG);
   case ISD::CONCAT_VECTORS: return LowerCONCAT_VECTORS(Op, DAG);
   case ISD::EXTRACT_SUBVECTOR: return LowerEXTRACT_SUBVECTOR(Op, DAG);
@@ -511,9 +530,6 @@ SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op,
   case ISD::FNEARBYINT: return LowerFNEARBYINT(Op, DAG);
   case ISD::FFLOOR: return LowerFFLOOR(Op, DAG);
   case ISD::UINT_TO_FP: return LowerUINT_TO_FP(Op, DAG);
-
-  // AMDIL DAG lowering.
-  case ISD::BRCOND: return LowerBRCOND(Op, DAG);
   }
   return Op;
 }
@@ -755,9 +771,21 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
       return DAG.getNode(AMDGPUISD::CLAMP, DL, VT,
                          Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
 
-    case Intrinsic::AMDGPU_div_scale:
+    case Intrinsic::AMDGPU_div_scale: {
+      // 3rd parameter required to be a constant.
+      const ConstantSDNode *Param = dyn_cast<ConstantSDNode>(Op.getOperand(3));
+      if (!Param)
+        return DAG.getUNDEF(VT);
+
+      // Translate to the operands expected by the machine instruction. The
+      // first parameter must be the same as the first instruction.
+      SDValue Numerator = Op.getOperand(1);
+      SDValue Denominator = Op.getOperand(2);
+      SDValue Src0 = Param->isAllOnesValue() ? Numerator : Denominator;
+
       return DAG.getNode(AMDGPUISD::DIV_SCALE, DL, VT,
-                         Op.getOperand(1), Op.getOperand(2));
+                         Src0, Denominator, Numerator);
+    }
 
     case Intrinsic::AMDGPU_div_fmas:
       return DAG.getNode(AMDGPUISD::DIV_FMAS, DL, VT,
