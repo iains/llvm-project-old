@@ -1156,6 +1156,7 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
       .Case("power6", "pwr6")
       .Case("power6x", "pwr6x")
       .Case("power7", "pwr7")
+      .Case("power8", "pwr8")
       .Case("pwr3", "pwr3")
       .Case("pwr4", "pwr4")
       .Case("pwr5", "pwr5")
@@ -1163,6 +1164,7 @@ static std::string getPPCTargetCPU(const ArgList &Args) {
       .Case("pwr6", "pwr6")
       .Case("pwr6x", "pwr6x")
       .Case("pwr7", "pwr7")
+      .Case("pwr8", "pwr8")
       .Case("powerpc", "ppc")
       .Case("powerpc64", "ppc64")
       .Case("powerpc64le", "ppc64le")
@@ -1426,9 +1428,13 @@ static void getX86TargetFeatures(const llvm::Triple &Triple,
     Features.push_back("-fsgsbase");
   }
 
+  // Add features to comply with gcc on Android
   if (Triple.getEnvironment() == llvm::Triple::Android) {
-    // Add sse3 feature to comply with gcc on Android
-    Features.push_back("+sse3");
+    if (Triple.getArch() == llvm::Triple::x86_64) {
+      Features.push_back("+sse4.2");
+      Features.push_back("+popcnt");
+    } else
+      Features.push_back("+ssse3");
   }
 
   // Now add any that the user explicitly requested on the command line,
@@ -2425,6 +2431,27 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     case llvm::Triple::x86_64:
       PIC = true; // "-fPIC"
       IsPICLevelTwo = true;
+      break;
+
+    default:
+      break;
+    }
+  }
+
+  // OpenBSD-specific defaults for PIE
+  if (getToolChain().getTriple().getOS() == llvm::Triple::OpenBSD) {
+    switch (getToolChain().getTriple().getArch()) {
+    case llvm::Triple::mips64:
+    case llvm::Triple::mips64el:
+    case llvm::Triple::sparc:
+    case llvm::Triple::x86:
+    case llvm::Triple::x86_64:
+      IsPICLevelTwo = false; // "-fpie"
+      break;
+
+    case llvm::Triple::ppc:
+    case llvm::Triple::sparcv9:
+      IsPICLevelTwo = true; // "-fPIE"
       break;
 
     default:
@@ -5102,6 +5129,22 @@ bool mips::hasMipsAbiArg(const ArgList &Args, const char *Value) {
   return A && (A->getValue() == StringRef(Value));
 }
 
+bool mips::isNaN2008(const ArgList &Args) {
+  if (Arg *NaNArg = Args.getLastArg(options::OPT_mnan_EQ))
+    return llvm::StringSwitch<bool>(NaNArg->getValue())
+               .Case("2008", true)
+               .Case("legacy", false)
+               .Default(false);
+
+  // NaN2008 is the default for MIPS32r6/MIPS64r6.
+  if (Arg *CPUArg = Args.getLastArg(options::OPT_mcpu_EQ))
+    return llvm::StringSwitch<bool>(CPUArg->getValue())
+               .Cases("mips32r6", "mips64r6", true)
+               .Default(false);
+
+  return false;
+}
+
 llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
   // See arch(3) and llvm-gcc's driver-driver.c. We don't implement support for
   // archs which Darwin doesn't use.
@@ -5571,7 +5614,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_F);
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -5761,7 +5804,7 @@ void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs);
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -5869,7 +5912,7 @@ void auroraux::Link::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs);
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6071,7 +6114,7 @@ void openbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6207,7 +6250,7 @@ void bitrig::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6471,7 +6514,7 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(ToolChain, Args, CmdArgs);
 
   const char *Exec =
-    Args.MakeArgString(ToolChain.GetProgramPath("ld"));
+    Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6724,7 +6767,7 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   addProfileRT(getToolChain(), Args, CmdArgs);
 
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6921,14 +6964,17 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
     else
       return "/lib/ld-linux.so.3";              /* TODO: check which dynamic linker name.  */
   } else if (ToolChain.getArch() == llvm::Triple::mips ||
-             ToolChain.getArch() == llvm::Triple::mipsel)
+             ToolChain.getArch() == llvm::Triple::mipsel) {
+    if (mips::isNaN2008(Args))
+      return "/lib/ld-linux-mipsn8.so.1";
     return "/lib/ld.so.1";
-  else if (ToolChain.getArch() == llvm::Triple::mips64 ||
-           ToolChain.getArch() == llvm::Triple::mips64el) {
+  } else if (ToolChain.getArch() == llvm::Triple::mips64 ||
+             ToolChain.getArch() == llvm::Triple::mips64el) {
     if (mips::hasMipsAbiArg(Args, "n32"))
-      return "/lib32/ld.so.1";
-    else
-      return "/lib64/ld.so.1";
+      return mips::isNaN2008(Args) ? "/lib32/ld-linux-mipsn8.so.1"
+                                   : "/lib32/ld.so.1";
+    return mips::isNaN2008(Args) ? "/lib64/ld-linux-mipsn8.so.1"
+                                 : "/lib64/ld.so.1";
   } else if (ToolChain.getArch() == llvm::Triple::ppc)
     return "/lib/ld.so.1";
   else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
@@ -7114,6 +7160,7 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
+  Args.AddAllArgs(CmdArgs, options::OPT_u);
 
   const ToolChain::path_list Paths = ToolChain.getFilePaths();
 
@@ -7278,7 +7325,7 @@ void minix::Link::ConstructJob(Compilation &C, const JobAction &JA,
          Args.MakeArgString(getToolChain().GetFilePath("crtend.o")));
   }
 
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -7456,7 +7503,7 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   addProfileRT(getToolChain(), Args, CmdArgs);
 
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 

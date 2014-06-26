@@ -191,9 +191,30 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
       break;
     }
     break;
+  case OMPD_sections:
+    switch (CKind) {
+#define OPENMP_SECTIONS_CLAUSE(Name)                                                \
+  case OMPC_##Name:                                                            \
+    return true;
+#include "clang/Basic/OpenMPKinds.def"
+    default:
+      break;
+    }
+    break;
+  case OMPD_single:
+    switch (CKind) {
+#define OPENMP_SINGLE_CLAUSE(Name)                                                \
+  case OMPC_##Name:                                                            \
+    return true;
+#include "clang/Basic/OpenMPKinds.def"
+    default:
+      break;
+    }
+    break;
   case OMPD_unknown:
   case OMPD_threadprivate:
   case OMPD_task:
+  case OMPD_section:
     break;
   }
   return false;
@@ -204,7 +225,8 @@ bool clang::isOpenMPLoopDirective(OpenMPDirectiveKind DKind) {
 }
 
 bool clang::isOpenMPWorksharingDirective(OpenMPDirectiveKind DKind) {
-  return DKind == OMPD_for; // TODO add next directives.
+  return DKind == OMPD_for || DKind == OMPD_sections || DKind == OMPD_section ||
+         DKind == OMPD_single; // TODO add next directives.
 }
 
 bool clang::isOpenMPParallelDirective(OpenMPDirectiveKind DKind) {

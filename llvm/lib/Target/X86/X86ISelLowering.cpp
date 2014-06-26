@@ -605,9 +605,8 @@ void X86TargetLowering::resetOperationActions() {
   }
 
   // FIXME - use subtarget debug flags
-  if (!Subtarget->isTargetDarwin() &&
-      !Subtarget->isTargetELF() &&
-      !Subtarget->isTargetCygMing()) {
+  if (!Subtarget->isTargetDarwin() && !Subtarget->isTargetELF() &&
+      !Subtarget->isTargetCygMing() && !Subtarget->isTargetWin64()) {
     setOperationAction(ISD::EH_LABEL, MVT::Other, Expand);
   }
 
@@ -6222,6 +6221,127 @@ static SDValue ExpandHorizontalBinOp(const SDValue &V0, const SDValue &V1,
   return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, LO, HI);
 }
 
+/// \brief Try to fold a build_vector that performs an 'addsub' into the
+/// sequence of 'vadd + vsub + blendi'.
+static SDValue matchAddSub(const BuildVectorSDNode *BV, SelectionDAG &DAG,
+                           const X86Subtarget *Subtarget) {
+  SDLoc DL(BV);
+  EVT VT = BV->getValueType(0);
+  unsigned NumElts = VT.getVectorNumElements();
+  SDValue InVec0 = DAG.getUNDEF(VT);
+  SDValue InVec1 = DAG.getUNDEF(VT);
+
+  assert((VT == MVT::v8f32 || VT == MVT::v4f64 || VT == MVT::v4f32 ||
+          VT == MVT::v2f64) && "build_vector with an invalid type found!");
+
+  // Don't try to emit a VSELECT that cannot be lowered into a blend.
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  if (!TLI.isOperationLegalOrCustom(ISD::VSELECT, VT))
+    return SDValue();
+
+  // Odd-numbered elements in the input build vector are obtained from
+  // adding two integer/float elements.
+  // Even-numbered elements in the input build vector are obtained from
+  // subtracting two integer/float elements.
+  unsigned ExpectedOpcode = ISD::FSUB;
+  unsigned NextExpectedOpcode = ISD::FADD;
+  bool AddFound = false;
+  bool SubFound = false;
+
+  for (unsigned i = 0, e = NumElts; i != e; i++) {
+    SDValue Op = BV->getOperand(i);
+      
+    // Skip 'undef' values.
+    unsigned Opcode = Op.getOpcode();
+    if (Opcode == ISD::UNDEF) {
+      std::swap(ExpectedOpcode, NextExpectedOpcode);
+      continue;
+    }
+      
+    // Early exit if we found an unexpected opcode.
+    if (Opcode != ExpectedOpcode)
+      return SDValue();
+
+    SDValue Op0 = Op.getOperand(0);
+    SDValue Op1 = Op.getOperand(1);
+
+    // Try to match the following pattern:
+    // (BINOP (extract_vector_elt A, i), (extract_vector_elt B, i))
+    // Early exit if we cannot match that sequence.
+    if (Op0.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
+        Op1.getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
+        !isa<ConstantSDNode>(Op0.getOperand(1)) ||
+        !isa<ConstantSDNode>(Op1.getOperand(1)) ||
+        Op0.getOperand(1) != Op1.getOperand(1))
+      return SDValue();
+
+    unsigned I0 = cast<ConstantSDNode>(Op0.getOperand(1))->getZExtValue();
+    if (I0 != i)
+      return SDValue();
+
+    // We found a valid add/sub node. Update the information accordingly.
+    if (i & 1)
+      AddFound = true;
+    else
+      SubFound = true;
+
+    // Update InVec0 and InVec1.
+    if (InVec0.getOpcode() == ISD::UNDEF)
+      InVec0 = Op0.getOperand(0);
+    if (InVec1.getOpcode() == ISD::UNDEF)
+      InVec1 = Op1.getOperand(0);
+
+    // Make sure that operands in input to each add/sub node always
+    // come from a same pair of vectors.
+    if (InVec0 != Op0.getOperand(0)) {
+      if (ExpectedOpcode == ISD::FSUB)
+        return SDValue();
+
+      // FADD is commutable. Try to commute the operands
+      // and then test again.
+      std::swap(Op0, Op1);
+      if (InVec0 != Op0.getOperand(0))
+        return SDValue();
+    }
+
+    if (InVec1 != Op1.getOperand(0))
+      return SDValue();
+
+    // Update the pair of expected opcodes.
+    std::swap(ExpectedOpcode, NextExpectedOpcode);
+  }
+
+  // Don't try to fold this build_vector into a VSELECT if it has
+  // too many UNDEF operands.
+  if (AddFound && SubFound && InVec0.getOpcode() != ISD::UNDEF &&
+      InVec1.getOpcode() != ISD::UNDEF) {
+    // Emit a sequence of vector add and sub followed by a VSELECT.
+    // The new VSELECT will be lowered into a BLENDI.
+    // At ISel stage, we pattern-match the sequence 'add + sub + BLENDI'
+    // and emit a single ADDSUB instruction.
+    SDValue Sub = DAG.getNode(ExpectedOpcode, DL, VT, InVec0, InVec1);
+    SDValue Add = DAG.getNode(NextExpectedOpcode, DL, VT, InVec0, InVec1);
+
+    // Construct the VSELECT mask.
+    EVT MaskVT = VT.changeVectorElementTypeToInteger();
+    EVT SVT = MaskVT.getVectorElementType();
+    unsigned SVTBits = SVT.getSizeInBits();
+    SmallVector<SDValue, 8> Ops;
+
+    for (unsigned i = 0, e = NumElts; i != e; ++i) {
+      APInt Value = i & 1 ? APInt::getNullValue(SVTBits) :
+                            APInt::getAllOnesValue(SVTBits);
+      SDValue Constant = DAG.getConstant(Value, SVT);
+      Ops.push_back(Constant);
+    }
+
+    SDValue Mask = DAG.getNode(ISD::BUILD_VECTOR, DL, MaskVT, Ops);
+    return DAG.getSelect(DL, VT, Mask, Sub, Add);
+  }
+  
+  return SDValue();
+}
+
 static SDValue PerformBUILD_VECTORCombine(SDNode *N, SelectionDAG &DAG,
                                           const X86Subtarget *Subtarget) {
   SDLoc DL(N);
@@ -6229,6 +6349,14 @@ static SDValue PerformBUILD_VECTORCombine(SDNode *N, SelectionDAG &DAG,
   unsigned NumElts = VT.getVectorNumElements();
   BuildVectorSDNode *BV = cast<BuildVectorSDNode>(N);
   SDValue InVec0, InVec1;
+
+  // Try to match an ADDSUB.
+  if ((Subtarget->hasSSE3() && (VT == MVT::v4f32 || VT == MVT::v2f64)) ||
+      (Subtarget->hasAVX() && (VT == MVT::v8f32 || VT == MVT::v4f64))) {
+    SDValue Value = matchAddSub(BV, DAG, Subtarget);
+    if (Value.getNode())
+      return Value;
+  }
 
   // Try to match horizontal ADD/SUB.
   unsigned NumUndefsLO = 0;
@@ -8209,6 +8337,11 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
                                 getShufflePSHUFLWImmediate(SVOp),
                                 DAG);
 
+  unsigned MaskValue;
+  if (isBlendMask(M, VT, Subtarget->hasSSE41(), Subtarget->hasInt256(),
+                  &MaskValue))
+    return LowerVECTOR_SHUFFLEtoBlend(SVOp, MaskValue, Subtarget, DAG);
+
   if (isSHUFPMask(M, VT))
     return getTargetShuffleNode(X86ISD::SHUFP, dl, VT, V1, V2,
                                 getShuffleSHUFImmediate(SVOp), DAG);
@@ -8245,11 +8378,6 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   if (isVPERM2X128Mask(M, VT, HasFp256))
     return getTargetShuffleNode(X86ISD::VPERM2X128, dl, VT, V1,
                                 V2, getShuffleVPERM2X128Immediate(SVOp), DAG);
-
-  unsigned MaskValue;
-  if (isBlendMask(M, VT, Subtarget->hasSSE41(), Subtarget->hasInt256(),
-                  &MaskValue))
-    return LowerVECTOR_SHUFFLEtoBlend(SVOp, MaskValue, Subtarget, DAG);
 
   if (Subtarget->hasSSE41() && isINSERTPSMask(M, VT))
     return getINSERTPS(SVOp, dl, DAG);
@@ -12530,6 +12658,18 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   case Intrinsic::x86_ssse3_pshuf_b_128:
   case Intrinsic::x86_avx2_pshuf_b:
     return DAG.getNode(X86ISD::PSHUFB, dl, Op.getValueType(),
+                       Op.getOperand(1), Op.getOperand(2));
+
+  case Intrinsic::x86_sse2_pshuf_d:
+    return DAG.getNode(X86ISD::PSHUFD, dl, Op.getValueType(),
+                       Op.getOperand(1), Op.getOperand(2));
+
+  case Intrinsic::x86_sse2_pshufl_w:
+    return DAG.getNode(X86ISD::PSHUFLW, dl, Op.getValueType(),
+                       Op.getOperand(1), Op.getOperand(2));
+
+  case Intrinsic::x86_sse2_pshufh_w:
+    return DAG.getNode(X86ISD::PSHUFHW, dl, Op.getValueType(),
                        Op.getOperand(1), Op.getOperand(2));
 
   case Intrinsic::x86_ssse3_psign_b_128:
@@ -17874,6 +18014,49 @@ static SDValue PerformShuffleCombine(SDNode *N, SelectionDAG &DAG,
   SDValue N1 = N->getOperand(1);
   EVT VT = N->getValueType(0);
 
+  // Canonicalize shuffles that perform 'addsub' on packed float vectors
+  // according to the rule:
+  //  (shuffle (FADD A, B), (FSUB A, B), Mask) ->
+  //  (shuffle (FSUB A, -B), (FADD A, -B), Mask)
+  //
+  // Where 'Mask' is:
+  //  <0,5,2,7>             -- for v4f32 and v4f64 shuffles;
+  //  <0,3>                 -- for v2f64 shuffles;
+  //  <0,9,2,11,4,13,6,15>  -- for v8f32 shuffles.
+  //
+  // This helps pattern-matching more SSE3/AVX ADDSUB instructions
+  // during ISel stage.
+  if (N->getOpcode() == ISD::VECTOR_SHUFFLE &&
+      ((Subtarget->hasSSE3() && (VT == MVT::v4f32 || VT == MVT::v2f64)) ||
+       (Subtarget->hasAVX() && (VT == MVT::v8f32 || VT == MVT::v4f64))) &&
+      N0->getOpcode() == ISD::FADD && N1->getOpcode() == ISD::FSUB &&
+      // Operands to the FADD and FSUB must be the same.
+      ((N0->getOperand(0) == N1->getOperand(0) &&
+        N0->getOperand(1) == N1->getOperand(1)) ||
+       // FADD is commutable. See if by commuting the operands of the FADD
+       // we would still be able to match the operands of the FSUB dag node.
+       (N0->getOperand(1) == N1->getOperand(0) &&
+        N0->getOperand(0) == N1->getOperand(1))) &&
+      N0->getOperand(0)->getOpcode() != ISD::UNDEF &&
+      N0->getOperand(1)->getOpcode() != ISD::UNDEF) {
+    
+    ShuffleVectorSDNode *SV = cast<ShuffleVectorSDNode>(N);
+    unsigned NumElts = VT.getVectorNumElements();
+    ArrayRef<int> Mask = SV->getMask();
+    bool CanFold = true;
+
+    for (unsigned i = 0, e = NumElts; i != e && CanFold; ++i)
+      CanFold = Mask[i] == (int)((i & 1) ? i + NumElts : i);
+
+    if (CanFold) {
+      SDValue Op0 = N1->getOperand(0);
+      SDValue Op1 = DAG.getNode(ISD::FNEG, dl, VT, N1->getOperand(1));
+      SDValue Sub = DAG.getNode(ISD::FSUB, dl, VT, Op0, Op1);
+      SDValue Add = DAG.getNode(ISD::FADD, dl, VT, Op0, Op1);
+      return DAG.getVectorShuffle(VT, dl, Sub, Add, Mask);
+    }
+  }
+
   // Don't create instructions with illegal types after legalize types has run.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (!DCI.isBeforeLegalize() && !TLI.isTypeLegal(VT.getVectorElementType()))
@@ -19188,6 +19371,8 @@ static SDValue PerformINTRINSIC_WO_CHAINCombine(SDNode *N, SelectionDAG &DAG,
       if (C->isAllOnesValue())
         return Op1;
     }
+
+    return SDValue();
   }
 
   // Packed SSE2/AVX2 arithmetic shift immediate intrinsics.

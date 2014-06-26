@@ -139,6 +139,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::STORE, MVT::v2f32, Promote);
   AddPromotedToType(ISD::STORE, MVT::v2f32, MVT::v2i32);
 
+  setOperationAction(ISD::STORE, MVT::i64, Promote);
+  AddPromotedToType(ISD::STORE, MVT::i64, MVT::v2i32);
+
   setOperationAction(ISD::STORE, MVT::v4f32, Promote);
   AddPromotedToType(ISD::STORE, MVT::v4f32, MVT::v4i32);
 
@@ -336,6 +339,7 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FFLOOR, VT, Expand);
     setOperationAction(ISD::FTRUNC, VT, Expand);
     setOperationAction(ISD::FMUL, VT, Expand);
+    setOperationAction(ISD::FMA, VT, Expand);
     setOperationAction(ISD::FRINT, VT, Expand);
     setOperationAction(ISD::FNEARBYINT, VT, Expand);
     setOperationAction(ISD::FSQRT, VT, Expand);
@@ -452,6 +456,10 @@ bool AMDGPUTargetLowering::isZExtFree(EVT Src, EVT Dest) const {
   // this will enable reducing 64-bit operations the 32-bit, which is always
   // good.
   return Src == MVT::i32 && Dest == MVT::i64;
+}
+
+bool AMDGPUTargetLowering::isZExtFree(SDValue Val, EVT VT2) const {
+  return isZExtFree(Val.getValueType(), VT2);
 }
 
 bool AMDGPUTargetLowering::isNarrowingProfitable(EVT SrcVT, EVT DestVT) const {
@@ -804,6 +812,12 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
     case Intrinsic::AMDGPU_rsq:
       return DAG.getNode(AMDGPUISD::RSQ, DL, VT, Op.getOperand(1));
+
+    case AMDGPUIntrinsic::AMDGPU_legacy_rsq:
+      return DAG.getNode(AMDGPUISD::RSQ_LEGACY, DL, VT, Op.getOperand(1));
+
+    case Intrinsic::AMDGPU_rsq_clamped:
+      return DAG.getNode(AMDGPUISD::RSQ_CLAMPED, DL, VT, Op.getOperand(1));
 
     case AMDGPUIntrinsic::AMDGPU_imax:
       return DAG.getNode(AMDGPUISD::SMAX, DL, VT, Op.getOperand(1),
@@ -1246,7 +1260,8 @@ SDValue AMDGPUTargetLowering::LowerSDIV24(SDValue Op, SelectionDAG &DAG) const {
   SDValue fb = DAG.getNode(ISD::SINT_TO_FP, DL, FLTTY, ib);
 
   // float fq = native_divide(fa, fb);
-  SDValue fq = DAG.getNode(AMDGPUISD::DIV_INF, DL, FLTTY, fa, fb);
+  SDValue fq = DAG.getNode(ISD::FMUL, DL, FLTTY,
+                           fa, DAG.getNode(AMDGPUISD::RCP, DL, FLTTY, fb));
 
   // fq = trunc(fq);
   fq = DAG.getNode(ISD::FTRUNC, DL, FLTTY, fq);
@@ -2031,7 +2046,6 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   // AMDIL DAG nodes
   NODE_NAME_CASE(CALL);
   NODE_NAME_CASE(UMUL);
-  NODE_NAME_CASE(DIV_INF);
   NODE_NAME_CASE(RET_FLAG);
   NODE_NAME_CASE(BRANCH_COND);
 
@@ -2052,6 +2066,8 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(TRIG_PREOP)
   NODE_NAME_CASE(RCP)
   NODE_NAME_CASE(RSQ)
+  NODE_NAME_CASE(RSQ_LEGACY)
+  NODE_NAME_CASE(RSQ_CLAMPED)
   NODE_NAME_CASE(DOT4)
   NODE_NAME_CASE(BFE_U32)
   NODE_NAME_CASE(BFE_I32)

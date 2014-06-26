@@ -62,6 +62,11 @@ void LLVMShutdown() {
 
 /*===-- Error handling ----------------------------------------------------===*/
 
+static char *LLVMCreateMessage(string_ostream &OS) {
+  OS << '\0';
+  return strdup(OS.str().data());
+}
+
 char *LLVMCreateMessage(const char *Message) {
   return strdup(Message);
 }
@@ -110,14 +115,10 @@ unsigned LLVMGetMDKindID(const char* Name, unsigned SLen) {
 }
 
 char *LLVMGetDiagInfoDescription(LLVMDiagnosticInfoRef DI) {
-  std::string MsgStorage;
-  raw_string_ostream Stream(MsgStorage);
-  DiagnosticPrinterRawOStream DP(Stream);
-
+  string_ostream Msg;
+  DiagnosticPrinterRawOStream DP(Msg);
   unwrap(DI)->print(DP);
-  Stream.flush();
-
-  return LLVMCreateMessage(MsgStorage.c_str());
+  return LLVMCreateMessage(Msg);
 }
 
 LLVMDiagnosticSeverity LLVMGetDiagInfoSeverity(LLVMDiagnosticInfoRef DI){
@@ -201,13 +202,9 @@ LLVMBool LLVMPrintModuleToFile(LLVMModuleRef M, const char *Filename,
 }
 
 char *LLVMPrintModuleToString(LLVMModuleRef M) {
-  std::string buf;
-  raw_string_ostream os(buf);
-
+  string_ostream os;
   unwrap(M)->print(os, nullptr);
-  os.flush();
-
-  return strdup(buf.c_str());
+  return LLVMCreateMessage(os);
 }
 
 /*--.. Operations on inline assembler ......................................--*/
@@ -278,17 +275,14 @@ void LLVMDumpType(LLVMTypeRef Ty) {
 }
 
 char *LLVMPrintTypeToString(LLVMTypeRef Ty) {
-  std::string buf;
-  raw_string_ostream os(buf);
+  string_ostream os;
 
   if (unwrap(Ty))
     unwrap(Ty)->print(os);
   else
     os << "Printing <null> Type";
 
-  os.flush();
-
-  return strdup(buf.c_str());
+  return LLVMCreateMessage(os);
 }
 
 /*--.. Operations on integer types .........................................--*/
@@ -532,17 +526,14 @@ void LLVMDumpValue(LLVMValueRef Val) {
 }
 
 char* LLVMPrintValueToString(LLVMValueRef Val) {
-  std::string buf;
-  raw_string_ostream os(buf);
+  string_ostream os;
 
   if (unwrap(Val))
     unwrap(Val)->print(os);
   else
     os << "Printing <null> Value";
 
-  os.flush();
-
-  return strdup(buf.c_str());
+  return LLVMCreateMessage(os);
 }
 
 void LLVMReplaceAllUsesWith(LLVMValueRef OldVal, LLVMValueRef NewVal) {
@@ -2708,10 +2699,11 @@ void LLVMDisposePassManager(LLVMPassManagerRef PM) {
 /*===-- Threading ------------------------------------------------------===*/
 
 LLVMBool LLVMStartMultithreaded() {
-  return LLVMIsMultithreaded();
+  return llvm_start_multithreaded();
 }
 
 void LLVMStopMultithreaded() {
+  llvm_stop_multithreaded();
 }
 
 LLVMBool LLVMIsMultithreaded() {

@@ -272,8 +272,8 @@ std::error_code processSymboledSection(DefinedAtom::ContentType atomType,
               Atom::Scope rScope = atomScope(rhs->scope);
               if (lScope != rScope)
                 return lScope < rScope;
-              // If same address and scope, sort by name.   
-              return (lhs->name.compare(rhs->name) < 1);
+              // If same address and scope, sort by name.
+              return lhs->name < rhs->name;
             });
 
   // Debug logging of symbols.
@@ -284,11 +284,13 @@ std::error_code processSymboledSection(DefinedAtom::ContentType atomType,
   if (symbols.empty() && section.content.empty())
     return std::error_code();
 
-  const uint64_t firstSymbolAddr = symbols.front()->value;
-  if (firstSymbolAddr != section.address) {
+  uint64_t anonAtomEnd = symbols.empty()
+                             ? section.address + section.content.size()
+                             : (uint64_t)symbols.front()->value;
+  if (anonAtomEnd != section.address) {
     // Section has anonymous content before first symbol.
-    atomFromSymbol(atomType, section, file, section.address, StringRef(),
-                  0, Atom::scopeTranslationUnit, firstSymbolAddr, copyRefs);
+    atomFromSymbol(atomType, section, file, section.address, StringRef(), 0,
+                   Atom::scopeTranslationUnit, anonAtomEnd, copyRefs);
   }
 
   const Symbol *lastSym = nullptr;
@@ -350,9 +352,9 @@ std::error_code processSection(DefinedAtom::ContentType atomType,
       case atomizeUTF8:
         // Break section up into zero terminated c-strings.
         size = 0;
-        for (unsigned int i=0; offset+i < e; ++i) {
+        for (unsigned int i = offset; i < e; ++i) {
           if (section.content[i] == 0) {
-            size = i+1;
+            size = i + 1 - offset;
             break;
           }
         }
@@ -360,9 +362,9 @@ std::error_code processSection(DefinedAtom::ContentType atomType,
       case atomizeUTF16:
         // Break section up into zero terminated UTF16 strings.
         size = 0;
-        for (unsigned int i=0; offset+i < e; i += 2) {
-          if ((section.content[i] == 0) && (section.content[i+1] == 0)) {
-            size = i+2;
+        for (unsigned int i = offset; i < e; i += 2) {
+          if ((section.content[i] == 0) && (section.content[i + 1] == 0)) {
+            size = i + 2 - offset;
             break;
           }
         }

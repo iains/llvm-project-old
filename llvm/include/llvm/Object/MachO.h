@@ -56,8 +56,8 @@ public:
     MachO::load_command C; // The command itself.
   };
 
-  MachOObjectFile(MemoryBuffer *Object, bool IsLittleEndian, bool Is64Bits,
-                  std::error_code &EC);
+  MachOObjectFile(std::unique_ptr<MemoryBuffer> Object, bool IsLittleEndian,
+                  bool Is64Bits, std::error_code &EC);
 
   void moveSymbolNext(DataRefImpl &Symb) const override;
   std::error_code getSymbolName(DataRefImpl Symb,
@@ -228,10 +228,12 @@ public:
     return v->isMachO();
   }
 
+  const char *getSectionPointer(DataRefImpl Rel) const;
+
 private:
-  typedef SmallVector<const char*, 1> SectionList;
+  typedef SmallVector<const char *, 1> SectionList;
   SectionList Sections;
-  typedef SmallVector<const char*, 1> LibraryList;
+  typedef SmallVector<const char *, 1> LibraryList;
   LibraryList Libraries;
   typedef SmallVector<StringRef, 1> LibraryShortName;
   LibraryShortName LibrariesShortNames;

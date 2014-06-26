@@ -1689,6 +1689,8 @@ Value *CodeGenFunction::EmitTargetBuiltinExpr(unsigned BuiltinID,
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
     return EmitPPCBuiltinExpr(BuiltinID, E);
+  case llvm::Triple::r600:
+    return EmitR600BuiltinExpr(BuiltinID, E);
   default:
     return nullptr;
   }
@@ -1784,36 +1786,6 @@ Value *CodeGenFunction::EmitNeonRShiftImm(Value *Vec, Value *Shift,
     return Builder.CreateLShr(Vec, Shift, name);
   else
     return Builder.CreateAShr(Vec, Shift, name);
-}
-
-Value *CodeGenFunction::EmitConcatVectors(Value *Lo, Value *Hi,
-                                          llvm::Type *ArgTy) {
-  unsigned NumElts = ArgTy->getVectorNumElements();
-  SmallVector<Constant *, 16> Indices;
-  for (unsigned i = 0; i < 2 * NumElts; ++i)
-    Indices.push_back(ConstantInt::get(Int32Ty, i));
-
-  Constant *Mask = ConstantVector::get(Indices);
-  Value *LoCast = Builder.CreateBitCast(Lo, ArgTy);
-  Value *HiCast = Builder.CreateBitCast(Hi, ArgTy);
-  return Builder.CreateShuffleVector(LoCast, HiCast, Mask, "concat");
-}
-
-Value *CodeGenFunction::EmitExtractHigh(Value *Vec, llvm::Type *ResTy) {
-  unsigned NumElts = ResTy->getVectorNumElements();
-  SmallVector<Constant *, 8> Indices;
-
-  llvm::Type *InTy = llvm::VectorType::get(ResTy->getVectorElementType(),
-                                           NumElts * 2);
-  Value *VecCast = Builder.CreateBitCast(Vec, InTy);
-
-  // extract_high is a shuffle on the second half of the input indices: E.g. 4,
-  // 5, 6, 7 if we're extracting <4 x i16> from <8 x i16>.
-  for (unsigned i = 0; i < NumElts; ++i)
-    Indices.push_back(ConstantInt::get(Int32Ty, NumElts + i));
-
-  Constant *Mask = ConstantVector::get(Indices);
-  return Builder.CreateShuffleVector(VecCast, VecCast, Mask, "concat");
 }
 
 /// GetPointeeAlignment - Given an expression with a pointer type, find the
@@ -5950,5 +5922,40 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
     llvm::Function *F = CGM.getIntrinsic(ID);
     return Builder.CreateCall(F, Ops, "");
   }
+  }
+}
+
+Value *CodeGenFunction::EmitR600BuiltinExpr(unsigned BuiltinID,
+                                            const CallExpr *E) {
+  switch (BuiltinID) {
+  case R600::BI__builtin_amdgpu_div_scale:
+  case R600::BI__builtin_amdgpu_div_scalef: {
+    // Translate from the intrinsics's struct return to the builtin's out
+    // argument.
+
+    std::pair<llvm::Value *, unsigned> FlagOutPtr
+      = EmitPointerWithAlignment(E->getArg(3));
+
+    llvm::Value *X = EmitScalarExpr(E->getArg(0));
+    llvm::Value *Y = EmitScalarExpr(E->getArg(1));
+    llvm::Value *Z = EmitScalarExpr(E->getArg(2));
+
+    llvm::Value *Callee = CGM.getIntrinsic(Intrinsic::AMDGPU_div_scale,
+                                           X->getType());
+
+    llvm::Value *Tmp = Builder.CreateCall3(Callee, X, Y, Z);
+
+    llvm::Value *Result = Builder.CreateExtractValue(Tmp, 0);
+    llvm::Value *Flag = Builder.CreateExtractValue(Tmp, 1);
+
+    llvm::Type *RealFlagType
+      = FlagOutPtr.first->getType()->getPointerElementType();
+
+    llvm::Value *FlagExt = Builder.CreateZExt(Flag, RealFlagType);
+    llvm::StoreInst *FlagStore = Builder.CreateStore(FlagExt, FlagOutPtr.first);
+    FlagStore->setAlignment(FlagOutPtr.second);
+    return Result;
+  } default:
+    return nullptr;
   }
 }

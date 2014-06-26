@@ -28,6 +28,7 @@
 #include "sanitizer_common/sanitizer_stackdepot.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_linux.h"
+#include "sanitizer_common/sanitizer_tls_get_addr.h"
 
 #include <stdarg.h>
 // ACHTUNG! No other system header includes in this file.
@@ -161,8 +162,13 @@ INTERCEPTOR(void *, memalign, SIZE_T boundary, SIZE_T size) {
   return ptr;
 }
 
-INTERCEPTOR(void *, __libc_memalign, uptr align, uptr s)
-    ALIAS(WRAPPER_NAME(memalign));
+INTERCEPTOR(void *, __libc_memalign, SIZE_T boundary, SIZE_T size) {
+  GET_MALLOC_STACK_TRACE;
+  CHECK_EQ(boundary & (boundary - 1), 0);
+  void *ptr = MsanReallocate(&stack, 0, size, boundary, false);
+  DTLS_on_libc_memalign(ptr, size * boundary);
+  return ptr;
+}
 
 INTERCEPTOR(void *, valloc, SIZE_T size) {
   GET_MALLOC_STACK_TRACE;
@@ -1389,7 +1395,7 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
   uptr beg = d & ~3UL;
   // Copy left unaligned origin if that memory is poisoned.
   if (beg < d) {
-    u32 o = GetOriginIfPoisoned(beg, d - beg);
+    u32 o = GetOriginIfPoisoned((uptr)src, d - beg);
     if (o) {
       if (__msan_get_track_origins() > 1) o = ChainOrigin(o, stack);
       *(u32 *)MEM_TO_ORIGIN(beg) = o;
@@ -1397,15 +1403,14 @@ void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack) {
     beg += 4;
   }
 
-  uptr end = (d + size + 3) & ~3UL;
+  uptr end = (d + size) & ~3UL;
   // Copy right unaligned origin if that memory is poisoned.
-  if (end > d + size) {
-    u32 o = GetOriginIfPoisoned(d + size, end - d - size);
+  if (end < d + size) {
+    u32 o = GetOriginIfPoisoned((uptr)src + (end - d), (d + size) - end);
     if (o) {
       if (__msan_get_track_origins() > 1) o = ChainOrigin(o, stack);
-      *(u32 *)MEM_TO_ORIGIN(end - 4) = o;
+      *(u32 *)MEM_TO_ORIGIN(end) = o;
     }
-    end -= 4;
   }
 
   if (beg < end) {
@@ -1460,6 +1465,7 @@ void InitializeInterceptors() {
   INTERCEPT_FUNCTION(mmap64);
   INTERCEPT_FUNCTION(posix_memalign);
   INTERCEPT_FUNCTION(memalign);
+  INTERCEPT_FUNCTION(__libc_memalign);
   INTERCEPT_FUNCTION(valloc);
   INTERCEPT_FUNCTION(pvalloc);
   INTERCEPT_FUNCTION(malloc);

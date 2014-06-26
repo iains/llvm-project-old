@@ -120,7 +120,6 @@ public:
 
   void EmitLOHDirective(MCLOHType Kind, const MCLOHArgs &Args) override;
   void EmitLabel(MCSymbol *Symbol) override;
-  void EmitDebugLabel(MCSymbol *Symbol) override;
 
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitLinkerOptions(ArrayRef<std::string> Options) override;
@@ -331,14 +330,6 @@ void MCAsmStreamer::EmitLOHDirective(MCLOHType Kind, const MCLOHArgs &Args) {
     IsFirst = false;
     OS << **It;
   }
-  EmitEOL();
-}
-
-void MCAsmStreamer::EmitDebugLabel(MCSymbol *Symbol) {
-  assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
-  MCStreamer::EmitDebugLabel(Symbol);
-
-  OS << *Symbol << MAI->getDebugLabelSuffix();
   EmitEOL();
 }
 
@@ -944,10 +935,7 @@ void MCAsmStreamer::EmitCFIStartProcImpl(MCDwarfFrameInfo &Frame) {
 }
 
 void MCAsmStreamer::EmitCFIEndProcImpl(MCDwarfFrameInfo &Frame) {
-  // Put a dummy non-null value in Frame.End to mark that this frame has been
-  // closed.
-  Frame.End = (MCSymbol *) 1;
-
+  MCStreamer::EmitCFIEndProcImpl(Frame);
   OS << "\t.cfi_endproc";
   EmitEOL();
 }
@@ -1187,9 +1175,10 @@ void MCAsmStreamer::AddEncodingComment(const MCInst &Inst,
   raw_ostream &OS = GetCommentOS();
   SmallString<256> Code;
   SmallVector<MCFixup, 4> Fixups;
-  raw_svector_ostream VecOS(Code);
-  Emitter->EncodeInstruction(Inst, VecOS, Fixups, STI);
-  VecOS.flush();
+  {
+    raw_svector_ostream VecOS(Code);
+    Emitter->EncodeInstruction(Inst, VecOS, Fixups, STI);
+  }
 
   // If we are showing fixups, create symbolic markers in the encoded
   // representation. We do this by making a per-bit map to the fixup item index,

@@ -108,13 +108,10 @@ LLVMBool LLVMParseIRInContext(LLVMContextRef ContextRef,
 
   if(!*OutM) {
     if (OutMessage) {
-      std::string buf;
-      raw_string_ostream os(buf);
-
+      string_ostream os;
       Diag.print(nullptr, os, false);
-      os.flush();
-
-      *OutMessage = strdup(buf.c_str());
+      os << '\0';
+      *OutMessage = strdup(os.str().data());
     }
     return 1;
   }

@@ -3446,7 +3446,7 @@ public:
 
   /// ActOnStringLiteral - The specified tokens were lexed as pasted string
   /// fragments (e.g. "foo" "bar" L"baz").
-  ExprResult ActOnStringLiteral(const Token *StringToks, unsigned NumStringToks,
+  ExprResult ActOnStringLiteral(ArrayRef<Token> StringToks,
                                 Scope *UDLScope = nullptr);
 
   ExprResult ActOnGenericSelectionExpr(SourceLocation KeyLoc,
@@ -4748,7 +4748,8 @@ public:
                                          SourceLocation AtLoc,
                                          SourceLocation SelLoc,
                                          SourceLocation LParenLoc,
-                                         SourceLocation RParenLoc);
+                                         SourceLocation RParenLoc,
+                                         bool WarnMultipleSelectors);
 
   /// ParseObjCProtocolExpression - Build protocol expression for \@protocol
   ExprResult ParseObjCProtocolExpression(IdentifierInfo * ProtocolName,
@@ -7296,7 +7297,7 @@ public:
                                      SourceLocation Loc,
                                      ArrayRef<Expr *> VarList);
 
-  // brief Initialization of captured region for OpenMP parallel region.
+  // brief Initialization of captured region for OpenMP region.
   void ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, SourceLocation Loc,
                               Scope *CurScope);
   StmtResult ActOnOpenMPExecutableDirective(OpenMPDirectiveKind Kind,
@@ -7321,6 +7322,20 @@ public:
   StmtResult ActOnOpenMPForDirective(ArrayRef<OMPClause *> Clauses, Stmt *AStmt,
                                      SourceLocation StartLoc,
                                      SourceLocation EndLoc);
+  /// \brief Called on well-formed '\#pragma omp sections' after parsing
+  /// of the associated statement.
+  StmtResult ActOnOpenMPSectionsDirective(ArrayRef<OMPClause *> Clauses,
+                                          Stmt *AStmt, SourceLocation StartLoc,
+                                          SourceLocation EndLoc);
+  /// \brief Called on well-formed '\#pragma omp section' after parsing of the
+  /// associated statement.
+  StmtResult ActOnOpenMPSectionDirective(Stmt *AStmt, SourceLocation StartLoc,
+                                         SourceLocation EndLoc);
+  /// \brief Called on well-formed '\#pragma omp single' after parsing of the
+  /// associated statement.
+  StmtResult ActOnOpenMPSingleDirective(ArrayRef<OMPClause *> Clauses,
+                                        Stmt *AStmt, SourceLocation StartLoc,
+                                        SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
                                          Expr *Expr,

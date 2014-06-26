@@ -6429,6 +6429,36 @@ TreeTransform<Derived>::TransformOMPForDirective(OMPForDirective *D) {
   return Res;
 }
 
+template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformOMPSectionsDirective(OMPSectionsDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_sections, DirName, nullptr);
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformOMPSectionDirective(OMPSectionDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_section, DirName, nullptr);
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformOMPSingleDirective(OMPSingleDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_single, DirName, nullptr);
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
 //===----------------------------------------------------------------------===//
 // OpenMP clause transformation
 //===----------------------------------------------------------------------===//

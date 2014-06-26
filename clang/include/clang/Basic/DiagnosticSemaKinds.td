@@ -2130,6 +2130,11 @@ def warn_attribute_dllimport_static_field_definition : Warning<
   InGroup<DiagGroup<"dllimport-static-field-def">>;
 def err_attribute_dll_member_of_dll_class : Error<
   "attribute %q0 cannot be applied to member of %q1 class">;
+def warn_attribute_dll_instantiated_base_class : Warning<
+  "propagating dll attribute to %select{already instantiated|explicitly specialized}0 "
+  "base class template "
+  "%select{without dll attribute|with different dll attribute}1 is unsupported">,
+  InGroup<DiagGroup<"unsupported-dll-base-class-template">>;
 def err_attribute_weakref_not_static : Error<
   "weakref declaration must have internal linkage">;
 def err_attribute_weakref_not_global_context : Error<
@@ -3405,6 +3410,10 @@ def err_template_instantiate_undefined : Error<
   "%select{implicit|explicit}0 instantiation of undefined template %1">;
 def err_implicit_instantiate_member_undefined : Error<
   "implicit instantiation of undefined member %0">;
+def note_template_class_instantiation_was_here : Note<
+  "class template %0 was instantiated here">;
+def note_template_class_explicit_specialization_was_here : Note<
+  "class template %0 was explicitly specialized here">;
 def note_template_class_instantiation_here : Note<
   "in instantiation of template class %0 requested here">;
 def note_template_member_class_here : Note<
@@ -7020,7 +7029,10 @@ def note_omp_predetermined_dsa : Note<
 def err_omp_loop_var_dsa : Error<
   "loop iteration variable may not be %0">;
 def err_omp_not_for : Error<
-  "statement after '#pragma omp %0' must be a for loop">;
+  "%select{statement after '#pragma omp %1' must be a for loop|"
+  "expected %2 for loops after '#pragma omp %1'%select{|, but found only %4}3}0">;
+def note_omp_collapse_expr : Note<
+  "as specified in 'collapse' clause">;
 def err_omp_negative_expression_in_clause : Error<
   "argument to '%0' clause must be a positive integer value">;
 def err_omp_not_integral : Error<
@@ -7101,6 +7113,13 @@ def err_omp_prohibited_region : Error<
   "%select{|; perhaps you forget to enclose 'omp %3' directive into a parallel region?}2">;
 def err_omp_prohibited_region_simd : Error<
   "OpenMP constructs may not be nested inside a simd region">;
+def err_omp_sections_not_compound_stmt : Error<
+  "the statement for '#pragma omp sections' must be a compound statement">;
+def err_omp_orphaned_section_directive : Error<
+  "%select{orphaned 'omp section' directives are prohibited, it|'omp section' directive}0"
+  " must be closely nested to a sections region%select{|, not a %1 region}0">;
+def err_omp_sections_substmt_not_section : Error<
+  "statement in 'omp sections' directive must be enclosed into a section region">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {
@@ -7164,6 +7183,10 @@ def warn_profile_data_out_of_date : Warning<
   "profile data may be out of date: of %0 function%s0, %1 %plural{1:has|:have}1"
   " no data and %2 %plural{1:has|:have}2 mismatched data that will be ignored">,
   InGroup<ProfileInstrOutOfDate>;
+def warn_profile_data_unprofiled : Warning<
+  "no profile data available for file \"%0\"">,
+  InGroup<ProfileInstrUnprofiled>;
+
 } // end of instrumentation issue category
 
 } // end of sema component.

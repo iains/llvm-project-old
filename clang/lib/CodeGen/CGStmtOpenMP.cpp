@@ -76,5 +76,18 @@ void CodeGenFunction::EmitOMPSimdDirective(const OMPSimdDirective &S) {
 }
 
 void CodeGenFunction::EmitOMPForDirective(const OMPForDirective &) {
-  llvm_unreachable("Not supported yet.");
+  llvm_unreachable("CodeGen for 'omp for' is not supported yet.");
 }
+
+void CodeGenFunction::EmitOMPSectionsDirective(const OMPSectionsDirective &) {
+  llvm_unreachable("CodeGen for 'omp sections' is not supported yet.");
+}
+
+void CodeGenFunction::EmitOMPSectionDirective(const OMPSectionDirective &) {
+  llvm_unreachable("CodeGen for 'omp section' is not supported yet.");
+}
+
+void CodeGenFunction::EmitOMPSingleDirective(const OMPSingleDirective &) {
+  llvm_unreachable("CodeGen for 'omp single' is not supported yet.");
+}
+

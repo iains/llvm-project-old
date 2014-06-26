@@ -116,8 +116,8 @@ protected:
   /// This is appended to emitted labels.  Defaults to ":"
   const char *LabelSuffix;
 
-  /// This is appended to emitted labels.  Defaults to ":"
-  const char *DebugLabelSuffix;
+  // Print the EH begin symbol with an assignment. Defaults to false.
+  bool UseAssignmentForEHBegin;
 
   /// This prefix is used for globals like constant pool entries that are
   /// completely private to the .s file and should not have names in the .o
@@ -415,7 +415,7 @@ public:
   const char *getCommentString() const { return CommentString; }
   const char *getLabelSuffix() const { return LabelSuffix; }
 
-  const char *getDebugLabelSuffix() const { return DebugLabelSuffix; }
+  bool useAssignmentForEHBegin() const { return UseAssignmentForEHBegin; }
   const char *getPrivateGlobalPrefix() const { return PrivateGlobalPrefix; }
   bool hasLinkerPrivateGlobalPrefix() const {
     return LinkerPrivateGlobalPrefix[0] != '\0';
@@ -481,6 +481,7 @@ public:
   bool isExceptionHandlingDwarf() const {
     return (ExceptionsType == ExceptionHandling::DwarfCFI ||
             ExceptionsType == ExceptionHandling::ARM ||
+            // Win64 handler data still uses DWARF LSDA encoding.
             ExceptionsType == ExceptionHandling::Win64);
   }
   bool doesDwarfUseRelocationsAcrossSections() const {
