@@ -1,6 +1,7 @@
+// REQUIRES: python27
 // RUN: sed 's/placeholder_for_f/f/' %s > %t.cpp
 // RUN: clang-tidy -checks=-*,misc-use-override %t.cpp -- -std=c++11 | FileCheck -check-prefix=CHECK-SANITY %s
-// R_U_N: not diff -U0 %s %t.cpp | python %S/../../clang-tidy/tool/clang-tidy-diff.py -checks=-*,misc-use-override -- -std=c++11 2>&1 | FileCheck %s
+// RUN: not diff -U0 %s %t.cpp | %python %S/../../clang-tidy/tool/clang-tidy-diff.py -checks=-*,misc-use-override -- -std=c++11 2>&1 | FileCheck %s
 struct A {
   virtual void f() {}
   virtual void g() {}
@@ -16,3 +17,6 @@ struct B : public A {
 };
 // CHECK-SANITY-NOT: Suppressed
 // CHECK: Suppressed 1 warnings (1 due to line filter).
+
+// FIXME: clang-tidy-diff.py is incompatible to dos path. Excluding win32.
+// REQUIRES: shell

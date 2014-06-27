@@ -4184,9 +4184,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT__SLASH_fallback) &&
       Output.getType() == types::TY_Object &&
       (InputType == types::TY_C || InputType == types::TY_CXX)) {
-    tools::visualstudio::Compile CL(getToolChain());
-    Command *CLCommand = CL.GetCommand(C, JA, Output, Inputs, Args,
-                                       LinkingOutput);
+    Command *CLCommand = getCLFallback()->GetCommand(C, JA, Output, Inputs,
+                                                     Args, LinkingOutput);
     // RTTI support in clang-cl is a work in progress.  Fall back to MSVC early
     // if we are using 'clang-cl /fallback /GR'.
     // FIXME: Remove this when RTTI is finished.
@@ -4448,6 +4447,12 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
     else
       CmdArgs.push_back("msvc");
   }
+}
+
+visualstudio::Compile *Clang::getCLFallback() const {
+  if (!CLFallback)
+    CLFallback.reset(new visualstudio::Compile(getToolChain()));
+  return CLFallback.get();
 }
 
 void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
@@ -7008,11 +7013,13 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfoList &Inputs,
                                   const ArgList &Args,
                                   const char *LinkingOutput) const {
-  const toolchains::Linux& ToolChain =
+  const toolchains::Linux& LinuxToolChain =
     static_cast<const toolchains::Linux&>(getToolChain());
+  const auto &ToolChain = getToolChain();
   const Driver &D = ToolChain.getDriver();
-  const bool isAndroid =
-    ToolChain.getTriple().getEnvironment() == llvm::Triple::Android;
+  const llvm::Triple &TT = ToolChain.getTriple();
+  const bool isAndroid = TT.getEnvironment() == llvm::Triple::Android;
+  const bool IsLinux = TT.isOSLinux();
   const bool IsPIE =
     !Args.hasArg(options::OPT_shared) &&
     !Args.hasArg(options::OPT_static) &&
@@ -7044,8 +7051,9 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_s))
     CmdArgs.push_back("-s");
 
-  for (const auto &Opt : ToolChain.ExtraOpts)
-    CmdArgs.push_back(Opt.c_str());
+  if (IsLinux)
+    for (const auto &Opt : LinuxToolChain.ExtraOpts)
+      CmdArgs.push_back(Opt.c_str());
 
   if (!Args.hasArg(options::OPT_static)) {
     CmdArgs.push_back("--eh-frame-hdr");
@@ -7112,16 +7120,17 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  if (ToolChain.getArch() == llvm::Triple::arm ||
-      ToolChain.getArch() == llvm::Triple::armeb ||
-      ToolChain.getArch() == llvm::Triple::thumb ||
-      ToolChain.getArch() == llvm::Triple::thumbeb ||
-      (!Args.hasArg(options::OPT_static) &&
-       !Args.hasArg(options::OPT_shared))) {
-    CmdArgs.push_back("-dynamic-linker");
-    CmdArgs.push_back(Args.MakeArgString(
-        D.DyldPrefix + getLinuxDynamicLinker(Args, ToolChain)));
-  }
+  if (IsLinux)
+    if (ToolChain.getArch() == llvm::Triple::arm ||
+        ToolChain.getArch() == llvm::Triple::armeb ||
+        ToolChain.getArch() == llvm::Triple::thumb ||
+        ToolChain.getArch() == llvm::Triple::thumbeb ||
+        (!Args.hasArg(options::OPT_static) &&
+         !Args.hasArg(options::OPT_shared))) {
+      CmdArgs.push_back("-dynamic-linker");
+      CmdArgs.push_back(Args.MakeArgString(
+          D.DyldPrefix + getLinuxDynamicLinker(Args, LinuxToolChain)));
+    }
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
@@ -7253,7 +7262,10 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  C.addCommand(new Command(JA, *this, ToolChain.Linker.c_str(), CmdArgs));
+  const char *Exec =
+    IsLinux ? LinuxToolChain.Linker.c_str()
+            : Args.MakeArgString(ToolChain.GetProgramPath("ld"));
+  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
 void minix::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
