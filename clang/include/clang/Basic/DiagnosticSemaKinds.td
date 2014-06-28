@@ -411,8 +411,8 @@ def warn_builtin_unknown : Warning<"use of unknown builtin %0">,
   InGroup<ImplicitFunctionDeclare>, DefaultError;
 def warn_dyn_class_memaccess : Warning<
   "%select{destination for|source of|first operand of|second operand of}0 this "
-  "%1 call is a pointer to dynamic class %2; vtable pointer will be "
-  "%select{overwritten|copied|moved|compared}3">,
+  "%1 call is a pointer to %select{|class containing a }2dynamic class %3; "
+  "vtable pointer will be %select{overwritten|copied|moved|compared}4">,
   InGroup<DiagGroup<"dynamic-class-memaccess">>;
 def note_bad_memaccess_silence : Note<
   "explicitly cast the pointer to silence this warning">;
@@ -7026,6 +7026,8 @@ def note_omp_predetermined_dsa : Note<
   "global variable is predetermined as shared|"
   "variable with automatic storage duration is predetermined as private}0"
   "%select{|; perhaps you forget to enclose 'omp %2' directive into a parallel or another task region?}1">;
+def note_omp_implicit_dsa : Note<
+  "implicitly determined as %0">;
 def err_omp_loop_var_dsa : Error<
   "loop iteration variable may not be %0">;
 def err_omp_not_for : Error<

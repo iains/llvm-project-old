@@ -641,8 +641,7 @@ void CodeGenAction::ExecuteAction() {
 
     bool Invalid;
     SourceManager &SM = CI.getSourceManager();
-    const llvm::MemoryBuffer *MainFile = SM.getBuffer(SM.getMainFileID(),
-                                                      &Invalid);
+    llvm::MemoryBuffer *MainFile = SM.getBuffer(SM.getMainFileID(), &Invalid);
     if (Invalid)
       return;
 
