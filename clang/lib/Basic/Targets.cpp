@@ -3103,9 +3103,6 @@ public:
     WindowsTargetInfo<X86_32TargetInfo>::getTargetDefines(Opts, Builder);
   }
 };
-} // end anonymous namespace
-
-namespace {
 
 // x86-32 Windows Visual Studio target
 class MicrosoftX86_32TargetInfo : public WindowsX86_32TargetInfo {
@@ -5305,7 +5302,6 @@ public:
         DspRev(NoDSP), HasMSA(false), HasFP64(false), ABI(ABIStr) {}
 
   StringRef getABI() const override { return ABI; }
-  bool setABI(const std::string &Name) override = 0;
   bool setCPU(const std::string &Name) override {
     CPU = Name;
     return true;
@@ -5521,14 +5517,15 @@ public:
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
   }
   bool setABI(const std::string &Name) override {
-    if ((Name == "o32") || (Name == "eabi")) {
+    if (Name == "o32" || Name == "eabi") {
       ABI = Name;
       return true;
-    } else if (Name == "32") {
+    }
+    if (Name == "32") {
       ABI = "o32";
       return true;
-    } else
-      return false;
+    }
+    return false;
   }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
@@ -5662,7 +5659,8 @@ public:
       setN32ABITypes();
       ABI = Name;
       return true;
-    } else if (Name == "n64" || Name == "64") {
+    }
+    if (Name == "n64" || Name == "64") {
       setN64ABITypes();
       ABI = "n64";
       return true;
@@ -6303,6 +6301,7 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
         return new CygwinX86_32TargetInfo(Triple);
       case llvm::Triple::GNU:
         return new MinGWX86_32TargetInfo(Triple);
+      case llvm::Triple::Itanium:
       case llvm::Triple::MSVC:
         return new MicrosoftX86_32TargetInfo(Triple);
       }
