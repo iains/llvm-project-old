@@ -4682,6 +4682,11 @@ TEST_F(FormatTest, UnderstandsOverloadedOperators) {
   verifyFormat("Deleted &operator=(const Deleted &)&& = delete;");
   verifyGoogleFormat("Deleted& operator=(const Deleted&)& = default;");
   verifyGoogleFormat("Deleted& operator=(const Deleted&)&& = delete;");
+
+  verifyFormat("string // break\n"
+               "operator()() & {}");
+  verifyFormat("string // break\n"
+               "operator()() && {}");
 }
 
 TEST_F(FormatTest, UnderstandsNewAndDelete) {
@@ -4841,6 +4846,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("MACRO(int *i);");
   verifyIndependentOfContext("MACRO(auto *a);");
   verifyIndependentOfContext("MACRO(const A *a);");
+  verifyIndependentOfContext("MACRO('0' <= c && c <= '9');");
   // FIXME: Is there a way to make this work?
   // verifyIndependentOfContext("MACRO(A *a);");
 

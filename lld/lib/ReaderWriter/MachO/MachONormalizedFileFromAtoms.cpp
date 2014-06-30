@@ -215,15 +215,20 @@ const MachOFinalSectionFromAtomType sectsToAtomType[] = {
                                                           typeTerminatorPtr),
   ENTRY("__DATA", "___got",           S_NON_LAZY_SYMBOL_POINTERS,
                                                           typeGOT),
-  ENTRY("__DATA", "___bss",           S_ZEROFILL,         typeZeroFill)
+  ENTRY("__DATA", "___bss",           S_ZEROFILL,         typeZeroFill),
+
+  // FIXME: __compact_unwind actually needs to be processed by a pass and put
+  // into __TEXT,__unwind_info. For now, forwarding it back to
+  // __LD,__compact_unwind is harmless (it's ignored by the unwinder, which then
+  // proceeds to process __TEXT,__eh_frame for its instructions).
+  ENTRY("__LD",   "__compact_unwind", S_REGULAR,         typeCompactUnwindInfo),
 };
 #undef ENTRY
 
 
 SectionInfo *Util::getFinalSection(DefinedAtom::ContentType atomType) {
-  for (const MachOFinalSectionFromAtomType *p = sectsToAtomType ;
-                                 p->atomType != DefinedAtom::typeUnknown; ++p) {
-    if (p->atomType != atomType)
+  for (auto &p : sectsToAtomType) {
+    if (p.atomType != atomType)
       continue;
     SectionAttr sectionAttrs = 0;
     switch (atomType) {
@@ -237,15 +242,15 @@ SectionInfo *Util::getFinalSection(DefinedAtom::ContentType atomType) {
     // If we already have a SectionInfo with this name, re-use it.
     // This can happen if two ContentType map to the same mach-o section.
     for (auto sect : _sectionMap) {
-      if (sect.second->sectionName.equals(p->sectionName) &&
-          sect.second->segmentName.equals(p->segmentName)) {
+      if (sect.second->sectionName.equals(p.sectionName) &&
+          sect.second->segmentName.equals(p.segmentName)) {
         return sect.second;
       }
     }
     // Otherwise allocate new SectionInfo object.
-    SectionInfo *sect = new (_allocator) SectionInfo(p->segmentName, 
-                                                     p->sectionName, 
-                                                     p->sectionType, 
+    SectionInfo *sect = new (_allocator) SectionInfo(p.segmentName,
+                                                     p.sectionName,
+                                                     p.sectionType,
                                                      sectionAttrs);
     _sectionInfos.push_back(sect);
     _sectionMap[atomType] = sect;
@@ -278,11 +283,12 @@ SectionInfo *Util::sectionForAtom(const DefinedAtom *atom) {
     // Not found, so need to create a new custom section.
     size_t seperatorIndex = customName.find('/');
     assert(seperatorIndex != StringRef::npos);
-    StringRef segName = customName.slice(0, seperatorIndex-1);
-    StringRef sectName = customName.drop_front(seperatorIndex);
+    StringRef segName = customName.slice(0, seperatorIndex);
+    StringRef sectName = customName.drop_front(seperatorIndex + 1);
     SectionInfo *sect = new (_allocator) SectionInfo(segName, sectName,
                                                      S_REGULAR);
     _customSections.push_back(sect);
+    _sectionInfos.push_back(sect);
     return sect;
   }
 }
@@ -452,6 +458,8 @@ void Util::assignAddressesToSections() {
         layoutSectionsInTextSegment(seg, address);
       else
         layoutSectionsInSegment(seg, address);
+
+      address = llvm::RoundUpToAlignment(address, _context.pageSize());
     }
     DEBUG_WITH_TYPE("WriterMachO-norm",
       llvm::dbgs() << "assignAddressesToSections()\n";
