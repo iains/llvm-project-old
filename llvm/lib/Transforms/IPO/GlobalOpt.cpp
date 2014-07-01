@@ -1908,7 +1908,7 @@ bool GlobalOpt::OptimizeFunctions(Module &M) {
   for (Module::iterator FI = M.begin(), E = M.end(); FI != E; ) {
     Function *F = FI++;
     // Functions without names cannot be referenced outside this module.
-    if (!F->hasName() && !F->isDeclaration())
+    if (!F->hasName() && !F->isDeclaration() && !F->hasLocalLinkage())
       F->setLinkage(GlobalValue::InternalLinkage);
     F->removeDeadConstantUsers();
     if (F->isDefTriviallyDead()) {
@@ -1953,7 +1953,7 @@ bool GlobalOpt::OptimizeGlobalVars(Module &M) {
        GVI != E; ) {
     GlobalVariable *GV = GVI++;
     // Global variables without names cannot be referenced outside this module.
-    if (!GV->hasName() && !GV->isDeclaration())
+    if (!GV->hasName() && !GV->isDeclaration() && !GV->hasLocalLinkage())
       GV->setLinkage(GlobalValue::InternalLinkage);
     // Simplify the initializer.
     if (GV->hasInitializer())
@@ -2858,14 +2858,19 @@ bool GlobalOpt::OptimizeGlobalAliases(Module &M) {
        I != E;) {
     Module::alias_iterator J = I++;
     // Aliases without names cannot be referenced outside this module.
-    if (!J->hasName() && !J->isDeclaration())
+    if (!J->hasName() && !J->isDeclaration() && !J->hasLocalLinkage())
       J->setLinkage(GlobalValue::InternalLinkage);
     // If the aliasee may change at link time, nothing can be done - bail out.
     if (J->mayBeOverridden())
       continue;
 
     Constant *Aliasee = J->getAliasee();
-    GlobalValue *Target = cast<GlobalValue>(Aliasee->stripPointerCasts());
+    GlobalValue *Target = dyn_cast<GlobalValue>(Aliasee->stripPointerCasts());
+    // We can't trivially replace the alias with the aliasee if the aliasee is
+    // non-trivial in some way.
+    // TODO: Try to handle non-zero GEPs of local aliasees.
+    if (!Target)
+      continue;
     Target->removeDeadConstantUsers();
 
     // Make all users of the alias use the aliasee instead.
