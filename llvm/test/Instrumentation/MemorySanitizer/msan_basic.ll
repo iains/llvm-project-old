@@ -651,7 +651,7 @@ define void @VACopy(i8* %p1, i8* %p2) nounwind uwtable sanitize_memory {
 declare void @llvm.va_start(i8*) nounwind
 
 ; Function Attrs: nounwind uwtable
-define void @VAStart(i32 %x, ...) {
+define void @VAStart(i32 %x, ...) sanitize_memory {
 entry:
   %x.addr = alloca i32, align 4
   %va = alloca [1 x %struct.__va_list_tag], align 16
@@ -683,7 +683,7 @@ entry:
 ; CHECK: ret void
 
 
-; Test that checks are omitted but shadow propagation is kept if
+; Test that checks are omitted and returned value is always initialized if
 ; sanitize_memory attribute is missing.
 
 define i32 @NoSanitizeMemory(i32 %x) uwtable {
@@ -703,9 +703,7 @@ declare void @bar()
 
 ; CHECK: @NoSanitizeMemory
 ; CHECK-NOT: @__msan_warning
-; CHECK: load i32* {{.*}} @__msan_param_tls
-; CHECK-NOT: @__msan_warning
-; CHECK: store {{.*}} @__msan_retval_tls
+; CHECK: store i32 0, {{.*}} @__msan_retval_tls
 ; CHECK-NOT: @__msan_warning
 ; CHECK: ret i32
 
@@ -828,7 +826,7 @@ entry:
 
 declare i32 @InnerTailCall(i32 %a)
 
-define void @MismatchedReturnTypeTailCall(i32 %a) {
+define void @MismatchedReturnTypeTailCall(i32 %a) sanitize_memory {
   %b = tail call i32 @InnerTailCall(i32 %a)
   ret void
 }

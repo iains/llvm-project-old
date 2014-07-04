@@ -572,7 +572,7 @@ protected:
   void getVisualStudioDefines(const LangOptions &Opts,
                               MacroBuilder &Builder) const {
     if (Opts.CPlusPlus) {
-      if (Opts.RTTI)
+      if (Opts.RTTIData)
         Builder.defineMacro("_CPPRTTI");
 
       if (Opts.Exceptions)
@@ -3292,10 +3292,8 @@ public:
     ComplexLongDoubleUsesFP2Ret = true;
 
     // x86-64 has atomics up to 16 bytes.
-    // FIXME: Once the backend is fixed, increase MaxAtomicInlineWidth to 128
-    // on CPUs with cmpxchg16b
     MaxAtomicPromoteWidth = 128;
-    MaxAtomicInlineWidth = 64;
+    MaxAtomicInlineWidth = 128;
   }
   BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::X86_64ABIBuiltinVaList;
@@ -4172,6 +4170,7 @@ const Builtin::Info ARMTargetInfo::BuiltinInfo[] = {
 #include "clang/Basic/BuiltinsNEON.def"
 
 #define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LANGBUILTIN(ID, TYPE, ATTRS, LANG) { #ID, TYPE, ATTRS, 0, LANG },
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
                                               ALL_LANGUAGES },
 #include "clang/Basic/BuiltinsARM.def"
@@ -5306,8 +5305,23 @@ public:
 
   StringRef getABI() const override { return ABI; }
   bool setCPU(const std::string &Name) override {
+    bool IsMips32 = getTriple().getArch() == llvm::Triple::mips ||
+                    getTriple().getArch() == llvm::Triple::mipsel;
     CPU = Name;
-    return true;
+    return llvm::StringSwitch<bool>(Name)
+        .Case("mips1", IsMips32)
+        .Case("mips2", IsMips32)
+        .Case("mips3", true)
+        .Case("mips4", true)
+        .Case("mips5", true)
+        .Case("mips32", IsMips32)
+        .Case("mips32r2", IsMips32)
+        .Case("mips32r6", IsMips32)
+        .Case("mips64", true)
+        .Case("mips64r2", true)
+        .Case("mips64r6", true)
+        .Case("octeon", true)
+        .Default(false);
   }
   const std::string& getCPU() const { return CPU; }
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const override {
@@ -5319,7 +5333,10 @@ public:
     Features["n64"] = false;
 
     Features[ABI] = true;
-    Features[CPU] = true;
+    if (CPU == "octeon")
+      Features["mips64r2"] = Features["cnmips"] = true;
+    else
+      Features[CPU] = true;
   }
 
   void getTargetDefines(const LangOptions &Opts,

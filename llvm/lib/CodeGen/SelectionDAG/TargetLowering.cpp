@@ -105,7 +105,7 @@ TargetLowering::makeLibCall(SelectionDAG &DAG,
   Type *RetTy = RetVT.getTypeForEVT(*DAG.getContext());
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
-    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, &Args, 0)
+    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args), 0)
     .setNoReturn(doesNotReturn).setDiscardResult(!isReturnValueUsed)
     .setSExtResult(isSigned).setZExtResult(!isSigned);
   return LowerCallTo(CLI);
@@ -1152,14 +1152,15 @@ bool TargetLowering::isConstTrueVal(const SDNode *N) const {
 
   bool IsVec = false;
   const ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N);
-  if (!CN) {
-    const BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N);
-    if (!BV)
-      return false;
-
-    IsVec = true;
-    CN = BV->getConstantSplatValue();
-  }
+  if (!CN)
+    if (auto *BV = dyn_cast<BuildVectorSDNode>(N))
+      if (SDValue Splat = BV->getConstantSplatValue())
+        if (auto *SplatCN = dyn_cast<ConstantSDNode>(Splat)) {
+          IsVec = true;
+          CN = SplatCN;
+        }
+  if (!CN)
+    return false;
 
   switch (getBooleanContents(IsVec)) {
   case UndefinedBooleanContent:
@@ -1179,14 +1180,15 @@ bool TargetLowering::isConstFalseVal(const SDNode *N) const {
 
   bool IsVec = false;
   const ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N);
-  if (!CN) {
-    const BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N);
-    if (!BV)
-      return false;
-
-    IsVec = true;
-    CN = BV->getConstantSplatValue();
-  }
+  if (!CN)
+    if (auto *BV = dyn_cast<BuildVectorSDNode>(N))
+      if (SDValue Splat = BV->getConstantSplatValue())
+        if (auto *SplatCN = dyn_cast<ConstantSDNode>(Splat)) {
+          IsVec = true;
+          CN = SplatCN;
+        }
+  if (!CN)
+    return false;
 
   if (getBooleanContents(IsVec) == UndefinedBooleanContent)
     return !CN->getAPIntValue()[0];

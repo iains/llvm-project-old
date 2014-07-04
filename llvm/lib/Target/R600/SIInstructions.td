@@ -846,13 +846,27 @@ defm BUFFER_LOAD_FORMAT_XYZW : MUBUF_Load_Helper <0x00000003, "BUFFER_LOAD_FORMA
 //def BUFFER_STORE_FORMAT_XY : MUBUF_ <0x00000005, "BUFFER_STORE_FORMAT_XY", []>;
 //def BUFFER_STORE_FORMAT_XYZ : MUBUF_ <0x00000006, "BUFFER_STORE_FORMAT_XYZ", []>;
 //def BUFFER_STORE_FORMAT_XYZW : MUBUF_ <0x00000007, "BUFFER_STORE_FORMAT_XYZW", []>;
-defm BUFFER_LOAD_UBYTE : MUBUF_Load_Helper <0x00000008, "BUFFER_LOAD_UBYTE", VReg_32>;
-defm BUFFER_LOAD_SBYTE : MUBUF_Load_Helper <0x00000009, "BUFFER_LOAD_SBYTE", VReg_32>;
-defm BUFFER_LOAD_USHORT : MUBUF_Load_Helper <0x0000000a, "BUFFER_LOAD_USHORT", VReg_32>;
-defm BUFFER_LOAD_SSHORT : MUBUF_Load_Helper <0x0000000b, "BUFFER_LOAD_SSHORT", VReg_32>;
-defm BUFFER_LOAD_DWORD : MUBUF_Load_Helper <0x0000000c, "BUFFER_LOAD_DWORD", VReg_32>;
-defm BUFFER_LOAD_DWORDX2 : MUBUF_Load_Helper <0x0000000d, "BUFFER_LOAD_DWORDX2", VReg_64>;
-defm BUFFER_LOAD_DWORDX4 : MUBUF_Load_Helper <0x0000000e, "BUFFER_LOAD_DWORDX4", VReg_128>;
+defm BUFFER_LOAD_UBYTE : MUBUF_Load_Helper <
+  0x00000008, "BUFFER_LOAD_UBYTE", VReg_32, i32, az_extloadi8_global
+>;
+defm BUFFER_LOAD_SBYTE : MUBUF_Load_Helper <
+  0x00000009, "BUFFER_LOAD_SBYTE", VReg_32, i32, sextloadi8_global
+>;
+defm BUFFER_LOAD_USHORT : MUBUF_Load_Helper <
+  0x0000000a, "BUFFER_LOAD_USHORT", VReg_32, i32, az_extloadi16_global
+>;
+defm BUFFER_LOAD_SSHORT : MUBUF_Load_Helper <
+  0x0000000b, "BUFFER_LOAD_SSHORT", VReg_32, i32, sextloadi16_global
+>;
+defm BUFFER_LOAD_DWORD : MUBUF_Load_Helper <
+  0x0000000c, "BUFFER_LOAD_DWORD", VReg_32, i32, global_load
+>;
+defm BUFFER_LOAD_DWORDX2 : MUBUF_Load_Helper <
+  0x0000000d, "BUFFER_LOAD_DWORDX2", VReg_64, v2i32, global_load
+>;
+defm BUFFER_LOAD_DWORDX4 : MUBUF_Load_Helper <
+  0x0000000e, "BUFFER_LOAD_DWORDX4", VReg_128, v4i32, global_load
+>;
 
 def BUFFER_STORE_BYTE : MUBUF_Store_Helper <
   0x00000018, "BUFFER_STORE_BYTE", VReg_32, i32, truncstorei8_global
@@ -1632,7 +1646,7 @@ let usesCustomInserter = 1 in {
 // constant that can be used with the ADDR64 MUBUF instructions.
 def SI_ADDR64_RSRC : InstSI <
   (outs SReg_128:$srsrc),
-  (ins SReg_64:$ptr),
+  (ins SSrc_64:$ptr),
   "", []
 >;
 
@@ -1724,7 +1738,6 @@ multiclass SMRD_Pattern <SMRD Instr_IMM, SMRD Instr_SGPR, ValueType vt> {
 
 defm : SMRD_Pattern <S_LOAD_DWORD_IMM, S_LOAD_DWORD_SGPR, f32>;
 defm : SMRD_Pattern <S_LOAD_DWORD_IMM, S_LOAD_DWORD_SGPR, i32>;
-defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, i64>;
 defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, v2i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX4_IMM, S_LOAD_DWORDX4_SGPR, v4i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX8_IMM, S_LOAD_DWORDX8_SGPR, v32i8>;
@@ -2372,7 +2385,7 @@ defm : DSReadPat <DS_READ_U8,  i32, az_extloadi8_local>;
 defm : DSReadPat <DS_READ_I16, i32, sextloadi16_local>;
 defm : DSReadPat <DS_READ_U16, i32, az_extloadi16_local>;
 defm : DSReadPat <DS_READ_B32, i32, local_load>;
-defm : DSReadPat <DS_READ_B64, i64, local_load>;
+defm : DSReadPat <DS_READ_B64, v2i32, local_load>;
 
 multiclass DSWritePat <DS inst, ValueType vt, PatFrag frag> {
   def : Pat <
@@ -2483,27 +2496,7 @@ defm : DSAtomicCmpXChg<DS_CMPST_RTN_B64, i64, atomic_cmp_swap_64_local>;
 //===----------------------------------------------------------------------===//
 
 multiclass MUBUFLoad_Pattern <MUBUF Instr_ADDR64, ValueType vt,
-                              PatFrag global_ld, PatFrag constant_ld> {
-  def : Pat <
-    (vt (global_ld (mubuf_vaddr_offset i64:$ptr, i64:$offset, IMM12bit:$imm_offset))),
-    (Instr_ADDR64 (SI_ADDR64_RSRC $ptr), $offset, (as_i16imm $imm_offset))
-  >;
-
-  def : Pat <
-    (vt (global_ld (add i64:$ptr, (i64 IMM12bit:$offset)))),
-    (Instr_ADDR64 (SI_ADDR64_RSRC (i64 0)), $ptr, (as_i16imm $offset))
-  >;
-
-  def : Pat <
-    (vt (global_ld i64:$ptr)),
-    (Instr_ADDR64 (SI_ADDR64_RSRC (i64 0)), $ptr, 0)
-  >;
-
-  def : Pat <
-     (vt (global_ld (add i64:$ptr, i64:$offset))),
-     (Instr_ADDR64 (SI_ADDR64_RSRC $ptr), $offset, 0)
-  >;
-
+                              PatFrag constant_ld> {
   def : Pat <
      (vt (constant_ld (add i64:$ptr, i64:$offset))),
      (Instr_ADDR64 (SI_ADDR64_RSRC $ptr), $offset, 0)
@@ -2511,23 +2504,19 @@ multiclass MUBUFLoad_Pattern <MUBUF Instr_ADDR64, ValueType vt,
 }
 
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_SBYTE_ADDR64, i32,
-                          sextloadi8_global, sextloadi8_constant>;
+                          sextloadi8_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_UBYTE_ADDR64, i32,
-                          az_extloadi8_global, az_extloadi8_constant>;
+                          az_extloadi8_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_SSHORT_ADDR64, i32,
-                          sextloadi16_global, sextloadi16_constant>;
+                          sextloadi16_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_USHORT_ADDR64, i32,
-                          az_extloadi16_global, az_extloadi16_constant>;
+                          az_extloadi16_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORD_ADDR64, i32,
-                          global_load, constant_load>;
-defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,
-                          global_load, constant_load>;
-defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,
-                          az_extloadi32_global, az_extloadi32_constant>;
+                          constant_load>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, v2i32,
-                          global_load, constant_load>;
+                          constant_load>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX4_ADDR64, v4i32,
-                          global_load, constant_load>;
+                          constant_load>;
 
 // BUFFER_LOAD_DWORD*, addr64=0
 multiclass MUBUF_Load_Dword <ValueType vt, MUBUF offset, MUBUF offen, MUBUF idxen,

@@ -393,6 +393,8 @@ void CodeGenModule::Release() {
     DebugInfo->finalize();
 
   EmitVersionIdentMetadata();
+
+  EmitTargetMetadata();
 }
 
 void CodeGenModule::UpdateCompletedType(const TagDecl *TD) {
@@ -1534,8 +1536,6 @@ CodeGenModule::GetOrCreateLLVMFunction(StringRef MangledName,
     }
   }
 
-  getTargetCodeGenInfo().emitTargetMD(D, F, *this);
-
   // Make sure the result is of the requested type.
   if (!IsIncompleteFunction) {
     assert(F->getType()->getElementType() == Ty);
@@ -1684,8 +1684,6 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
 
   if (AddrSpace != Ty->getAddressSpace())
     return llvm::ConstantExpr::getAddrSpaceCast(GV, Ty);
-
-  getTargetCodeGenInfo().emitTargetMD(D, GV, *this);
 
   return GV;
 }
@@ -1958,21 +1956,57 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D) {
   if (NeedsGlobalCtor || NeedsGlobalDtor)
     EmitCXXGlobalVarDeclInitFunc(D, GV, NeedsGlobalCtor);
 
-  // If we are compiling with ASan, add metadata indicating dynamically
-  // initialized (and not blacklisted) globals.
-  if (SanOpts.Address && NeedsGlobalCtor &&
-      !SanitizerBlacklist->isIn(*GV, "init")) {
-    llvm::NamedMDNode *DynamicInitializers = TheModule.getOrInsertNamedMetadata(
-        "llvm.asan.dynamically_initialized_globals");
-    llvm::Value *GlobalToAdd[] = { GV };
-    llvm::MDNode *ThisGlobal = llvm::MDNode::get(VMContext, GlobalToAdd);
-    DynamicInitializers->addOperand(ThisGlobal);
-  }
+  reportGlobalToASan(GV, D->getLocation(), NeedsGlobalCtor);
 
   // Emit global variable debug information.
   if (CGDebugInfo *DI = getModuleDebugInfo())
     if (getCodeGenOpts().getDebugInfo() >= CodeGenOptions::LimitedDebugInfo)
       DI->EmitGlobalVariable(GV, D);
+}
+
+void CodeGenModule::reportGlobalToASan(llvm::GlobalVariable *GV,
+                                       SourceLocation Loc, bool IsDynInit) {
+  if (!SanOpts.Address)
+    return;
+  IsDynInit &= !SanitizerBlacklist->isIn(*GV, "init");
+  bool IsBlacklisted = SanitizerBlacklist->isIn(*GV);
+
+  llvm::LLVMContext &LLVMCtx = TheModule.getContext();
+
+  llvm::GlobalVariable *LocDescr = nullptr;
+  if (!IsBlacklisted) {
+    // Don't generate source location if a global is blacklisted - it won't
+    // be instrumented anyway.
+    PresumedLoc PLoc = Context.getSourceManager().getPresumedLoc(Loc);
+    if (PLoc.isValid()) {
+      llvm::Constant *LocData[] = {
+          GetAddrOfConstantCString(PLoc.getFilename()),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(LLVMCtx), PLoc.getLine()),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(LLVMCtx),
+                                 PLoc.getColumn()),
+      };
+      auto LocStruct = llvm::ConstantStruct::getAnon(LocData);
+      LocDescr = new llvm::GlobalVariable(TheModule, LocStruct->getType(), true,
+                                          llvm::GlobalValue::PrivateLinkage,
+                                          LocStruct, ".asan_loc_descr");
+      LocDescr->setUnnamedAddr(true);
+      // Add LocDescr to llvm.compiler.used, so that it won't be removed by
+      // the optimizer before the ASan instrumentation pass.
+      addCompilerUsedGlobal(LocDescr);
+    }
+  }
+
+  llvm::Value *GlobalMetadata[] = {
+      GV,
+      LocDescr,
+      llvm::ConstantInt::get(llvm::Type::getInt1Ty(LLVMCtx), IsDynInit),
+      llvm::ConstantInt::get(llvm::Type::getInt1Ty(LLVMCtx), IsBlacklisted)
+  };
+
+  llvm::MDNode *ThisGlobal = llvm::MDNode::get(VMContext, GlobalMetadata);
+  llvm::NamedMDNode *AsanGlobals =
+      TheModule.getOrInsertNamedMetadata("llvm.asan.globals");
+  AsanGlobals->addOperand(ThisGlobal);
 }
 
 static bool isVarDeclStrongDefinition(const VarDecl *D, bool NoCommon) {
@@ -2779,6 +2813,8 @@ CodeGenModule::GetAddrOfConstantStringFromLiteral(const StringLiteral *S) {
   auto GV = GenerateStringLiteral(C, LT, *this, GlobalVariableName, Alignment);
   if (Entry)
     Entry->setValue(GV);
+
+  reportGlobalToASan(GV, S->getStrTokenLoc(0));
   return GV;
 }
 
@@ -3259,11 +3295,9 @@ void CodeGenModule::EmitDeclMetadata() {
   llvm::NamedMDNode *GlobalMetadata = nullptr;
 
   // StaticLocalDeclMap
-  for (llvm::DenseMap<GlobalDecl,StringRef>::iterator
-         I = MangledDeclNames.begin(), E = MangledDeclNames.end();
-       I != E; ++I) {
-    llvm::GlobalValue *Addr = getModule().getNamedValue(I->second);
-    EmitGlobalDeclMetadata(*this, GlobalMetadata, I->first, Addr);
+  for (auto &I : MangledDeclNames) {
+    llvm::GlobalValue *Addr = getModule().getNamedValue(I.second);
+    EmitGlobalDeclMetadata(*this, GlobalMetadata, I.first, Addr);
   }
 }
 
@@ -3279,11 +3313,9 @@ void CodeGenFunction::EmitDeclMetadata() {
 
   llvm::NamedMDNode *GlobalMetadata = nullptr;
 
-  for (llvm::DenseMap<const Decl*, llvm::Value*>::iterator
-         I = LocalDeclMap.begin(), E = LocalDeclMap.end(); I != E; ++I) {
-    const Decl *D = I->first;
-    llvm::Value *Addr = I->second;
-
+  for (auto &I : LocalDeclMap) {
+    const Decl *D = I.first;
+    llvm::Value *Addr = I.second;
     if (auto *Alloca = dyn_cast<llvm::AllocaInst>(Addr)) {
       llvm::Value *DAddr = GetPointerConstant(getLLVMContext(), D);
       Alloca->setMetadata(DeclPtrKind, llvm::MDNode::get(Context, DAddr));
@@ -3304,6 +3336,14 @@ void CodeGenModule::EmitVersionIdentMetadata() {
     llvm::MDString::get(Ctx, Version)
   };
   IdentMetadata->addOperand(llvm::MDNode::get(Ctx, IdentNode));
+}
+
+void CodeGenModule::EmitTargetMetadata() {
+  for (auto &I : MangledDeclNames) {
+    const Decl *D = I.first.getDecl()->getMostRecentDecl();
+    llvm::GlobalValue *GV = GetGlobalValue(I.second);
+    getTargetCodeGenInfo().emitTargetMD(D, GV, *this);
+  }
 }
 
 void CodeGenModule::EmitCoverageFile() {

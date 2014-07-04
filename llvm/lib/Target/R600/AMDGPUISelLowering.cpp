@@ -185,6 +185,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::LOAD, MVT::v2f32, Promote);
   AddPromotedToType(ISD::LOAD, MVT::v2f32, MVT::v2i32);
 
+  setOperationAction(ISD::LOAD, MVT::i64, Promote);
+  AddPromotedToType(ISD::LOAD, MVT::i64, MVT::v2i32);
+
   setOperationAction(ISD::LOAD, MVT::v4f32, Promote);
   AddPromotedToType(ISD::LOAD, MVT::v4f32, MVT::v4i32);
 
@@ -556,6 +559,9 @@ void AMDGPUTargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   case ISD::LOAD: {
     SDNode *Node = LowerLOAD(SDValue(N, 0), DAG).getNode();
+    if (!Node)
+      return;
+
     Results.push_back(SDValue(Node, 0));
     Results.push_back(SDValue(Node, 1));
     // XXX: LLVM seems not to replace Chain Value inside CustomWidenLowerNode
@@ -564,8 +570,9 @@ void AMDGPUTargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   }
   case ISD::STORE: {
-    SDNode *Node = LowerSTORE(SDValue(N, 0), DAG).getNode();
-    Results.push_back(SDValue(Node, 0));
+    SDValue Lowered = LowerSTORE(SDValue(N, 0), DAG);
+    if (Lowered.getNode())
+      Results.push_back(Lowered);
     return;
   }
   default:
@@ -905,7 +912,7 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
     case AMDGPUIntrinsic::AMDIL_round_nearest: // Legacy name.
       return DAG.getNode(ISD::FRINT, DL, VT, Op.getOperand(1));
-    case AMDGPUIntrinsic::AMDGPU_trunc:
+    case AMDGPUIntrinsic::AMDGPU_trunc: // Legacy name.
       return DAG.getNode(ISD::FTRUNC, DL, VT, Op.getOperand(1));
   }
 }

@@ -135,6 +135,12 @@ static ld_plugin_status cleanup_hook(void);
 
 extern "C" ld_plugin_status onload(ld_plugin_tv *tv);
 ld_plugin_status onload(ld_plugin_tv *tv) {
+  InitializeAllTargetInfos();
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
+  InitializeAllAsmPrinters();
+
   // We're given a pointer to the first transfer vector. We read through them
   // until we find one where tv_tag == LDPT_NULL. The REGISTER_* tagged values
   // contain pointers to functions that we need to call to register our own
@@ -228,11 +234,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
   if (!RegisteredAllSymbolsRead)
     return LDPS_OK;
 
-  InitializeAllTargetInfos();
-  InitializeAllTargets();
-  InitializeAllTargetMCs();
-  InitializeAllAsmParsers();
-  InitializeAllAsmPrinters();
   CodeGen = new LTOCodeGenerator();
 
   // Pass through extra options to the code generator.
@@ -292,7 +293,7 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     return LDPS_OK;
 
   std::string Error;
-  M = LTOModule::makeLTOModule(view, file->filesize, TargetOpts, Error);
+  M = LTOModule::createFromBuffer(view, file->filesize, TargetOpts, Error);
   if (!M) {
     (*message)(LDPL_ERROR,
                "LLVM gold plugin has failed to create LTO module: %s",

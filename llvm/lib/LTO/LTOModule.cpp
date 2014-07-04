@@ -24,11 +24,11 @@
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
 #include "llvm/MC/MCSection.h"
-#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/MC/SubtargetFeature.h"
+#include "llvm/Object/RecordStreamer.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
@@ -44,12 +44,13 @@
 #include <system_error>
 using namespace llvm;
 
-LTOModule::LTOModule(llvm::Module *m, llvm::TargetMachine *t)
-  : _module(m), _target(t),
-    _context(_target->getMCAsmInfo(), _target->getRegisterInfo(), &ObjFileInfo),
-    _mangler(t->getDataLayout()) {
-  ObjFileInfo.InitMCObjectFileInfo(t->getTargetTriple(),
-                                   t->getRelocationModel(), t->getCodeModel(),
+LTOModule::LTOModule(std::unique_ptr<Module> M, TargetMachine *TM)
+    : _module(std::move(M)), _target(TM),
+      _context(_target->getMCAsmInfo(), _target->getRegisterInfo(),
+               &ObjFileInfo),
+      _mangler(TM->getDataLayout()) {
+  ObjFileInfo.InitMCObjectFileInfo(TM->getTargetTriple(),
+                                   TM->getRelocationModel(), TM->getCodeModel(),
                                    _context);
 }
 
@@ -67,84 +68,61 @@ bool LTOModule::isBitcodeFile(const char *path) {
   return type == sys::fs::file_magic::bitcode;
 }
 
-/// isBitcodeFileForTarget - Returns 'true' if the file (or memory contents) is
-/// LLVM bitcode for the specified triple.
-bool LTOModule::isBitcodeFileForTarget(const void *mem, size_t length,
-                                       const char *triplePrefix) {
-  MemoryBuffer *buffer = makeBuffer(mem, length);
-  if (!buffer)
-    return false;
-  return isTargetMatch(buffer, triplePrefix);
-}
-
-bool LTOModule::isBitcodeFileForTarget(const char *path,
-                                       const char *triplePrefix) {
-  std::unique_ptr<MemoryBuffer> buffer;
-  if (MemoryBuffer::getFile(path, buffer))
-    return false;
-  return isTargetMatch(buffer.release(), triplePrefix);
-}
-
-/// isTargetMatch - Returns 'true' if the memory buffer is for the specified
-/// target triple.
-bool LTOModule::isTargetMatch(MemoryBuffer *buffer, const char *triplePrefix) {
+bool LTOModule::isBitcodeForTarget(MemoryBuffer *buffer,
+                                   StringRef triplePrefix) {
   std::string Triple = getBitcodeTargetTriple(buffer, getGlobalContext());
-  delete buffer;
-  return strncmp(Triple.c_str(), triplePrefix, strlen(triplePrefix)) == 0;
+  return StringRef(Triple).startswith(triplePrefix);
 }
 
-/// makeLTOModule - Create an LTOModule. N.B. These methods take ownership of
-/// the buffer.
-LTOModule *LTOModule::makeLTOModule(const char *path, TargetOptions options,
-                                    std::string &errMsg) {
+LTOModule *LTOModule::createFromFile(const char *path, TargetOptions options,
+                                     std::string &errMsg) {
   std::unique_ptr<MemoryBuffer> buffer;
   if (std::error_code ec = MemoryBuffer::getFile(path, buffer)) {
     errMsg = ec.message();
     return nullptr;
   }
-  return makeLTOModule(buffer.release(), options, errMsg);
+  return makeLTOModule(std::move(buffer), options, errMsg);
 }
 
-LTOModule *LTOModule::makeLTOModule(int fd, const char *path,
-                                    size_t size, TargetOptions options,
-                                    std::string &errMsg) {
-  return makeLTOModule(fd, path, size, 0, options, errMsg);
+LTOModule *LTOModule::createFromOpenFile(int fd, const char *path, size_t size,
+                                         TargetOptions options,
+                                         std::string &errMsg) {
+  return createFromOpenFileSlice(fd, path, size, 0, options, errMsg);
 }
 
-LTOModule *LTOModule::makeLTOModule(int fd, const char *path,
-                                    size_t map_size,
-                                    off_t offset,
-                                    TargetOptions options,
-                                    std::string &errMsg) {
+LTOModule *LTOModule::createFromOpenFileSlice(int fd, const char *path,
+                                              size_t map_size, off_t offset,
+                                              TargetOptions options,
+                                              std::string &errMsg) {
   std::unique_ptr<MemoryBuffer> buffer;
   if (std::error_code ec =
           MemoryBuffer::getOpenFileSlice(fd, path, buffer, map_size, offset)) {
     errMsg = ec.message();
     return nullptr;
   }
-  return makeLTOModule(buffer.release(), options, errMsg);
+  return makeLTOModule(std::move(buffer), options, errMsg);
 }
 
-LTOModule *LTOModule::makeLTOModule(const void *mem, size_t length,
-                                    TargetOptions options,
-                                    std::string &errMsg, StringRef path) {
+LTOModule *LTOModule::createFromBuffer(const void *mem, size_t length,
+                                       TargetOptions options,
+                                       std::string &errMsg, StringRef path) {
   std::unique_ptr<MemoryBuffer> buffer(makeBuffer(mem, length, path));
   if (!buffer)
     return nullptr;
-  return makeLTOModule(buffer.release(), options, errMsg);
+  return makeLTOModule(std::move(buffer), options, errMsg);
 }
 
-LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
+LTOModule *LTOModule::makeLTOModule(std::unique_ptr<MemoryBuffer> Buffer,
                                     TargetOptions options,
                                     std::string &errMsg) {
   // parse bitcode buffer
   ErrorOr<Module *> ModuleOrErr =
-      getLazyBitcodeModule(buffer, getGlobalContext());
+      getLazyBitcodeModule(Buffer.get(), getGlobalContext());
   if (std::error_code EC = ModuleOrErr.getError()) {
     errMsg = EC.message();
-    delete buffer;
     return nullptr;
   }
+  Buffer.release();
   std::unique_ptr<Module> m(ModuleOrErr.get());
 
   std::string TripleStr = m->getTargetTriple();
@@ -177,7 +155,7 @@ LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
                                                      options);
   m->materializeAllPermanently();
 
-  LTOModule *Ret = new LTOModule(m.release(), target);
+  LTOModule *Ret = new LTOModule(std::move(m), target);
 
   // We need a MCContext set up in order to get mangled names of private
   // symbols. It is a bit odd that we need to report uses and definitions
@@ -551,105 +529,6 @@ LTOModule::addPotentialUndefinedSymbol(const GlobalValue *decl, bool isFunc) {
 
   entry.setValue(info);
 }
-
-namespace {
-
-  class RecordStreamer : public MCStreamer {
-  public:
-    enum State { NeverSeen, Global, Defined, DefinedGlobal, Used };
-
-  private:
-    StringMap<State> Symbols;
-
-    void markDefined(const MCSymbol &Symbol) {
-      State &S = Symbols[Symbol.getName()];
-      switch (S) {
-      case DefinedGlobal:
-      case Global:
-        S = DefinedGlobal;
-        break;
-      case NeverSeen:
-      case Defined:
-      case Used:
-        S = Defined;
-        break;
-      }
-    }
-    void markGlobal(const MCSymbol &Symbol) {
-      State &S = Symbols[Symbol.getName()];
-      switch (S) {
-      case DefinedGlobal:
-      case Defined:
-        S = DefinedGlobal;
-        break;
-
-      case NeverSeen:
-      case Global:
-      case Used:
-        S = Global;
-        break;
-      }
-    }
-    void markUsed(const MCSymbol &Symbol) {
-      State &S = Symbols[Symbol.getName()];
-      switch (S) {
-      case DefinedGlobal:
-      case Defined:
-      case Global:
-        break;
-
-      case NeverSeen:
-      case Used:
-        S = Used;
-        break;
-      }
-    }
-
-    void visitUsedSymbol(const MCSymbol &Sym) override {
-      markUsed(Sym);
-    }
-
-  public:
-    typedef StringMap<State>::const_iterator const_iterator;
-
-    const_iterator begin() {
-      return Symbols.begin();
-    }
-
-    const_iterator end() {
-      return Symbols.end();
-    }
-
-    RecordStreamer(MCContext &Context) : MCStreamer(Context) {}
-
-    void EmitInstruction(const MCInst &Inst,
-                         const MCSubtargetInfo &STI) override {
-      MCStreamer::EmitInstruction(Inst, STI);
-    }
-    void EmitLabel(MCSymbol *Symbol) override {
-      MCStreamer::EmitLabel(Symbol);
-      markDefined(*Symbol);
-    }
-    void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override {
-      markDefined(*Symbol);
-      MCStreamer::EmitAssignment(Symbol, Value);
-    }
-    bool EmitSymbolAttribute(MCSymbol *Symbol,
-                             MCSymbolAttr Attribute) override {
-      if (Attribute == MCSA_Global)
-        markGlobal(*Symbol);
-      return true;
-    }
-    void EmitZerofill(const MCSection *Section, MCSymbol *Symbol,
-                      uint64_t Size , unsigned ByteAlignment) override {
-      markDefined(*Symbol);
-    }
-    void EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
-                          unsigned ByteAlignment) override {
-      markDefined(*Symbol);
-    }
-  };
-} // end anonymous namespace
 
 /// addAsmGlobalSymbols - Add global symbols from module-level ASM to the
 /// defined or undefined lists.

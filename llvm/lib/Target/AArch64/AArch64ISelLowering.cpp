@@ -627,7 +627,7 @@ MVT AArch64TargetLowering::getScalarShiftAmountTy(EVT LHSTy) const {
 
 unsigned AArch64TargetLowering::getMaximalGlobalOffset() const {
   // FIXME: On AArch64, this depends on the type.
-  // Basically, the addressable offsets are o to 4095 * Ty.getSizeInBytes().
+  // Basically, the addressable offsets are up to 4095 * Ty.getSizeInBytes().
   // and the offset has to be a multiple of the related size in bytes.
   return 4095;
 }
@@ -1503,7 +1503,7 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
   StructType *RetTy = StructType::get(ArgTy, ArgTy, NULL);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
-    .setCallee(CallingConv::Fast, RetTy, Callee, &Args, 0);
+    .setCallee(CallingConv::Fast, RetTy, Callee, std::move(Args), 0);
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
@@ -7884,6 +7884,18 @@ bool AArch64TargetLowering::shouldExpandAtomicInIR(Instruction *Inst) const {
 
   // For the real atomic operations, we have ldxr/stxr up to 128 bits.
   return Inst->getType()->getPrimitiveSizeInBits() <= 128;
+}
+
+TargetLoweringBase::LegalizeTypeAction
+AArch64TargetLowering::getPreferredVectorAction(EVT VT) const {
+  MVT SVT = VT.getSimpleVT();
+  // During type legalization, we prefer to widen v1i8, v1i16, v1i32  to v8i8,
+  // v4i16, v2i32 instead of to promote.
+  if (SVT == MVT::v1i8 || SVT == MVT::v1i16 || SVT == MVT::v1i32
+      || SVT == MVT::v1f32)
+    return TypeWidenVector;
+
+  return TargetLoweringBase::getPreferredVectorAction(VT);
 }
 
 Value *AArch64TargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,

@@ -1695,7 +1695,8 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   // FIXME: handle tail calls differently.
   unsigned CallOpc;
-  bool HasMinSizeAttr = Subtarget->isMinSize();
+  bool HasMinSizeAttr = MF.getFunction()->getAttributes().hasAttribute(
+      AttributeSet::FunctionIndex, Attribute::MinSize);
   if (Subtarget->isThumb()) {
     if ((!isDirect || isARMFunc) && !Subtarget->hasV5TOps())
       CallOpc = ARMISD::CALL_NOLINK;
@@ -2333,7 +2334,8 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(Chain)
     .setCallee(CallingConv::C, Type::getInt32Ty(*DAG.getContext()),
-               DAG.getExternalSymbol("__tls_get_addr", PtrVT), &Args, 0);
+               DAG.getExternalSymbol("__tls_get_addr", PtrVT), std::move(Args),
+               0);
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
@@ -2441,7 +2443,7 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
 
   // If we have T2 ops, we can materialize the address directly via movt/movw
   // pair. This is always cheaper.
-  if (Subtarget->useMovt()) {
+  if (Subtarget->useMovt(DAG.getMachineFunction())) {
     ++NumMovwMovt;
     // FIXME: Once remat is capable of dealing with instructions with register
     // operands, expand this into two nodes.
@@ -2463,7 +2465,7 @@ SDValue ARMTargetLowering::LowerGlobalAddressDarwin(SDValue Op,
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   Reloc::Model RelocM = getTargetMachine().getRelocationModel();
 
-  if (Subtarget->useMovt())
+  if (Subtarget->useMovt(DAG.getMachineFunction()))
     ++NumMovwMovt;
 
   // FIXME: Once remat is capable of dealing with instructions with register
@@ -2483,7 +2485,8 @@ SDValue ARMTargetLowering::LowerGlobalAddressDarwin(SDValue Op,
 SDValue ARMTargetLowering::LowerGlobalAddressWindows(SDValue Op,
                                                      SelectionDAG &DAG) const {
   assert(Subtarget->isTargetWindows() && "non-Windows COFF is not supported");
-  assert(Subtarget->useMovt() && "Windows on ARM expects to use movw/movt");
+  assert(Subtarget->useMovt(DAG.getMachineFunction()) &&
+         "Windows on ARM expects to use movw/movt");
 
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   EVT PtrVT = getPointerTy();
@@ -6095,7 +6098,7 @@ SDValue ARMTargetLowering::LowerFSINCOS(SDValue Op, SelectionDAG &DAG) const {
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
     .setCallee(CallingConv::C, Type::getVoidTy(*DAG.getContext()), Callee,
-               &Args, 0)
+               std::move(Args), 0)
     .setDiscardResult();
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
@@ -10564,7 +10567,7 @@ SDValue ARMTargetLowering::LowerDivRem(SDValue Op, SelectionDAG &DAG) const {
   SDLoc dl(Op);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(InChain)
-    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, &Args, 0)
+    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args), 0)
     .setInRegister().setSExtResult(isSigned).setZExtResult(!isSigned);
 
   std::pair<SDValue, SDValue> CallInfo = LowerCallTo(CLI);

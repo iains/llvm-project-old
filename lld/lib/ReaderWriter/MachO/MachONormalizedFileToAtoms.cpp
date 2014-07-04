@@ -231,6 +231,7 @@ void atomFromSymbol(DefinedAtom::ContentType atomType, const Section &section,
   } else {
     DefinedAtom::Merge merge = (symbolDescFlags & N_WEAK_DEF)
                               ? DefinedAtom::mergeAsWeak : DefinedAtom::mergeNo;
+    bool thumb = (symbolDescFlags & N_ARM_THUMB_DEF);
     if (atomType == DefinedAtom::typeUnknown) {
       // Mach-O needs a segment and section name.  Concatentate those two
       // with a / seperator (e.g. "seg/sect") to fit into the lld model
@@ -238,15 +239,15 @@ void atomFromSymbol(DefinedAtom::ContentType atomType, const Section &section,
       std::string segSectName = section.segmentName.str()
                                 + "/" + section.sectionName.str();
       file.addDefinedAtomInCustomSection(symbolName, symbolScope, atomType,
-                                         merge, offset, size, segSectName, true,
-                                         &section);
+                                         merge, thumb,offset, size, segSectName, 
+                                         true, &section);
     } else {
       if ((atomType == lld::DefinedAtom::typeCode) &&
           (symbolDescFlags & N_SYMBOL_RESOLVER)) {
         atomType = lld::DefinedAtom::typeResolver;
       }
       file.addDefinedAtom(symbolName, symbolScope, atomType, merge,
-                          offset, size, copyRefs, &section);
+                          offset, size, thumb, copyRefs, &section);
     }
   }
 }
@@ -418,7 +419,7 @@ std::error_code processSection(DefinedAtom::ContentType atomType,
                                      "not zero terminated.");
       }
       file.addDefinedAtom(StringRef(), scope, atomType, merge, offset, size,
-                          copyRefs, &section);
+                          false, copyRefs, &section);
       offset += size;
     }
   }
@@ -438,10 +439,25 @@ std::error_code convertRelocs(const Section &section,
     if (sectIndex > normalizedFile.sections.size())
       return make_dynamic_error_code(Twine("out of range section "
                                      "index (") + Twine(sectIndex) + ")");
-    const Section &sect = normalizedFile.sections[sectIndex-1];
+    const Section *sect = nullptr;
+    if (sectIndex == 0) {
+      for (const Section &s : normalizedFile.sections) {
+        uint64_t sAddr = s.address;
+        if ((sAddr <= addr) && (addr < sAddr+s.content.size())) {
+          sect = &s;
+          break;
+        }
+      }
+      if (!sect) {
+        return make_dynamic_error_code(Twine("address (" + Twine(addr)
+                                           + ") is not in any section"));
+      }
+    } else {
+      sect = &normalizedFile.sections[sectIndex-1];
+    }
     uint32_t offsetInTarget;
-    uint64_t offsetInSect = addr - sect.address;
-    *atom = file.findAtomCoveringAddress(sect, offsetInSect, &offsetInTarget);
+    uint64_t offsetInSect = addr - sect->address;
+    *atom = file.findAtomCoveringAddress(*sect, offsetInSect, &offsetInTarget);
     *addend = offsetInTarget;
     return std::error_code();
   };
@@ -534,7 +550,7 @@ std::error_code convertRelocs(const Section &section,
          + " (r_address=" + Twine::utohexstr(reloc.offset)
          + ", r_type=" + Twine(reloc.type)
          + ", r_extern=" + Twine(reloc.isExtern)
-         + ", r_length=" + Twine(reloc.length)
+         + ", r_length=" + Twine((int)reloc.length)
          + ", r_pcrel=" + Twine(reloc.pcRel)
          + (!reloc.scattered ? (Twine(", r_symbolnum=") + Twine(reloc.symbol))
                              : (Twine(", r_scattered=1, r_value=")
@@ -542,7 +558,27 @@ std::error_code convertRelocs(const Section &section,
          + ")" );
     } else {
       // Instantiate an lld::Reference object and add to its atom.
-      inAtom->addReference(offsetInAtom, kind, target, addend);
+      Reference::KindArch arch = Reference::KindArch::all;
+      switch (normalizedFile.arch ) {
+      case lld::MachOLinkingContext::arch_x86_64:
+        arch = Reference::KindArch::x86_64;
+        break;
+      case lld::MachOLinkingContext::arch_x86:
+        arch = Reference::KindArch::x86;
+        break;
+      case lld::MachOLinkingContext::arch_ppc:
+        arch = Reference::KindArch::PowerPC;
+        break;
+      case lld::MachOLinkingContext::arch_armv6:
+      case lld::MachOLinkingContext::arch_armv7:
+      case lld::MachOLinkingContext::arch_armv7s:
+        arch = Reference::KindArch::ARM;
+        break;
+      case lld::MachOLinkingContext::arch_unknown:
+        return make_dynamic_error_code(Twine("unknown architecture"));
+      }
+      
+      inAtom->addReference(offsetInAtom, kind, target, addend, arch);
     }
   }
   return std::error_code();
@@ -578,11 +614,6 @@ normalizedObjectToAtoms(const NormalizedFile &normalizedFile, StringRef path,
                                DefinedAtom::Alignment(sym.desc >> 8), copyRefs);
     }
   }
-
-  // TEMP BEGIN: until all KindHandlers switched to new interface.
-  if (normalizedFile.arch != lld::MachOLinkingContext::arch_x86_64)
-    return std::unique_ptr<File>(std::move(file));
-  // TEMP END
 
   // Convert mach-o relocations to References
   std::unique_ptr<mach_o::KindHandler> handler

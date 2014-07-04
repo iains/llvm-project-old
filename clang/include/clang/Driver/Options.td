@@ -469,6 +469,8 @@ def fexceptions : Flag<["-"], "fexceptions">, Group<f_Group>, Flags<[CC1Option]>
 def : Flag<["-"], "fexpensive-optimizations">, Group<clang_ignored_f_Group>;
 def : Flag<["-"], "fno-expensive-optimizations">, Group<clang_ignored_f_Group>;
 def fextdirs_EQ : Joined<["-"], "fextdirs=">, Group<f_Group>;
+def : Flag<["-"], "fdefer-pop">, Group<clang_ignored_f_Group>;
+def : Flag<["-"], "fno-defer-pop">, Group<clang_ignored_f_Group>;
 def : Flag<["-"], "fextended-identifiers">, Group<clang_ignored_f_Group>;
 def : Flag<["-"], "fno-extended-identifiers">, Group<f_Group>, Flags<[Unsupported]>;
 def fhosted : Flag<["-"], "fhosted">, Group<f_Group>;
@@ -559,6 +561,7 @@ def filelist : Separate<["-"], "filelist">, Flags<[LinkerInput]>;
 def : Flag<["-"], "findirect-virtual-calls">, Alias<fapple_kext>;
 def finline_functions : Flag<["-"], "finline-functions">, Group<clang_ignored_f_Group>;
 def finline : Flag<["-"], "finline">, Group<clang_ignored_f_Group>;
+def finput_charset_EQ : Joined<["-"], "finput-charset=">, Group<f_Group>;
 def finstrument_functions : Flag<["-"], "finstrument-functions">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Generate calls to instrument function entry and exit">;
 def : Flag<["-"], "fkeep-inline-functions">, Group<clang_ignored_f_Group>;
@@ -1210,6 +1213,21 @@ def mfp64 : Flag<["-"], "mfp64">, Group<m_Group>,
 def mfp32 : Flag<["-"], "mfp32">, Group<m_Group>,
   HelpText<"Use 32-bit floating point registers (MIPS only)">;
 def mnan_EQ : Joined<["-"], "mnan=">, Group<m_Group>;
+def mips1 : Flag<["-"], "mips1">,
+  Alias<march_EQ>, AliasArgs<["mips1"]>,
+  HelpText<"Equivalent to -march=mips1">, Flags<[HelpHidden]>;
+def mips2 : Flag<["-"], "mips2">,
+  Alias<march_EQ>, AliasArgs<["mips2"]>,
+  HelpText<"Equivalent to -march=mips2">, Flags<[HelpHidden]>;
+def mips3 : Flag<["-"], "mips3">,
+  Alias<march_EQ>, AliasArgs<["mips3"]>,
+  HelpText<"Equivalent to -march=mips3">, Flags<[HelpHidden]>;
+def mips4 : Flag<["-"], "mips4">,
+  Alias<march_EQ>, AliasArgs<["mips4"]>,
+  HelpText<"Equivalent to -march=mips4">, Flags<[HelpHidden]>;
+def mips5 : Flag<["-"], "mips5">,
+  Alias<march_EQ>, AliasArgs<["mips5"]>,
+  HelpText<"Equivalent to -march=mips5">, Flags<[HelpHidden]>;
 def mips32 : Flag<["-"], "mips32">,
   Alias<march_EQ>, AliasArgs<["mips32"]>,
   HelpText<"Equivalent to -march=mips32">, Flags<[HelpHidden]>;

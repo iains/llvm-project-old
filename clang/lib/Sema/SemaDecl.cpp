@@ -2519,11 +2519,13 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
         ResQT = Context.mergeObjCGCQualifiers(NewQType, OldQType);
       if (ResQT.isNull()) {
         if (New->isCXXClassMember() && New->isOutOfLine())
-          Diag(New->getLocation(),
-               diag::err_member_def_does_not_match_ret_type) << New;
+          Diag(New->getLocation(), diag::err_member_def_does_not_match_ret_type)
+              << New << New->getReturnTypeSourceRange();
         else
-          Diag(New->getLocation(), diag::err_ovl_diff_return_type);
-        Diag(OldLocation, PrevDiag) << Old << Old->getType();
+          Diag(New->getLocation(), diag::err_ovl_diff_return_type)
+              << New->getReturnTypeSourceRange();
+        Diag(OldLocation, PrevDiag) << Old << Old->getType()
+                                    << Old->getReturnTypeSourceRange();
         return true;
       }
       else
@@ -7494,8 +7496,10 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     
     // OpenCL v1.2, s6.9 -- Kernels can only have return type void.
     if (!NewFD->getReturnType()->isVoidType()) {
-      Diag(D.getIdentifierLoc(),
-           diag::err_expected_kernel_void_return_type);
+      SourceRange RTRange = NewFD->getReturnTypeSourceRange();
+      Diag(D.getIdentifierLoc(), diag::err_expected_kernel_void_return_type)
+          << (RTRange.isValid() ? FixItHint::CreateReplacement(RTRange, "void")
+                                : FixItHint());
       D.setInvalidType();
     }
 
@@ -7835,23 +7839,6 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   return Redeclaration;
 }
 
-static SourceRange getResultSourceRange(const FunctionDecl *FD) {
-  const TypeSourceInfo *TSI = FD->getTypeSourceInfo();
-  if (!TSI)
-    return SourceRange();
-
-  TypeLoc TL = TSI->getTypeLoc();
-  FunctionTypeLoc FunctionTL = TL.getAs<FunctionTypeLoc>();
-  if (!FunctionTL)
-    return SourceRange();
-
-  TypeLoc ResultTL = FunctionTL.getReturnLoc();
-  if (ResultTL.getUnqualifiedLoc().getAs<BuiltinTypeLoc>())
-    return ResultTL.getSourceRange();
-
-  return SourceRange();
-}
-
 void Sema::CheckMain(FunctionDecl* FD, const DeclSpec& DS) {
   // C++11 [basic.start.main]p3:
   //   A program that [...] declares main to be inline, static or
@@ -7891,34 +7878,37 @@ void Sema::CheckMain(FunctionDecl* FD, const DeclSpec& DS) {
   assert(T->isFunctionType() && "function decl is not of function type");
   const FunctionType* FT = T->castAs<FunctionType>();
 
-  // All the standards say that main() should should return 'int'.
-  if (Context.hasSameUnqualifiedType(FT->getReturnType(), Context.IntTy)) {
+  if (getLangOpts().GNUMode && !getLangOpts().CPlusPlus) {
+    // In C with GNU extensions we allow main() to have non-integer return
+    // type, but we should warn about the extension, and we disable the
+    // implicit-return-zero rule.
+
+    // GCC in C mode accepts qualified 'int'.
+    if (Context.hasSameUnqualifiedType(FT->getReturnType(), Context.IntTy))
+      FD->setHasImplicitReturnZero(true);
+    else {
+      Diag(FD->getTypeSpecStartLoc(), diag::ext_main_returns_nonint);
+      SourceRange RTRange = FD->getReturnTypeSourceRange();
+      if (RTRange.isValid())
+        Diag(RTRange.getBegin(), diag::note_main_change_return_type)
+            << FixItHint::CreateReplacement(RTRange, "int");
+    }
+  } else {
     // In C and C++, main magically returns 0 if you fall off the end;
     // set the flag which tells us that.
     // This is C++ [basic.start.main]p5 and C99 5.1.2.2.3.
-    FD->setHasImplicitReturnZero(true);
 
-  // In C with GNU extensions we allow main() to have non-integer return
-  // type, but we should warn about the extension, and we disable the
-  // implicit-return-zero rule.
-  } else if (getLangOpts().GNUMode && !getLangOpts().CPlusPlus) {
-    Diag(FD->getTypeSpecStartLoc(), diag::ext_main_returns_nonint);
-
-    SourceRange ResultRange = getResultSourceRange(FD);
-    if (ResultRange.isValid())
-      Diag(ResultRange.getBegin(), diag::note_main_change_return_type)
-          << FixItHint::CreateReplacement(ResultRange, "int");
-
-  // Otherwise, this is just a flat-out error.
-  } else {
-    SourceRange ResultRange = getResultSourceRange(FD);
-    if (ResultRange.isValid())
+    // All the standards say that main() should return 'int'.
+    if (Context.hasSameType(FT->getReturnType(), Context.IntTy))
+      FD->setHasImplicitReturnZero(true);
+    else {
+      // Otherwise, this is just a flat-out error.
+      SourceRange RTRange = FD->getReturnTypeSourceRange();
       Diag(FD->getTypeSpecStartLoc(), diag::err_main_returns_nonint)
-          << FixItHint::CreateReplacement(ResultRange, "int");
-    else
-      Diag(FD->getTypeSpecStartLoc(), diag::err_main_returns_nonint);
-
-    FD->setInvalidDecl(true);
+          << (RTRange.isValid() ? FixItHint::CreateReplacement(RTRange, "int")
+                                : FixItHint());
+      FD->setInvalidDecl(true);
+    }
   }
 
   // Treat protoless main() as nullary.

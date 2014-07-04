@@ -60,11 +60,9 @@ Mips16ConstantIslands(
 
 /// Select the Mips CPU for the given triple and cpu name.
 /// FIXME: Merge with the copy in MipsMCTargetDesc.cpp
-static inline StringRef selectMipsCPU(StringRef TT, StringRef CPU) {
+static StringRef selectMipsCPU(Triple TT, StringRef CPU) {
   if (CPU.empty() || CPU == "generic") {
-    Triple TheTriple(TT);
-    if (TheTriple.getArch() == Triple::mips ||
-        TheTriple.getArch() == Triple::mipsel)
+    if (TT.getArch() == Triple::mips || TT.getArch() == Triple::mipsel)
       CPU = "mips32";
     else
       CPU = "mips64";
@@ -73,6 +71,36 @@ static inline StringRef selectMipsCPU(StringRef TT, StringRef CPU) {
 }
 
 void MipsSubtarget::anchor() { }
+
+static std::string computeDataLayout(const MipsSubtarget &ST) {
+  std::string Ret = "";
+
+  // There are both little and big endian mips.
+  if (ST.isLittle())
+    Ret += "e";
+  else
+    Ret += "E";
+
+  Ret += "-m:m";
+
+  // Pointers are 32 bit on some ABIs.
+  if (!ST.isABI_N64())
+    Ret += "-p:32:32";
+
+  // 8 and 16 bit integers only need no have natural alignment, but try to
+  // align them to 32 bits. 64 bit integers have natural alignment.
+  Ret += "-i8:8:32-i16:16:32-i64:64";
+
+  // 32 bit registers are always available and the stack is at least 64 bit
+  // aligned. On N64 64 bit registers are also available and the stack is
+  // 128 bit aligned.
+  if (ST.isABI_N64() || ST.isABI_N32())
+    Ret += "-n32:64-S128";
+  else
+    Ret += "-n32-S64";
+
+  return Ret;
+}
 
 MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
                              const std::string &FS, bool little,
@@ -85,27 +113,13 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
       InMips16Mode(false), InMips16HardFloat(Mips16HardFloat),
       InMicroMipsMode(false), HasDSP(false), HasDSPR2(false),
       AllowMixed16_32(Mixed16_32 | Mips_Os16), Os16(Mips_Os16), HasMSA(false),
-      RM(_RM), OverrideMode(NoOverride), TM(_TM), TargetTriple(TT) {
-  std::string CPUName = CPU;
-  CPUName = selectMipsCPU(TT, CPUName);
-
-  // Parse features string.
-  ParseSubtargetFeatures(CPUName, FS);
-
-  if (InMips16Mode && !TM->Options.UseSoftFloat) {
-    // Hard float for mips16 means essentially to compile as soft float
-    // but to use a runtime library for soft float that is written with
-    // native mips32 floating point instructions (those runtime routines
-    // run in mips32 hard float mode).
-    TM->Options.UseSoftFloat = true;
-    TM->Options.FloatABIType = FloatABI::Soft;
-    InMips16HardFloat = true;
-  }
+      RM(_RM), OverrideMode(NoOverride), TM(_TM), TargetTriple(TT),
+      DL(computeDataLayout(initializeSubtargetDependencies(CPU, FS, TM))),
+      TSInfo(DL), JITInfo(), InstrInfo(MipsInstrInfo::create(*TM)),
+      FrameLowering(MipsFrameLowering::create(*TM, *this)),
+      TLInfo(MipsTargetLowering::create(*TM)) {
 
   PreviousInMips16Mode = InMips16Mode;
-
-  // Initialize scheduling itinerary for the specified CPU.
-  InstrItins = getInstrItineraryForCPU(CPUName);
 
   // Don't even attempt to generate code for MIPS-I, MIPS-II, MIPS-III, and
   // MIPS-V. They have not been tested and currently exist for the integrated
@@ -167,6 +181,29 @@ MipsSubtarget::enablePostRAScheduler(CodeGenOpt::Level OptLevel,
   return OptLevel >= CodeGenOpt::Aggressive;
 }
 
+MipsSubtarget &
+MipsSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS,
+                                               const TargetMachine *TM) {
+  std::string CPUName = selectMipsCPU(TargetTriple, CPU);
+  
+  // Parse features string.
+  ParseSubtargetFeatures(CPUName, FS);
+  // Initialize scheduling itinerary for the specified CPU.
+  InstrItins = getInstrItineraryForCPU(CPUName);
+
+  if (InMips16Mode && !TM->Options.UseSoftFloat) {
+    // Hard float for mips16 means essentially to compile as soft float
+    // but to use a runtime library for soft float that is written with
+    // native mips32 floating point instructions (those runtime routines
+    // run in mips32 hard float mode).
+    TM->Options.UseSoftFloat = true;
+    TM->Options.FloatABIType = FloatABI::Soft;
+    InMips16HardFloat = true;
+  }
+
+  return *this;
+}
+
 //FIXME: This logic for reseting the subtarget along with
 // the helper classes can probably be simplified but there are a lot of
 // cases so we will defer rewriting this to later.
@@ -186,14 +223,14 @@ void MipsSubtarget::resetSubtarget(MachineFunction *MF) {
       return;
     OverrideMode = Mips16Override;
     PreviousInMips16Mode = true;
-    TM->setHelperClassesMips16();
+    setHelperClassesMips16();
     return;
   } else if (ChangeToNoMips16) {
     if (!PreviousInMips16Mode)
       return;
     OverrideMode = NoMips16Override;
     PreviousInMips16Mode = false;
-    TM->setHelperClassesMipsSE();
+    setHelperClassesMipsSE();
     return;
   } else {
     if (OverrideMode == NoOverride)
@@ -201,14 +238,50 @@ void MipsSubtarget::resetSubtarget(MachineFunction *MF) {
     OverrideMode = NoOverride;
     DEBUG(dbgs() << "back to default" << "\n");
     if (inMips16Mode() && !PreviousInMips16Mode) {
-      TM->setHelperClassesMips16();
+      setHelperClassesMips16();
       PreviousInMips16Mode = true;
     } else if (!inMips16Mode() && PreviousInMips16Mode) {
-      TM->setHelperClassesMipsSE();
+      setHelperClassesMipsSE();
       PreviousInMips16Mode = false;
     }
     return;
   }
+}
+
+void MipsSubtarget::setHelperClassesMips16() {
+  InstrInfoSE.swap(InstrInfo);
+  FrameLoweringSE.swap(FrameLowering);
+  TLInfoSE.swap(TLInfo);
+  if (!InstrInfo16) {
+    InstrInfo.reset(MipsInstrInfo::create(*TM));
+    FrameLowering.reset(MipsFrameLowering::create(*TM, *this));
+    TLInfo.reset(MipsTargetLowering::create(*TM));
+  } else {
+    InstrInfo16.swap(InstrInfo);
+    FrameLowering16.swap(FrameLowering);
+    TLInfo16.swap(TLInfo);
+  }
+  assert(TLInfo && "null target lowering 16");
+  assert(InstrInfo && "null instr info 16");
+  assert(FrameLowering && "null frame lowering 16");
+}
+
+void MipsSubtarget::setHelperClassesMipsSE() {
+  InstrInfo16.swap(InstrInfo);
+  FrameLowering16.swap(FrameLowering);
+  TLInfo16.swap(TLInfo);
+  if (!InstrInfoSE) {
+    InstrInfo.reset(MipsInstrInfo::create(*TM));
+    FrameLowering.reset(MipsFrameLowering::create(*TM, *this));
+    TLInfo.reset(MipsTargetLowering::create(*TM));
+  } else {
+    InstrInfoSE.swap(InstrInfo);
+    FrameLoweringSE.swap(FrameLowering);
+    TLInfoSE.swap(TLInfo);
+  }
+  assert(TLInfo && "null target lowering in SE");
+  assert(InstrInfo && "null instr info SE");
+  assert(FrameLowering && "null frame lowering SE");
 }
 
 bool MipsSubtarget::mipsSEUsesSoftFloat() const {

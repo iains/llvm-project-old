@@ -1,11 +1,11 @@
-; RUN: llc < %s -march=x86 -mcpu=corei7-avx | FileCheck %s
+; RUN: llc < %s -mtriple=i686-linux -mcpu=corei7-avx | FileCheck %s
 ; RUN: opt -instsimplify -disable-output < %s
 
 ;CHECK-LABEL: AGEP0:
 define <4 x i32*> @AGEP0(i32* %ptr) nounwind {
 entry:
 ;CHECK-LABEL: AGEP0
-;CHECK: vbroadcast
+;CHECK: vpshufd {{.*}} xmm0 = mem[0,0,0,0]
 ;CHECK-NEXT: vpaddd
 ;CHECK-NEXT: ret
   %vecinit.i = insertelement <4 x i32*> undef, i32* %ptr, i32 0

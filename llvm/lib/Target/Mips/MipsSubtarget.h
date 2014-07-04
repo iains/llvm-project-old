@@ -14,6 +14,12 @@
 #ifndef MIPSSUBTARGET_H
 #define MIPSSUBTARGET_H
 
+#include "MipsFrameLowering.h"
+#include "MipsISelLowering.h"
+#include "MipsInstrInfo.h"
+#include "MipsJITInfo.h"
+#include "MipsSelectionDAGInfo.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -132,6 +138,20 @@ protected:
   MipsTargetMachine *TM;
 
   Triple TargetTriple;
+
+  const DataLayout DL; // Calculates type size & alignment
+  const MipsSelectionDAGInfo TSInfo;
+  MipsJITInfo JITInfo;
+  std::unique_ptr<const MipsInstrInfo> InstrInfo;
+  std::unique_ptr<const MipsFrameLowering> FrameLowering;
+  std::unique_ptr<const MipsTargetLowering> TLInfo;
+  std::unique_ptr<const MipsInstrInfo> InstrInfo16;
+  std::unique_ptr<const MipsFrameLowering> FrameLowering16;
+  std::unique_ptr<const MipsTargetLowering> TLInfo16;
+  std::unique_ptr<const MipsInstrInfo> InstrInfoSE;
+  std::unique_ptr<const MipsFrameLowering> FrameLoweringSE;
+  std::unique_ptr<const MipsTargetLowering> TLInfoSE;
+
 public:
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
                              AntiDepBreakMode& Mode,
@@ -242,12 +262,31 @@ public:
   /// \brief Reset the subtarget for the Mips target.
   void resetSubtarget(MachineFunction *MF);
 
+  MipsSubtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS,
+                                                 const TargetMachine *TM);
+
   /// Does the system support unaligned memory access.
   ///
   /// MIPS32r6/MIPS64r6 require full unaligned access support but does not
   /// specify which component of the system provides it. Hardware, software, and
   /// hybrid implementations are all valid.
   bool systemSupportsUnalignedAccess() const { return hasMips32r6(); }
+
+  // Set helper classes
+  void setHelperClassesMips16();
+  void setHelperClassesMipsSE();
+
+  MipsJITInfo *getJITInfo() { return &JITInfo; }
+  const MipsSelectionDAGInfo *getSelectionDAGInfo() const { return &TSInfo; }
+  const DataLayout *getDataLayout() const { return &DL; }
+  const MipsInstrInfo *getInstrInfo() const { return InstrInfo.get(); }
+  const TargetFrameLowering *getFrameLowering() const {
+    return FrameLowering.get();
+  }
+  const MipsRegisterInfo *getRegisterInfo() const {
+    return &InstrInfo->getRegisterInfo();
+  }
+  const MipsTargetLowering *getTargetLowering() const { return TLInfo.get(); }
 };
 } // End llvm namespace
 

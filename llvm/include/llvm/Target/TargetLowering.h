@@ -185,10 +185,15 @@ public:
   /// Return true if the target has BitExtract instructions.
   bool hasExtractBitsInsn() const { return HasExtractBitsInsn; }
 
-  /// Return true if a vector of the given type should be split
-  /// (TypeSplitVector) instead of promoted (TypePromoteInteger) during type
-  /// legalization.
-  virtual bool shouldSplitVectorType(EVT /*VT*/) const { return false; }
+  /// Return the preferred vector type legalization action.
+  virtual TargetLoweringBase::LegalizeTypeAction
+  getPreferredVectorAction(EVT VT) const {
+    // The default action for one element vectors is to scalarize
+    if (VT.getVectorNumElements() == 1)
+      return TypeScalarizeVector;
+    // The default action for other vectors is to promote
+    return TypePromoteInteger;
+  }
 
   // There are two general methods for expanding a BUILD_VECTOR node:
   //  1. Use SCALAR_TO_VECTOR on the defined scalar values and then shuffle
@@ -710,6 +715,13 @@ public:
   /// of the specified type to a smaller type in order to save space and / or
   /// reduce runtime.
   virtual bool ShouldShrinkFPConstant(EVT) const { return true; }
+
+  /// When splitting a value of the specified type into parts, does the Lo
+  /// or Hi part come first?  This usually follows the endianness, except
+  /// for ppcf128, where the Hi part always comes first.
+  bool hasBigEndianPartOrdering(EVT VT) const {
+    return isBigEndian() || VT == MVT::ppcf128;
+  }
 
   /// If true, the target has custom DAG combine transformations that it can
   /// perform for the specified node.
@@ -2111,7 +2123,7 @@ public:
     unsigned NumFixedArgs;
     CallingConv::ID CallConv;
     SDValue Callee;
-    ArgListTy *Args;
+    ArgListTy Args;
     SelectionDAG &DAG;
     SDLoc DL;
     ImmutableCallSite *CS;
@@ -2123,7 +2135,7 @@ public:
       : RetTy(nullptr), RetSExt(false), RetZExt(false), IsVarArg(false),
         IsInReg(false), DoesNotReturn(false), IsReturnValueUsed(true),
         IsTailCall(false), NumFixedArgs(-1), CallConv(CallingConv::C),
-        Args(nullptr), DAG(DAG), CS(nullptr) {}
+        DAG(DAG), CS(nullptr) {}
 
     CallLoweringInfo &setDebugLoc(SDLoc dl) {
       DL = dl;
@@ -2136,19 +2148,19 @@ public:
     }
 
     CallLoweringInfo &setCallee(CallingConv::ID CC, Type *ResultType,
-                                SDValue Target, ArgListTy *ArgsList,
+                                SDValue Target, ArgListTy &&ArgsList,
                                 unsigned FixedArgs = -1) {
       RetTy = ResultType;
       Callee = Target;
       CallConv = CC;
       NumFixedArgs =
-        (FixedArgs == static_cast<unsigned>(-1) ? Args->size() : FixedArgs);
-      Args = ArgsList;
+        (FixedArgs == static_cast<unsigned>(-1) ? Args.size() : FixedArgs);
+      Args = std::move(ArgsList);
       return *this;
     }
 
     CallLoweringInfo &setCallee(Type *ResultType, FunctionType *FTy,
-                                SDValue Target, ArgListTy *ArgsList,
+                                SDValue Target, ArgListTy &&ArgsList,
                                 ImmutableCallSite &Call) {
       RetTy = ResultType;
 
@@ -2163,7 +2175,7 @@ public:
 
       CallConv = Call.getCallingConv();
       NumFixedArgs = FTy->getNumParams();
-      Args = ArgsList;
+      Args = std::move(ArgsList);
 
       CS = &Call;
 
@@ -2206,8 +2218,7 @@ public:
     }
 
     ArgListTy &getArgs() {
-      assert(Args && "Arguments must be set before accessing them");
-      return *Args;
+      return Args;
     }
   };
 

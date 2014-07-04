@@ -349,8 +349,8 @@ class CodeGenModule : public CodeGenTypeCache {
   /// emitted when the translation unit is complete.
   CtorList GlobalDtors;
 
-  /// A map of canonical GlobalDecls to their mangled names.
-  llvm::DenseMap<GlobalDecl, StringRef> MangledDeclNames;
+  /// An ordered map of canonical GlobalDecls to their mangled names.
+  llvm::MapVector<GlobalDecl, StringRef> MangledDeclNames;
   llvm::StringMap<GlobalDecl, llvm::BumpPtrAllocator> Manglings;
 
   /// Global annotations.
@@ -750,8 +750,8 @@ public:
   /// \brief Gets or a creats a Microsoft TypeDescriptor.
   llvm::Constant *getMSTypeDescriptor(QualType Ty);
   /// \brief Gets or a creats a Microsoft CompleteObjectLocator.
-  llvm::GlobalVariable *getMSCompleteObjectLocator(const CXXRecordDecl *RD,
-                                                   const VPtrInfo *Info);
+  llvm::Constant *getMSCompleteObjectLocator(const CXXRecordDecl *RD,
+                                             const VPtrInfo *Info);
 
   /// Gets the address of a block which requires no captures.
   llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, const char *);
@@ -1025,6 +1025,9 @@ public:
 
   const SanitizerOptions &getSanOpts() const { return SanOpts; }
 
+  void reportGlobalToASan(llvm::GlobalVariable *GV, SourceLocation Loc,
+                          bool IsDynInit = false);
+
   void addDeferredVTable(const CXXRecordDecl *RD) {
     DeferredVTables.push_back(RD);
   }
@@ -1142,6 +1145,9 @@ private:
 
   /// \brief Emit the Clang version as llvm.ident metadata.
   void EmitVersionIdentMetadata();
+
+  /// Emits target specific Metadata for global declarations.
+  void EmitTargetMetadata();
 
   /// Emit the llvm.gcov metadata used to tell LLVM where to emit the .gcno and
   /// .gcda files in a way that persists in .bc files.

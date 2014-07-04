@@ -486,12 +486,18 @@ bool Sema::CheckNeonBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
 bool Sema::CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall,
                                         unsigned MaxWidth) {
   assert((BuiltinID == ARM::BI__builtin_arm_ldrex ||
+          BuiltinID == ARM::BI__builtin_arm_ldaex ||
           BuiltinID == ARM::BI__builtin_arm_strex ||
+          BuiltinID == ARM::BI__builtin_arm_stlex ||
           BuiltinID == AArch64::BI__builtin_arm_ldrex ||
-          BuiltinID == AArch64::BI__builtin_arm_strex) &&
+          BuiltinID == AArch64::BI__builtin_arm_ldaex ||
+          BuiltinID == AArch64::BI__builtin_arm_strex ||
+          BuiltinID == AArch64::BI__builtin_arm_stlex) &&
          "unexpected ARM builtin");
   bool IsLdrex = BuiltinID == ARM::BI__builtin_arm_ldrex ||
-                 BuiltinID == AArch64::BI__builtin_arm_ldrex;
+                 BuiltinID == ARM::BI__builtin_arm_ldaex ||
+                 BuiltinID == AArch64::BI__builtin_arm_ldrex ||
+                 BuiltinID == AArch64::BI__builtin_arm_ldaex;
 
   DeclRefExpr *DRE =cast<DeclRefExpr>(TheCall->getCallee()->IgnoreParenCasts());
 
@@ -598,15 +604,17 @@ bool Sema::CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   llvm::APSInt Result;
 
   if (BuiltinID == ARM::BI__builtin_arm_ldrex ||
-      BuiltinID == ARM::BI__builtin_arm_strex) {
+      BuiltinID == ARM::BI__builtin_arm_ldaex ||
+      BuiltinID == ARM::BI__builtin_arm_strex ||
+      BuiltinID == ARM::BI__builtin_arm_stlex) {
     return CheckARMBuiltinExclusiveCall(BuiltinID, TheCall, 64);
   }
 
   if (CheckNeonBuiltinFunctionCall(BuiltinID, TheCall))
     return true;
 
-  // For NEON intrinsics which take an immediate value as part of the
-  // instruction, range check them here.
+  // For intrinsics which take an immediate value as part of the instruction,
+  // range check them here.
   unsigned i = 0, l = 0, u = 0;
   switch (BuiltinID) {
   default: return false;
@@ -615,7 +623,8 @@ bool Sema::CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   case ARM::BI__builtin_arm_vcvtr_f:
   case ARM::BI__builtin_arm_vcvtr_d: i = 1; u = 1; break;
   case ARM::BI__builtin_arm_dmb:
-  case ARM::BI__builtin_arm_dsb: l = 0; u = 15; break;
+  case ARM::BI__builtin_arm_dsb:
+  case ARM::BI__builtin_arm_isb: l = 0; u = 15; break;
   }
 
   // FIXME: VFP Intrinsics should error if VFP not present.
@@ -627,7 +636,9 @@ bool Sema::CheckAArch64BuiltinFunctionCall(unsigned BuiltinID,
   llvm::APSInt Result;
 
   if (BuiltinID == AArch64::BI__builtin_arm_ldrex ||
-      BuiltinID == AArch64::BI__builtin_arm_strex) {
+      BuiltinID == AArch64::BI__builtin_arm_ldaex ||
+      BuiltinID == AArch64::BI__builtin_arm_strex ||
+      BuiltinID == AArch64::BI__builtin_arm_stlex) {
     return CheckARMBuiltinExclusiveCall(BuiltinID, TheCall, 128);
   }
 
@@ -4613,7 +4624,6 @@ static Expr *EvalAddr(Expr *E, SmallVectorImpl<DeclRefExpr *> &refVars,
   case Stmt::CXXReinterpretCastExprClass: {
     Expr* SubExpr = cast<CastExpr>(E)->getSubExpr();
     switch (cast<CastExpr>(E)->getCastKind()) {
-    case CK_BitCast:
     case CK_LValueToRValue:
     case CK_NoOp:
     case CK_BaseToDerived:
@@ -4627,6 +4637,14 @@ static Expr *EvalAddr(Expr *E, SmallVectorImpl<DeclRefExpr *> &refVars,
 
     case CK_ArrayToPointerDecay:
       return EvalVal(SubExpr, refVars, ParentDecl);
+
+    case CK_BitCast:
+      if (SubExpr->getType()->isAnyPointerType() ||
+          SubExpr->getType()->isBlockPointerType() ||
+          SubExpr->getType()->isObjCQualifiedIdType())
+        return EvalAddr(SubExpr, refVars, ParentDecl);
+      else
+        return nullptr;
 
     default:
       return nullptr;
