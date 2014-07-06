@@ -712,7 +712,8 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   raw_ostream &OS = llvm::errs();
 
   // Create the target instance.
-  setTarget(TargetInfo::CreateTargetInfo(getDiagnostics(), &getTargetOpts()));
+  setTarget(TargetInfo::CreateTargetInfo(getDiagnostics(),
+                                         getInvocation().TargetOpts));
   if (!hasTarget())
     return false;
 
@@ -720,7 +721,7 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  getTarget().setForcedLangOptions(getLangOpts());
+  getTarget().adjust(getLangOpts());
 
   // rewriter project will change target built-in bool type from its default. 
   if (getFrontendOpts().ProgramAction == frontend::RewriteObjC)

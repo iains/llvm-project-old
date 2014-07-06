@@ -1,3 +1,4 @@
+// REQUIRES: x86-registered-target
 // RUN: %clang_cc1 -triple i386-mingw32 -fsyntax-only -verify -fms-extensions  -Wno-missing-declarations -x objective-c++ %s
 __stdcall int func0();
 int __stdcall func();
@@ -20,15 +21,12 @@ void * __ptr32 PtrToPtr32(const void *p)
 
 void __forceinline InterlockedBitTestAndSet (long *Base, long Bit)
 {
-  // FIXME: Re-enable this once MS inline asm stabilizes.
-#if 0
   __asm {
     mov eax, Bit
     mov ecx, Base
     lock bts [ecx], eax
     setc al
   };
-#endif
 }
 
 // Both inline and __forceinline is OK.

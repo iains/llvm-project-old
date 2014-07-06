@@ -504,20 +504,17 @@ class ASTInfoCollector : public ASTReaderListener {
   Preprocessor &PP;
   ASTContext &Context;
   LangOptions &LangOpt;
-  IntrusiveRefCntPtr<TargetOptions> &TargetOpts;
+  std::shared_ptr<TargetOptions> &TargetOpts;
   IntrusiveRefCntPtr<TargetInfo> &Target;
   unsigned &Counter;
 
   bool InitializedLanguage;
 public:
-  ASTInfoCollector(Preprocessor &PP, ASTContext &Context, LangOptions &LangOpt, 
-                   IntrusiveRefCntPtr<TargetOptions> &TargetOpts,
-                   IntrusiveRefCntPtr<TargetInfo> &Target,
-                   unsigned &Counter)
-    : PP(PP), Context(Context), LangOpt(LangOpt),
-      TargetOpts(TargetOpts), Target(Target),
-      Counter(Counter),
-      InitializedLanguage(false) {}
+  ASTInfoCollector(Preprocessor &PP, ASTContext &Context, LangOptions &LangOpt,
+                   std::shared_ptr<TargetOptions> &TargetOpts,
+                   IntrusiveRefCntPtr<TargetInfo> &Target, unsigned &Counter)
+      : PP(PP), Context(Context), LangOpt(LangOpt), TargetOpts(TargetOpts),
+        Target(Target), Counter(Counter), InitializedLanguage(false) {}
 
   bool ReadLanguageOptions(const LangOptions &LangOpts,
                            bool Complain) override {
@@ -536,10 +533,10 @@ public:
     // If we've already initialized the target, don't do it again.
     if (Target)
       return false;
-    
-    this->TargetOpts = new TargetOptions(TargetOpts);
-    Target = TargetInfo::CreateTargetInfo(PP.getDiagnostics(),
-                                          &*this->TargetOpts);
+
+    this->TargetOpts = std::make_shared<TargetOptions>(TargetOpts);
+    Target =
+        TargetInfo::CreateTargetInfo(PP.getDiagnostics(), this->TargetOpts);
 
     updated();
     return false;
@@ -559,7 +556,7 @@ private:
     //
     // FIXME: We shouldn't need to do this, the target should be immutable once
     // created. This complexity should be lifted elsewhere.
-    Target->setForcedLangOptions(LangOpt);
+    Target->adjust(LangOpt);
 
     // Initialize the preprocessor.
     PP.Initialize(*Target);
@@ -1066,8 +1063,8 @@ bool ASTUnit::Parse(llvm::MemoryBuffer *OverrideMainBuffer) {
   Clang->setDiagnostics(&getDiagnostics());
   
   // Create the target instance.
-  Clang->setTarget(TargetInfo::CreateTargetInfo(Clang->getDiagnostics(),
-                   &Clang->getTargetOpts()));
+  Clang->setTarget(TargetInfo::CreateTargetInfo(
+      Clang->getDiagnostics(), Clang->getInvocation().TargetOpts));
   if (!Clang->hasTarget()) {
     delete OverrideMainBuffer;
     return true;
@@ -1077,7 +1074,7 @@ bool ASTUnit::Parse(llvm::MemoryBuffer *OverrideMainBuffer) {
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  Clang->getTarget().setForcedLangOptions(Clang->getLangOpts());
+  Clang->getTarget().adjust(Clang->getLangOpts());
   
   assert(Clang->getFrontendOpts().Inputs.size() == 1 &&
          "Invocation must have exactly one source file!");
@@ -1087,7 +1084,7 @@ bool ASTUnit::Parse(llvm::MemoryBuffer *OverrideMainBuffer) {
          "IR inputs not support here!");
 
   // Configure the various subsystems.
-  LangOpts = &Clang->getLangOpts();
+  LangOpts = Clang->getInvocation().LangOpts;
   FileSystemOpts = Clang->getFileSystemOpts();
   IntrusiveRefCntPtr<vfs::FileSystem> VFS =
       createVFSFromCompilerInvocation(Clang->getInvocation(), getDiagnostics());
@@ -1565,8 +1562,8 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
   Clang->setDiagnostics(&getDiagnostics());
   
   // Create the target instance.
-  Clang->setTarget(TargetInfo::CreateTargetInfo(Clang->getDiagnostics(),
-                                                &Clang->getTargetOpts()));
+  Clang->setTarget(TargetInfo::CreateTargetInfo(
+      Clang->getDiagnostics(), Clang->getInvocation().TargetOpts));
   if (!Clang->hasTarget()) {
     llvm::sys::fs::remove(FrontendOpts.OutputFile);
     Preamble.clear();
@@ -1580,7 +1577,7 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  Clang->getTarget().setForcedLangOptions(Clang->getLangOpts());
+  Clang->getTarget().adjust(Clang->getLangOpts());
   
   assert(Clang->getFrontendOpts().Inputs.size() == 1 &&
          "Invocation must have exactly one source file!");
@@ -1709,7 +1706,7 @@ void ASTUnit::transferASTDataFromCompilerInstance(CompilerInstance &CI) {
   // Steal the created target, context, and preprocessor if they have been
   // created.
   assert(CI.hasInvocation() && "missing invocation");
-  LangOpts = CI.getInvocation().getLangOpts();
+  LangOpts = CI.getInvocation().LangOpts;
   TheSema.reset(CI.takeSema());
   Consumer.reset(CI.takeASTConsumer());
   if (CI.hasASTContext())
@@ -1832,8 +1829,8 @@ ASTUnit *ASTUnit::LoadFromCompilerInvocationAction(
   Clang->setDiagnostics(&AST->getDiagnostics());
   
   // Create the target instance.
-  Clang->setTarget(TargetInfo::CreateTargetInfo(Clang->getDiagnostics(),
-                                                &Clang->getTargetOpts()));
+  Clang->setTarget(TargetInfo::CreateTargetInfo(
+      Clang->getDiagnostics(), Clang->getInvocation().TargetOpts));
   if (!Clang->hasTarget())
     return nullptr;
 
@@ -1841,7 +1838,7 @@ ASTUnit *ASTUnit::LoadFromCompilerInvocationAction(
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  Clang->getTarget().setForcedLangOptions(Clang->getLangOpts());
+  Clang->getTarget().adjust(Clang->getLangOpts());
   
   assert(Clang->getFrontendOpts().Inputs.size() == 1 &&
          "Invocation must have exactly one source file!");
@@ -2409,8 +2406,8 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
   ProcessWarningOptions(Diag, CCInvocation->getDiagnosticOpts());
   
   // Create the target instance.
-  Clang->setTarget(TargetInfo::CreateTargetInfo(Clang->getDiagnostics(),
-                                                &Clang->getTargetOpts()));
+  Clang->setTarget(TargetInfo::CreateTargetInfo(
+      Clang->getDiagnostics(), Clang->getInvocation().TargetOpts));
   if (!Clang->hasTarget()) {
     Clang->setInvocation(nullptr);
     return;
@@ -2420,7 +2417,7 @@ void ASTUnit::CodeComplete(StringRef File, unsigned Line, unsigned Column,
   //
   // FIXME: We shouldn't need to do this, the target should be immutable once
   // created. This complexity should be lifted elsewhere.
-  Clang->getTarget().setForcedLangOptions(Clang->getLangOpts());
+  Clang->getTarget().adjust(Clang->getLangOpts());
   
   assert(Clang->getFrontendOpts().Inputs.size() == 1 &&
          "Invocation must have exactly one source file!");
