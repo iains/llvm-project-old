@@ -1889,6 +1889,7 @@ public:
 
   void EmitCXXTryStmt(const CXXTryStmt &S);
   void EmitSEHTryStmt(const SEHTryStmt &S);
+  void EmitSEHLeaveStmt(const SEHLeaveStmt &S);
   void EmitCXXForRangeStmt(const CXXForRangeStmt &S,
                            const ArrayRef<const Attr *> &Attrs = None);
 
@@ -1902,6 +1903,7 @@ public:
   void EmitOMPSectionsDirective(const OMPSectionsDirective &S);
   void EmitOMPSectionDirective(const OMPSectionDirective &S);
   void EmitOMPSingleDirective(const OMPSingleDirective &S);
+  void EmitOMPParallelForDirective(const OMPParallelForDirective &S);
 
   //===--------------------------------------------------------------------===//
   //                         LValue Expression Emission

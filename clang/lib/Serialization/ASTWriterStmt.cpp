@@ -1650,6 +1650,12 @@ void ASTStmtWriter::VisitSEHTryStmt(SEHTryStmt *S) {
   Code = serialization::STMT_SEH_TRY;
 }
 
+void ASTStmtWriter::VisitSEHLeaveStmt(SEHLeaveStmt *S) {
+  VisitStmt(S);
+  Writer.AddSourceLocation(S->getLeaveLoc(), Record);
+  Code = serialization::STMT_SEH_LEAVE;
+}
+
 //===----------------------------------------------------------------------===//
 // OpenMP Clauses.
 //===----------------------------------------------------------------------===//
@@ -1843,6 +1849,14 @@ void ASTStmtWriter::VisitOMPSingleDirective(OMPSingleDirective *D) {
   Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Code = serialization::STMT_OMP_SINGLE_DIRECTIVE;
+}
+
+void ASTStmtWriter::VisitOMPParallelForDirective(OMPParallelForDirective *D) {
+  VisitStmt(D);
+  Record.push_back(D->getNumClauses());
+  Record.push_back(D->getCollapsedNumber());
+  VisitOMPExecutableDirective(D);
+  Code = serialization::STMT_OMP_PARALLEL_FOR_DIRECTIVE;
 }
 
 //===----------------------------------------------------------------------===//

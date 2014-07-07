@@ -261,12 +261,11 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
   return LDPS_OK;
 }
 
-/// claim_file_hook - called by gold to see whether this file is one that
-/// our plugin can handle. We'll try to open it and register all the symbols
-/// with add_symbol if possible.
+/// Called by gold to see whether this file is one that our plugin can handle.
+/// We'll try to open it and register all the symbols with add_symbol if
+/// possible.
 static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
                                         int *claimed) {
-  LTOModule *M;
   const void *view;
   std::unique_ptr<MemoryBuffer> buffer;
   if (get_view) {
@@ -281,11 +280,14 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     if (file->offset) {
       offset = file->offset;
     }
-    if (std::error_code ec = MemoryBuffer::getOpenFileSlice(
-            file->fd, file->name, buffer, file->filesize, offset)) {
-      (*message)(LDPL_ERROR, ec.message().c_str());
+    ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
+        MemoryBuffer::getOpenFileSlice(file->fd, file->name, file->filesize,
+                                       offset);
+    if (std::error_code EC = BufferOrErr.getError()) {
+      (*message)(LDPL_ERROR, EC.message().c_str());
       return LDPS_ERR;
     }
+    buffer = std::move(BufferOrErr.get());
     view = buffer->getBufferStart();
   }
 
@@ -293,7 +295,8 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     return LDPS_OK;
 
   std::string Error;
-  M = LTOModule::createFromBuffer(view, file->filesize, TargetOpts, Error);
+  LTOModule *M =
+      LTOModule::createFromBuffer(view, file->filesize, TargetOpts, Error);
   if (!M) {
     (*message)(LDPL_ERROR,
                "LLVM gold plugin has failed to create LTO module: %s",

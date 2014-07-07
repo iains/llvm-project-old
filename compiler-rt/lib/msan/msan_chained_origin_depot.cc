@@ -19,7 +19,7 @@ namespace __msan {
 struct ChainedOriginDepotDesc {
   u32 here_id;
   u32 prev_id;
-  u32 hash() const { return here_id ^ prev_id; }
+  u32 hash() const { return (here_id * 0x1f1f1f1f) ^ prev_id; }
   bool is_valid() { return true; }
 };
 
@@ -58,7 +58,8 @@ struct ChainedOriginDepotNode {
   typedef Handle handle_type;
 };
 
-static StackDepotBase<ChainedOriginDepotNode, 3> chainedOriginDepot;
+// kTabSizeLog = 22 => 32Mb static storage for bucket pointers.
+static StackDepotBase<ChainedOriginDepotNode, 3, 20> chainedOriginDepot;
 
 StackDepotStats *ChainedOriginDepotGetStats() {
   return chainedOriginDepot.GetStats();

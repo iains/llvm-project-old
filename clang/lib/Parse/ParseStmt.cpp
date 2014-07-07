@@ -288,6 +288,11 @@ Retry:
     ProhibitAttributes(Attrs); // TODO: is it correct?
     return ParseSEHTryBlock();
 
+  case tok::kw___leave:
+    Res = ParseSEHLeaveStatement();
+    SemiError = "__leave";
+    break;
+
   case tok::annot_pragma_vis:
     ProhibitAttributes(Attrs);
     HandlePragmaVisibility();
@@ -422,7 +427,8 @@ StmtResult Parser::ParseSEHTryBlockCommon(SourceLocation TryLoc) {
   if(Tok.isNot(tok::l_brace))
     return StmtError(Diag(Tok, diag::err_expected) << tok::l_brace);
 
-  StmtResult TryBlock(ParseCompoundStatement());
+  StmtResult TryBlock(ParseCompoundStatement(/*isStmtExpr=*/false,
+                      Scope::DeclScope | Scope::SEHTryScope));
   if(TryBlock.isInvalid())
     return TryBlock;
 
@@ -504,6 +510,16 @@ StmtResult Parser::ParseSEHFinallyBlock(SourceLocation FinallyBlock) {
     return Block;
 
   return Actions.ActOnSEHFinallyBlock(FinallyBlock,Block.get());
+}
+
+/// Handle __leave
+///
+/// seh-leave-statement:
+///   '__leave' ';'
+///
+StmtResult Parser::ParseSEHLeaveStatement() {
+  SourceLocation LeaveLoc = ConsumeToken();  // eat the '__leave'.
+  return Actions.ActOnSEHLeaveStmt(LeaveLoc, getCurScope());
 }
 
 /// ParseLabeledStatement - We have an identifier and a ':' after it.

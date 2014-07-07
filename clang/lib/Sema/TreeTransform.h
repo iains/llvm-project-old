@@ -6376,6 +6376,12 @@ StmtResult TreeTransform<Derived>::TransformSEHHandler(Stmt *Handler) {
     return getDerived().TransformSEHExceptStmt(cast<SEHExceptStmt>(Handler));
 }
 
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformSEHLeaveStmt(SEHLeaveStmt *S) {
+  return S;
+}
+
 //===----------------------------------------------------------------------===//
 // OpenMP directive transformation
 //===----------------------------------------------------------------------===//
@@ -6472,6 +6478,17 @@ TreeTransform<Derived>::TransformOMPSingleDirective(OMPSingleDirective *D) {
   DeclarationNameInfo DirName;
   getDerived().getSema().StartOpenMPDSABlock(OMPD_single, DirName, nullptr,
                                              D->getLocStart());
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformOMPParallelForDirective(
+    OMPParallelForDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_parallel_for, DirName,
+                                             nullptr, D->getLocStart());
   StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
   getDerived().getSema().EndOpenMPDSABlock(Res.get());
   return Res;

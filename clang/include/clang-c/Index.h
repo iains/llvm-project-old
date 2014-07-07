@@ -2155,7 +2155,15 @@ enum CXCursorKind {
    */
   CXCursor_OMPSingleDirective            = 237,
 
-  CXCursor_LastStmt                      = CXCursor_OMPSingleDirective,
+  /** \brief OpenMP parallel for directive.
+   */
+  CXCursor_OMPParallelForDirective       = 238,
+
+  /** \brief Windows Structured Exception Handling's leave statement.
+   */
+  CXCursor_SEHLeaveStmt                  = 239,
+
+  CXCursor_LastStmt                      = CXCursor_SEHLeaveStmt,
 
   /**
    * \brief Cursor that represents the translation unit itself.

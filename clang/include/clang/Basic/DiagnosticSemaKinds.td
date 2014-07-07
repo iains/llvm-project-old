@@ -5153,6 +5153,8 @@ def err_need_header_before_typeid : Error<
   "you need to include <typeinfo> before using the 'typeid' operator">;
 def err_need_header_before_ms_uuidof : Error<
   "you need to include <guiddef.h> before using the '__uuidof' operator">;
+def err_ms___leave_not_in___try : Error<
+  "'__leave' statement not in __try block">;
 def err_uuidof_without_guid : Error<
   "cannot call operator __uuidof on a type with no GUID">;
 def err_uuidof_with_multiple_guids : Error<
@@ -7034,7 +7036,7 @@ def note_omp_predetermined_dsa : Note<
 def note_omp_implicit_dsa : Note<
   "implicitly determined as %0">;
 def err_omp_loop_var_dsa : Error<
-  "loop iteration variable may not be %0">;
+  "loop iteration variable in the associated loop of 'omp %1' directive may not be %0, predetermined as %2">;
 def err_omp_not_for : Error<
   "%select{statement after '#pragma omp %1' must be a for loop|"
   "expected %2 for loops after '#pragma omp %1'%select{|, but found only %4}3}0">;
