@@ -475,8 +475,6 @@ class CodeGenModule : public CodeGenTypeCache {
 
   std::unique_ptr<llvm::SpecialCaseList> SanitizerBlacklist;
 
-  const SanitizerOptions &SanOpts;
-
   /// @}
 public:
   CodeGenModule(ASTContext &C, const CodeGenOptions &CodeGenOpts,
@@ -1013,8 +1011,6 @@ public:
   const llvm::SpecialCaseList &getSanitizerBlacklist() const {
     return *SanitizerBlacklist;
   }
-
-  const SanitizerOptions &getSanOpts() const { return SanOpts; }
 
   void reportGlobalToASan(llvm::GlobalVariable *GV, SourceLocation Loc,
                           bool IsDynInit = false);

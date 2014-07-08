@@ -1158,7 +1158,12 @@ bool TargetLowering::isConstTrueVal(const SDNode *N) const {
       return false;
 
     IsVec = true;
-    CN = BV->getConstantSplatValue();
+    bool HasUndefElements;
+    CN = BV->getConstantSplatNode(HasUndefElements);
+    // Only interested in constant splats, and we don't try to handle undef
+    // elements in identifying boolean constants.
+    if (!CN || HasUndefElements)
+      return false;
   }
 
   switch (getBooleanContents(IsVec)) {
@@ -1185,7 +1190,12 @@ bool TargetLowering::isConstFalseVal(const SDNode *N) const {
       return false;
 
     IsVec = true;
-    CN = BV->getConstantSplatValue();
+    bool HasUndefElements;
+    CN = BV->getConstantSplatNode(HasUndefElements);
+    // Only interested in constant splats, and we don't try to handle undef
+    // elements in identifying boolean constants.
+    if (!CN || HasUndefElements)
+      return false;
   }
 
   if (getBooleanContents(IsVec) == UndefinedBooleanContent)
