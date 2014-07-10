@@ -743,18 +743,9 @@ class JumpFR<string opstr, RegisterOperand RO,
          FrmR, opstr>;
 
 // Indirect branch
-class IndirectBranch<string opstr, RegisterOperand RO> :
-      JumpFR<opstr, RO, brind> {
+class IndirectBranch<string opstr, RegisterOperand RO> : JumpFR<opstr, RO> {
   let isBranch = 1;
   let isIndirectBranch = 1;
-}
-
-// Return instruction
-class RetBase<string opstr, RegisterOperand RO>: JumpFR<opstr, RO> {
-  let isReturn = 1;
-  let isCodeGenOnly = 1;
-  let hasCtrlDep = 1;
-  let hasExtraSrcRegAllocReq = 1;
 }
 
 // Jump and Link (Call)
@@ -1229,7 +1220,35 @@ def BAL_BR : BAL_BR_Pseudo<BGEZAL>;
 def TAILCALL : TailCall<J>;
 def TAILCALL_R : TailCallReg<GPR32Opnd, JR>;
 
-def RET : MMRel, RetBase<"ret", GPR32Opnd>, MTLO_FM<8>;
+// Indirect branches are matched as PseudoIndirectBranch/PseudoIndirectBranch64
+// then are expanded to JR, JR64, JALR, or JALR64 depending on the ISA.
+class PseudoIndirectBranchBase<RegisterOperand RO> :
+    MipsPseudo<(outs), (ins RO:$rs), [(brind RO:$rs)], IIBranch> {
+  let isTerminator=1;
+  let isBarrier=1;
+  let hasDelaySlot = 1;
+  let isBranch = 1;
+  let isIndirectBranch = 1;
+}
+
+def PseudoIndirectBranch : PseudoIndirectBranchBase<GPR32Opnd>;
+
+// Return instructions are matched as a RetRA instruction, then ar expanded
+// into PseudoReturn/PseudoReturn64 after register allocation. Finally,
+// MipsAsmPrinter expands this into JR, JR64, JALR, or JALR64 depending on the
+// ISA.
+class PseudoReturnBase<RegisterOperand RO> : MipsPseudo<(outs), (ins RO:$rs),
+                                                        [], IIBranch> {
+  let isTerminator = 1;
+  let isBarrier = 1;
+  let hasDelaySlot = 1;
+  let isReturn = 1;
+  let isCodeGenOnly = 1;
+  let hasCtrlDep = 1;
+  let hasExtraSrcRegAllocReq = 1;
+}
+
+def PseudoReturn : PseudoReturnBase<GPR32Opnd>;
 
 // Exception handling related node and instructions.
 // The conversion sequence is:

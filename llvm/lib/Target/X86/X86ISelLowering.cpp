@@ -4858,19 +4858,6 @@ static bool ShouldXformToMOVLP(SDNode *V1, SDNode *V2,
   return true;
 }
 
-/// isSplatVector - Returns true if N is a BUILD_VECTOR node whose elements are
-/// all the same.
-static bool isSplatVector(SDNode *N) {
-  if (N->getOpcode() != ISD::BUILD_VECTOR)
-    return false;
-
-  SDValue SplatValue = N->getOperand(0);
-  for (unsigned i = 1, e = N->getNumOperands(); i != e; ++i)
-    if (N->getOperand(i) != SplatValue)
-      return false;
-  return true;
-}
-
 /// isZeroShuffle - Returns true if N is a VECTOR_SHUFFLE that can be resolved
 /// to an zero vector.
 /// FIXME: move to dag combiner / method on ShuffleVectorSDNode
@@ -5779,18 +5766,22 @@ static SDValue LowerVectorBroadcast(SDValue Op, const X86Subtarget* Subtarget,
       return SDValue();
 
     case ISD::BUILD_VECTOR: {
-      // The BUILD_VECTOR node must be a splat.
-      if (!isSplatVector(Op.getNode()))
+      auto *BVOp = cast<BuildVectorSDNode>(Op.getNode());
+      BitVector UndefElements;
+      SDValue Splat = BVOp->getSplatValue(&UndefElements);
+
+      // We need a splat of a single value to use broadcast, and it doesn't
+      // make any sense if the value is only in one element of the vector.
+      if (!Splat || (VT.getVectorNumElements() - UndefElements.count()) <= 1)
         return SDValue();
 
-      Ld = Op.getOperand(0);
+      Ld = Splat;
       ConstSplatVal = (Ld.getOpcode() == ISD::Constant ||
-                     Ld.getOpcode() == ISD::ConstantFP);
+                       Ld.getOpcode() == ISD::ConstantFP);
 
-      // The suspected load node has several users. Make sure that all
-      // of its users are from the BUILD_VECTOR node.
-      // Constants may have multiple users.
-      if (!ConstSplatVal && !Ld->hasNUsesOfValue(VT.getVectorNumElements(), 0))
+      // Make sure that all of the users of a non-constant load are from the
+      // BUILD_VECTOR node.
+      if (!ConstSplatVal && !BVOp->isOnlyUserOf(Ld.getNode()))
         return SDValue();
       break;
     }
@@ -7703,6 +7694,9 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   if (isSingleInputShuffleMask(Mask)) {
     // Check whether we can widen this to an i16 shuffle by duplicating bytes.
     // Notably, this handles splat and partial-splat shuffles more efficiently.
+    // However, it only makes sense if the pre-duplication shuffle simplifies
+    // things significantly. Currently, this means we need to be able to
+    // express the pre-duplication shuffle as an i16 shuffle.
     //
     // FIXME: We should check for other patterns which can be widened into an
     // i16 shuffle as well.
@@ -7713,7 +7707,9 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
       }
       return true;
     };
-    if (canWidenViaDuplication(Mask)) {
+    auto tryToWidenViaDuplication = [&]() -> SDValue {
+      if (!canWidenViaDuplication(Mask))
+        return SDValue();
       SmallVector<int, 4> LoInputs;
       std::copy_if(Mask.begin(), Mask.end(), std::back_inserter(LoInputs),
                    [](int M) { return M >= 0 && M < 8; });
@@ -7731,52 +7727,57 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
       ArrayRef<int> InPlaceInputs = TargetLo ? LoInputs : HiInputs;
       ArrayRef<int> MovingInputs = TargetLo ? HiInputs : LoInputs;
 
-      int ByteMask[16];
+      int PreDupI16Shuffle[] = {-1, -1, -1, -1, -1, -1, -1, -1};
       SmallDenseMap<int, int, 8> LaneMap;
-      for (int i = 0; i < 16; ++i)
-        ByteMask[i] = -1;
       for (int I : InPlaceInputs) {
-        ByteMask[I] = I;
+        PreDupI16Shuffle[I/2] = I/2;
         LaneMap[I] = I;
       }
-      int FreeByteIdx = 0;
-      int TargetOffset = TargetLo ? 0 : 8;
-      for (int I : MovingInputs) {
-        // Walk the free index into the byte mask until we find an unoccupied
-        // spot. We bound this to 8 steps to catch bugs, the pigeonhole
-        // principle indicates that there *must* be a spot as we can only have
-        // 8 duplicated inputs. We have to walk the index using modular
-        // arithmetic to wrap around as necessary.
-        // FIXME: We could do a much better job of picking an inexpensive slot
-        // so this doesn't go through the worst case for the byte shuffle.
-        for (int j = 0; j < 8 && ByteMask[FreeByteIdx + TargetOffset] != -1;
-             ++j, FreeByteIdx = (FreeByteIdx + 1) % 8)
-          ;
-        assert(ByteMask[FreeByteIdx + TargetOffset] == -1 &&
-               "Failed to find a free byte!");
-        ByteMask[FreeByteIdx + TargetOffset] = I;
-        LaneMap[I] = FreeByteIdx + TargetOffset;
+      int j = TargetLo ? 0 : 4, je = j + 4;
+      for (int i = 0, ie = MovingInputs.size(); i < ie; ++i) {
+        // Check if j is already a shuffle of this input. This happens when
+        // there are two adjacent bytes after we move the low one.
+        if (PreDupI16Shuffle[j] != MovingInputs[i] / 2) {
+          // If we haven't yet mapped the input, search for a slot into which
+          // we can map it.
+          while (j < je && PreDupI16Shuffle[j] != -1)
+            ++j;
+
+          if (j == je)
+            // We can't place the inputs into a single half with a simple i16 shuffle, so bail.
+            return SDValue();
+
+          // Map this input with the i16 shuffle.
+          PreDupI16Shuffle[j] = MovingInputs[i] / 2;
+        }
+
+        // Update the lane map based on the mapping we ended up with.
+        LaneMap[MovingInputs[i]] = 2 * j + MovingInputs[i] % 2;
       }
-      V1 = DAG.getVectorShuffle(MVT::v16i8, DL, V1, DAG.getUNDEF(MVT::v16i8),
-                                ByteMask);
-      for (int &M : Mask)
-        if (M != -1)
-          M = LaneMap[M];
+      V1 = DAG.getNode(
+          ISD::BITCAST, DL, MVT::v16i8,
+          DAG.getVectorShuffle(MVT::v8i16, DL,
+                               DAG.getNode(ISD::BITCAST, DL, MVT::v8i16, V1),
+                               DAG.getUNDEF(MVT::v8i16), PreDupI16Shuffle));
 
       // Unpack the bytes to form the i16s that will be shuffled into place.
       V1 = DAG.getNode(TargetLo ? X86ISD::UNPCKL : X86ISD::UNPCKH, DL,
                        MVT::v16i8, V1, V1);
 
-      int I16Shuffle[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+      int PostDupI16Shuffle[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
       for (int i = 0; i < 16; i += 2) {
         if (Mask[i] != -1)
-          I16Shuffle[i / 2] = Mask[i] - (TargetLo ? 0 : 8);
-        assert(I16Shuffle[i / 2] < 8 && "Invalid v8 shuffle mask!");
+          PostDupI16Shuffle[i / 2] = LaneMap[Mask[i]] - (TargetLo ? 0 : 8);
+        assert(PostDupI16Shuffle[i / 2] < 8 && "Invalid v8 shuffle mask!");
       }
-      return DAG.getVectorShuffle(MVT::v8i16, DL,
-                                  DAG.getNode(ISD::BITCAST, DL, MVT::v8i16, V1),
-                                  DAG.getUNDEF(MVT::v8i16), I16Shuffle);
-    }
+      return DAG.getNode(
+          ISD::BITCAST, DL, MVT::v16i8,
+          DAG.getVectorShuffle(MVT::v8i16, DL,
+                               DAG.getNode(ISD::BITCAST, DL, MVT::v8i16, V1),
+                               DAG.getUNDEF(MVT::v8i16), PostDupI16Shuffle));
+    };
+    if (SDValue V = tryToWidenViaDuplication())
+      return V;
   }
 
   // Check whether an interleaving lowering is likely to be more efficient.
@@ -7801,19 +7802,6 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
 
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v16i8, Evens, Odds);
   }
-  SDValue Zero = getZeroVector(MVT::v8i16, Subtarget, DAG, DL);
-  SDValue LoV1 =
-      DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
-                  DAG.getNode(X86ISD::UNPCKL, DL, MVT::v16i8, V1, Zero));
-  SDValue HiV1 =
-      DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
-                  DAG.getNode(X86ISD::UNPCKH, DL, MVT::v16i8, V1, Zero));
-  SDValue LoV2 =
-      DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
-                  DAG.getNode(X86ISD::UNPCKL, DL, MVT::v16i8, V2, Zero));
-  SDValue HiV2 =
-      DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
-                  DAG.getNode(X86ISD::UNPCKH, DL, MVT::v16i8, V2, Zero));
 
   int V1LoBlendMask[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
   int V1HiBlendMask[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
@@ -7835,10 +7823,49 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   buildBlendMasks(LoMask, V1LoBlendMask, V2LoBlendMask);
   buildBlendMasks(HiMask, V1HiBlendMask, V2HiBlendMask);
 
-  SDValue V1Lo = DAG.getVectorShuffle(MVT::v8i16, DL, LoV1, HiV1, V1LoBlendMask);
-  SDValue V2Lo = DAG.getVectorShuffle(MVT::v8i16, DL, LoV2, HiV2, V2LoBlendMask);
-  SDValue V1Hi = DAG.getVectorShuffle(MVT::v8i16, DL, LoV1, HiV1, V1HiBlendMask);
-  SDValue V2Hi = DAG.getVectorShuffle(MVT::v8i16, DL, LoV2, HiV2, V2HiBlendMask);
+  SDValue Zero = getZeroVector(MVT::v8i16, Subtarget, DAG, DL);
+
+  auto buildLoAndHiV8s = [&](SDValue V, MutableArrayRef<int> LoBlendMask,
+                             MutableArrayRef<int> HiBlendMask) {
+    SDValue V1, V2;
+    // Check if any of the odd lanes in the v16i8 are used. If not, we can mask
+    // them out and avoid using UNPCK{L,H} to extract the elements of V as
+    // i16s.
+    if (std::none_of(LoBlendMask.begin(), LoBlendMask.end(),
+                     [](int M) { return M >= 0 && M % 2 == 1; }) &&
+        std::none_of(HiBlendMask.begin(), HiBlendMask.end(),
+                     [](int M) { return M >= 0 && M % 2 == 1; })) {
+      // Use a mask to drop the high bytes.
+      V1 = DAG.getNode(ISD::BITCAST, DL, MVT::v8i16, V);
+      V1 = DAG.getNode(ISD::AND, DL, MVT::v8i16, V1,
+                       DAG.getConstant(0x00FF, MVT::v8i16));
+
+      // This will be a single vector shuffle instead of a blend so nuke V2.
+      V2 = DAG.getUNDEF(MVT::v8i16);
+
+      // Squash the masks to point directly into V1.
+      for (int &M : LoBlendMask)
+        if (M >= 0)
+          M /= 2;
+      for (int &M : HiBlendMask)
+        if (M >= 0)
+          M /= 2;
+    } else {
+      // Otherwise just unpack the low half of V into V1 and the high half into
+      // V2 so that we can blend them as i16s.
+      V1 = DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
+                       DAG.getNode(X86ISD::UNPCKL, DL, MVT::v16i8, V, Zero));
+      V2 = DAG.getNode(ISD::BITCAST, DL, MVT::v8i16,
+                       DAG.getNode(X86ISD::UNPCKH, DL, MVT::v16i8, V, Zero));
+    }
+
+    SDValue BlendedLo = DAG.getVectorShuffle(MVT::v8i16, DL, V1, V2, LoBlendMask);
+    SDValue BlendedHi = DAG.getVectorShuffle(MVT::v8i16, DL, V1, V2, HiBlendMask);
+    return std::make_pair(BlendedLo, BlendedHi);
+  };
+  SDValue V1Lo, V1Hi, V2Lo, V2Hi;
+  std::tie(V1Lo, V1Hi) = buildLoAndHiV8s(V1, V1LoBlendMask, V1HiBlendMask);
+  std::tie(V2Lo, V2Hi) = buildLoAndHiV8s(V2, V2LoBlendMask, V2HiBlendMask);
 
   SDValue LoV = DAG.getVectorShuffle(MVT::v8i16, DL, V1Lo, V2Lo, LoMask);
   SDValue HiV = DAG.getVectorShuffle(MVT::v8i16, DL, V1Hi, V2Hi, HiMask);
@@ -9375,8 +9402,13 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   bool Commuted = false;
   // FIXME: This should also accept a bitcast of a splat?  Be careful, not
   // 1,1,1,1 -> v8i16 though.
-  V1IsSplat = isSplatVector(V1.getNode());
-  V2IsSplat = isSplatVector(V2.getNode());
+  BitVector UndefElements;
+  if (auto *BVOp = dyn_cast<BuildVectorSDNode>(V1.getNode()))
+    if (BVOp->getConstantSplatNode(&UndefElements) && UndefElements.none())
+      V1IsSplat = true;
+  if (auto *BVOp = dyn_cast<BuildVectorSDNode>(V2.getNode()))
+    if (BVOp->getConstantSplatNode(&UndefElements) && UndefElements.none())
+      V2IsSplat = true;
 
   // Canonicalize the splat or undef, if present, to be on the RHS.
   if (!V2IsUndef && V1IsSplat && !V2IsSplat) {
@@ -15125,7 +15157,7 @@ static SDValue LowerMUL_LOHI(SDValue Op, const X86Subtarget *Subtarget,
          (VT == MVT::v8i32 && Subtarget->hasInt256()));
 
   // Get the high parts.
-  const int Mask[] = {1, 2, 3, 4, 5, 6, 7, 8};
+  const int Mask[] = {1, -1, 3, -1, 5, -1, 7, -1};
   SDValue Hi0 = DAG.getVectorShuffle(VT, dl, Op0, Op0, Mask);
   SDValue Hi1 = DAG.getVectorShuffle(VT, dl, Op1, Op1, Mask);
 
@@ -15141,10 +15173,18 @@ static SDValue LowerMUL_LOHI(SDValue Op, const X86Subtarget *Subtarget,
                              DAG.getNode(Opcode, dl, MulVT, Hi0, Hi1));
 
   // Shuffle it back into the right order.
-  const int HighMask[] = {1, 5, 3, 7, 9, 13, 11, 15};
-  SDValue Highs = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, HighMask);
-  const int LowMask[] = {0, 4, 2, 6, 8, 12, 10, 14};
-  SDValue Lows = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, LowMask);
+  SDValue Highs, Lows;
+  if (VT == MVT::v8i32) {
+    const int HighMask[] = {1, 9, 3, 11, 5, 13, 7, 15};
+    Highs = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, HighMask);
+    const int LowMask[] = {0, 8, 2, 10, 4, 12, 6, 14};
+    Lows = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, LowMask);
+  } else {
+    const int HighMask[] = {1, 5, 3, 7};
+    Highs = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, HighMask);
+    const int LowMask[] = {0, 4, 2, 6};
+    Lows = DAG.getVectorShuffle(VT, dl, Mul1, Mul2, LowMask);
+  }
 
   // If we have a signed multiply but no PMULDQ fix up the high parts of a
   // unsigned multiply.
@@ -15171,10 +15211,9 @@ static SDValue LowerScalarImmediateShift(SDValue Op, SelectionDAG &DAG,
   SDValue Amt = Op.getOperand(1);
 
   // Optimize shl/srl/sra with constant shift amount.
-  if (isSplatVector(Amt.getNode())) {
-    SDValue SclrAmt = Amt->getOperand(0);
-    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(SclrAmt)) {
-      uint64_t ShiftAmt = C->getZExtValue();
+  if (auto *BVAmt = dyn_cast<BuildVectorSDNode>(Amt)) {
+    if (auto *ShiftConst = BVAmt->getConstantSplatNode()) {
+      uint64_t ShiftAmt = ShiftConst->getZExtValue();
 
       if (VT == MVT::v2i64 || VT == MVT::v4i32 || VT == MVT::v8i16 ||
           (Subtarget->hasInt256() &&
@@ -19423,28 +19462,34 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
           Other->getOpcode() == ISD::SUB && DAG.isEqualTo(OpRHS, CondRHS))
         return DAG.getNode(X86ISD::SUBUS, DL, VT, OpLHS, OpRHS);
 
-      // If the RHS is a constant we have to reverse the const canonicalization.
-      // x > C-1 ? x+-C : 0 --> subus x, C
-      if (CC == ISD::SETUGT && Other->getOpcode() == ISD::ADD &&
-          isSplatVector(CondRHS.getNode()) && isSplatVector(OpRHS.getNode())) {
-        APInt A = cast<ConstantSDNode>(OpRHS.getOperand(0))->getAPIntValue();
-        if (CondRHS.getConstantOperandVal(0) == -A-1)
-          return DAG.getNode(X86ISD::SUBUS, DL, VT, OpLHS,
-                             DAG.getConstant(-A, VT));
-      }
+      if (auto *OpRHSBV = dyn_cast<BuildVectorSDNode>(OpRHS))
+        if (auto *OpRHSConst = OpRHSBV->getConstantSplatNode()) {
+          if (auto *CondRHSBV = dyn_cast<BuildVectorSDNode>(CondRHS))
+            if (auto *CondRHSConst = CondRHSBV->getConstantSplatNode())
+              // If the RHS is a constant we have to reverse the const
+              // canonicalization.
+              // x > C-1 ? x+-C : 0 --> subus x, C
+              if (CC == ISD::SETUGT && Other->getOpcode() == ISD::ADD &&
+                  CondRHSConst->getAPIntValue() ==
+                      (-OpRHSConst->getAPIntValue() - 1))
+                return DAG.getNode(
+                    X86ISD::SUBUS, DL, VT, OpLHS,
+                    DAG.getConstant(-OpRHSConst->getAPIntValue(), VT));
 
-      // Another special case: If C was a sign bit, the sub has been
-      // canonicalized into a xor.
-      // FIXME: Would it be better to use computeKnownBits to determine whether
-      //        it's safe to decanonicalize the xor?
-      // x s< 0 ? x^C : 0 --> subus x, C
-      if (CC == ISD::SETLT && Other->getOpcode() == ISD::XOR &&
-          ISD::isBuildVectorAllZeros(CondRHS.getNode()) &&
-          isSplatVector(OpRHS.getNode())) {
-        APInt A = cast<ConstantSDNode>(OpRHS.getOperand(0))->getAPIntValue();
-        if (A.isSignBit())
-          return DAG.getNode(X86ISD::SUBUS, DL, VT, OpLHS, OpRHS);
-      }
+          // Another special case: If C was a sign bit, the sub has been
+          // canonicalized into a xor.
+          // FIXME: Would it be better to use computeKnownBits to determine
+          //        whether it's safe to decanonicalize the xor?
+          // x s< 0 ? x^C : 0 --> subus x, C
+          if (CC == ISD::SETLT && Other->getOpcode() == ISD::XOR &&
+              ISD::isBuildVectorAllZeros(CondRHS.getNode()) &&
+              OpRHSConst->getAPIntValue().isSignBit())
+            // Note that we have to rebuild the RHS constant here to ensure we
+            // don't rely on particular values of undef lanes.
+            return DAG.getNode(
+                X86ISD::SUBUS, DL, VT, OpLHS,
+                DAG.getConstant(OpRHSConst->getAPIntValue(), VT));
+        }
     }
   }
 
@@ -20152,16 +20197,15 @@ static SDValue PerformSHLCombine(SDNode *N, SelectionDAG &DAG) {
   // vector operations in many cases. Also, on sandybridge ADD is faster than
   // shl.
   // (shl V, 1) -> add V,V
-  if (isSplatVector(N1.getNode())) {
-    assert(N0.getValueType().isVector() && "Invalid vector shift type");
-    ConstantSDNode *N1C = dyn_cast<ConstantSDNode>(N1->getOperand(0));
-    // We shift all of the values by one. In many cases we do not have
-    // hardware support for this operation. This is better expressed as an ADD
-    // of two values.
-    if (N1C && (1 == N1C->getZExtValue())) {
-      return DAG.getNode(ISD::ADD, SDLoc(N), VT, N0, N0);
+  if (auto *N1BV = dyn_cast<BuildVectorSDNode>(N1))
+    if (auto *N1SplatC = N1BV->getConstantSplatNode()) {
+      assert(N0.getValueType().isVector() && "Invalid vector shift type");
+      // We shift all of the values by one. In many cases we do not have
+      // hardware support for this operation. This is better expressed as an ADD
+      // of two values.
+      if (N1SplatC->getZExtValue() == 1)
+        return DAG.getNode(ISD::ADD, SDLoc(N), VT, N0, N0);
     }
-  }
 
   return SDValue();
 }
@@ -20180,10 +20224,9 @@ static SDValue performShiftToAllZeros(SDNode *N, SelectionDAG &DAG,
 
   SDValue Amt = N->getOperand(1);
   SDLoc DL(N);
-  if (isSplatVector(Amt.getNode())) {
-    SDValue SclrAmt = Amt->getOperand(0);
-    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(SclrAmt)) {
-      APInt ShiftAmt = C->getAPIntValue();
+  if (auto *AmtBV = dyn_cast<BuildVectorSDNode>(Amt))
+    if (auto *AmtSplat = AmtBV->getConstantSplatNode()) {
+      APInt ShiftAmt = AmtSplat->getAPIntValue();
       unsigned MaxAmount = VT.getVectorElementType().getSizeInBits();
 
       // SSE2/AVX2 logical shifts always return a vector of 0s
@@ -20193,7 +20236,6 @@ static SDValue performShiftToAllZeros(SDNode *N, SelectionDAG &DAG,
       if (ShiftAmt.trunc(8).uge(MaxAmount))
         return getZeroVector(VT, Subtarget, DAG, DL);
     }
-  }
 
   return SDValue();
 }
@@ -20387,9 +20429,10 @@ static SDValue WidenMaskArithmetic(SDNode *N, SelectionDAG &DAG,
 
   // The right side has to be a 'trunc' or a constant vector.
   bool RHSTrunc = N1.getOpcode() == ISD::TRUNCATE;
-  bool RHSConst = (isSplatVector(N1.getNode()) &&
-                   isa<ConstantSDNode>(N1->getOperand(0)));
-  if (!RHSTrunc && !RHSConst)
+  ConstantSDNode *RHSConstSplat = nullptr;
+  if (auto *RHSBV = dyn_cast<BuildVectorSDNode>(N1))
+    RHSConstSplat = RHSBV->getConstantSplatNode();
+  if (!RHSTrunc && !RHSConstSplat)
     return SDValue();
 
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -20399,9 +20442,9 @@ static SDValue WidenMaskArithmetic(SDNode *N, SelectionDAG &DAG,
 
   // Set N0 and N1 to hold the inputs to the new wide operation.
   N0 = N0->getOperand(0);
-  if (RHSConst) {
+  if (RHSConstSplat) {
     N1 = DAG.getNode(ISD::ZERO_EXTEND, DL, WideVT.getScalarType(),
-                     N1->getOperand(0));
+                     SDValue(RHSConstSplat, 0));
     SmallVector<SDValue, 8> C(WideVT.getVectorNumElements(), N1);
     N1 = DAG.getNode(ISD::BUILD_VECTOR, DL, WideVT, C);
   } else if (RHSTrunc) {
@@ -20547,12 +20590,9 @@ static SDValue PerformOrCombine(SDNode *N, SelectionDAG &DAG,
       unsigned EltBits = MaskVT.getVectorElementType().getSizeInBits();
       unsigned SraAmt = ~0;
       if (Mask.getOpcode() == ISD::SRA) {
-        SDValue Amt = Mask.getOperand(1);
-        if (isSplatVector(Amt.getNode())) {
-          SDValue SclrAmt = Amt->getOperand(0);
-          if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(SclrAmt))
-            SraAmt = C->getZExtValue();
-        }
+        if (auto *AmtBV = dyn_cast<BuildVectorSDNode>(Mask.getOperand(1)))
+          if (auto *AmtConst = AmtBV->getConstantSplatNode())
+            SraAmt = AmtConst->getZExtValue();
       } else if (Mask.getOpcode() == X86ISD::VSRAI) {
         SDValue SraC = Mask.getOperand(1);
         SraAmt  = cast<ConstantSDNode>(SraC)->getZExtValue();

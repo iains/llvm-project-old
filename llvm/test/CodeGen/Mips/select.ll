@@ -18,9 +18,9 @@ entry:
 ; 32R2:          movn $5, $6, $4
 ; 32R2:          move $2, $5
 
-; 32R6-DAG:      selnez $[[T0:[0-9]+]], $5, $4
-; 32R6-DAG:      seleqz $[[T1:[0-9]+]], $6, $4
-; 32R6:          or $2, $[[T0]], $[[T1]]
+; 32R6-DAG:      seleqz $[[T0:[0-9]+]], $5, $4
+; 32R6-DAG:      selnez $[[T1:[0-9]+]], $6, $4
+; 32R6:          or $2, $[[T1]], $[[T0]]
 
 ; 64:            movn $5, $6, $4
 ; 64:            move $2, $5
@@ -28,9 +28,9 @@ entry:
 ; 64R2:          movn $5, $6, $4
 ; 64R2:          move $2, $5
 
-; 64R6-DAG:      selnez $[[T0:[0-9]+]], $5, $4
-; 64R6-DAG:      seleqz $[[T1:[0-9]+]], $6, $4
-; 64R6:          or $2, $[[T0]], $[[T1]]
+; 64R6-DAG:      seleqz $[[T0:[0-9]+]], $5, $4
+; 64R6-DAG:      selnez $[[T1:[0-9]+]], $6, $4
+; 64R6:          or $2, $[[T1]], $[[T0]]
 
   %tobool = icmp ne i32 %s, 0
   %cond = select i1 %tobool, i32 %f1, i32 %f0
@@ -56,13 +56,13 @@ entry:
 ; 32R2:          move $3, $7
 
 ; 32R6-DAG:      lw $[[F1:[0-9]+]], 16($sp)
-; 32R6-DAG:      selnez $[[T0:[0-9]+]], $6, $4
-; 32R6-DAG:      seleqz $[[T1:[0-9]+]], $[[F1]], $4
-; 32R6:          or $2, $[[T0]], $[[T1]]
+; 32R6-DAG:      seleqz $[[T0:[0-9]+]], $6, $4
+; 32R6-DAG:      selnez $[[T1:[0-9]+]], $[[F1]], $4
+; 32R6:          or $2, $[[T1]], $[[T0]]
 ; 32R6-DAG:      lw $[[F1H:[0-9]+]], 20($sp)
-; 32R6-DAG:      selnez $[[T0:[0-9]+]], $7, $4
-; 32R6-DAG:      seleqz $[[T1:[0-9]+]], $[[F1H]], $4
-; 32R6:          or $3, $[[T0]], $[[T1]]
+; 32R6-DAG:      seleqz $[[T0:[0-9]+]], $7, $4
+; 32R6-DAG:      selnez $[[T1:[0-9]+]], $[[F1H]], $4
+; 32R6:          or $3, $[[T1]], $[[T0]]
 
 ; 64:            movn $5, $6, $4
 ; 64:            move $2, $5
@@ -74,9 +74,9 @@ entry:
 ;        (setcc's result is i32 so bits 32-63 are undefined). It's not really
 ;        needed.
 ; 64R6-DAG:      sll $[[CC:[0-9]+]], $4, 0
-; 64R6-DAG:      selnez $[[T0:[0-9]+]], $5, $[[CC]]
-; 64R6-DAG:      seleqz $[[T1:[0-9]+]], $6, $[[CC]]
-; 64R6:          or $2, $[[T0]], $[[T1]]
+; 64R6-DAG:      seleqz $[[T0:[0-9]+]], $5, $[[CC]]
+; 64R6-DAG:      selnez $[[T1:[0-9]+]], $6, $[[CC]]
+; 64R6:          or $2, $[[T1]], $[[T0]]
 
   %tobool = icmp ne i32 %s, 0
   %cond = select i1 %tobool, i64 %f1, i64 %f0
@@ -105,13 +105,13 @@ entry:
 
 ; 32R6-DAG:      lw $[[F1:[0-9]+]], 16($sp)
 ; 32R6-DAG:      or $[[T2:[0-9]+]], $4, $5
-; 32R6-DAG:      selnez $[[T0:[0-9]+]], $6, $[[T2]]
-; 32R6-DAG:      seleqz $[[T1:[0-9]+]], $[[F1]], $[[T2]]
-; 32R6:          or $2, $[[T0]], $[[T1]]
+; 32R6-DAG:      seleqz $[[T0:[0-9]+]], $6, $[[T2]]
+; 32R6-DAG:      selnez $[[T1:[0-9]+]], $[[F1]], $[[T2]]
+; 32R6:          or $2, $[[T1]], $[[T0]]
 ; 32R6-DAG:      lw $[[F1H:[0-9]+]], 20($sp)
-; 32R6-DAG:      selnez $[[T0:[0-9]+]], $7, $[[T2]]
-; 32R6-DAG:      seleqz $[[T1:[0-9]+]], $[[F1H]], $[[T2]]
-; 32R6:          or $3, $[[T0]], $[[T1]]
+; 32R6-DAG:      seleqz $[[T0:[0-9]+]], $7, $[[T2]]
+; 32R6-DAG:      selnez $[[T1:[0-9]+]], $[[F1H]], $[[T2]]
+; 32R6:          or $3, $[[T1]], $[[T0]]
 
 ; 64:            movn $5, $6, $4
 ; 64:            move $2, $5
@@ -119,9 +119,9 @@ entry:
 ; 64R2:          movn $5, $6, $4
 ; 64R2:          move $2, $5
 
-; 64R6-DAG:      selnez $[[T0:[0-9]+]], $5, $4
-; 64R6-DAG:      seleqz $[[T1:[0-9]+]], $6, $4
-; 64R6:          or $2, $[[T0]], $[[T1]]
+; 64R6-DAG:      seleqz $[[T0:[0-9]+]], $5, $4
+; 64R6-DAG:      selnez $[[T1:[0-9]+]], $6, $4
+; 64R6:          or $2, $[[T1]], $[[T0]]
 
   %tobool = icmp ne i64 %s, 0
   %cond = select i1 %tobool, i64 %f1, i64 %f0
@@ -252,7 +252,7 @@ entry:
 
 ; 32R6-DAG:      mtc1 $6, $[[F2:f[0-9]+]]
 ; 32R6-DAG:      mtc1 $7, $[[F3:f[0-9]+]]
-; 32R6:          cmp.olt.s $[[CC:f0]], $[[F2]], $[[F3]]
+; 32R6:          cmp.lt.s $[[CC:f0]], $[[F2]], $[[F3]]
 ; 32R6:          sel.s $[[CC]], $f14, $f12
 
 ; 64:            c.olt.s $f14, $f15
@@ -263,7 +263,7 @@ entry:
 ; 64R2:          movt.s $f13, $f12, $fcc0
 ; 64R2:          mov.s $f0, $f13
 
-; 64R6:          cmp.olt.s $[[CC:f0]], $f14, $f15
+; 64R6:          cmp.lt.s $[[CC:f0]], $f14, $f15
 ; 64R6:          sel.s $[[CC]], $f13, $f12
 
   %cmp = fcmp olt float %f2, %f3
@@ -289,7 +289,7 @@ entry:
 
 ; 32R6-DAG:      mtc1 $6, $[[F2:f[0-9]+]]
 ; 32R6-DAG:      mtc1 $7, $[[F3:f[0-9]+]]
-; 32R6:          cmp.olt.s $[[CC:f0]], $[[F3]], $[[F2]]
+; 32R6:          cmp.lt.s $[[CC:f0]], $[[F3]], $[[F2]]
 ; 32R6:          sel.s $[[CC]], $f14, $f12
 
 ; 64:            c.ule.s $f14, $f15
@@ -300,7 +300,7 @@ entry:
 ; 64R2:          movf.s $f13, $f12, $fcc0
 ; 64R2:          mov.s $f0, $f13
 
-; 64R6:          cmp.olt.s $[[CC:f0]], $f15, $f14
+; 64R6:          cmp.lt.s $[[CC:f0]], $f15, $f14
 ; 64R6:          sel.s $[[CC]], $f13, $f12
 
   %cmp = fcmp ogt float %f2, %f3
@@ -326,7 +326,7 @@ entry:
 
 ; 32R6-DAG:      lwc1 $[[F2:f[0-9]+]], 16($sp)
 ; 32R6-DAG:      lwc1 $[[F3:f[0-9]+]], 20($sp)
-; 32R6:          cmp.olt.s $[[CC:f0]], $[[F3]], $[[F2]]
+; 32R6:          cmp.lt.s $[[CC:f0]], $[[F3]], $[[F2]]
 ; 32R6:          sel.d $[[CC]], $f14, $f12
 
 ; 64:            c.ule.s $f14, $f15
@@ -337,7 +337,7 @@ entry:
 ; 64R2:          movf.d $f13, $f12, $fcc0
 ; 64R2:          mov.d $f0, $f13
 
-; 64R6:          cmp.olt.s $[[CC:f0]], $f15, $f14
+; 64R6:          cmp.lt.s $[[CC:f0]], $f15, $f14
 ; 64R6:          sel.d $[[CC]], $f13, $f12
 
   %cmp = fcmp ogt float %f2, %f3
@@ -400,7 +400,7 @@ entry:
 
 ; 32R6-DAG:      ldc1 $[[F2:f[0-9]+]], 16($sp)
 ; 32R6-DAG:      ldc1 $[[F3:f[0-9]+]], 24($sp)
-; 32R6:          cmp.olt.d $[[CC:f0]], $[[F2]], $[[F3]]
+; 32R6:          cmp.lt.d $[[CC:f0]], $[[F2]], $[[F3]]
 ; 32R6:          sel.d $[[CC]], $f14, $f12
 
 ; 64:            c.olt.d $f14, $f15
@@ -411,7 +411,7 @@ entry:
 ; 64R2:          movt.d $f13, $f12, $fcc0
 ; 64R2:          mov.d $f0, $f13
 
-; 64R6:          cmp.olt.d $[[CC:f0]], $f14, $f15
+; 64R6:          cmp.lt.d $[[CC:f0]], $f14, $f15
 ; 64R6:          sel.d $[[CC]], $f13, $f12
 
   %cmp = fcmp olt double %f2, %f3
@@ -437,7 +437,7 @@ entry:
 
 ; 32R6-DAG:      ldc1 $[[F2:f[0-9]+]], 16($sp)
 ; 32R6-DAG:      ldc1 $[[F3:f[0-9]+]], 24($sp)
-; 32R6:          cmp.olt.d $[[CC:f0]], $[[F3]], $[[F2]]
+; 32R6:          cmp.lt.d $[[CC:f0]], $[[F3]], $[[F2]]
 ; 32R6:          sel.d $[[CC]], $f14, $f12
 
 ; 64:            c.ule.d $f14, $f15
@@ -448,7 +448,7 @@ entry:
 ; 64R2:          movf.d $f13, $f12, $fcc0
 ; 64R2:          mov.d $f0, $f13
 
-; 64R6:          cmp.olt.d $[[CC:f0]], $f15, $f14
+; 64R6:          cmp.lt.d $[[CC:f0]], $f15, $f14
 ; 64R6:          sel.d $[[CC]], $f13, $f12
 
   %cmp = fcmp ogt double %f2, %f3
@@ -477,7 +477,7 @@ entry:
 ; 32R6-DAG:      mtc1 $6, $[[F2:f[0-9]+]]
 ; 32R6-DAG:      mthc1 $7, $[[F2]]
 ; 32R6-DAG:      ldc1 $[[F3:f[0-9]+]], 16($sp)
-; 32R6:          cmp.olt.d $[[CC:f0]], $[[F3]], $[[F2]]
+; 32R6:          cmp.lt.d $[[CC:f0]], $[[F3]], $[[F2]]
 ; 32R6:          sel.s $[[CC]], $f14, $f12
 
 ; 64:            c.ule.d $f14, $f15
@@ -488,7 +488,7 @@ entry:
 ; 64R2:          movf.s $f13, $f12, $fcc0
 ; 64R2:          mov.s $f0, $f13
 
-; 64R6:          cmp.olt.d $[[CC:f0]], $f15, $f14
+; 64R6:          cmp.lt.d $[[CC:f0]], $f15, $f14
 ; 64R6:          sel.s $[[CC]], $f13, $f12
 
   %cmp = fcmp ogt double %f2, %f3
@@ -561,7 +561,7 @@ entry:
 
 ; 32R6-DAG:      mtc1 $6, $[[F2:f[0-9]+]]
 ; 32R6-DAG:      mtc1 $7, $[[F3:f[0-9]+]]
-; 32R6:          cmp.olt.s $[[CC:f[0-9]+]], $[[F2]], $[[F3]]
+; 32R6:          cmp.lt.s $[[CC:f[0-9]+]], $[[F2]], $[[F3]]
 ; 32R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 32R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -577,7 +577,7 @@ entry:
 ; 64R2:          movt $5, $4, $fcc0
 ; 64R2:          move $2, $5
 
-; 64R6:          cmp.olt.s $[[CC:f[0-9]+]], $f14, $f15
+; 64R6:          cmp.lt.s $[[CC:f[0-9]+]], $f14, $f15
 ; 64R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 64R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -607,7 +607,7 @@ entry:
 
 ; 32R6-DAG:      mtc1 $6, $[[F2:f[0-9]+]]
 ; 32R6-DAG:      mtc1 $7, $[[F3:f[0-9]+]]
-; 32R6:          cmp.olt.s $[[CC:f[0-9]+]], $[[F3]], $[[F2]]
+; 32R6:          cmp.lt.s $[[CC:f[0-9]+]], $[[F3]], $[[F2]]
 ; 32R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 32R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -623,7 +623,7 @@ entry:
 ; 64R2:          movf $5, $4, $fcc0
 ; 64R2:          move $2, $5
 
-; 64R6:          cmp.olt.s $[[CC:f[0-9]+]], $f15, $f14
+; 64R6:          cmp.lt.s $[[CC:f[0-9]+]], $f15, $f14
 ; 64R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 64R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -745,7 +745,7 @@ entry:
 ; 32R6-DAG:      ldc1 $[[TMP:f[0-9]+]], 0($[[D2]])
 ; 32R6-DAG:      lw $[[D3:[0-9]+]], %got(d3)($1)
 ; 32R6-DAG:      ldc1 $[[TMP1:f[0-9]+]], 0($[[D3]])
-; 32R6:          cmp.olt.d $[[CC:f[0-9]+]], $[[TMP]], $[[TMP1]]
+; 32R6:          cmp.lt.d $[[CC:f[0-9]+]], $[[TMP]], $[[TMP1]]
 ; 32R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 32R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -779,7 +779,7 @@ entry:
 ; 64R6-DAG:      ldc1 $[[TMP:f[0-9]+]], 0($[[D2]])
 ; 64R6-DAG:      ld $[[D3:[0-9]+]], %got_disp(d3)($1)
 ; 64R6-DAG:      ldc1 $[[TMP1:f[0-9]+]], 0($[[D3]])
-; 64R6:          cmp.olt.d $[[CC:f[0-9]+]], $[[TMP]], $[[TMP1]]
+; 64R6:          cmp.lt.d $[[CC:f[0-9]+]], $[[TMP]], $[[TMP1]]
 ; 64R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 64R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -824,7 +824,7 @@ entry:
 ; 32R6-DAG:      ldc1 $[[TMP:f[0-9]+]], 0($[[D2]])
 ; 32R6-DAG:      lw $[[D3:[0-9]+]], %got(d3)($1)
 ; 32R6-DAG:      ldc1 $[[TMP1:f[0-9]+]], 0($[[D3]])
-; 32R6:          cmp.olt.d $[[CC:f[0-9]+]], $[[TMP1]], $[[TMP]]
+; 32R6:          cmp.lt.d $[[CC:f[0-9]+]], $[[TMP1]], $[[TMP]]
 ; 32R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 32R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant
@@ -858,7 +858,7 @@ entry:
 ; 64R6-DAG:      ldc1 $[[TMP:f[0-9]+]], 0($[[D2]])
 ; 64R6-DAG:      ld $[[D3:[0-9]+]], %got_disp(d3)($1)
 ; 64R6-DAG:      ldc1 $[[TMP1:f[0-9]+]], 0($[[D3]])
-; 64R6:          cmp.olt.d $[[CC:f[0-9]+]], $[[TMP1]], $[[TMP]]
+; 64R6:          cmp.lt.d $[[CC:f[0-9]+]], $[[TMP1]], $[[TMP]]
 ; 64R6:          mfc1 $[[CCGPR:[0-9]+]], $[[CC]]
 ; 64R6:          seleqz $[[EQ:[0-9]+]], $5, $[[CCGPR]]
 ; FIXME: This move is redundant

@@ -655,13 +655,13 @@ static ConstantSDNode *isConstOrConstSplat(SDValue N) {
     return CN;
 
   if (BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N)) {
-    bool HasUndefElements;
-    ConstantSDNode *CN = BV->getConstantSplatNode(HasUndefElements);
+    BitVector UndefElements;
+    ConstantSDNode *CN = BV->getConstantSplatNode(&UndefElements);
 
     // BuildVectors can truncate their operands. Ignore that case here.
     // FIXME: We blindly ignore splats which include undef which is overly
     // pessimistic.
-    if (CN && !HasUndefElements &&
+    if (CN && UndefElements.none() &&
         CN->getValueType(0) == N.getValueType().getScalarType())
       return CN;
   }
@@ -6013,6 +6013,20 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
     }
   }
 
+  // trunc (select c, a, b) -> select c, (trunc a), (trunc b)
+  if (N0.getOpcode() == ISD::SELECT) {
+    EVT SrcVT = N0.getValueType();
+    if ((!LegalOperations || TLI.isOperationLegal(ISD::SELECT, SrcVT)) &&
+        TLI.isTruncateFree(SrcVT, VT)) {
+      SDLoc SL(N0);
+      SDValue TruncOp0 = DAG.getNode(ISD::TRUNCATE, SL, VT, N0.getOperand(1));
+      SDValue TruncOp1 = DAG.getNode(ISD::TRUNCATE, SL, VT, N0.getOperand(2));
+      EVT SetCCVT = getSetCCResultType(VT);
+      SDValue Cond = DAG.getSExtOrTrunc(N0.getOperand(0), SL, SetCCVT);
+      return DAG.getNode(ISD::SELECT, SDLoc(N), VT, Cond, TruncOp0, TruncOp1);
+    }
+  }
+
   // Fold a series of buildvector, bitcast, and truncate if possible.
   // For example fold
   //   (2xi32 trunc (bitcast ((4xi32)buildvector x, x, y, y) 2xi64)) to
@@ -10376,10 +10390,24 @@ SDValue DAGCombiner::visitCONCAT_VECTORS(SDNode *N) {
     SmallVector<SDValue, 8> Opnds;
     unsigned BuildVecNumElts =  N0.getNumOperands();
 
-    for (unsigned i = 0; i != BuildVecNumElts; ++i)
-      Opnds.push_back(N0.getOperand(i));
-    for (unsigned i = 0; i != BuildVecNumElts; ++i)
-      Opnds.push_back(N1.getOperand(i));
+    EVT SclTy0 = N0.getOperand(0)->getValueType(0);
+    EVT SclTy1 = N1.getOperand(0)->getValueType(0);
+    if (SclTy0.isFloatingPoint()) {
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(N0.getOperand(i));
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(N1.getOperand(i));
+    } else {
+      // If BUILD_VECTOR are from built from integer, they may have different
+      // operand types. Get the smaller type and truncate all operands to it.
+      EVT MinTy = SclTy0.bitsLE(SclTy1) ? SclTy0 : SclTy1;
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(DAG.getNode(ISD::TRUNCATE, SDLoc(N), MinTy,
+                        N0.getOperand(i)));
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(DAG.getNode(ISD::TRUNCATE, SDLoc(N), MinTy,
+                        N1.getOperand(i)));
+    }
 
     return DAG.getNode(ISD::BUILD_VECTOR, SDLoc(N), VT, Opnds);
   }

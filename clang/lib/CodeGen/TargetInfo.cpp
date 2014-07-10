@@ -957,8 +957,16 @@ void X86_32ABIInfo::computeInfo(CGFunctionInfo &FI) const {
   else
     State.FreeRegs = DefaultNumRegisterParameters;
 
-  if (!getCXXABI().classifyReturnType(FI))
+  if (!getCXXABI().classifyReturnType(FI)) {
     FI.getReturnInfo() = classifyReturnType(FI.getReturnType(), State);
+  } else if (FI.getReturnInfo().isIndirect()) {
+    // The C++ ABI is not aware of register usage, so we have to check if the
+    // return value was sret and put it in a register ourselves if appropriate.
+    if (State.FreeRegs) {
+      --State.FreeRegs;  // The sret parameter consumes a register.
+      FI.getReturnInfo().setInReg(true);
+    }
+  }
 
   bool UsedInAlloca = false;
   for (auto &I : FI.arguments()) {
@@ -2083,7 +2091,7 @@ GetSSETypeAtOffset(llvm::Type *IRType, unsigned IROffset,
 /// the source type.  IROffset is an offset in bytes into the LLVM IR type that
 /// the 8-byte value references.  PrefType may be null.
 ///
-/// SourceTy is the source level type for the entire argument.  SourceOffset is
+/// SourceTy is the source-level type for the entire argument.  SourceOffset is
 /// an offset into this that we're processing (which is always either 0 or 8).
 ///
 llvm::Type *X86_64ABIInfo::

@@ -14,15 +14,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Utils/SpecialCaseList.h"
+#include "llvm/Support/SpecialCaseList.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
@@ -38,10 +34,12 @@ namespace llvm {
 /// reason for doing so is efficiency; StringSet is much faster at matching
 /// literal strings than Regex.
 struct SpecialCaseList::Entry {
-  StringSet<> Strings;
-  Regex *RegEx;
+  Entry() {}
+  Entry(Entry &&Other)
+      : Strings(std::move(Other.Strings)), RegEx(std::move(Other.RegEx)) {}
 
-  Entry() : RegEx(nullptr) {}
+  StringSet<> Strings;
+  std::unique_ptr<Regex> RegEx;
 
   bool match(StringRef Query) const {
     return Strings.count(Query) || (RegEx && RegEx->match(Query));
@@ -151,66 +149,16 @@ bool SpecialCaseList::parse(const MemoryBuffer *MB, std::string &Error) {
     for (StringMap<std::string>::const_iterator II = I->second.begin(),
                                                 IE = I->second.end();
          II != IE; ++II) {
-      Entries[I->getKey()][II->getKey()].RegEx = new Regex(II->getValue());
+      Entries[I->getKey()][II->getKey()].RegEx.reset(new Regex(II->getValue()));
     }
   }
   return true;
 }
 
-SpecialCaseList::~SpecialCaseList() {
-  for (StringMap<StringMap<Entry> >::iterator I = Entries.begin(),
-                                              E = Entries.end();
-       I != E; ++I) {
-    for (StringMap<Entry>::const_iterator II = I->second.begin(),
-                                          IE = I->second.end();
-         II != IE; ++II) {
-      delete II->second.RegEx;
-    }
-  }
-}
+SpecialCaseList::~SpecialCaseList() {}
 
-bool SpecialCaseList::isIn(const Function& F, const StringRef Category) const {
-  return isIn(*F.getParent(), Category) ||
-         inSectionCategory("fun", F.getName(), Category);
-}
-
-static StringRef GetGlobalTypeString(const GlobalValue &G) {
-  // Types of GlobalVariables are always pointer types.
-  Type *GType = G.getType()->getElementType();
-  // For now we support blacklisting struct types only.
-  if (StructType *SGType = dyn_cast<StructType>(GType)) {
-    if (!SGType->isLiteral())
-      return SGType->getName();
-  }
-  return "<unknown type>";
-}
-
-bool SpecialCaseList::isIn(const GlobalVariable &G,
-                           const StringRef Category) const {
-  return isIn(*G.getParent(), Category) ||
-         inSectionCategory("global", G.getName(), Category) ||
-         inSectionCategory("type", GetGlobalTypeString(G), Category);
-}
-
-bool SpecialCaseList::isIn(const GlobalAlias &GA,
-                           const StringRef Category) const {
-  if (isIn(*GA.getParent(), Category))
-    return true;
-
-  if (isa<FunctionType>(GA.getType()->getElementType()))
-    return inSectionCategory("fun", GA.getName(), Category);
-
-  return inSectionCategory("global", GA.getName(), Category) ||
-         inSectionCategory("type", GetGlobalTypeString(GA), Category);
-}
-
-bool SpecialCaseList::isIn(const Module &M, const StringRef Category) const {
-  return inSectionCategory("src", M.getModuleIdentifier(), Category);
-}
-
-bool SpecialCaseList::inSectionCategory(const StringRef Section,
-                                        const StringRef Query,
-                                        const StringRef Category) const {
+bool SpecialCaseList::inSection(const StringRef Section, const StringRef Query,
+                                const StringRef Category) const {
   StringMap<StringMap<Entry> >::const_iterator I = Entries.find(Section);
   if (I == Entries.end()) return false;
   StringMap<Entry>::const_iterator II = I->second.find(Category);
