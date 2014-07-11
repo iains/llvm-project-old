@@ -3153,65 +3153,10 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
                                 Node->getOperand(0), Node->getValueType(0), dl);
     Results.push_back(Tmp1);
     break;
-  case ISD::FP_TO_SINT: {
-    EVT VT = Node->getOperand(0).getValueType();
-    EVT NVT = Node->getValueType(0);
-
-    // FIXME: Only f32 to i64 conversions are supported.
-    if (VT != MVT::f32 || NVT != MVT::i64)
-      break;
-
-    // Expand f32 -> i64 conversion
-    // This algorithm comes from compiler-rt's implementation of fixsfdi:
-    // https://github.com/llvm-mirror/compiler-rt/blob/master/lib/builtins/fixsfdi.c
-    EVT IntVT = EVT::getIntegerVT(*DAG.getContext(),
-                                  VT.getSizeInBits());
-    SDValue ExponentMask = DAG.getConstant(0x7F800000, IntVT);
-    SDValue ExponentLoBit = DAG.getConstant(23, IntVT);
-    SDValue Bias = DAG.getConstant(127, IntVT);
-    SDValue SignMask = DAG.getConstant(APInt::getSignBit(VT.getSizeInBits()),
-                                       IntVT);
-    SDValue SignLowBit = DAG.getConstant(VT.getSizeInBits() - 1, IntVT);
-    SDValue MantissaMask = DAG.getConstant(0x007FFFFF, IntVT);
-
-    SDValue Bits = DAG.getNode(ISD::BITCAST, dl, IntVT, Node->getOperand(0));
-
-    SDValue ExponentBits = DAG.getNode(ISD::SRL, dl, IntVT,
-        DAG.getNode(ISD::AND, dl, IntVT, Bits, ExponentMask),
-        DAG.getZExtOrTrunc(ExponentLoBit, dl, TLI.getShiftAmountTy(IntVT)));
-    SDValue Exponent = DAG.getNode(ISD::SUB, dl, IntVT, ExponentBits, Bias);
-
-    SDValue Sign = DAG.getNode(ISD::SRA, dl, IntVT,
-        DAG.getNode(ISD::AND, dl, IntVT, Bits, SignMask),
-        DAG.getZExtOrTrunc(SignLowBit, dl, TLI.getShiftAmountTy(IntVT)));
-    Sign = DAG.getSExtOrTrunc(Sign, dl, NVT);
-
-    SDValue R = DAG.getNode(ISD::OR, dl, IntVT,
-        DAG.getNode(ISD::AND, dl, IntVT, Bits, MantissaMask),
-        DAG.getConstant(0x00800000, IntVT));
-
-    R = DAG.getZExtOrTrunc(R, dl, NVT);
-
-
-    R = DAG.getSelectCC(dl, Exponent, ExponentLoBit,
-       DAG.getNode(ISD::SHL, dl, NVT, R,
-                   DAG.getZExtOrTrunc(
-                      DAG.getNode(ISD::SUB, dl, IntVT, Exponent, ExponentLoBit),
-                      dl, TLI.getShiftAmountTy(IntVT))),
-       DAG.getNode(ISD::SRL, dl, NVT, R,
-                   DAG.getZExtOrTrunc(
-                      DAG.getNode(ISD::SUB, dl, IntVT, ExponentLoBit, Exponent),
-                      dl, TLI.getShiftAmountTy(IntVT))),
-       ISD::SETGT);
-
-    SDValue Ret = DAG.getNode(ISD::SUB, dl, NVT,
-        DAG.getNode(ISD::XOR, dl, NVT, R, Sign),
-        Sign);
-
-    Results.push_back(DAG.getSelectCC(dl, Exponent, DAG.getConstant(0, IntVT),
-        DAG.getConstant(0, NVT), Ret, ISD::SETLT));
+  case ISD::FP_TO_SINT:
+    if (TLI.expandFP_TO_SINT(Node, Tmp1, DAG))
+      Results.push_back(Tmp1);
     break;
-  }
   case ISD::FP_TO_UINT: {
     SDValue True, False;
     EVT VT =  Node->getOperand(0).getValueType();
@@ -3761,7 +3706,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     SDValue SumSignNE = DAG.getSetCC(dl, OType, LHSSign, SumSign, ISD::SETNE);
 
     SDValue Cmp = DAG.getNode(ISD::AND, dl, OType, SignsMatch, SumSignNE);
-    Results.push_back(DAG.getBoolExtOrTrunc(Cmp, dl, ResultType));
+    Results.push_back(DAG.getBoolExtOrTrunc(Cmp, dl, ResultType, ResultType));
     break;
   }
   case ISD::UADDO:
@@ -3779,7 +3724,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
       = Node->getOpcode() == ISD::UADDO ? ISD::SETULT : ISD::SETUGT;
     SDValue SetCC = DAG.getSetCC(dl, SetCCType, Sum, LHS, CC);
 
-    Results.push_back(DAG.getBoolExtOrTrunc(SetCC, dl, ResultType));
+    Results.push_back(DAG.getBoolExtOrTrunc(SetCC, dl, ResultType, ResultType));
     break;
   }
   case ISD::UMULO:
@@ -3969,7 +3914,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     // illegal; expand it into a SELECT_CC.
     EVT VT = Node->getValueType(0);
     int TrueValue;
-    switch (TLI.getBooleanContents(VT.isVector())) {
+    switch (TLI.getBooleanContents(Tmp1->getValueType(0))) {
     case TargetLowering::ZeroOrOneBooleanContent:
     case TargetLowering::UndefinedBooleanContent:
       TrueValue = 1;

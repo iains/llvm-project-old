@@ -91,6 +91,10 @@ def clang_ignored_f_Group : OptionGroup<"<clang ignored f group>">,
 def clang_ignored_m_Group : OptionGroup<"<clang ignored m group>">,
   Group<m_Group>;
 
+// Group that ignores all gcc optimizations that won't be implemented
+def clang_ignored_gcc_optimization_f_Group : OptionGroup<
+  "<clang_ignored_gcc_optimization_f_Group>">, Group<f_Group>;
+
 /////////
 // Options
 
@@ -958,6 +962,7 @@ def gno_record_gcc_switches : Flag<["-"], "gno-record-gcc-switches">,
 def gstrict_dwarf : Flag<["-"], "gstrict-dwarf">, Group<g_flags_Group>;
 def gno_strict_dwarf : Flag<["-"], "gno-strict-dwarf">, Group<g_flags_Group>;
 def gcolumn_info : Flag<["-"], "gcolumn-info">, Group<g_flags_Group>;
+def gno_column_info : Flag<["-"], "gno-column-info">, Group<g_flags_Group>;
 def gsplit_dwarf : Flag<["-"], "gsplit-dwarf">, Group<g_flags_Group>;
 def ggnu_pubnames : Flag<["-"], "ggnu-pubnames">, Group<g_flags_Group>;
 def gdwarf_aranges : Flag<["-"], "gdwarf-aranges">, Group<g_flags_Group>;
@@ -1248,6 +1253,12 @@ def mips64r2 : Flag<["-"], "mips64r2">,
 def mips64r6 : Flag<["-"], "mips64r6">,
   Alias<march_EQ>, AliasArgs<["mips64r6"]>,
   HelpText<"Equivalent to -march=mips64r6">, Flags<[HelpHidden]>;
+def modd_spreg : Flag<["-"], "modd-spreg">, Group<m_Group>,
+  HelpText<"Enable odd single-precision floating point registers">,
+  Flags<[HelpHidden]>;
+def mno_odd_spreg : Flag<["-"], "mno-odd-spreg">, Group<m_Group>,
+  HelpText<"Disable odd single-precision floating point registers">,
+  Flags<[HelpHidden]>;
 def module_file_info : Flag<["-"], "module-file-info">, Flags<[DriverOption,CC1Option]>, Group<Action_Group>;
 def mthumb : Flag<["-"], "mthumb">, Group<m_Group>;
 def mtune_EQ : Joined<["-"], "mtune=">, Group<m_Group>;
@@ -1584,7 +1595,8 @@ defm gcse : BooleanFFlag<"gcse">, Group<clang_ignored_f_Group>;
 defm gnu : BooleanFFlag<"gnu">, Group<clang_ignored_f_Group>;
 defm ident : BooleanFFlag<"ident">, Group<clang_ignored_f_Group>;
 defm implicit_templates : BooleanFFlag<"implicit-templates">, Group<clang_ignored_f_Group>;
-defm inline_limit : BooleanFFlag<"inline-limit">, Group<clang_ignored_f_Group>;
+def finline_limit_EQ : Joined<["-"], "finline-limit=">, Group<clang_ignored_gcc_optimization_f_Group>;
+defm finline_limit : BooleanFFlag<"inline-limit">, Group<clang_ignored_gcc_optimization_f_Group>;
 defm ivopts : BooleanFFlag<"ivopts">, Group<clang_ignored_f_Group>;
 defm non_call_exceptions : BooleanFFlag<"non-call-exceptions">, Group<clang_ignored_f_Group>;
 defm permissive : BooleanFFlag<"permissive">, Group<clang_ignored_f_Group>;

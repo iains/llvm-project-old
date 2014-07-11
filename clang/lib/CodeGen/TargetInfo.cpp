@@ -2903,6 +2903,7 @@ public:
   PPC64_SVR4_ABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
 
   bool isPromotableTypeForABI(QualType Ty) const;
+  bool isAlignedParamType(QualType Ty) const;
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
   ABIArgInfo classifyArgumentType(QualType Ty) const;
@@ -2923,7 +2924,8 @@ public:
       const Type *T = isSingleElementStruct(I.type, getContext());
       if (T) {
         const BuiltinType *BT = T->getAs<BuiltinType>();
-        if (T->isVectorType() || (BT && BT->isFloatingPoint())) {
+        if ((T->isVectorType() && getContext().getTypeSize(T) == 128) ||
+            (BT && BT->isFloatingPoint())) {
           QualType QT(T, 0);
           I.info = ABIArgInfo::getDirectInReg(CGT.ConvertType(QT));
           continue;
@@ -2992,16 +2994,68 @@ PPC64_SVR4_ABIInfo::isPromotableTypeForABI(QualType Ty) const {
   return false;
 }
 
+/// isAlignedParamType - Determine whether a type requires 16-byte
+/// alignment in the parameter area.
+bool
+PPC64_SVR4_ABIInfo::isAlignedParamType(QualType Ty) const {
+  // Complex types are passed just like their elements.
+  if (const ComplexType *CTy = Ty->getAs<ComplexType>())
+    Ty = CTy->getElementType();
+
+  // Only vector types of size 16 bytes need alignment (larger types are
+  // passed via reference, smaller types are not aligned).
+  if (Ty->isVectorType())
+    return getContext().getTypeSize(Ty) == 128;
+
+  // For single-element float/vector structs, we consider the whole type
+  // to have the same alignment requirements as its single element.
+  const Type *AlignAsType = nullptr;
+  const Type *EltType = isSingleElementStruct(Ty, getContext());
+  if (EltType) {
+    const BuiltinType *BT = EltType->getAs<BuiltinType>();
+    if ((EltType->isVectorType() &&
+         getContext().getTypeSize(EltType) == 128) ||
+        (BT && BT->isFloatingPoint()))
+      AlignAsType = EltType;
+  }
+
+  // With special case aggregates, only vector base types need alignment.
+  if (AlignAsType)
+    return AlignAsType->isVectorType();
+
+  // Otherwise, we only need alignment for any aggregate type that
+  // has an alignment requirement of >= 16 bytes.
+  if (isAggregateTypeForABI(Ty) && getContext().getTypeAlign(Ty) >= 128)
+    return true;
+
+  return false;
+}
+
 ABIArgInfo
 PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
   if (Ty->isAnyComplexType())
     return ABIArgInfo::getDirect();
 
+  // Non-Altivec vector types are passed in GPRs (smaller than 16 bytes)
+  // or via reference (larger than 16 bytes).
+  if (Ty->isVectorType()) {
+    uint64_t Size = getContext().getTypeSize(Ty);
+    if (Size > 128)
+      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+    else if (Size < 128) {
+      llvm::Type *CoerceTy = llvm::IntegerType::get(getVMContext(), Size);
+      return ABIArgInfo::getDirect(CoerceTy);
+    }
+  }
+
   if (isAggregateTypeForABI(Ty)) {
     if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
       return ABIArgInfo::getIndirect(0, RAA == CGCXXABI::RAA_DirectInMemory);
 
-    return ABIArgInfo::getIndirect(0);
+    uint64_t ABIAlign = isAlignedParamType(Ty)? 16 : 8;
+    uint64_t TyAlign = getContext().getTypeAlign(Ty) / 8;
+    return ABIArgInfo::getIndirect(ABIAlign, /*ByVal=*/true,
+                                   /*Realign=*/TyAlign > ABIAlign);
   }
 
   return (isPromotableTypeForABI(Ty) ?
@@ -3015,6 +3069,18 @@ PPC64_SVR4_ABIInfo::classifyReturnType(QualType RetTy) const {
 
   if (RetTy->isAnyComplexType())
     return ABIArgInfo::getDirect();
+
+  // Non-Altivec vector types are returned in GPRs (smaller than 16 bytes)
+  // or via reference (larger than 16 bytes).
+  if (RetTy->isVectorType()) {
+    uint64_t Size = getContext().getTypeSize(RetTy);
+    if (Size > 128)
+      return ABIArgInfo::getIndirect(0);
+    else if (Size < 128) {
+      llvm::Type *CoerceTy = llvm::IntegerType::get(getVMContext(), Size);
+      return ABIArgInfo::getDirect(CoerceTy);
+    }
+  }
 
   if (isAggregateTypeForABI(RetTy))
     return ABIArgInfo::getIndirect(0);
@@ -3033,6 +3099,14 @@ llvm::Value *PPC64_SVR4_ABIInfo::EmitVAArg(llvm::Value *VAListAddr,
   CGBuilderTy &Builder = CGF.Builder;
   llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
   llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
+
+  // Handle types that require 16-byte alignment in the parameter save area.
+  if (isAlignedParamType(Ty)) {
+    llvm::Value *AddrAsInt = Builder.CreatePtrToInt(Addr, CGF.Int64Ty);
+    AddrAsInt = Builder.CreateAdd(AddrAsInt, Builder.getInt64(15));
+    AddrAsInt = Builder.CreateAnd(AddrAsInt, Builder.getInt64(-16));
+    Addr = Builder.CreateIntToPtr(AddrAsInt, BP, "ap.align");
+  }
 
   // Update the va_list pointer.  The pointer should be bumped by the
   // size of the object.  We can trust getTypeSize() except for a complex

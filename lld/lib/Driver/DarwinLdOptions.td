@@ -64,15 +64,30 @@ def bundle_loader : Separate<["-"], "bundle_loader">,
 
 // library options
 def grp_libs : OptionGroup<"libs">, HelpText<"LIBRARY OPTIONS">;
-def L : Joined<["-"], "L">,
+def L : JoinedOrSeparate<["-"], "L">,
         HelpText<"Add directory to library search path">, Group<grp_libs>;
+def Z : Flag<["-"], "Z">,
+     HelpText<"Do not search standard directories for libraries or frameworks">;
 def all_load : Flag<["-"], "all_load">,
         HelpText<"Forces all members of all static libraries to be loaded">,
         Group<grp_libs>;
+def syslibroot : Separate<["-"], "syslibroot">,
+        HelpText<"Add path to SDK to all absolute library search paths">,
+        Group<grp_libs>;
+
+// Input options
+def l : Joined<["-"], "l">,
+        HelpText<"Base name of library searched for in -L directories">;
 
 // test case options
-def print_atoms : Flag<["-"], "print_atoms">, 
+def print_atoms : Flag<["-"], "print_atoms">,
         HelpText<"Emit output as yaml atoms">;
+def test_libresolution : Flag<["-"], "test_libresolution">,
+        HelpText<"Only files specified by -file_exists are considered to exist."
+                 " Print debugging information during resolution">;
+def path_exists : Separate<["-"], "path_exists">,
+        HelpText<"When used with -test_libresolution, only these paths exist">;
+
 
 // general options
 def output : Separate<["-"], "o">, HelpText<"Output file path">;

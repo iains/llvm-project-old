@@ -93,6 +93,19 @@ enum TypeEvaluationKind {
   TEK_Aggregate
 };
 
+class SuppressDebugLocation {
+  llvm::DebugLoc CurLoc;
+  llvm::IRBuilderBase &Builder;
+public:
+  SuppressDebugLocation(llvm::IRBuilderBase &Builder)
+      : CurLoc(Builder.getCurrentDebugLocation()), Builder(Builder) {
+    Builder.SetCurrentDebugLocation(llvm::DebugLoc());
+  }
+  ~SuppressDebugLocation() {
+    Builder.SetCurrentDebugLocation(CurLoc);
+  }
+};
+
 /// CodeGenFunction - This class organizes the per-function state that is used
 /// while generating LLVM code.
 class CodeGenFunction : public CodeGenTypeCache {
@@ -1905,6 +1918,7 @@ public:
   void EmitOMPSingleDirective(const OMPSingleDirective &S);
   void EmitOMPParallelForDirective(const OMPParallelForDirective &S);
   void EmitOMPParallelSectionsDirective(const OMPParallelSectionsDirective &S);
+  void EmitOMPTaskDirective(const OMPTaskDirective &S);
 
   //===--------------------------------------------------------------------===//
   //                         LValue Expression Emission

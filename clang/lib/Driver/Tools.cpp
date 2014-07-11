@@ -916,6 +916,14 @@ static void getMipsCPUAndABI(const ArgList &Args,
   const char *DefMips32CPU = "mips32r2";
   const char *DefMips64CPU = "mips64r2";
 
+  // MIPS32r6 is the default for mips(el)?-img-linux-gnu and MIPS64r6 is the
+  // default for mips64(el)?-img-linux-gnu.
+  if (Triple.getVendor() == llvm::Triple::ImaginationTechnologies &&
+      Triple.getEnvironment() == llvm::Triple::GNU) {
+    DefMips32CPU = "mips32r6";
+    DefMips64CPU = "mips64r6";
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_march_EQ,
                                options::OPT_mcpu_EQ))
     CPUName = A->getValue();
@@ -1050,6 +1058,8 @@ static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
                    "msa");
   AddTargetFeature(Args, Features, options::OPT_mfp64, options::OPT_mfp32,
                    "fp64");
+  AddTargetFeature(Args, Features, options::OPT_mno_odd_spreg,
+                   options::OPT_modd_spreg, "nooddspreg");
 }
 
 void Clang::AddMIPSTargetArgs(const ArgList &Args,
@@ -2937,7 +2947,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // We ignore flags -gstrict-dwarf and -grecord-gcc-switches for now.
   Args.ClaimAllArgs(options::OPT_g_flags_Group);
-  if (Args.hasArg(options::OPT_gcolumn_info))
+  if (Args.hasFlag(options::OPT_gcolumn_info, options::OPT_gno_column_info,
+                   /*Default*/ true))
     CmdArgs.push_back("-dwarf-column-info");
 
   // FIXME: Move backend command line options to the module.
@@ -3125,6 +3136,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     } else {
       A->render(Args, CmdArgs);
     }
+  }
+
+  // Warn about ignored options to clang.
+  for (arg_iterator it = Args.filtered_begin(
+       options::OPT_clang_ignored_gcc_optimization_f_Group),
+       ie = Args.filtered_end(); it != ie; ++it) {
+    D.Diag(diag::warn_ignored_gcc_optimization) << (*it)->getAsString(Args);
   }
 
   // Don't warn about unused -flto.  This can happen when we're preprocessing or
@@ -5184,7 +5202,7 @@ bool mips::hasMipsAbiArg(const ArgList &Args, const char *Value) {
   return A && (A->getValue() == StringRef(Value));
 }
 
-bool mips::isNaN2008(const ArgList &Args) {
+bool mips::isNaN2008(const ArgList &Args, const llvm::Triple &Triple) {
   if (Arg *NaNArg = Args.getLastArg(options::OPT_mnan_EQ))
     return llvm::StringSwitch<bool>(NaNArg->getValue())
                .Case("2008", true)
@@ -5192,10 +5210,9 @@ bool mips::isNaN2008(const ArgList &Args) {
                .Default(false);
 
   // NaN2008 is the default for MIPS32r6/MIPS64r6.
-  if (Arg *CPUArg = Args.getLastArg(options::OPT_mcpu_EQ))
-    return llvm::StringSwitch<bool>(CPUArg->getValue())
-               .Cases("mips32r6", "mips64r6", true)
-               .Default(false);
+  return llvm::StringSwitch<bool>(getCPUName(Args, Triple))
+             .Cases("mips32r6", "mips64r6", true)
+             .Default(false);
 
   return false;
 }
@@ -6839,7 +6856,10 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   if (getToolChain().getArch() == llvm::Triple::x86) {
     CmdArgs.push_back("--32");
   } else if (getToolChain().getArch() == llvm::Triple::x86_64) {
-    CmdArgs.push_back("--64");
+    if (getToolChain().getTriple().getEnvironment() == llvm::Triple::GNUX32)
+      CmdArgs.push_back("--x32");
+    else
+      CmdArgs.push_back("--64");
   } else if (getToolChain().getArch() == llvm::Triple::ppc) {
     CmdArgs.push_back("-a32");
     CmdArgs.push_back("-mppc");
@@ -7020,16 +7040,16 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
       return "/lib/ld-linux.so.3";              /* TODO: check which dynamic linker name.  */
   } else if (ToolChain.getArch() == llvm::Triple::mips ||
              ToolChain.getArch() == llvm::Triple::mipsel) {
-    if (mips::isNaN2008(Args))
+    if (mips::isNaN2008(Args, ToolChain.getTriple()))
       return "/lib/ld-linux-mipsn8.so.1";
     return "/lib/ld.so.1";
   } else if (ToolChain.getArch() == llvm::Triple::mips64 ||
              ToolChain.getArch() == llvm::Triple::mips64el) {
     if (mips::hasMipsAbiArg(Args, "n32"))
-      return mips::isNaN2008(Args) ? "/lib32/ld-linux-mipsn8.so.1"
-                                   : "/lib32/ld.so.1";
-    return mips::isNaN2008(Args) ? "/lib64/ld-linux-mipsn8.so.1"
-                                 : "/lib64/ld.so.1";
+      return mips::isNaN2008(Args, ToolChain.getTriple())
+                 ? "/lib32/ld-linux-mipsn8.so.1" : "/lib32/ld.so.1";
+    return mips::isNaN2008(Args, ToolChain.getTriple())
+               ? "/lib64/ld-linux-mipsn8.so.1" : "/lib64/ld.so.1";
   } else if (ToolChain.getArch() == llvm::Triple::ppc)
     return "/lib/ld.so.1";
   else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
@@ -7039,6 +7059,9 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
     return "/lib64/ld64.so.2";
   else if (ToolChain.getArch() == llvm::Triple::sparcv9)
     return "/lib64/ld-linux.so.2";
+  else if (ToolChain.getArch() == llvm::Triple::x86_64 &&
+           ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUX32)
+    return "/libx32/ld-linux-x32.so.2";
   else
     return "/lib64/ld-linux-x86-64.so.2";
 }
@@ -7149,6 +7172,9 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
   else if (ToolChain.getArch() == llvm::Triple::systemz)
     CmdArgs.push_back("elf64_s390");
+  else if (ToolChain.getArch() == llvm::Triple::x86_64 &&
+           ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUX32)
+    CmdArgs.push_back("elf32_x86_64");
   else
     CmdArgs.push_back("elf_x86_64");
 

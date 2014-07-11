@@ -1120,6 +1120,12 @@ Value *InstCombiner::Descale(Value *Val, APInt Scale, bool &NoSignedWrap) {
     return nullptr;
   }
 
+  // If Op is zero then Val = Op * Scale.
+  if (match(Op, m_Zero())) {
+    NoSignedWrap = true;
+    return Op;
+  }
+
   // We know that we can successfully descale, so from here on we can safely
   // modify the IR.  Op holds the descaled version of the deepest term in the
   // expression.  NoSignedWrap is 'true' if multiplying Op by Scale is known
@@ -1199,7 +1205,7 @@ Value *InstCombiner::SimplifyVectorOp(BinaryOperator &Inst) {
   // It may not be safe to reorder shuffles and things like div, urem, etc.
   // because we may trap when executing those ops on unknown vector elements.
   // See PR20059.
-  if (!isSafeToSpeculativelyExecute(&Inst)) return nullptr;
+  if (!isSafeToSpeculativelyExecute(&Inst, DL)) return nullptr;
 
   unsigned VWidth = cast<VectorType>(Inst.getType())->getNumElements();
   Value *LHS = Inst.getOperand(0), *RHS = Inst.getOperand(1);

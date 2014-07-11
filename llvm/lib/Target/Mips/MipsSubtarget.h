@@ -62,8 +62,15 @@ protected:
   // floating point registers instead of only using even ones.
   bool IsSingleFloat;
 
+  // IsFPXX - MIPS O32 modeless ABI.
+  bool IsFPXX;
+
   // IsFP64bit - The target processor has 64-bit floating point registers.
   bool IsFP64bit;
+
+  /// Are odd single-precision registers permitted?
+  /// This corresponds to -modd-spreg and -mno-odd-spreg
+  bool UseOddSPReg;
 
   // IsNan2008 - IEEE 754-2008 NaN encoding.
   bool IsNaN2008bit;
@@ -202,7 +209,9 @@ public:
   bool hasCnMips() const { return HasCnMips; }
 
   bool isLittle() const { return IsLittle; }
+  bool isFPXX() const { return IsFPXX; }
   bool isFP64bit() const { return IsFP64bit; }
+  bool useOddSPReg() const { return UseOddSPReg; }
   bool isNaN2008() const { return IsNaN2008bit; }
   bool isNotFP64bit() const { return !IsFP64bit; }
   bool isGP64bit() const { return IsGP64bit; }

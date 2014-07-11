@@ -997,7 +997,11 @@ def warn_template_qualified_friend_ignored : Warning<
   "dependent nested name specifier '%0' for friend template declaration is "
   "not supported; ignoring this friend declaration">,
   InGroup<UnsupportedFriend>;
-  
+def ext_friend_tag_redecl_outside_namespace : ExtWarn<
+  "unqualified friend declaration referring to type outside of the nearest "
+  "enclosing namespace is a Microsoft extension; add a nested name specifier">,
+  InGroup<Microsoft>;
+
 def err_invalid_member_in_interface : Error<
   "%select{data member |non-public member function |static member function |"
           "user-declared constructor|user-declared destructor|operator |"
@@ -7013,8 +7017,12 @@ def err_omp_expected_var_name : Error<
   "expected variable name">;
 def err_omp_required_method : Error<
   "%0 variable must have an accessible, unambiguous %select{default constructor|copy constructor|copy assignment operator|'%2'|destructor}1">;
+def err_omp_task_predetermined_firstprivate_required_method : Error<
+  "predetermined as a firstprivate in a task construct variable must have an accessible, unambiguous %select{copy constructor|destructor}0">;
 def err_omp_clause_ref_type_arg : Error<
   "arguments of OpenMP clause '%0' cannot be of reference type %1">;
+def err_omp_task_predetermined_firstprivate_ref_type_arg : Error<
+  "predetermined as a firstprivate in a task construct variable cannot be of reference type %0">;
 def err_omp_threadprivate_incomplete_type : Error<
   "threadprivate variable with incomplete type %0">;
 def err_omp_no_dsa_for_variable : Error<
@@ -7031,6 +7039,7 @@ def note_omp_predetermined_dsa : Note<
   "loop iteration variable is predetermined as lastprivate|"
   "constant variable is predetermined as shared|"
   "global variable is predetermined as shared|"
+  "non-shared variable in a task construct is predetermined as firstprivate|"
   "variable with automatic storage duration is predetermined as private}0"
   "%select{|; perhaps you forget to enclose 'omp %2' directive into a parallel or another task region?}1">;
 def note_omp_implicit_dsa : Note<
@@ -7133,6 +7142,8 @@ def err_omp_sections_substmt_not_section : Error<
   "statement in 'omp sections' directive must be enclosed into a section region">;
 def err_omp_parallel_sections_substmt_not_section : Error<
   "statement in 'omp parallel sections' directive must be enclosed into a section region">;
+def err_omp_parallel_reduction_in_task_firstprivate : Error<
+  "argument of a reduction clause of a %0 construct must not appear in a firstprivate clause on a task construct">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {
