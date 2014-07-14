@@ -602,8 +602,8 @@ void ReportStackOverflow(uptr pc, uptr sp, uptr bp, void *context, uptr addr) {
   Printf("%s", d.Warning());
   Report(
       "ERROR: AddressSanitizer: stack-overflow on address %p"
-      " (pc %p sp %p bp %p T%d)\n",
-      (void *)addr, (void *)pc, (void *)sp, (void *)bp,
+      " (pc %p bp %p sp %p T%d)\n",
+      (void *)addr, (void *)pc, (void *)bp, (void *)sp,
       GetCurrentTidOrInvalid());
   Printf("%s", d.EndWarning());
   GET_STACK_TRACE_SIGNAL(pc, bp, context);
@@ -611,14 +611,15 @@ void ReportStackOverflow(uptr pc, uptr sp, uptr bp, void *context, uptr addr) {
   ReportErrorSummary("stack-overflow", &stack);
 }
 
-void ReportSIGSEGV(uptr pc, uptr sp, uptr bp, void *context, uptr addr) {
+void ReportSIGSEGV(const char *description, uptr pc, uptr sp, uptr bp,
+                   void *context, uptr addr) {
   ScopedInErrorReport in_report;
   Decorator d;
   Printf("%s", d.Warning());
   Report(
-      "ERROR: AddressSanitizer: SEGV on unknown address %p"
-      " (pc %p sp %p bp %p T%d)\n",
-      (void *)addr, (void *)pc, (void *)sp, (void *)bp,
+      "ERROR: AddressSanitizer: %s on unknown address %p"
+      " (pc %p bp %p sp %p T%d)\n",
+      description, (void *)addr, (void *)pc, (void *)bp, (void *)sp,
       GetCurrentTidOrInvalid());
   Printf("%s", d.EndWarning());
   GET_STACK_TRACE_SIGNAL(pc, bp, context);
@@ -767,8 +768,10 @@ void ReportODRViolation(const __asan_global *g1, u32 stack_id1,
   InternalScopedString g1_loc(256), g2_loc(256);
   PrintGlobalLocation(&g1_loc, *g1);
   PrintGlobalLocation(&g2_loc, *g2);
-  Printf("  [1] size=%zd %s %s\n", g1->size, g1->name, g1_loc.data());
-  Printf("  [2] size=%zd %s %s\n", g2->size, g2->name, g2_loc.data());
+  Printf("  [1] size=%zd '%s' %s\n", g1->size,
+         MaybeDemangleGlobalName(g1->name), g1_loc.data());
+  Printf("  [2] size=%zd '%s' %s\n", g2->size,
+         MaybeDemangleGlobalName(g2->name), g2_loc.data());
   if (stack_id1 && stack_id2) {
     Printf("These globals were registered at these points:\n");
     Printf("  [1]:\n");
@@ -781,7 +784,10 @@ void ReportODRViolation(const __asan_global *g1, u32 stack_id1,
   }
   Report("HINT: if you don't care about these warnings you may set "
          "ASAN_OPTIONS=detect_odr_violation=0\n");
-  ReportErrorSummary("odr-violation", g1_loc.data(), 0, g1->name);
+  InternalScopedString error_msg(256);
+  error_msg.append("odr-violation: global '%s' at %s",
+                   MaybeDemangleGlobalName(g1->name), g1_loc.data());
+  ReportErrorSummary(error_msg.data());
 }
 
 // ----------------------- CheckForInvalidPointerPair ----------- {{{1
@@ -905,7 +911,7 @@ void __asan_report_error(uptr pc, uptr bp, uptr sp, uptr addr, int is_write,
   Decorator d;
   Printf("%s", d.Warning());
   Report("ERROR: AddressSanitizer: %s on address "
-             "%p at pc 0x%zx bp 0x%zx sp 0x%zx\n",
+             "%p at pc %p bp %p sp %p\n",
              bug_descr, (void*)addr, pc, bp, sp);
   Printf("%s", d.EndWarning());
 

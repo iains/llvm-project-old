@@ -5,11 +5,13 @@ add_clang_library(clangTidyMiscModule
   BoolPointerImplicitConversion.cpp
   MiscTidyModule.cpp
   RedundantSmartptrGet.cpp
+  SwappedArgumentsCheck.cpp
   UseOverride.cpp
 
   LINK_LIBS
   clangAST
   clangASTMatchers
   clangBasic
+  clangLex
   clangTidy
   )

@@ -19,13 +19,7 @@ set(LIBCXXABI_SOURCES
   typeinfo.cpp
 )
 
-set(LIBCXXABI_HEADERS
-  ../include/cxxabi.h
-  ../include/libunwind.h
-  ../include/unwind.h
-)
-
-append_if(LIBCXXABI_HEADERS APPLE ../include/mach-o/compact_unwind_encoding.h)
+set(LIBCXXABI_HEADERS ../include/cxxabi.h)
 
 # Add all the headers to the project for IDEs.
 if (MSVC_IDE OR XCODE)
@@ -53,6 +47,13 @@ include_directories("${LIBCXXABI_LIBCXX_INCLUDES}")
 # Generate library list.
 set(libraries ${LIBCXXABI_CXX_ABI_LIBRARIES})
 append_if(libraries LIBCXXABI_HAS_C_LIB c)
+append_if(libraries LIBCXXABI_HAS_PTHREAD_LIB pthread)
+
+if (LIBCXXABI_USE_LLVM_UNWINDER)
+  list(APPEND libraries unwind)
+else()
+  append_if(libraries LIBCXXABI_HAS_GCC_EH_LIB gcc_eh)
+endif()
 
 target_link_libraries(cxxabi ${libraries})
 
@@ -88,6 +89,6 @@ set_target_properties(cxxabi
   )
 
 install(TARGETS cxxabi
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+  ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
   )

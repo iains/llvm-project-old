@@ -1242,18 +1242,39 @@ ObjectFileELF::GetSectionHeaderInfo(SectionHeaderColl &section_headers,
                                     uint32_t &gnu_debuglink_crc,
                                     ArchSpec &arch_spec)
 {
+    // Don't reparse the section headers if we already did that.
+    if (!section_headers.empty())
+        return section_headers.size();
+
     // Only initialize the arch_spec to okay defaults if they're not already set.
     // We'll refine this with note data as we parse the notes.
     if (arch_spec.GetTriple ().getOS () == llvm::Triple::OSType::UnknownOS)
     {
         arch_spec.SetArchitecture (eArchTypeELF, header.e_machine, LLDB_INVALID_CPUTYPE);
-        arch_spec.GetTriple().setOSName (Host::GetOSString().GetCString());
-        arch_spec.GetTriple().setVendorName(Host::GetVendorString().GetCString());
+        switch (arch_spec.GetAddressByteSize())
+        {
+        case 4:
+            {
+                const ArchSpec host_arch32 = Host::GetArchitecture (Host::eSystemDefaultArchitecture32);
+                if (host_arch32.GetCore() == arch_spec.GetCore())
+                {
+                    arch_spec.GetTriple().setOSName (Host::GetOSString().GetCString());
+                    arch_spec.GetTriple().setVendorName(Host::GetVendorString().GetCString());
+                }
+            }
+            break;
+        case 8:
+            {
+                const ArchSpec host_arch64 = Host::GetArchitecture (Host::eSystemDefaultArchitecture64);
+                if (host_arch64.GetCore() == arch_spec.GetCore())
+                {
+                    arch_spec.GetTriple().setOSName (Host::GetOSString().GetCString());
+                    arch_spec.GetTriple().setVendorName(Host::GetVendorString().GetCString());
+                }
+            }
+            break;
+        }
     }
-
-    // We have already parsed the section headers
-    if (!section_headers.empty())
-        return section_headers.size();
 
     // If there are no section headers we are done.
     if (header.e_shnum == 0)
@@ -2569,8 +2590,11 @@ ObjectFileELF::GetArchitecture (ArchSpec &arch)
     if (!ParseHeader())
         return false;
 
-    // Allow elf notes to be parsed which may affect the detected architecture.
-    ParseSectionHeaders();
+    if (m_section_headers.empty())
+    {
+        // Allow elf notes to be parsed which may affect the detected architecture.
+        ParseSectionHeaders();
+    }
 
     arch = m_arch_spec;
     return true;

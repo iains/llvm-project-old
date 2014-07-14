@@ -1,19 +1,19 @@
 // RUN: $(dirname %s)/check_clang_tidy_fix.sh %s misc-redundant-smartptr-get %t
 // REQUIRES: shell
 
-// CHECK-MESSAGES-NOT: warning
+#define NULL __null
 
 namespace std {
 
 template <typename T>
-class unique_ptr {
+struct unique_ptr {
   T& operator*() const;
   T* operator->() const;
   T* get() const;
 };
 
 template <typename T>
-class shared_ptr {
+struct shared_ptr {
   T& operator*() const;
   T* operator->() const;
   T* get() const;
@@ -102,8 +102,6 @@ void Positive() {
   // CHECK-MESSAGES: nullptr != ss->get();
   // CHECK-FIXES: bb = nullptr != *ss;
 }
-
-// CHECK-MESSAGES-NOT: warning:
 
 void Negative() {
   struct NegPtr {
