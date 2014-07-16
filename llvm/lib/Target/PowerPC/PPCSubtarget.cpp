@@ -149,11 +149,19 @@ bool PPCSubtarget::hasLazyResolverStub(const GlobalValue *GV) const {
   // We never have stubs if HasLazyResolverStubs=false or if in static mode.
   if (!HasLazyResolverStubs || TM.getRelocationModel() == Reloc::Static)
     return false;
+  // If symbol visibility is hidden, the extra load is not needed if the symbol
+  // is definitely defined in the current translation unit.
+  // NOTE: Non-hidden symbols can, in principle, be interposed even if they
+  // don't have weak linkage, so would need to be indirected.
+  // If the definition is marked "externally_available" (indicated by
+  // isDeclarationForLinker), this means that it will be stripped from the
+  // module and we cannot use it directly.
   bool isDecl = GV->isDeclaration();
-  if (GV->hasHiddenVisibility() && !isDecl && !GV->hasCommonLinkage())
+  if (GV->hasHiddenVisibility() && !isDecl && !GV->hasCommonLinkage()
+      && !GV->isDeclarationForLinker())
     return false;
-  return GV->hasWeakLinkage() || GV->hasLinkOnceLinkage() ||
-         GV->hasCommonLinkage() || isDecl;
+  return GV->hasWeakLinkage() || GV->hasLinkOnceLinkage() || isDecl ||
+         GV->hasCommonLinkage() || GV->isDeclarationForLinker();
 }
 
 // Embedded cores need aggressive scheduling (and some others also benefit).
