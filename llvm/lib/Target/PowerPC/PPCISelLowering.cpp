@@ -3563,7 +3563,7 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
     SDValue ArgVal;
     bool needsLoad = false;
     EVT ObjectVT = Ins[ArgNo].VT;
-    unsigned ObjSize = ObjectVT.getSizeInBits()/8;
+    unsigned ObjSize = (ObjectVT.getSizeInBits() + 7)/8;
     unsigned ArgSize = ObjSize;
     ISD::ArgFlagsTy Flags = Ins[ArgNo].Flags;
     if (Ins[ArgNo].isOrigArg()) {
@@ -5594,6 +5594,9 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
 
         RegsToPass.push_back(std::make_pair(GPR[GPR_idx++], Arg));
       } else {
+        if (Arg.getValueType() == MVT::i1 && ! isPPC64)
+          Arg = DAG.getNode(ISD::ZERO_EXTEND, dl, PtrVT, Arg);
+
         LowerMemOpCallTo(DAG, MF, Chain, Arg, PtrOff, SPDiff, ArgOffset,
                          isPPC64, isTailCall, false, MemOpChains,
                          TailCallArguments, dl);
