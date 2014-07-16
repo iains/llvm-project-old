@@ -50,6 +50,8 @@ private:
   short TexVTXClauseSize;
   Generation Gen;
   bool FP64;
+  bool FP64Denormals;
+  bool FP32Denormals;
   bool CaymanISA;
   bool EnableIRStructurizer;
   bool EnablePromoteAlloca;
@@ -97,6 +99,14 @@ public:
     return CaymanISA;
   }
 
+  bool hasFP32Denormals() const {
+    return FP32Denormals;
+  }
+
+  bool hasFP64Denormals() const {
+    return FP64Denormals;
+  }
+
   bool hasBFE() const {
     return (getGeneration() >= EVERGREEN);
   }
@@ -124,6 +134,14 @@ public:
   bool hasMulI24() const {
     return (getGeneration() >= SOUTHERN_ISLANDS ||
             hasCaymanISA());
+  }
+
+  bool hasFFBL() const {
+    return (getGeneration() >= EVERGREEN);
+  }
+
+  bool hasFFBH() const {
+    return (getGeneration() >= EVERGREEN);
   }
 
   bool IsIRStructurizerEnabled() const {

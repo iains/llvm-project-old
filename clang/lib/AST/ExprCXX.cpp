@@ -55,8 +55,8 @@ QualType CXXUuidofExpr::getTypeOperand(ASTContext &Context) const {
 }
 
 // static
-UuidAttr *CXXUuidofExpr::GetUuidAttrOfType(QualType QT,
-                                           bool *RDHasMultipleGUIDsPtr) {
+const UuidAttr *CXXUuidofExpr::GetUuidAttrOfType(QualType QT,
+                                                 bool *RDHasMultipleGUIDsPtr) {
   // Optionally remove one level of pointer, reference or array indirection.
   const Type *Ty = QT.getTypePtr();
   if (QT->isPointerType() || QT->isReferenceType())
@@ -64,22 +64,23 @@ UuidAttr *CXXUuidofExpr::GetUuidAttrOfType(QualType QT,
   else if (QT->isArrayType())
     Ty = Ty->getBaseElementTypeUnsafe();
 
-  // Loop all record redeclaration looking for an uuid attribute.
-  CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
+  const CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
   if (!RD)
     return nullptr;
 
+  if (const UuidAttr *Uuid = RD->getMostRecentDecl()->getAttr<UuidAttr>())
+    return Uuid;
+
   // __uuidof can grab UUIDs from template arguments.
-  if (ClassTemplateSpecializationDecl *CTSD =
+  if (const ClassTemplateSpecializationDecl *CTSD =
           dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
     const TemplateArgumentList &TAL = CTSD->getTemplateArgs();
-    UuidAttr *UuidForRD = nullptr;
+    const UuidAttr *UuidForRD = nullptr;
 
-    for (unsigned I = 0, N = TAL.size(); I != N; ++I) {
-      const TemplateArgument &TA = TAL[I];
+    for (const TemplateArgument &TA : TAL.asArray()) {
       bool SeenMultipleGUIDs = false;
 
-      UuidAttr *UuidForTA = nullptr;
+      const UuidAttr *UuidForTA = nullptr;
       if (TA.getKind() == TemplateArgument::Type)
         UuidForTA = GetUuidAttrOfType(TA.getAsType(), &SeenMultipleGUIDs);
       else if (TA.getKind() == TemplateArgument::Declaration)
@@ -107,10 +108,6 @@ UuidAttr *CXXUuidofExpr::GetUuidAttrOfType(QualType QT,
 
     return UuidForRD;
   }
-
-  for (auto I : RD->redecls())
-    if (auto Uuid = I->getAttr<UuidAttr>())
-      return Uuid;
 
   return nullptr;
 }

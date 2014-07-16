@@ -18,6 +18,7 @@
 #include "ARMJITInfo.h"
 #include "ARMSelectionDAGInfo.h"
 #include "ARMSubtarget.h"
+#include "ARMMachineFunctionInfo.h"
 #include "Thumb1FrameLowering.h"
 #include "Thumb1InstrInfo.h"
 #include "Thumb2InstrInfo.h"
@@ -27,6 +28,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 
 using namespace llvm;
 
@@ -188,7 +191,6 @@ void ARMSubtarget::initializeEnvironment() {
   InThumbMode = false;
   HasThumb2 = false;
   NoARM = false;
-  PostRAScheduler = false;
   IsR9Reserved = ReserveR9;
   UseMovt = false;
   SupportsTailCall = false;
@@ -305,9 +307,6 @@ void ARMSubtarget::resetSubtargetFeatures(StringRef CPU, StringRef FS) {
     SupportsTailCall = !isThumb1Only();
   }
 
-  if (!isThumb() || hasThumb2())
-    PostRAScheduler = true;
-
   switch (Align) {
     case DefaultAlign:
       // Assume pre-ARMv6 doesn't support unaligned accesses.
@@ -422,23 +421,13 @@ bool ARMSubtarget::hasSinCos() const {
     !getTargetTriple().isOSVersionLT(7, 0);
 }
 
-// Enable the PostMachineScheduler if the target selects it instead of
-// PostRAScheduler. Currently only available on the command line via
-// -misched-postra.
+// This overrides the PostRAScheduler bit in the SchedModel for any CPU.
 bool ARMSubtarget::enablePostMachineScheduler() const {
-  return PostRAScheduler;
+  return (!isThumb() || hasThumb2());
 }
 
 bool ARMSubtarget::enableAtomicExpandLoadLinked() const {
   return hasAnyDataBarrier() && !isThumb1Only();
-}
-
-bool ARMSubtarget::enablePostRAScheduler(
-           CodeGenOpt::Level OptLevel,
-           TargetSubtargetInfo::AntiDepBreakMode& Mode,
-           RegClassVector& CriticalPathRCs) const {
-  Mode = TargetSubtargetInfo::ANTIDEP_NONE;
-  return PostRAScheduler && OptLevel >= CodeGenOpt::Default;
 }
 
 bool ARMSubtarget::useMovt(const MachineFunction &MF) const {
@@ -448,4 +437,52 @@ bool ARMSubtarget::useMovt(const MachineFunction &MF) const {
   return UseMovt && (isTargetWindows() ||
                      !MF.getFunction()->getAttributes().hasAttribute(
                          AttributeSet::FunctionIndex, Attribute::MinSize));
+}
+
+bool ARMSubtarget::shouldCoalesce(MachineInstr *MI,
+                                  const TargetRegisterClass *SrcRC,
+                                  unsigned SubReg,
+                                  const TargetRegisterClass *DstRC,
+                                  unsigned DstSubReg,
+                                  const TargetRegisterClass *NewRC) const {
+  auto MBB = MI->getParent();
+  auto MF = MBB->getParent();
+  const MachineRegisterInfo &MRI = MF->getRegInfo();
+  // If not copying into a sub-register this should be ok because we shouldn't
+  // need to split the reg.
+  if (!DstSubReg)
+    return true;
+  // Small registers don't frequently cause a problem, so we can coalesce them.
+  if (NewRC->getSize() < 32 && DstRC->getSize() < 32 && SrcRC->getSize() < 32)
+    return true;
+
+  auto NewRCWeight =
+              MRI.getTargetRegisterInfo()->getRegClassWeight(NewRC);
+  auto SrcRCWeight =
+              MRI.getTargetRegisterInfo()->getRegClassWeight(SrcRC);
+  auto DstRCWeight =
+              MRI.getTargetRegisterInfo()->getRegClassWeight(DstRC);
+  // If the source register class is more expensive than the destination, the
+  // coalescing is probably profitable.
+  if (SrcRCWeight.RegWeight > NewRCWeight.RegWeight)
+    return true;
+  if (DstRCWeight.RegWeight > NewRCWeight.RegWeight)
+    return true;
+
+  // If the register allocator isn't constrained, we can always allow coalescing
+  // unfortunately we don't know yet if we will be constrained.
+  // The goal of this heuristic is to restrict how many expensive registers
+  // we allow to coalesce in a given basic block.
+  auto AFI = MF->getInfo<ARMFunctionInfo>();
+  auto It = AFI->getCoalescedWeight(MBB);
+
+  DEBUG(dbgs() << "\tARM::shouldCoalesce - Coalesced Weight: " << It->second << "\n");
+  DEBUG(dbgs() << "\tARM::shouldCoalesce - Reg Weight: " << NewRCWeight.RegWeight << "\n");
+  unsigned SizeMultiplier = MBB->size()/100;
+  SizeMultiplier = SizeMultiplier ? SizeMultiplier : 1;
+  if (It->second < NewRCWeight.WeightLimit * SizeMultiplier) {
+    It->second += NewRCWeight.RegWeight;
+    return true;
+  }
+  return false;
 }

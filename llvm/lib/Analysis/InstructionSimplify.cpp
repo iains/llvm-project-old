@@ -1958,13 +1958,23 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
         Lower = (-Upper) + 1;
       }
     } else if (match(LHS, m_SDiv(m_Value(), m_ConstantInt(CI2)))) {
-      // 'sdiv x, CI2' produces [INT_MIN / CI2, INT_MAX / CI2].
       APInt IntMin = APInt::getSignedMinValue(Width);
       APInt IntMax = APInt::getSignedMaxValue(Width);
-      APInt Val = CI2->getValue().abs();
-      if (!Val.isMinValue()) {
+      APInt Val = CI2->getValue();
+      if (Val.isAllOnesValue()) {
+        // 'sdiv x, -1' produces [INT_MIN + 1, INT_MAX]
+        //    where CI2 != -1 and CI2 != 0 and CI2 != 1
+        Lower = IntMin + 1;
+        Upper = IntMax + 1;
+      } else if (Val.countLeadingZeros() < Width - 1) {
+        // 'sdiv x, CI2' produces [INT_MIN / CI2, INT_MAX / CI2]
+        //    where CI2 != -1 and CI2 != 0 and CI2 != 1
         Lower = IntMin.sdiv(Val);
-        Upper = IntMax.sdiv(Val) + 1;
+        Upper = IntMax.sdiv(Val);
+        if (Lower.sgt(Upper))
+          std::swap(Lower, Upper);
+        Upper = Upper + 1;
+        assert(Upper != Lower && "Upper part of range has wrapped!");
       }
     } else if (match(LHS, m_LShr(m_Value(), m_ConstantInt(CI2)))) {
       // 'lshr x, CI2' produces [0, UINT_MAX >> CI2].

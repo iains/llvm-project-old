@@ -10,6 +10,7 @@ endif()
 set(ASAN_SOURCES
   asan_allocator2.cc
   asan_activation.cc
+  asan_debugging.cc
   asan_fake_stack.cc
   asan_globals.cc
   asan_interceptors.cc
@@ -179,7 +180,7 @@ else()
       add_compiler_rt_runtime(clang_rt.asan_dll_thunk-${arch} ${arch} STATIC
         SOURCES asan_dll_thunk.cc
                 $<TARGET_OBJECTS:RTInterception.${arch}>
-        CFLAGS ${ASAN_CFLAGS} -DASAN_DLL_THUNK -DSANITIZER_DLL_THUNK
+        CFLAGS ${ASAN_CFLAGS} -DASAN_DLL_THUNK
         DEFS ${ASAN_COMMON_DEFINITIONS})
       add_dependencies(asan clang_rt.asan_dll_thunk-${arch})
     endif()

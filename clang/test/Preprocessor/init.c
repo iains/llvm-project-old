@@ -274,35 +274,64 @@
 // AARCH64:#define __FLT_MIN_EXP__ (-125)
 // AARCH64:#define __FLT_MIN__ 1.17549435e-38F
 // AARCH64:#define __FLT_RADIX__ 2
+// AARCH64:#define __INT16_FMTd__ "hd"
+// AARCH64:#define __INT16_FMTi__ "hi"
 // AARCH64:#define __INT16_MAX__ 32767
 // AARCH64:#define __INT16_TYPE__ short
+// AARCH64:#define __INT32_FMTd__ "d"
+// AARCH64:#define __INT32_FMTi__ "i"
 // AARCH64:#define __INT32_MAX__ 2147483647
 // AARCH64:#define __INT32_TYPE__ int
 // AARCH64:#define __INT64_C_SUFFIX__ L
+// AARCH64:#define __INT64_FMTd__ "ld"
+// AARCH64:#define __INT64_FMTi__ "li"
 // AARCH64:#define __INT64_MAX__ 9223372036854775807L
 // AARCH64:#define __INT64_TYPE__ long int
+// AARCH64:#define __INT8_FMTd__ "hhd"
+// AARCH64:#define __INT8_FMTi__ "hhi"
 // AARCH64:#define __INT8_MAX__ 127
 // AARCH64:#define __INT8_TYPE__ char
+// AARCH64:#define __INTMAX_C_SUFFIX__ L
+// AARCH64:#define __INTMAX_FMTd__ "ld"
+// AARCH64:#define __INTMAX_FMTi__ "li"
 // AARCH64:#define __INTMAX_MAX__ 9223372036854775807L
 // AARCH64:#define __INTMAX_TYPE__ long int
 // AARCH64:#define __INTMAX_WIDTH__ 64
+// AARCH64:#define __INTPTR_FMTd__ "ld"
+// AARCH64:#define __INTPTR_FMTi__ "li"
 // AARCH64:#define __INTPTR_MAX__ 9223372036854775807L
 // AARCH64:#define __INTPTR_TYPE__ long int
 // AARCH64:#define __INTPTR_WIDTH__ 64
+// AARCH64:#define __INT_FAST16_FMTd__ "hd"
+// AARCH64:#define __INT_FAST16_FMTi__ "hi"
 // AARCH64:#define __INT_FAST16_MAX__ 32767
 // AARCH64:#define __INT_FAST16_TYPE__ short
+// AARCH64:#define __INT_FAST32_FMTd__ "d"
+// AARCH64:#define __INT_FAST32_FMTi__ "i"
 // AARCH64:#define __INT_FAST32_MAX__ 2147483647
 // AARCH64:#define __INT_FAST32_TYPE__ int
+// AARCH64:#define __INT_FAST64_FMTd__ "ld"
+// AARCH64:#define __INT_FAST64_FMTi__ "li"
 // AARCH64:#define __INT_FAST64_MAX__ 9223372036854775807L
 // AARCH64:#define __INT_FAST64_TYPE__ long int
+// AARCH64:#define __INT_FAST8_FMTd__ "hhd"
+// AARCH64:#define __INT_FAST8_FMTi__ "hhi"
 // AARCH64:#define __INT_FAST8_MAX__ 127
 // AARCH64:#define __INT_FAST8_TYPE__ char
+// AARCH64:#define __INT_LEAST16_FMTd__ "hd"
+// AARCH64:#define __INT_LEAST16_FMTi__ "hi"
 // AARCH64:#define __INT_LEAST16_MAX__ 32767
 // AARCH64:#define __INT_LEAST16_TYPE__ short
+// AARCH64:#define __INT_LEAST32_FMTd__ "d"
+// AARCH64:#define __INT_LEAST32_FMTi__ "i"
 // AARCH64:#define __INT_LEAST32_MAX__ 2147483647
 // AARCH64:#define __INT_LEAST32_TYPE__ int
+// AARCH64:#define __INT_LEAST64_FMTd__ "ld"
+// AARCH64:#define __INT_LEAST64_FMTi__ "li"
 // AARCH64:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // AARCH64:#define __INT_LEAST64_TYPE__ long int
+// AARCH64:#define __INT_LEAST8_FMTd__ "hhd"
+// AARCH64:#define __INT_LEAST8_FMTi__ "hhi"
 // AARCH64:#define __INT_LEAST8_MAX__ 127
 // AARCH64:#define __INT_LEAST8_TYPE__ char
 // AARCH64:#define __INT_MAX__ 2147483647
@@ -356,6 +385,7 @@
 // AARCH64:#define __UINT8_C_SUFFIX__ U
 // AARCH64:#define __UINT8_MAX__ 255U
 // AARCH64:#define __UINT8_TYPE__ unsigned char
+// AARCH64:#define __UINTMAX_C_SUFFIX__ UL
 // AARCH64:#define __UINTMAX_MAX__ 18446744073709551615UL
 // AARCH64:#define __UINTMAX_TYPE__ long unsigned int
 // AARCH64:#define __UINTMAX_WIDTH__ 64
@@ -431,35 +461,64 @@
 // AARCH64-BE:#define __FLT_MIN_EXP__ (-125)
 // AARCH64-BE:#define __FLT_MIN__ 1.17549435e-38F
 // AARCH64-BE:#define __FLT_RADIX__ 2
+// AARCH64-BE:#define __INT16_FMTd__ "hd"
+// AARCH64-BE:#define __INT16_FMTi__ "hi"
 // AARCH64-BE:#define __INT16_MAX__ 32767
 // AARCH64-BE:#define __INT16_TYPE__ short
+// AARCH64-BE:#define __INT32_FMTd__ "d"
+// AARCH64-BE:#define __INT32_FMTi__ "i"
 // AARCH64-BE:#define __INT32_MAX__ 2147483647
 // AARCH64-BE:#define __INT32_TYPE__ int
 // AARCH64-BE:#define __INT64_C_SUFFIX__ L
+// AARCH64-BE:#define __INT64_FMTd__ "ld"
+// AARCH64-BE:#define __INT64_FMTi__ "li"
 // AARCH64-BE:#define __INT64_MAX__ 9223372036854775807L
 // AARCH64-BE:#define __INT64_TYPE__ long int
+// AARCH64-BE:#define __INT8_FMTd__ "hhd"
+// AARCH64-BE:#define __INT8_FMTi__ "hhi"
 // AARCH64-BE:#define __INT8_MAX__ 127
 // AARCH64-BE:#define __INT8_TYPE__ char
+// AARCH64-BE:#define __INTMAX_C_SUFFIX__ L
+// AARCH64-BE:#define __INTMAX_FMTd__ "ld"
+// AARCH64-BE:#define __INTMAX_FMTi__ "li"
 // AARCH64-BE:#define __INTMAX_MAX__ 9223372036854775807L
 // AARCH64-BE:#define __INTMAX_TYPE__ long int
 // AARCH64-BE:#define __INTMAX_WIDTH__ 64
+// AARCH64-BE:#define __INTPTR_FMTd__ "ld"
+// AARCH64-BE:#define __INTPTR_FMTi__ "li"
 // AARCH64-BE:#define __INTPTR_MAX__ 9223372036854775807L
 // AARCH64-BE:#define __INTPTR_TYPE__ long int
 // AARCH64-BE:#define __INTPTR_WIDTH__ 64
+// AARCH64-BE:#define __INT_FAST16_FMTd__ "hd"
+// AARCH64-BE:#define __INT_FAST16_FMTi__ "hi"
 // AARCH64-BE:#define __INT_FAST16_MAX__ 32767
 // AARCH64-BE:#define __INT_FAST16_TYPE__ short
+// AARCH64-BE:#define __INT_FAST32_FMTd__ "d"
+// AARCH64-BE:#define __INT_FAST32_FMTi__ "i"
 // AARCH64-BE:#define __INT_FAST32_MAX__ 2147483647
 // AARCH64-BE:#define __INT_FAST32_TYPE__ int
+// AARCH64-BE:#define __INT_FAST64_FMTd__ "ld"
+// AARCH64-BE:#define __INT_FAST64_FMTi__ "li"
 // AARCH64-BE:#define __INT_FAST64_MAX__ 9223372036854775807L
 // AARCH64-BE:#define __INT_FAST64_TYPE__ long int
+// AARCH64-BE:#define __INT_FAST8_FMTd__ "hhd"
+// AARCH64-BE:#define __INT_FAST8_FMTi__ "hhi"
 // AARCH64-BE:#define __INT_FAST8_MAX__ 127
 // AARCH64-BE:#define __INT_FAST8_TYPE__ char
+// AARCH64-BE:#define __INT_LEAST16_FMTd__ "hd"
+// AARCH64-BE:#define __INT_LEAST16_FMTi__ "hi"
 // AARCH64-BE:#define __INT_LEAST16_MAX__ 32767
 // AARCH64-BE:#define __INT_LEAST16_TYPE__ short
+// AARCH64-BE:#define __INT_LEAST32_FMTd__ "d"
+// AARCH64-BE:#define __INT_LEAST32_FMTi__ "i"
 // AARCH64-BE:#define __INT_LEAST32_MAX__ 2147483647
 // AARCH64-BE:#define __INT_LEAST32_TYPE__ int
+// AARCH64-BE:#define __INT_LEAST64_FMTd__ "ld"
+// AARCH64-BE:#define __INT_LEAST64_FMTi__ "li"
 // AARCH64-BE:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // AARCH64-BE:#define __INT_LEAST64_TYPE__ long int
+// AARCH64-BE:#define __INT_LEAST8_FMTd__ "hhd"
+// AARCH64-BE:#define __INT_LEAST8_FMTi__ "hhi"
 // AARCH64-BE:#define __INT_LEAST8_MAX__ 127
 // AARCH64-BE:#define __INT_LEAST8_TYPE__ char
 // AARCH64-BE:#define __INT_MAX__ 2147483647
@@ -513,6 +572,7 @@
 // AARCH64-BE:#define __UINT8_C_SUFFIX__ U
 // AARCH64-BE:#define __UINT8_MAX__ 255U
 // AARCH64-BE:#define __UINT8_TYPE__ unsigned char
+// AARCH64-BE:#define __UINTMAX_C_SUFFIX__ UL
 // AARCH64-BE:#define __UINTMAX_MAX__ 18446744073709551615UL
 // AARCH64-BE:#define __UINTMAX_TYPE__ long unsigned int
 // AARCH64-BE:#define __UINTMAX_WIDTH__ 64
@@ -588,35 +648,64 @@
 // AARCH64-NETBSD:#define __FLT_MIN_EXP__ (-125)
 // AARCH64-NETBSD:#define __FLT_MIN__ 1.17549435e-38F
 // AARCH64-NETBSD:#define __FLT_RADIX__ 2
+// AARCH64-NETBSD:#define __INT16_FMTd__ "hd"
+// AARCH64-NETBSD:#define __INT16_FMTi__ "hi"
 // AARCH64-NETBSD:#define __INT16_MAX__ 32767
 // AARCH64-NETBSD:#define __INT16_TYPE__ short
+// AARCH64-NETBSD:#define __INT32_FMTd__ "d"
+// AARCH64-NETBSD:#define __INT32_FMTi__ "i"
 // AARCH64-NETBSD:#define __INT32_MAX__ 2147483647
 // AARCH64-NETBSD:#define __INT32_TYPE__ int
 // AARCH64-NETBSD:#define __INT64_C_SUFFIX__ LL
+// AARCH64-NETBSD:#define __INT64_FMTd__ "lld"
+// AARCH64-NETBSD:#define __INT64_FMTi__ "lli"
 // AARCH64-NETBSD:#define __INT64_MAX__ 9223372036854775807L
 // AARCH64-NETBSD:#define __INT64_TYPE__ long long int
+// AARCH64-NETBSD:#define __INT8_FMTd__ "hhd"
+// AARCH64-NETBSD:#define __INT8_FMTi__ "hhi"
 // AARCH64-NETBSD:#define __INT8_MAX__ 127
 // AARCH64-NETBSD:#define __INT8_TYPE__ char
+// AARCH64-NETBSD:#define __INTMAX_C_SUFFIX__ LL
+// AARCH64-NETBSD:#define __INTMAX_FMTd__ "lld"
+// AARCH64-NETBSD:#define __INTMAX_FMTi__ "lli"
 // AARCH64-NETBSD:#define __INTMAX_MAX__ 9223372036854775807LL
 // AARCH64-NETBSD:#define __INTMAX_TYPE__ long long int
 // AARCH64-NETBSD:#define __INTMAX_WIDTH__ 64
+// AARCH64-NETBSD:#define __INTPTR_FMTd__ "ld"
+// AARCH64-NETBSD:#define __INTPTR_FMTi__ "li"
 // AARCH64-NETBSD:#define __INTPTR_MAX__ 9223372036854775807L
 // AARCH64-NETBSD:#define __INTPTR_TYPE__ long int
 // AARCH64-NETBSD:#define __INTPTR_WIDTH__ 64
+// AARCH64-NETBSD:#define __INT_FAST16_FMTd__ "hd"
+// AARCH64-NETBSD:#define __INT_FAST16_FMTi__ "hi"
 // AARCH64-NETBSD:#define __INT_FAST16_MAX__ 32767
 // AARCH64-NETBSD:#define __INT_FAST16_TYPE__ short
+// AARCH64-NETBSD:#define __INT_FAST32_FMTd__ "d"
+// AARCH64-NETBSD:#define __INT_FAST32_FMTi__ "i"
 // AARCH64-NETBSD:#define __INT_FAST32_MAX__ 2147483647
 // AARCH64-NETBSD:#define __INT_FAST32_TYPE__ int
+// AARCH64-NETBSD:#define __INT_FAST64_FMTd__ "ld"
+// AARCH64-NETBSD:#define __INT_FAST64_FMTi__ "li"
 // AARCH64-NETBSD:#define __INT_FAST64_MAX__ 9223372036854775807L
 // AARCH64-NETBSD:#define __INT_FAST64_TYPE__ long int
+// AARCH64-NETBSD:#define __INT_FAST8_FMTd__ "hhd"
+// AARCH64-NETBSD:#define __INT_FAST8_FMTi__ "hhi"
 // AARCH64-NETBSD:#define __INT_FAST8_MAX__ 127
 // AARCH64-NETBSD:#define __INT_FAST8_TYPE__ char
+// AARCH64-NETBSD:#define __INT_LEAST16_FMTd__ "hd"
+// AARCH64-NETBSD:#define __INT_LEAST16_FMTi__ "hi"
 // AARCH64-NETBSD:#define __INT_LEAST16_MAX__ 32767
 // AARCH64-NETBSD:#define __INT_LEAST16_TYPE__ short
+// AARCH64-NETBSD:#define __INT_LEAST32_FMTd__ "d"
+// AARCH64-NETBSD:#define __INT_LEAST32_FMTi__ "i"
 // AARCH64-NETBSD:#define __INT_LEAST32_MAX__ 2147483647
 // AARCH64-NETBSD:#define __INT_LEAST32_TYPE__ int
+// AARCH64-NETBSD:#define __INT_LEAST64_FMTd__ "ld"
+// AARCH64-NETBSD:#define __INT_LEAST64_FMTi__ "li"
 // AARCH64-NETBSD:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // AARCH64-NETBSD:#define __INT_LEAST64_TYPE__ long int
+// AARCH64-NETBSD:#define __INT_LEAST8_FMTd__ "hhd"
+// AARCH64-NETBSD:#define __INT_LEAST8_FMTi__ "hhi"
 // AARCH64-NETBSD:#define __INT_LEAST8_MAX__ 127
 // AARCH64-NETBSD:#define __INT_LEAST8_TYPE__ char
 // AARCH64-NETBSD:#define __INT_MAX__ 2147483647
@@ -665,12 +754,13 @@
 // AARCH64-NETBSD:#define __UINT32_C_SUFFIX__ U
 // AARCH64-NETBSD:#define __UINT32_MAX__ 4294967295U
 // AARCH64-NETBSD:#define __UINT32_TYPE__ unsigned int
-// AARCH64-NETBSD:#define __UINT64_C_SUFFIX__ UL
-// AARCH64-NETBSD:#define __UINT64_MAX__ 18446744073709551615UL
-// AARCH64-NETBSD:#define __UINT64_TYPE__ long unsigned int
+// AARCH64-NETBSD:#define __UINT64_C_SUFFIX__ ULL
+// AARCH64-NETBSD:#define __UINT64_MAX__ 18446744073709551615ULL
+// AARCH64-NETBSD:#define __UINT64_TYPE__ long long unsigned int
 // AARCH64-NETBSD:#define __UINT8_C_SUFFIX__ U
 // AARCH64-NETBSD:#define __UINT8_MAX__ 255U
 // AARCH64-NETBSD:#define __UINT8_TYPE__ unsigned char
+// AARCH64-NETBSD:#define __UINTMAX_C_SUFFIX__ ULL
 // AARCH64-NETBSD:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // AARCH64-NETBSD:#define __UINTMAX_TYPE__ long long unsigned int
 // AARCH64-NETBSD:#define __UINTMAX_WIDTH__ 64
@@ -742,35 +832,64 @@
 // ARM:#define __FLT_MIN_EXP__ (-125)
 // ARM:#define __FLT_MIN__ 1.17549435e-38F
 // ARM:#define __FLT_RADIX__ 2
+// ARM:#define __INT16_FMTd__ "hd"
+// ARM:#define __INT16_FMTi__ "hi"
 // ARM:#define __INT16_MAX__ 32767
 // ARM:#define __INT16_TYPE__ short
+// ARM:#define __INT32_FMTd__ "d"
+// ARM:#define __INT32_FMTi__ "i"
 // ARM:#define __INT32_MAX__ 2147483647
 // ARM:#define __INT32_TYPE__ int
 // ARM:#define __INT64_C_SUFFIX__ LL
+// ARM:#define __INT64_FMTd__ "lld"
+// ARM:#define __INT64_FMTi__ "lli"
 // ARM:#define __INT64_MAX__ 9223372036854775807LL
 // ARM:#define __INT64_TYPE__ long long int
+// ARM:#define __INT8_FMTd__ "hhd"
+// ARM:#define __INT8_FMTi__ "hhi"
 // ARM:#define __INT8_MAX__ 127
 // ARM:#define __INT8_TYPE__ char
+// ARM:#define __INTMAX_C_SUFFIX__ LL
+// ARM:#define __INTMAX_FMTd__ "lld"
+// ARM:#define __INTMAX_FMTi__ "lli"
 // ARM:#define __INTMAX_MAX__ 9223372036854775807LL
 // ARM:#define __INTMAX_TYPE__ long long int
 // ARM:#define __INTMAX_WIDTH__ 64
+// ARM:#define __INTPTR_FMTd__ "ld"
+// ARM:#define __INTPTR_FMTi__ "li"
 // ARM:#define __INTPTR_MAX__ 2147483647L
 // ARM:#define __INTPTR_TYPE__ long int
 // ARM:#define __INTPTR_WIDTH__ 32
+// ARM:#define __INT_FAST16_FMTd__ "hd"
+// ARM:#define __INT_FAST16_FMTi__ "hi"
 // ARM:#define __INT_FAST16_MAX__ 32767
 // ARM:#define __INT_FAST16_TYPE__ short
+// ARM:#define __INT_FAST32_FMTd__ "d"
+// ARM:#define __INT_FAST32_FMTi__ "i"
 // ARM:#define __INT_FAST32_MAX__ 2147483647
 // ARM:#define __INT_FAST32_TYPE__ int
+// ARM:#define __INT_FAST64_FMTd__ "lld"
+// ARM:#define __INT_FAST64_FMTi__ "lli"
 // ARM:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // ARM:#define __INT_FAST64_TYPE__ long long int
+// ARM:#define __INT_FAST8_FMTd__ "hhd"
+// ARM:#define __INT_FAST8_FMTi__ "hhi"
 // ARM:#define __INT_FAST8_MAX__ 127
 // ARM:#define __INT_FAST8_TYPE__ char
+// ARM:#define __INT_LEAST16_FMTd__ "hd"
+// ARM:#define __INT_LEAST16_FMTi__ "hi"
 // ARM:#define __INT_LEAST16_MAX__ 32767
 // ARM:#define __INT_LEAST16_TYPE__ short
+// ARM:#define __INT_LEAST32_FMTd__ "d"
+// ARM:#define __INT_LEAST32_FMTi__ "i"
 // ARM:#define __INT_LEAST32_MAX__ 2147483647
 // ARM:#define __INT_LEAST32_TYPE__ int
+// ARM:#define __INT_LEAST64_FMTd__ "lld"
+// ARM:#define __INT_LEAST64_FMTi__ "lli"
 // ARM:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // ARM:#define __INT_LEAST64_TYPE__ long long int
+// ARM:#define __INT_LEAST8_FMTd__ "hhd"
+// ARM:#define __INT_LEAST8_FMTi__ "hhi"
 // ARM:#define __INT_LEAST8_MAX__ 127
 // ARM:#define __INT_LEAST8_TYPE__ char
 // ARM:#define __INT_MAX__ 2147483647
@@ -826,11 +945,12 @@
 // ARM:#define __UINT8_C_SUFFIX__ U
 // ARM:#define __UINT8_MAX__ 255U
 // ARM:#define __UINT8_TYPE__ unsigned char
+// ARM:#define __UINTMAX_C_SUFFIX__ ULL
 // ARM:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // ARM:#define __UINTMAX_TYPE__ long long unsigned int
 // ARM:#define __UINTMAX_WIDTH__ 64
 // ARM:#define __UINTPTR_MAX__ 4294967295U
-// ARM:#define __UINTPTR_TYPE__ unsigned int
+// ARM:#define __UINTPTR_TYPE__ long unsigned int
 // ARM:#define __UINTPTR_WIDTH__ 32
 // ARM:#define __UINT_FAST16_MAX__ 65535U
 // ARM:#define __UINT_FAST16_TYPE__ unsigned short
@@ -899,35 +1019,64 @@
 // ARM-BE:#define __FLT_MIN_EXP__ (-125)
 // ARM-BE:#define __FLT_MIN__ 1.17549435e-38F
 // ARM-BE:#define __FLT_RADIX__ 2
+// ARM-BE:#define __INT16_FMTd__ "hd"
+// ARM-BE:#define __INT16_FMTi__ "hi"
 // ARM-BE:#define __INT16_MAX__ 32767
 // ARM-BE:#define __INT16_TYPE__ short
+// ARM-BE:#define __INT32_FMTd__ "d"
+// ARM-BE:#define __INT32_FMTi__ "i"
 // ARM-BE:#define __INT32_MAX__ 2147483647
 // ARM-BE:#define __INT32_TYPE__ int
 // ARM-BE:#define __INT64_C_SUFFIX__ LL
+// ARM-BE:#define __INT64_FMTd__ "lld"
+// ARM-BE:#define __INT64_FMTi__ "lli"
 // ARM-BE:#define __INT64_MAX__ 9223372036854775807LL
 // ARM-BE:#define __INT64_TYPE__ long long int
+// ARM-BE:#define __INT8_FMTd__ "hhd"
+// ARM-BE:#define __INT8_FMTi__ "hhi"
 // ARM-BE:#define __INT8_MAX__ 127
 // ARM-BE:#define __INT8_TYPE__ char
+// ARM-BE:#define __INTMAX_C_SUFFIX__ LL
+// ARM-BE:#define __INTMAX_FMTd__ "lld"
+// ARM-BE:#define __INTMAX_FMTi__ "lli"
 // ARM-BE:#define __INTMAX_MAX__ 9223372036854775807LL
 // ARM-BE:#define __INTMAX_TYPE__ long long int
 // ARM-BE:#define __INTMAX_WIDTH__ 64
+// ARM-BE:#define __INTPTR_FMTd__ "ld"
+// ARM-BE:#define __INTPTR_FMTi__ "li"
 // ARM-BE:#define __INTPTR_MAX__ 2147483647L
 // ARM-BE:#define __INTPTR_TYPE__ long int
 // ARM-BE:#define __INTPTR_WIDTH__ 32
+// ARM-BE:#define __INT_FAST16_FMTd__ "hd"
+// ARM-BE:#define __INT_FAST16_FMTi__ "hi"
 // ARM-BE:#define __INT_FAST16_MAX__ 32767
 // ARM-BE:#define __INT_FAST16_TYPE__ short
+// ARM-BE:#define __INT_FAST32_FMTd__ "d"
+// ARM-BE:#define __INT_FAST32_FMTi__ "i"
 // ARM-BE:#define __INT_FAST32_MAX__ 2147483647
 // ARM-BE:#define __INT_FAST32_TYPE__ int
+// ARM-BE:#define __INT_FAST64_FMTd__ "lld"
+// ARM-BE:#define __INT_FAST64_FMTi__ "lli"
 // ARM-BE:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // ARM-BE:#define __INT_FAST64_TYPE__ long long int
+// ARM-BE:#define __INT_FAST8_FMTd__ "hhd"
+// ARM-BE:#define __INT_FAST8_FMTi__ "hhi"
 // ARM-BE:#define __INT_FAST8_MAX__ 127
 // ARM-BE:#define __INT_FAST8_TYPE__ char
+// ARM-BE:#define __INT_LEAST16_FMTd__ "hd"
+// ARM-BE:#define __INT_LEAST16_FMTi__ "hi"
 // ARM-BE:#define __INT_LEAST16_MAX__ 32767
 // ARM-BE:#define __INT_LEAST16_TYPE__ short
+// ARM-BE:#define __INT_LEAST32_FMTd__ "d"
+// ARM-BE:#define __INT_LEAST32_FMTi__ "i"
 // ARM-BE:#define __INT_LEAST32_MAX__ 2147483647
 // ARM-BE:#define __INT_LEAST32_TYPE__ int
+// ARM-BE:#define __INT_LEAST64_FMTd__ "lld"
+// ARM-BE:#define __INT_LEAST64_FMTi__ "lli"
 // ARM-BE:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // ARM-BE:#define __INT_LEAST64_TYPE__ long long int
+// ARM-BE:#define __INT_LEAST8_FMTd__ "hhd"
+// ARM-BE:#define __INT_LEAST8_FMTi__ "hhi"
 // ARM-BE:#define __INT_LEAST8_MAX__ 127
 // ARM-BE:#define __INT_LEAST8_TYPE__ char
 // ARM-BE:#define __INT_MAX__ 2147483647
@@ -982,11 +1131,12 @@
 // ARM-BE:#define __UINT8_C_SUFFIX__ U
 // ARM-BE:#define __UINT8_MAX__ 255U
 // ARM-BE:#define __UINT8_TYPE__ unsigned char
+// ARM-BE:#define __UINTMAX_C_SUFFIX__ ULL
 // ARM-BE:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // ARM-BE:#define __UINTMAX_TYPE__ long long unsigned int
 // ARM-BE:#define __UINTMAX_WIDTH__ 64
 // ARM-BE:#define __UINTPTR_MAX__ 4294967295U
-// ARM-BE:#define __UINTPTR_TYPE__ unsigned int
+// ARM-BE:#define __UINTPTR_TYPE__ long unsigned int
 // ARM-BE:#define __UINTPTR_WIDTH__ 32
 // ARM-BE:#define __UINT_FAST16_MAX__ 65535U
 // ARM-BE:#define __UINT_FAST16_TYPE__ unsigned short
@@ -1058,35 +1208,64 @@
 // ARMEABISOFTFP:#define __FLT_MIN_EXP__ (-125)
 // ARMEABISOFTFP:#define __FLT_MIN__ 1.17549435e-38F
 // ARMEABISOFTFP:#define __FLT_RADIX__ 2
+// ARMEABISOFTFP:#define __INT16_FMTd__ "hd"
+// ARMEABISOFTFP:#define __INT16_FMTi__ "hi"
 // ARMEABISOFTFP:#define __INT16_MAX__ 32767
 // ARMEABISOFTFP:#define __INT16_TYPE__ short
+// ARMEABISOFTFP:#define __INT32_FMTd__ "d"
+// ARMEABISOFTFP:#define __INT32_FMTi__ "i"
 // ARMEABISOFTFP:#define __INT32_MAX__ 2147483647
 // ARMEABISOFTFP:#define __INT32_TYPE__ int
 // ARMEABISOFTFP:#define __INT64_C_SUFFIX__ LL
+// ARMEABISOFTFP:#define __INT64_FMTd__ "lld"
+// ARMEABISOFTFP:#define __INT64_FMTi__ "lli"
 // ARMEABISOFTFP:#define __INT64_MAX__ 9223372036854775807LL
 // ARMEABISOFTFP:#define __INT64_TYPE__ long long int
+// ARMEABISOFTFP:#define __INT8_FMTd__ "hhd"
+// ARMEABISOFTFP:#define __INT8_FMTi__ "hhi"
 // ARMEABISOFTFP:#define __INT8_MAX__ 127
 // ARMEABISOFTFP:#define __INT8_TYPE__ char
+// ARMEABISOFTFP:#define __INTMAX_C_SUFFIX__ LL
+// ARMEABISOFTFP:#define __INTMAX_FMTd__ "lld"
+// ARMEABISOFTFP:#define __INTMAX_FMTi__ "lli"
 // ARMEABISOFTFP:#define __INTMAX_MAX__ 9223372036854775807LL
 // ARMEABISOFTFP:#define __INTMAX_TYPE__ long long int
 // ARMEABISOFTFP:#define __INTMAX_WIDTH__ 64
+// ARMEABISOFTFP:#define __INTPTR_FMTd__ "ld"
+// ARMEABISOFTFP:#define __INTPTR_FMTi__ "li"
 // ARMEABISOFTFP:#define __INTPTR_MAX__ 2147483647L
 // ARMEABISOFTFP:#define __INTPTR_TYPE__ long int
 // ARMEABISOFTFP:#define __INTPTR_WIDTH__ 32
+// ARMEABISOFTFP:#define __INT_FAST16_FMTd__ "hd"
+// ARMEABISOFTFP:#define __INT_FAST16_FMTi__ "hi"
 // ARMEABISOFTFP:#define __INT_FAST16_MAX__ 32767
 // ARMEABISOFTFP:#define __INT_FAST16_TYPE__ short
+// ARMEABISOFTFP:#define __INT_FAST32_FMTd__ "d"
+// ARMEABISOFTFP:#define __INT_FAST32_FMTi__ "i"
 // ARMEABISOFTFP:#define __INT_FAST32_MAX__ 2147483647
 // ARMEABISOFTFP:#define __INT_FAST32_TYPE__ int
+// ARMEABISOFTFP:#define __INT_FAST64_FMTd__ "lld"
+// ARMEABISOFTFP:#define __INT_FAST64_FMTi__ "lli"
 // ARMEABISOFTFP:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // ARMEABISOFTFP:#define __INT_FAST64_TYPE__ long long int
+// ARMEABISOFTFP:#define __INT_FAST8_FMTd__ "hhd"
+// ARMEABISOFTFP:#define __INT_FAST8_FMTi__ "hhi"
 // ARMEABISOFTFP:#define __INT_FAST8_MAX__ 127
 // ARMEABISOFTFP:#define __INT_FAST8_TYPE__ char
+// ARMEABISOFTFP:#define __INT_LEAST16_FMTd__ "hd"
+// ARMEABISOFTFP:#define __INT_LEAST16_FMTi__ "hi"
 // ARMEABISOFTFP:#define __INT_LEAST16_MAX__ 32767
 // ARMEABISOFTFP:#define __INT_LEAST16_TYPE__ short
+// ARMEABISOFTFP:#define __INT_LEAST32_FMTd__ "d"
+// ARMEABISOFTFP:#define __INT_LEAST32_FMTi__ "i"
 // ARMEABISOFTFP:#define __INT_LEAST32_MAX__ 2147483647
 // ARMEABISOFTFP:#define __INT_LEAST32_TYPE__ int
+// ARMEABISOFTFP:#define __INT_LEAST64_FMTd__ "lld"
+// ARMEABISOFTFP:#define __INT_LEAST64_FMTi__ "lli"
 // ARMEABISOFTFP:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // ARMEABISOFTFP:#define __INT_LEAST64_TYPE__ long long int
+// ARMEABISOFTFP:#define __INT_LEAST8_FMTd__ "hhd"
+// ARMEABISOFTFP:#define __INT_LEAST8_FMTi__ "hhi"
 // ARMEABISOFTFP:#define __INT_LEAST8_MAX__ 127
 // ARMEABISOFTFP:#define __INT_LEAST8_TYPE__ char
 // ARMEABISOFTFP:#define __INT_MAX__ 2147483647
@@ -1143,11 +1322,12 @@
 // ARMEABISOFTFP:#define __UINT8_C_SUFFIX__ U
 // ARMEABISOFTFP:#define __UINT8_MAX__ 255U
 // ARMEABISOFTFP:#define __UINT8_TYPE__ unsigned char
+// ARMEABISOFTFP:#define __UINTMAX_C_SUFFIX__ ULL
 // ARMEABISOFTFP:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // ARMEABISOFTFP:#define __UINTMAX_TYPE__ long long unsigned int
 // ARMEABISOFTFP:#define __UINTMAX_WIDTH__ 64
 // ARMEABISOFTFP:#define __UINTPTR_MAX__ 4294967295U
-// ARMEABISOFTFP:#define __UINTPTR_TYPE__ unsigned int
+// ARMEABISOFTFP:#define __UINTPTR_TYPE__ long unsigned int
 // ARMEABISOFTFP:#define __UINTPTR_WIDTH__ 32
 // ARMEABISOFTFP:#define __UINT_FAST16_MAX__ 65535U
 // ARMEABISOFTFP:#define __UINT_FAST16_TYPE__ unsigned short
@@ -1219,35 +1399,64 @@
 // ARMEABIHARDFP:#define __FLT_MIN_EXP__ (-125)
 // ARMEABIHARDFP:#define __FLT_MIN__ 1.17549435e-38F
 // ARMEABIHARDFP:#define __FLT_RADIX__ 2
+// ARMEABIHARDFP:#define __INT16_FMTd__ "hd"
+// ARMEABIHARDFP:#define __INT16_FMTi__ "hi"
 // ARMEABIHARDFP:#define __INT16_MAX__ 32767
 // ARMEABIHARDFP:#define __INT16_TYPE__ short
+// ARMEABIHARDFP:#define __INT32_FMTd__ "d"
+// ARMEABIHARDFP:#define __INT32_FMTi__ "i"
 // ARMEABIHARDFP:#define __INT32_MAX__ 2147483647
 // ARMEABIHARDFP:#define __INT32_TYPE__ int
 // ARMEABIHARDFP:#define __INT64_C_SUFFIX__ LL
+// ARMEABIHARDFP:#define __INT64_FMTd__ "lld"
+// ARMEABIHARDFP:#define __INT64_FMTi__ "lli"
 // ARMEABIHARDFP:#define __INT64_MAX__ 9223372036854775807LL
 // ARMEABIHARDFP:#define __INT64_TYPE__ long long int
+// ARMEABIHARDFP:#define __INT8_FMTd__ "hhd"
+// ARMEABIHARDFP:#define __INT8_FMTi__ "hhi"
 // ARMEABIHARDFP:#define __INT8_MAX__ 127
 // ARMEABIHARDFP:#define __INT8_TYPE__ char
+// ARMEABIHARDFP:#define __INTMAX_C_SUFFIX__ LL
+// ARMEABIHARDFP:#define __INTMAX_FMTd__ "lld"
+// ARMEABIHARDFP:#define __INTMAX_FMTi__ "lli"
 // ARMEABIHARDFP:#define __INTMAX_MAX__ 9223372036854775807LL
 // ARMEABIHARDFP:#define __INTMAX_TYPE__ long long int
 // ARMEABIHARDFP:#define __INTMAX_WIDTH__ 64
+// ARMEABIHARDFP:#define __INTPTR_FMTd__ "ld"
+// ARMEABIHARDFP:#define __INTPTR_FMTi__ "li"
 // ARMEABIHARDFP:#define __INTPTR_MAX__ 2147483647L
 // ARMEABIHARDFP:#define __INTPTR_TYPE__ long int
 // ARMEABIHARDFP:#define __INTPTR_WIDTH__ 32
+// ARMEABIHARDFP:#define __INT_FAST16_FMTd__ "hd"
+// ARMEABIHARDFP:#define __INT_FAST16_FMTi__ "hi"
 // ARMEABIHARDFP:#define __INT_FAST16_MAX__ 32767
 // ARMEABIHARDFP:#define __INT_FAST16_TYPE__ short
+// ARMEABIHARDFP:#define __INT_FAST32_FMTd__ "d"
+// ARMEABIHARDFP:#define __INT_FAST32_FMTi__ "i"
 // ARMEABIHARDFP:#define __INT_FAST32_MAX__ 2147483647
 // ARMEABIHARDFP:#define __INT_FAST32_TYPE__ int
+// ARMEABIHARDFP:#define __INT_FAST64_FMTd__ "lld"
+// ARMEABIHARDFP:#define __INT_FAST64_FMTi__ "lli"
 // ARMEABIHARDFP:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // ARMEABIHARDFP:#define __INT_FAST64_TYPE__ long long int
+// ARMEABIHARDFP:#define __INT_FAST8_FMTd__ "hhd"
+// ARMEABIHARDFP:#define __INT_FAST8_FMTi__ "hhi"
 // ARMEABIHARDFP:#define __INT_FAST8_MAX__ 127
 // ARMEABIHARDFP:#define __INT_FAST8_TYPE__ char
+// ARMEABIHARDFP:#define __INT_LEAST16_FMTd__ "hd"
+// ARMEABIHARDFP:#define __INT_LEAST16_FMTi__ "hi"
 // ARMEABIHARDFP:#define __INT_LEAST16_MAX__ 32767
 // ARMEABIHARDFP:#define __INT_LEAST16_TYPE__ short
+// ARMEABIHARDFP:#define __INT_LEAST32_FMTd__ "d"
+// ARMEABIHARDFP:#define __INT_LEAST32_FMTi__ "i"
 // ARMEABIHARDFP:#define __INT_LEAST32_MAX__ 2147483647
 // ARMEABIHARDFP:#define __INT_LEAST32_TYPE__ int
+// ARMEABIHARDFP:#define __INT_LEAST64_FMTd__ "lld"
+// ARMEABIHARDFP:#define __INT_LEAST64_FMTi__ "lli"
 // ARMEABIHARDFP:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // ARMEABIHARDFP:#define __INT_LEAST64_TYPE__ long long int
+// ARMEABIHARDFP:#define __INT_LEAST8_FMTd__ "hhd"
+// ARMEABIHARDFP:#define __INT_LEAST8_FMTi__ "hhi"
 // ARMEABIHARDFP:#define __INT_LEAST8_MAX__ 127
 // ARMEABIHARDFP:#define __INT_LEAST8_TYPE__ char
 // ARMEABIHARDFP:#define __INT_MAX__ 2147483647
@@ -1304,11 +1513,12 @@
 // ARMEABIHARDFP:#define __UINT8_C_SUFFIX__ U
 // ARMEABIHARDFP:#define __UINT8_MAX__ 255U
 // ARMEABIHARDFP:#define __UINT8_TYPE__ unsigned char
+// ARMEABIHARDFP:#define __UINTMAX_C_SUFFIX__ ULL
 // ARMEABIHARDFP:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // ARMEABIHARDFP:#define __UINTMAX_TYPE__ long long unsigned int
 // ARMEABIHARDFP:#define __UINTMAX_WIDTH__ 64
 // ARMEABIHARDFP:#define __UINTPTR_MAX__ 4294967295U
-// ARMEABIHARDFP:#define __UINTPTR_TYPE__ unsigned int
+// ARMEABIHARDFP:#define __UINTPTR_TYPE__ long unsigned int
 // ARMEABIHARDFP:#define __UINTPTR_WIDTH__ 32
 // ARMEABIHARDFP:#define __UINT_FAST16_MAX__ 65535U
 // ARMEABIHARDFP:#define __UINT_FAST16_TYPE__ unsigned short
@@ -1378,35 +1588,64 @@
 // ARM-NETBSD:#define __FLT_MIN_EXP__ (-125)
 // ARM-NETBSD:#define __FLT_MIN__ 1.17549435e-38F
 // ARM-NETBSD:#define __FLT_RADIX__ 2
+// ARM-NETBSD:#define __INT16_FMTd__ "hd"
+// ARM-NETBSD:#define __INT16_FMTi__ "hi"
 // ARM-NETBSD:#define __INT16_MAX__ 32767
 // ARM-NETBSD:#define __INT16_TYPE__ short
+// ARM-NETBSD:#define __INT32_FMTd__ "d"
+// ARM-NETBSD:#define __INT32_FMTi__ "i"
 // ARM-NETBSD:#define __INT32_MAX__ 2147483647
 // ARM-NETBSD:#define __INT32_TYPE__ int
 // ARM-NETBSD:#define __INT64_C_SUFFIX__ LL
+// ARM-NETBSD:#define __INT64_FMTd__ "lld"
+// ARM-NETBSD:#define __INT64_FMTi__ "lli"
 // ARM-NETBSD:#define __INT64_MAX__ 9223372036854775807LL
 // ARM-NETBSD:#define __INT64_TYPE__ long long int
+// ARM-NETBSD:#define __INT8_FMTd__ "hhd"
+// ARM-NETBSD:#define __INT8_FMTi__ "hhi"
 // ARM-NETBSD:#define __INT8_MAX__ 127
 // ARM-NETBSD:#define __INT8_TYPE__ char
+// ARM-NETBSD:#define __INTMAX_C_SUFFIX__ LL
+// ARM-NETBSD:#define __INTMAX_FMTd__ "lld"
+// ARM-NETBSD:#define __INTMAX_FMTi__ "lli"
 // ARM-NETBSD:#define __INTMAX_MAX__ 9223372036854775807LL
 // ARM-NETBSD:#define __INTMAX_TYPE__ long long int
 // ARM-NETBSD:#define __INTMAX_WIDTH__ 64
+// ARM-NETBSD:#define __INTPTR_FMTd__ "ld"
+// ARM-NETBSD:#define __INTPTR_FMTi__ "li"
 // ARM-NETBSD:#define __INTPTR_MAX__ 2147483647L
 // ARM-NETBSD:#define __INTPTR_TYPE__ long int
 // ARM-NETBSD:#define __INTPTR_WIDTH__ 32
+// ARM-NETBSD:#define __INT_FAST16_FMTd__ "hd"
+// ARM-NETBSD:#define __INT_FAST16_FMTi__ "hi"
 // ARM-NETBSD:#define __INT_FAST16_MAX__ 32767
 // ARM-NETBSD:#define __INT_FAST16_TYPE__ short
+// ARM-NETBSD:#define __INT_FAST32_FMTd__ "d"
+// ARM-NETBSD:#define __INT_FAST32_FMTi__ "i"
 // ARM-NETBSD:#define __INT_FAST32_MAX__ 2147483647
 // ARM-NETBSD:#define __INT_FAST32_TYPE__ int
+// ARM-NETBSD:#define __INT_FAST64_FMTd__ "lld"
+// ARM-NETBSD:#define __INT_FAST64_FMTi__ "lli"
 // ARM-NETBSD:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // ARM-NETBSD:#define __INT_FAST64_TYPE__ long long int
+// ARM-NETBSD:#define __INT_FAST8_FMTd__ "hhd"
+// ARM-NETBSD:#define __INT_FAST8_FMTi__ "hhi"
 // ARM-NETBSD:#define __INT_FAST8_MAX__ 127
 // ARM-NETBSD:#define __INT_FAST8_TYPE__ char
+// ARM-NETBSD:#define __INT_LEAST16_FMTd__ "hd"
+// ARM-NETBSD:#define __INT_LEAST16_FMTi__ "hi"
 // ARM-NETBSD:#define __INT_LEAST16_MAX__ 32767
 // ARM-NETBSD:#define __INT_LEAST16_TYPE__ short
+// ARM-NETBSD:#define __INT_LEAST32_FMTd__ "d"
+// ARM-NETBSD:#define __INT_LEAST32_FMTi__ "i"
 // ARM-NETBSD:#define __INT_LEAST32_MAX__ 2147483647
 // ARM-NETBSD:#define __INT_LEAST32_TYPE__ int
+// ARM-NETBSD:#define __INT_LEAST64_FMTd__ "lld"
+// ARM-NETBSD:#define __INT_LEAST64_FMTi__ "lli"
 // ARM-NETBSD:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // ARM-NETBSD:#define __INT_LEAST64_TYPE__ long long int
+// ARM-NETBSD:#define __INT_LEAST8_FMTd__ "hhd"
+// ARM-NETBSD:#define __INT_LEAST8_FMTi__ "hhi"
 // ARM-NETBSD:#define __INT_LEAST8_MAX__ 127
 // ARM-NETBSD:#define __INT_LEAST8_TYPE__ char
 // ARM-NETBSD:#define __INT_MAX__ 2147483647
@@ -1462,11 +1701,12 @@
 // ARM-NETBSD:#define __UINT8_C_SUFFIX__ U
 // ARM-NETBSD:#define __UINT8_MAX__ 255U
 // ARM-NETBSD:#define __UINT8_TYPE__ unsigned char
+// ARM-NETBSD:#define __UINTMAX_C_SUFFIX__ UL
 // ARM-NETBSD:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // ARM-NETBSD:#define __UINTMAX_TYPE__ long long unsigned int
 // ARM-NETBSD:#define __UINTMAX_WIDTH__ 64
 // ARM-NETBSD:#define __UINTPTR_MAX__ 4294967295U
-// ARM-NETBSD:#define __UINTPTR_TYPE__ unsigned int
+// ARM-NETBSD:#define __UINTPTR_TYPE__ long unsigned int
 // ARM-NETBSD:#define __UINTPTR_WIDTH__ 32
 // ARM-NETBSD:#define __UINT_FAST16_MAX__ 65535U
 // ARM-NETBSD:#define __UINT_FAST16_TYPE__ unsigned short
@@ -1589,35 +1829,64 @@
 // I386:#define __FLT_MIN_EXP__ (-125)
 // I386:#define __FLT_MIN__ 1.17549435e-38F
 // I386:#define __FLT_RADIX__ 2
+// I386:#define __INT16_FMTd__ "hd"
+// I386:#define __INT16_FMTi__ "hi"
 // I386:#define __INT16_MAX__ 32767
 // I386:#define __INT16_TYPE__ short
+// I386:#define __INT32_FMTd__ "d"
+// I386:#define __INT32_FMTi__ "i"
 // I386:#define __INT32_MAX__ 2147483647
 // I386:#define __INT32_TYPE__ int
 // I386:#define __INT64_C_SUFFIX__ LL
+// I386:#define __INT64_FMTd__ "lld"
+// I386:#define __INT64_FMTi__ "lli"
 // I386:#define __INT64_MAX__ 9223372036854775807LL
 // I386:#define __INT64_TYPE__ long long int
+// I386:#define __INT8_FMTd__ "hhd"
+// I386:#define __INT8_FMTi__ "hhi"
 // I386:#define __INT8_MAX__ 127
 // I386:#define __INT8_TYPE__ char
+// I386:#define __INTMAX_C_SUFFIX__ LL
+// I386:#define __INTMAX_FMTd__ "lld"
+// I386:#define __INTMAX_FMTi__ "lli"
 // I386:#define __INTMAX_MAX__ 9223372036854775807LL
 // I386:#define __INTMAX_TYPE__ long long int
 // I386:#define __INTMAX_WIDTH__ 64
+// I386:#define __INTPTR_FMTd__ "d"
+// I386:#define __INTPTR_FMTi__ "i"
 // I386:#define __INTPTR_MAX__ 2147483647
 // I386:#define __INTPTR_TYPE__ int
 // I386:#define __INTPTR_WIDTH__ 32
+// I386:#define __INT_FAST16_FMTd__ "hd"
+// I386:#define __INT_FAST16_FMTi__ "hi"
 // I386:#define __INT_FAST16_MAX__ 32767
 // I386:#define __INT_FAST16_TYPE__ short
+// I386:#define __INT_FAST32_FMTd__ "d"
+// I386:#define __INT_FAST32_FMTi__ "i"
 // I386:#define __INT_FAST32_MAX__ 2147483647
 // I386:#define __INT_FAST32_TYPE__ int
+// I386:#define __INT_FAST64_FMTd__ "lld"
+// I386:#define __INT_FAST64_FMTi__ "lli"
 // I386:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // I386:#define __INT_FAST64_TYPE__ long long int
+// I386:#define __INT_FAST8_FMTd__ "hhd"
+// I386:#define __INT_FAST8_FMTi__ "hhi"
 // I386:#define __INT_FAST8_MAX__ 127
 // I386:#define __INT_FAST8_TYPE__ char
+// I386:#define __INT_LEAST16_FMTd__ "hd"
+// I386:#define __INT_LEAST16_FMTi__ "hi"
 // I386:#define __INT_LEAST16_MAX__ 32767
 // I386:#define __INT_LEAST16_TYPE__ short
+// I386:#define __INT_LEAST32_FMTd__ "d"
+// I386:#define __INT_LEAST32_FMTi__ "i"
 // I386:#define __INT_LEAST32_MAX__ 2147483647
 // I386:#define __INT_LEAST32_TYPE__ int
+// I386:#define __INT_LEAST64_FMTd__ "lld"
+// I386:#define __INT_LEAST64_FMTi__ "lli"
 // I386:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // I386:#define __INT_LEAST64_TYPE__ long long int
+// I386:#define __INT_LEAST8_FMTd__ "hhd"
+// I386:#define __INT_LEAST8_FMTi__ "hhi"
 // I386:#define __INT_LEAST8_MAX__ 127
 // I386:#define __INT_LEAST8_TYPE__ char
 // I386:#define __INT_MAX__ 2147483647
@@ -1673,6 +1942,7 @@
 // I386:#define __UINT8_C_SUFFIX__ U
 // I386:#define __UINT8_MAX__ 255U
 // I386:#define __UINT8_TYPE__ unsigned char
+// I386:#define __UINTMAX_C_SUFFIX__ ULL
 // I386:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // I386:#define __UINTMAX_TYPE__ long long unsigned int
 // I386:#define __UINTMAX_WIDTH__ 64
@@ -1741,35 +2011,64 @@
 // I386-LINUX:#define __FLT_MIN_EXP__ (-125)
 // I386-LINUX:#define __FLT_MIN__ 1.17549435e-38F
 // I386-LINUX:#define __FLT_RADIX__ 2
+// I386-LINUX:#define __INT16_FMTd__ "hd"
+// I386-LINUX:#define __INT16_FMTi__ "hi"
 // I386-LINUX:#define __INT16_MAX__ 32767
 // I386-LINUX:#define __INT16_TYPE__ short
+// I386-LINUX:#define __INT32_FMTd__ "d"
+// I386-LINUX:#define __INT32_FMTi__ "i"
 // I386-LINUX:#define __INT32_MAX__ 2147483647
 // I386-LINUX:#define __INT32_TYPE__ int
 // I386-LINUX:#define __INT64_C_SUFFIX__ LL
+// I386-LINUX:#define __INT64_FMTd__ "lld"
+// I386-LINUX:#define __INT64_FMTi__ "lli"
 // I386-LINUX:#define __INT64_MAX__ 9223372036854775807LL
 // I386-LINUX:#define __INT64_TYPE__ long long int
+// I386-LINUX:#define __INT8_FMTd__ "hhd"
+// I386-LINUX:#define __INT8_FMTi__ "hhi"
 // I386-LINUX:#define __INT8_MAX__ 127
 // I386-LINUX:#define __INT8_TYPE__ char
+// I386-LINUX:#define __INTMAX_C_SUFFIX__ LL
+// I386-LINUX:#define __INTMAX_FMTd__ "lld"
+// I386-LINUX:#define __INTMAX_FMTi__ "lli"
 // I386-LINUX:#define __INTMAX_MAX__ 9223372036854775807LL
 // I386-LINUX:#define __INTMAX_TYPE__ long long int
 // I386-LINUX:#define __INTMAX_WIDTH__ 64
+// I386-LINUX:#define __INTPTR_FMTd__ "d"
+// I386-LINUX:#define __INTPTR_FMTi__ "i"
 // I386-LINUX:#define __INTPTR_MAX__ 2147483647
 // I386-LINUX:#define __INTPTR_TYPE__ int
 // I386-LINUX:#define __INTPTR_WIDTH__ 32
+// I386-LINUX:#define __INT_FAST16_FMTd__ "hd"
+// I386-LINUX:#define __INT_FAST16_FMTi__ "hi"
 // I386-LINUX:#define __INT_FAST16_MAX__ 32767
 // I386-LINUX:#define __INT_FAST16_TYPE__ short
+// I386-LINUX:#define __INT_FAST32_FMTd__ "d"
+// I386-LINUX:#define __INT_FAST32_FMTi__ "i"
 // I386-LINUX:#define __INT_FAST32_MAX__ 2147483647
 // I386-LINUX:#define __INT_FAST32_TYPE__ int
+// I386-LINUX:#define __INT_FAST64_FMTd__ "lld"
+// I386-LINUX:#define __INT_FAST64_FMTi__ "lli"
 // I386-LINUX:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // I386-LINUX:#define __INT_FAST64_TYPE__ long long int
+// I386-LINUX:#define __INT_FAST8_FMTd__ "hhd"
+// I386-LINUX:#define __INT_FAST8_FMTi__ "hhi"
 // I386-LINUX:#define __INT_FAST8_MAX__ 127
 // I386-LINUX:#define __INT_FAST8_TYPE__ char
+// I386-LINUX:#define __INT_LEAST16_FMTd__ "hd"
+// I386-LINUX:#define __INT_LEAST16_FMTi__ "hi"
 // I386-LINUX:#define __INT_LEAST16_MAX__ 32767
 // I386-LINUX:#define __INT_LEAST16_TYPE__ short
+// I386-LINUX:#define __INT_LEAST32_FMTd__ "d"
+// I386-LINUX:#define __INT_LEAST32_FMTi__ "i"
 // I386-LINUX:#define __INT_LEAST32_MAX__ 2147483647
 // I386-LINUX:#define __INT_LEAST32_TYPE__ int
+// I386-LINUX:#define __INT_LEAST64_FMTd__ "lld"
+// I386-LINUX:#define __INT_LEAST64_FMTi__ "lli"
 // I386-LINUX:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // I386-LINUX:#define __INT_LEAST64_TYPE__ long long int
+// I386-LINUX:#define __INT_LEAST8_FMTd__ "hhd"
+// I386-LINUX:#define __INT_LEAST8_FMTi__ "hhi"
 // I386-LINUX:#define __INT_LEAST8_MAX__ 127
 // I386-LINUX:#define __INT_LEAST8_TYPE__ char
 // I386-LINUX:#define __INT_MAX__ 2147483647
@@ -1825,6 +2124,7 @@
 // I386-LINUX:#define __UINT8_C_SUFFIX__ U
 // I386-LINUX:#define __UINT8_MAX__ 255U
 // I386-LINUX:#define __UINT8_TYPE__ unsigned char
+// I386-LINUX:#define __UINTMAX_C_SUFFIX__ ULL
 // I386-LINUX:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // I386-LINUX:#define __UINTMAX_TYPE__ long long unsigned int
 // I386-LINUX:#define __UINTMAX_WIDTH__ 64
@@ -1893,35 +2193,64 @@
 // I386-NETBSD:#define __FLT_MIN_EXP__ (-125)
 // I386-NETBSD:#define __FLT_MIN__ 1.17549435e-38F
 // I386-NETBSD:#define __FLT_RADIX__ 2
+// I386-NETBSD:#define __INT16_FMTd__ "hd"
+// I386-NETBSD:#define __INT16_FMTi__ "hi"
 // I386-NETBSD:#define __INT16_MAX__ 32767
 // I386-NETBSD:#define __INT16_TYPE__ short
+// I386-NETBSD:#define __INT32_FMTd__ "d"
+// I386-NETBSD:#define __INT32_FMTi__ "i"
 // I386-NETBSD:#define __INT32_MAX__ 2147483647
 // I386-NETBSD:#define __INT32_TYPE__ int
 // I386-NETBSD:#define __INT64_C_SUFFIX__ LL
+// I386-NETBSD:#define __INT64_FMTd__ "lld"
+// I386-NETBSD:#define __INT64_FMTi__ "lli"
 // I386-NETBSD:#define __INT64_MAX__ 9223372036854775807LL
 // I386-NETBSD:#define __INT64_TYPE__ long long int
+// I386-NETBSD:#define __INT8_FMTd__ "hhd"
+// I386-NETBSD:#define __INT8_FMTi__ "hhi"
 // I386-NETBSD:#define __INT8_MAX__ 127
 // I386-NETBSD:#define __INT8_TYPE__ char
+// I386-NETBSD:#define __INTMAX_C_SUFFIX__ LL
+// I386-NETBSD:#define __INTMAX_FMTd__ "lld"
+// I386-NETBSD:#define __INTMAX_FMTi__ "lli"
 // I386-NETBSD:#define __INTMAX_MAX__ 9223372036854775807LL
 // I386-NETBSD:#define __INTMAX_TYPE__ long long int
 // I386-NETBSD:#define __INTMAX_WIDTH__ 64
+// I386-NETBSD:#define __INTPTR_FMTd__ "d"
+// I386-NETBSD:#define __INTPTR_FMTi__ "i"
 // I386-NETBSD:#define __INTPTR_MAX__ 2147483647
 // I386-NETBSD:#define __INTPTR_TYPE__ int
 // I386-NETBSD:#define __INTPTR_WIDTH__ 32
+// I386-NETBSD:#define __INT_FAST16_FMTd__ "hd"
+// I386-NETBSD:#define __INT_FAST16_FMTi__ "hi"
 // I386-NETBSD:#define __INT_FAST16_MAX__ 32767
 // I386-NETBSD:#define __INT_FAST16_TYPE__ short
+// I386-NETBSD:#define __INT_FAST32_FMTd__ "d"
+// I386-NETBSD:#define __INT_FAST32_FMTi__ "i"
 // I386-NETBSD:#define __INT_FAST32_MAX__ 2147483647
 // I386-NETBSD:#define __INT_FAST32_TYPE__ int
+// I386-NETBSD:#define __INT_FAST64_FMTd__ "lld"
+// I386-NETBSD:#define __INT_FAST64_FMTi__ "lli"
 // I386-NETBSD:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // I386-NETBSD:#define __INT_FAST64_TYPE__ long long int
+// I386-NETBSD:#define __INT_FAST8_FMTd__ "hhd"
+// I386-NETBSD:#define __INT_FAST8_FMTi__ "hhi"
 // I386-NETBSD:#define __INT_FAST8_MAX__ 127
 // I386-NETBSD:#define __INT_FAST8_TYPE__ char
+// I386-NETBSD:#define __INT_LEAST16_FMTd__ "hd"
+// I386-NETBSD:#define __INT_LEAST16_FMTi__ "hi"
 // I386-NETBSD:#define __INT_LEAST16_MAX__ 32767
 // I386-NETBSD:#define __INT_LEAST16_TYPE__ short
+// I386-NETBSD:#define __INT_LEAST32_FMTd__ "d"
+// I386-NETBSD:#define __INT_LEAST32_FMTi__ "i"
 // I386-NETBSD:#define __INT_LEAST32_MAX__ 2147483647
 // I386-NETBSD:#define __INT_LEAST32_TYPE__ int
+// I386-NETBSD:#define __INT_LEAST64_FMTd__ "lld"
+// I386-NETBSD:#define __INT_LEAST64_FMTi__ "lli"
 // I386-NETBSD:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // I386-NETBSD:#define __INT_LEAST64_TYPE__ long long int
+// I386-NETBSD:#define __INT_LEAST8_FMTd__ "hhd"
+// I386-NETBSD:#define __INT_LEAST8_FMTi__ "hhi"
 // I386-NETBSD:#define __INT_LEAST8_MAX__ 127
 // I386-NETBSD:#define __INT_LEAST8_TYPE__ char
 // I386-NETBSD:#define __INT_MAX__ 2147483647
@@ -1977,6 +2306,7 @@
 // I386-NETBSD:#define __UINT8_C_SUFFIX__ U
 // I386-NETBSD:#define __UINT8_MAX__ 255U
 // I386-NETBSD:#define __UINT8_TYPE__ unsigned char
+// I386-NETBSD:#define __UINTMAX_C_SUFFIX__ ULL
 // I386-NETBSD:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // I386-NETBSD:#define __UINTMAX_TYPE__ long long unsigned int
 // I386-NETBSD:#define __UINTMAX_WIDTH__ 64
@@ -2065,35 +2395,64 @@
 // MIPS32BE:#define __FLT_MIN_EXP__ (-125)
 // MIPS32BE:#define __FLT_MIN__ 1.17549435e-38F
 // MIPS32BE:#define __FLT_RADIX__ 2
+// MIPS32BE:#define __INT16_FMTd__ "hd"
+// MIPS32BE:#define __INT16_FMTi__ "hi"
 // MIPS32BE:#define __INT16_MAX__ 32767
 // MIPS32BE:#define __INT16_TYPE__ short
+// MIPS32BE:#define __INT32_FMTd__ "d"
+// MIPS32BE:#define __INT32_FMTi__ "i"
 // MIPS32BE:#define __INT32_MAX__ 2147483647
 // MIPS32BE:#define __INT32_TYPE__ int
 // MIPS32BE:#define __INT64_C_SUFFIX__ LL
+// MIPS32BE:#define __INT64_FMTd__ "lld"
+// MIPS32BE:#define __INT64_FMTi__ "lli"
 // MIPS32BE:#define __INT64_MAX__ 9223372036854775807LL
 // MIPS32BE:#define __INT64_TYPE__ long long int
+// MIPS32BE:#define __INT8_FMTd__ "hhd"
+// MIPS32BE:#define __INT8_FMTi__ "hhi"
 // MIPS32BE:#define __INT8_MAX__ 127
 // MIPS32BE:#define __INT8_TYPE__ char
+// MIPS32BE:#define __INTMAX_C_SUFFIX__ LL
+// MIPS32BE:#define __INTMAX_FMTd__ "lld"
+// MIPS32BE:#define __INTMAX_FMTi__ "lli"
 // MIPS32BE:#define __INTMAX_MAX__ 9223372036854775807LL
 // MIPS32BE:#define __INTMAX_TYPE__ long long int
 // MIPS32BE:#define __INTMAX_WIDTH__ 64
+// MIPS32BE:#define __INTPTR_FMTd__ "ld"
+// MIPS32BE:#define __INTPTR_FMTi__ "li"
 // MIPS32BE:#define __INTPTR_MAX__ 2147483647L
 // MIPS32BE:#define __INTPTR_TYPE__ long int
 // MIPS32BE:#define __INTPTR_WIDTH__ 32
+// MIPS32BE:#define __INT_FAST16_FMTd__ "hd"
+// MIPS32BE:#define __INT_FAST16_FMTi__ "hi"
 // MIPS32BE:#define __INT_FAST16_MAX__ 32767
 // MIPS32BE:#define __INT_FAST16_TYPE__ short
+// MIPS32BE:#define __INT_FAST32_FMTd__ "d"
+// MIPS32BE:#define __INT_FAST32_FMTi__ "i"
 // MIPS32BE:#define __INT_FAST32_MAX__ 2147483647
 // MIPS32BE:#define __INT_FAST32_TYPE__ int
+// MIPS32BE:#define __INT_FAST64_FMTd__ "lld"
+// MIPS32BE:#define __INT_FAST64_FMTi__ "lli"
 // MIPS32BE:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // MIPS32BE:#define __INT_FAST64_TYPE__ long long int
+// MIPS32BE:#define __INT_FAST8_FMTd__ "hhd"
+// MIPS32BE:#define __INT_FAST8_FMTi__ "hhi"
 // MIPS32BE:#define __INT_FAST8_MAX__ 127
 // MIPS32BE:#define __INT_FAST8_TYPE__ char
+// MIPS32BE:#define __INT_LEAST16_FMTd__ "hd"
+// MIPS32BE:#define __INT_LEAST16_FMTi__ "hi"
 // MIPS32BE:#define __INT_LEAST16_MAX__ 32767
 // MIPS32BE:#define __INT_LEAST16_TYPE__ short
+// MIPS32BE:#define __INT_LEAST32_FMTd__ "d"
+// MIPS32BE:#define __INT_LEAST32_FMTi__ "i"
 // MIPS32BE:#define __INT_LEAST32_MAX__ 2147483647
 // MIPS32BE:#define __INT_LEAST32_TYPE__ int
+// MIPS32BE:#define __INT_LEAST64_FMTd__ "lld"
+// MIPS32BE:#define __INT_LEAST64_FMTi__ "lli"
 // MIPS32BE:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // MIPS32BE:#define __INT_LEAST64_TYPE__ long long int
+// MIPS32BE:#define __INT_LEAST8_FMTd__ "hhd"
+// MIPS32BE:#define __INT_LEAST8_FMTi__ "hhi"
 // MIPS32BE:#define __INT_LEAST8_MAX__ 127
 // MIPS32BE:#define __INT_LEAST8_TYPE__ char
 // MIPS32BE:#define __INT_MAX__ 2147483647
@@ -2153,11 +2512,12 @@
 // MIPS32BE:#define __UINT8_C_SUFFIX__ U
 // MIPS32BE:#define __UINT8_MAX__ 255U
 // MIPS32BE:#define __UINT8_TYPE__ unsigned char
+// MIPS32BE:#define __UINTMAX_C_SUFFIX__ ULL
 // MIPS32BE:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // MIPS32BE:#define __UINTMAX_TYPE__ long long unsigned int
 // MIPS32BE:#define __UINTMAX_WIDTH__ 64
 // MIPS32BE:#define __UINTPTR_MAX__ 4294967295U
-// MIPS32BE:#define __UINTPTR_TYPE__ unsigned int
+// MIPS32BE:#define __UINTPTR_TYPE__ long unsigned int
 // MIPS32BE:#define __UINTPTR_WIDTH__ 32
 // MIPS32BE:#define __UINT_FAST16_MAX__ 65535U
 // MIPS32BE:#define __UINT_FAST16_TYPE__ unsigned short
@@ -2238,35 +2598,64 @@
 // MIPS32EL:#define __FLT_MIN_EXP__ (-125)
 // MIPS32EL:#define __FLT_MIN__ 1.17549435e-38F
 // MIPS32EL:#define __FLT_RADIX__ 2
+// MIPS32EL:#define __INT16_FMTd__ "hd"
+// MIPS32EL:#define __INT16_FMTi__ "hi"
 // MIPS32EL:#define __INT16_MAX__ 32767
 // MIPS32EL:#define __INT16_TYPE__ short
+// MIPS32EL:#define __INT32_FMTd__ "d"
+// MIPS32EL:#define __INT32_FMTi__ "i"
 // MIPS32EL:#define __INT32_MAX__ 2147483647
 // MIPS32EL:#define __INT32_TYPE__ int
 // MIPS32EL:#define __INT64_C_SUFFIX__ LL
+// MIPS32EL:#define __INT64_FMTd__ "lld"
+// MIPS32EL:#define __INT64_FMTi__ "lli"
 // MIPS32EL:#define __INT64_MAX__ 9223372036854775807LL
 // MIPS32EL:#define __INT64_TYPE__ long long int
+// MIPS32EL:#define __INT8_FMTd__ "hhd"
+// MIPS32EL:#define __INT8_FMTi__ "hhi"
 // MIPS32EL:#define __INT8_MAX__ 127
 // MIPS32EL:#define __INT8_TYPE__ char
+// MIPS32EL:#define __INTMAX_C_SUFFIX__ LL
+// MIPS32EL:#define __INTMAX_FMTd__ "lld"
+// MIPS32EL:#define __INTMAX_FMTi__ "lli"
 // MIPS32EL:#define __INTMAX_MAX__ 9223372036854775807LL
 // MIPS32EL:#define __INTMAX_TYPE__ long long int
 // MIPS32EL:#define __INTMAX_WIDTH__ 64
+// MIPS32EL:#define __INTPTR_FMTd__ "ld"
+// MIPS32EL:#define __INTPTR_FMTi__ "li"
 // MIPS32EL:#define __INTPTR_MAX__ 2147483647L
 // MIPS32EL:#define __INTPTR_TYPE__ long int
 // MIPS32EL:#define __INTPTR_WIDTH__ 32
+// MIPS32EL:#define __INT_FAST16_FMTd__ "hd"
+// MIPS32EL:#define __INT_FAST16_FMTi__ "hi"
 // MIPS32EL:#define __INT_FAST16_MAX__ 32767
 // MIPS32EL:#define __INT_FAST16_TYPE__ short
+// MIPS32EL:#define __INT_FAST32_FMTd__ "d"
+// MIPS32EL:#define __INT_FAST32_FMTi__ "i"
 // MIPS32EL:#define __INT_FAST32_MAX__ 2147483647
 // MIPS32EL:#define __INT_FAST32_TYPE__ int
+// MIPS32EL:#define __INT_FAST64_FMTd__ "lld"
+// MIPS32EL:#define __INT_FAST64_FMTi__ "lli"
 // MIPS32EL:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // MIPS32EL:#define __INT_FAST64_TYPE__ long long int
+// MIPS32EL:#define __INT_FAST8_FMTd__ "hhd"
+// MIPS32EL:#define __INT_FAST8_FMTi__ "hhi"
 // MIPS32EL:#define __INT_FAST8_MAX__ 127
 // MIPS32EL:#define __INT_FAST8_TYPE__ char
+// MIPS32EL:#define __INT_LEAST16_FMTd__ "hd"
+// MIPS32EL:#define __INT_LEAST16_FMTi__ "hi"
 // MIPS32EL:#define __INT_LEAST16_MAX__ 32767
 // MIPS32EL:#define __INT_LEAST16_TYPE__ short
+// MIPS32EL:#define __INT_LEAST32_FMTd__ "d"
+// MIPS32EL:#define __INT_LEAST32_FMTi__ "i"
 // MIPS32EL:#define __INT_LEAST32_MAX__ 2147483647
 // MIPS32EL:#define __INT_LEAST32_TYPE__ int
+// MIPS32EL:#define __INT_LEAST64_FMTd__ "lld"
+// MIPS32EL:#define __INT_LEAST64_FMTi__ "lli"
 // MIPS32EL:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // MIPS32EL:#define __INT_LEAST64_TYPE__ long long int
+// MIPS32EL:#define __INT_LEAST8_FMTd__ "hhd"
+// MIPS32EL:#define __INT_LEAST8_FMTi__ "hhi"
 // MIPS32EL:#define __INT_LEAST8_MAX__ 127
 // MIPS32EL:#define __INT_LEAST8_TYPE__ char
 // MIPS32EL:#define __INT_MAX__ 2147483647
@@ -2324,11 +2713,12 @@
 // MIPS32EL:#define __UINT8_C_SUFFIX__ U
 // MIPS32EL:#define __UINT8_MAX__ 255U
 // MIPS32EL:#define __UINT8_TYPE__ unsigned char
+// MIPS32EL:#define __UINTMAX_C_SUFFIX__ ULL
 // MIPS32EL:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // MIPS32EL:#define __UINTMAX_TYPE__ long long unsigned int
 // MIPS32EL:#define __UINTMAX_WIDTH__ 64
 // MIPS32EL:#define __UINTPTR_MAX__ 4294967295U
-// MIPS32EL:#define __UINTPTR_TYPE__ unsigned int
+// MIPS32EL:#define __UINTPTR_TYPE__ long unsigned int
 // MIPS32EL:#define __UINTPTR_WIDTH__ 32
 // MIPS32EL:#define __UINT_FAST16_MAX__ 65535U
 // MIPS32EL:#define __UINT_FAST16_TYPE__ unsigned short
@@ -2410,35 +2800,64 @@
 // MIPS64BE:#define __FLT_MIN_EXP__ (-125)
 // MIPS64BE:#define __FLT_MIN__ 1.17549435e-38F
 // MIPS64BE:#define __FLT_RADIX__ 2
+// MIPS64BE:#define __INT16_FMTd__ "hd"
+// MIPS64BE:#define __INT16_FMTi__ "hi"
 // MIPS64BE:#define __INT16_MAX__ 32767
 // MIPS64BE:#define __INT16_TYPE__ short
+// MIPS64BE:#define __INT32_FMTd__ "d"
+// MIPS64BE:#define __INT32_FMTi__ "i"
 // MIPS64BE:#define __INT32_MAX__ 2147483647
 // MIPS64BE:#define __INT32_TYPE__ int
 // MIPS64BE:#define __INT64_C_SUFFIX__ LL
+// MIPS64BE:#define __INT64_FMTd__ "lld"
+// MIPS64BE:#define __INT64_FMTi__ "lli"
 // MIPS64BE:#define __INT64_MAX__ 9223372036854775807L
 // MIPS64BE:#define __INT64_TYPE__ long long int
+// MIPS64BE:#define __INT8_FMTd__ "hhd"
+// MIPS64BE:#define __INT8_FMTi__ "hhi"
 // MIPS64BE:#define __INT8_MAX__ 127
 // MIPS64BE:#define __INT8_TYPE__ char
+// MIPS64BE:#define __INTMAX_C_SUFFIX__ LL
+// MIPS64BE:#define __INTMAX_FMTd__ "lld"
+// MIPS64BE:#define __INTMAX_FMTi__ "lli"
 // MIPS64BE:#define __INTMAX_MAX__ 9223372036854775807LL
 // MIPS64BE:#define __INTMAX_TYPE__ long long int
 // MIPS64BE:#define __INTMAX_WIDTH__ 64
+// MIPS64BE:#define __INTPTR_FMTd__ "ld"
+// MIPS64BE:#define __INTPTR_FMTi__ "li"
 // MIPS64BE:#define __INTPTR_MAX__ 9223372036854775807L
 // MIPS64BE:#define __INTPTR_TYPE__ long int
 // MIPS64BE:#define __INTPTR_WIDTH__ 64
+// MIPS64BE:#define __INT_FAST16_FMTd__ "hd"
+// MIPS64BE:#define __INT_FAST16_FMTi__ "hi"
 // MIPS64BE:#define __INT_FAST16_MAX__ 32767
 // MIPS64BE:#define __INT_FAST16_TYPE__ short
+// MIPS64BE:#define __INT_FAST32_FMTd__ "d"
+// MIPS64BE:#define __INT_FAST32_FMTi__ "i"
 // MIPS64BE:#define __INT_FAST32_MAX__ 2147483647
 // MIPS64BE:#define __INT_FAST32_TYPE__ int
+// MIPS64BE:#define __INT_FAST64_FMTd__ "ld"
+// MIPS64BE:#define __INT_FAST64_FMTi__ "li"
 // MIPS64BE:#define __INT_FAST64_MAX__ 9223372036854775807L
 // MIPS64BE:#define __INT_FAST64_TYPE__ long int
+// MIPS64BE:#define __INT_FAST8_FMTd__ "hhd"
+// MIPS64BE:#define __INT_FAST8_FMTi__ "hhi"
 // MIPS64BE:#define __INT_FAST8_MAX__ 127
 // MIPS64BE:#define __INT_FAST8_TYPE__ char
+// MIPS64BE:#define __INT_LEAST16_FMTd__ "hd"
+// MIPS64BE:#define __INT_LEAST16_FMTi__ "hi"
 // MIPS64BE:#define __INT_LEAST16_MAX__ 32767
 // MIPS64BE:#define __INT_LEAST16_TYPE__ short
+// MIPS64BE:#define __INT_LEAST32_FMTd__ "d"
+// MIPS64BE:#define __INT_LEAST32_FMTi__ "i"
 // MIPS64BE:#define __INT_LEAST32_MAX__ 2147483647
 // MIPS64BE:#define __INT_LEAST32_TYPE__ int
+// MIPS64BE:#define __INT_LEAST64_FMTd__ "ld"
+// MIPS64BE:#define __INT_LEAST64_FMTi__ "li"
 // MIPS64BE:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // MIPS64BE:#define __INT_LEAST64_TYPE__ long int
+// MIPS64BE:#define __INT_LEAST8_FMTd__ "hhd"
+// MIPS64BE:#define __INT_LEAST8_FMTi__ "hhi"
 // MIPS64BE:#define __INT_LEAST8_MAX__ 127
 // MIPS64BE:#define __INT_LEAST8_TYPE__ char
 // MIPS64BE:#define __INT_MAX__ 2147483647
@@ -2489,12 +2908,13 @@
 // MIPS64BE:#define __UINT32_C_SUFFIX__ U
 // MIPS64BE:#define __UINT32_MAX__ 4294967295U
 // MIPS64BE:#define __UINT32_TYPE__ unsigned int
-// MIPS64BE:#define __UINT64_C_SUFFIX__ UL
-// MIPS64BE:#define __UINT64_MAX__ 18446744073709551615UL
-// MIPS64BE:#define __UINT64_TYPE__ long unsigned int
+// MIPS64BE:#define __UINT64_C_SUFFIX__ ULL
+// MIPS64BE:#define __UINT64_MAX__ 18446744073709551615ULL
+// MIPS64BE:#define __UINT64_TYPE__ long long unsigned int
 // MIPS64BE:#define __UINT8_C_SUFFIX__ U
 // MIPS64BE:#define __UINT8_MAX__ 255U
 // MIPS64BE:#define __UINT8_TYPE__ unsigned char
+// MIPS64BE:#define __UINTMAX_C_SUFFIX__ ULL
 // MIPS64BE:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // MIPS64BE:#define __UINTMAX_TYPE__ long long unsigned int
 // MIPS64BE:#define __UINTMAX_WIDTH__ 64
@@ -2582,35 +3002,64 @@
 // MIPS64EL:#define __FLT_MIN_EXP__ (-125)
 // MIPS64EL:#define __FLT_MIN__ 1.17549435e-38F
 // MIPS64EL:#define __FLT_RADIX__ 2
+// MIPS64EL:#define __INT16_FMTd__ "hd"
+// MIPS64EL:#define __INT16_FMTi__ "hi"
 // MIPS64EL:#define __INT16_MAX__ 32767
 // MIPS64EL:#define __INT16_TYPE__ short
+// MIPS64EL:#define __INT32_FMTd__ "d"
+// MIPS64EL:#define __INT32_FMTi__ "i"
 // MIPS64EL:#define __INT32_MAX__ 2147483647
 // MIPS64EL:#define __INT32_TYPE__ int
 // MIPS64EL:#define __INT64_C_SUFFIX__ LL
+// MIPS64EL:#define __INT64_FMTd__ "lld"
+// MIPS64EL:#define __INT64_FMTi__ "lli"
 // MIPS64EL:#define __INT64_MAX__ 9223372036854775807L
 // MIPS64EL:#define __INT64_TYPE__ long long int
+// MIPS64EL:#define __INT8_FMTd__ "hhd"
+// MIPS64EL:#define __INT8_FMTi__ "hhi"
 // MIPS64EL:#define __INT8_MAX__ 127
 // MIPS64EL:#define __INT8_TYPE__ char
+// MIPS64EL:#define __INTMAX_C_SUFFIX__ LL
+// MIPS64EL:#define __INTMAX_FMTd__ "lld"
+// MIPS64EL:#define __INTMAX_FMTi__ "lli"
 // MIPS64EL:#define __INTMAX_MAX__ 9223372036854775807LL
 // MIPS64EL:#define __INTMAX_TYPE__ long long int
 // MIPS64EL:#define __INTMAX_WIDTH__ 64
+// MIPS64EL:#define __INTPTR_FMTd__ "ld"
+// MIPS64EL:#define __INTPTR_FMTi__ "li"
 // MIPS64EL:#define __INTPTR_MAX__ 9223372036854775807L
 // MIPS64EL:#define __INTPTR_TYPE__ long int
 // MIPS64EL:#define __INTPTR_WIDTH__ 64
+// MIPS64EL:#define __INT_FAST16_FMTd__ "hd"
+// MIPS64EL:#define __INT_FAST16_FMTi__ "hi"
 // MIPS64EL:#define __INT_FAST16_MAX__ 32767
 // MIPS64EL:#define __INT_FAST16_TYPE__ short
+// MIPS64EL:#define __INT_FAST32_FMTd__ "d"
+// MIPS64EL:#define __INT_FAST32_FMTi__ "i"
 // MIPS64EL:#define __INT_FAST32_MAX__ 2147483647
 // MIPS64EL:#define __INT_FAST32_TYPE__ int
+// MIPS64EL:#define __INT_FAST64_FMTd__ "ld"
+// MIPS64EL:#define __INT_FAST64_FMTi__ "li"
 // MIPS64EL:#define __INT_FAST64_MAX__ 9223372036854775807L
 // MIPS64EL:#define __INT_FAST64_TYPE__ long int
+// MIPS64EL:#define __INT_FAST8_FMTd__ "hhd"
+// MIPS64EL:#define __INT_FAST8_FMTi__ "hhi"
 // MIPS64EL:#define __INT_FAST8_MAX__ 127
 // MIPS64EL:#define __INT_FAST8_TYPE__ char
+// MIPS64EL:#define __INT_LEAST16_FMTd__ "hd"
+// MIPS64EL:#define __INT_LEAST16_FMTi__ "hi"
 // MIPS64EL:#define __INT_LEAST16_MAX__ 32767
 // MIPS64EL:#define __INT_LEAST16_TYPE__ short
+// MIPS64EL:#define __INT_LEAST32_FMTd__ "d"
+// MIPS64EL:#define __INT_LEAST32_FMTi__ "i"
 // MIPS64EL:#define __INT_LEAST32_MAX__ 2147483647
 // MIPS64EL:#define __INT_LEAST32_TYPE__ int
+// MIPS64EL:#define __INT_LEAST64_FMTd__ "ld"
+// MIPS64EL:#define __INT_LEAST64_FMTi__ "li"
 // MIPS64EL:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // MIPS64EL:#define __INT_LEAST64_TYPE__ long int
+// MIPS64EL:#define __INT_LEAST8_FMTd__ "hhd"
+// MIPS64EL:#define __INT_LEAST8_FMTi__ "hhi"
 // MIPS64EL:#define __INT_LEAST8_MAX__ 127
 // MIPS64EL:#define __INT_LEAST8_TYPE__ char
 // MIPS64EL:#define __INT_MAX__ 2147483647
@@ -2662,12 +3111,13 @@
 // MIPS64EL:#define __UINT32_C_SUFFIX__ U
 // MIPS64EL:#define __UINT32_MAX__ 4294967295U
 // MIPS64EL:#define __UINT32_TYPE__ unsigned int
-// MIPS64EL:#define __UINT64_C_SUFFIX__ UL
-// MIPS64EL:#define __UINT64_MAX__ 18446744073709551615UL
-// MIPS64EL:#define __UINT64_TYPE__ long unsigned int
+// MIPS64EL:#define __UINT64_C_SUFFIX__ ULL
+// MIPS64EL:#define __UINT64_MAX__ 18446744073709551615ULL
+// MIPS64EL:#define __UINT64_TYPE__ long long unsigned int
 // MIPS64EL:#define __UINT8_C_SUFFIX__ U
 // MIPS64EL:#define __UINT8_MAX__ 255U
 // MIPS64EL:#define __UINT8_TYPE__ unsigned char
+// MIPS64EL:#define __UINTMAX_C_SUFFIX__ ULL
 // MIPS64EL:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // MIPS64EL:#define __UINTMAX_TYPE__ long long unsigned int
 // MIPS64EL:#define __UINTMAX_WIDTH__ 64
@@ -2911,36 +3361,65 @@
 // MSP430:#define __FLT_MIN_EXP__ (-125)
 // MSP430:#define __FLT_MIN__ 1.17549435e-38F
 // MSP430:#define __FLT_RADIX__ 2
+// MSP430:#define __INT16_FMTd__ "hd"
+// MSP430:#define __INT16_FMTi__ "hi"
 // MSP430:#define __INT16_MAX__ 32767
 // MSP430:#define __INT16_TYPE__ short
 // MSP430:#define __INT32_C_SUFFIX__ L
+// MSP430:#define __INT32_FMTd__ "ld"
+// MSP430:#define __INT32_FMTi__ "li"
 // MSP430:#define __INT32_MAX__ 2147483647L
 // MSP430:#define __INT32_TYPE__ long int
 // MSP430:#define __INT64_C_SUFFIX__ LL
+// MSP430:#define __INT64_FMTd__ "lld"
+// MSP430:#define __INT64_FMTi__ "lli"
 // MSP430:#define __INT64_MAX__ 9223372036854775807LL
 // MSP430:#define __INT64_TYPE__ long long int
+// MSP430:#define __INT8_FMTd__ "hhd"
+// MSP430:#define __INT8_FMTi__ "hhi"
 // MSP430:#define __INT8_MAX__ 127
 // MSP430:#define __INT8_TYPE__ char
+// MSP430:#define __INTMAX_C_SUFFIX__ LL
+// MSP430:#define __INTMAX_FMTd__ "lld"
+// MSP430:#define __INTMAX_FMTi__ "lli"
 // MSP430:#define __INTMAX_MAX__ 9223372036854775807LL
 // MSP430:#define __INTMAX_TYPE__ long long int
 // MSP430:#define __INTMAX_WIDTH__ 64
+// MSP430:#define __INTPTR_FMTd__ "d"
+// MSP430:#define __INTPTR_FMTi__ "i"
 // MSP430:#define __INTPTR_MAX__ 32767
 // MSP430:#define __INTPTR_TYPE__ int
 // MSP430:#define __INTPTR_WIDTH__ 16
+// MSP430:#define __INT_FAST16_FMTd__ "hd"
+// MSP430:#define __INT_FAST16_FMTi__ "hi"
 // MSP430:#define __INT_FAST16_MAX__ 32767
 // MSP430:#define __INT_FAST16_TYPE__ short
+// MSP430:#define __INT_FAST32_FMTd__ "ld"
+// MSP430:#define __INT_FAST32_FMTi__ "li"
 // MSP430:#define __INT_FAST32_MAX__ 2147483647L
 // MSP430:#define __INT_FAST32_TYPE__ long int
+// MSP430:#define __INT_FAST64_FMTd__ "lld"
+// MSP430:#define __INT_FAST64_FMTi__ "lli"
 // MSP430:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // MSP430:#define __INT_FAST64_TYPE__ long long int
+// MSP430:#define __INT_FAST8_FMTd__ "hhd"
+// MSP430:#define __INT_FAST8_FMTi__ "hhi"
 // MSP430:#define __INT_FAST8_MAX__ 127
 // MSP430:#define __INT_FAST8_TYPE__ char
+// MSP430:#define __INT_LEAST16_FMTd__ "hd"
+// MSP430:#define __INT_LEAST16_FMTi__ "hi"
 // MSP430:#define __INT_LEAST16_MAX__ 32767
 // MSP430:#define __INT_LEAST16_TYPE__ short
+// MSP430:#define __INT_LEAST32_FMTd__ "ld"
+// MSP430:#define __INT_LEAST32_FMTi__ "li"
 // MSP430:#define __INT_LEAST32_MAX__ 2147483647L
 // MSP430:#define __INT_LEAST32_TYPE__ long int
+// MSP430:#define __INT_LEAST64_FMTd__ "lld"
+// MSP430:#define __INT_LEAST64_FMTi__ "lli"
 // MSP430:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // MSP430:#define __INT_LEAST64_TYPE__ long long int
+// MSP430:#define __INT_LEAST8_FMTd__ "hhd"
+// MSP430:#define __INT_LEAST8_FMTi__ "hhi"
 // MSP430:#define __INT_LEAST8_MAX__ 127
 // MSP430:#define __INT_LEAST8_TYPE__ char
 // MSP430:#define __INT_MAX__ 32767
@@ -2995,11 +3474,12 @@
 // MSP430:#define __UINT8_C_SUFFIX__ U
 // MSP430:#define __UINT8_MAX__ 255U
 // MSP430:#define __UINT8_TYPE__ unsigned char
+// MSP430:#define __UINTMAX_C_SUFFIX__ ULL
 // MSP430:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // MSP430:#define __UINTMAX_TYPE__ long long unsigned int
 // MSP430:#define __UINTMAX_WIDTH__ 64
 // MSP430:#define __UINTPTR_MAX__ 65535U
-// MSP430:#define __UINTPTR_TYPE__ unsigned short
+// MSP430:#define __UINTPTR_TYPE__ unsigned int
 // MSP430:#define __UINTPTR_WIDTH__ 16
 // MSP430:#define __UINT_FAST16_MAX__ 65535U
 // MSP430:#define __UINT_FAST16_TYPE__ unsigned short
@@ -3063,35 +3543,64 @@
 // NVPTX32:#define __FLT_MIN_EXP__ (-125)
 // NVPTX32:#define __FLT_MIN__ 1.17549435e-38F
 // NVPTX32:#define __FLT_RADIX__ 2
+// NVPTX32:#define __INT16_FMTd__ "hd"
+// NVPTX32:#define __INT16_FMTi__ "hi"
 // NVPTX32:#define __INT16_MAX__ 32767
 // NVPTX32:#define __INT16_TYPE__ short
+// NVPTX32:#define __INT32_FMTd__ "d"
+// NVPTX32:#define __INT32_FMTi__ "i"
 // NVPTX32:#define __INT32_MAX__ 2147483647
 // NVPTX32:#define __INT32_TYPE__ int
 // NVPTX32:#define __INT64_C_SUFFIX__ LL
+// NVPTX32:#define __INT64_FMTd__ "lld"
+// NVPTX32:#define __INT64_FMTi__ "lli"
 // NVPTX32:#define __INT64_MAX__ 9223372036854775807L
 // NVPTX32:#define __INT64_TYPE__ long long int
+// NVPTX32:#define __INT8_FMTd__ "hhd"
+// NVPTX32:#define __INT8_FMTi__ "hhi"
 // NVPTX32:#define __INT8_MAX__ 127
 // NVPTX32:#define __INT8_TYPE__ char
+// NVPTX32:#define __INTMAX_C_SUFFIX__ LL
+// NVPTX32:#define __INTMAX_FMTd__ "lld"
+// NVPTX32:#define __INTMAX_FMTi__ "lli"
 // NVPTX32:#define __INTMAX_MAX__ 9223372036854775807LL
 // NVPTX32:#define __INTMAX_TYPE__ long long int
 // NVPTX32:#define __INTMAX_WIDTH__ 64
-// NVPTX32:#define __INTPTR_MAX__ 4294967295U
-// NVPTX32:#define __INTPTR_TYPE__ unsigned int
+// NVPTX32:#define __INTPTR_FMTd__ "d"
+// NVPTX32:#define __INTPTR_FMTi__ "i"
+// NVPTX32:#define __INTPTR_MAX__ 2147483647
+// NVPTX32:#define __INTPTR_TYPE__ int
 // NVPTX32:#define __INTPTR_WIDTH__ 32
+// NVPTX32:#define __INT_FAST16_FMTd__ "hd"
+// NVPTX32:#define __INT_FAST16_FMTi__ "hi"
 // NVPTX32:#define __INT_FAST16_MAX__ 32767
 // NVPTX32:#define __INT_FAST16_TYPE__ short
+// NVPTX32:#define __INT_FAST32_FMTd__ "d"
+// NVPTX32:#define __INT_FAST32_FMTi__ "i"
 // NVPTX32:#define __INT_FAST32_MAX__ 2147483647
 // NVPTX32:#define __INT_FAST32_TYPE__ int
+// NVPTX32:#define __INT_FAST64_FMTd__ "ld"
+// NVPTX32:#define __INT_FAST64_FMTi__ "li"
 // NVPTX32:#define __INT_FAST64_MAX__ 9223372036854775807L
 // NVPTX32:#define __INT_FAST64_TYPE__ long int
+// NVPTX32:#define __INT_FAST8_FMTd__ "hhd"
+// NVPTX32:#define __INT_FAST8_FMTi__ "hhi"
 // NVPTX32:#define __INT_FAST8_MAX__ 127
 // NVPTX32:#define __INT_FAST8_TYPE__ char
+// NVPTX32:#define __INT_LEAST16_FMTd__ "hd"
+// NVPTX32:#define __INT_LEAST16_FMTi__ "hi"
 // NVPTX32:#define __INT_LEAST16_MAX__ 32767
 // NVPTX32:#define __INT_LEAST16_TYPE__ short
+// NVPTX32:#define __INT_LEAST32_FMTd__ "d"
+// NVPTX32:#define __INT_LEAST32_FMTi__ "i"
 // NVPTX32:#define __INT_LEAST32_MAX__ 2147483647
 // NVPTX32:#define __INT_LEAST32_TYPE__ int
+// NVPTX32:#define __INT_LEAST64_FMTd__ "ld"
+// NVPTX32:#define __INT_LEAST64_FMTi__ "li"
 // NVPTX32:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // NVPTX32:#define __INT_LEAST64_TYPE__ long int
+// NVPTX32:#define __INT_LEAST8_FMTd__ "hhd"
+// NVPTX32:#define __INT_LEAST8_FMTi__ "hhi"
 // NVPTX32:#define __INT_LEAST8_MAX__ 127
 // NVPTX32:#define __INT_LEAST8_TYPE__ char
 // NVPTX32:#define __INT_MAX__ 2147483647
@@ -3142,12 +3651,13 @@
 // NVPTX32:#define __UINT32_C_SUFFIX__ U
 // NVPTX32:#define __UINT32_MAX__ 4294967295U
 // NVPTX32:#define __UINT32_TYPE__ unsigned int
-// NVPTX32:#define __UINT64_C_SUFFIX__ UL
-// NVPTX32:#define __UINT64_MAX__ 18446744073709551615UL
-// NVPTX32:#define __UINT64_TYPE__ long unsigned int
+// NVPTX32:#define __UINT64_C_SUFFIX__ ULL
+// NVPTX32:#define __UINT64_MAX__ 18446744073709551615ULL
+// NVPTX32:#define __UINT64_TYPE__ long long unsigned int
 // NVPTX32:#define __UINT8_C_SUFFIX__ U
 // NVPTX32:#define __UINT8_MAX__ 255U
 // NVPTX32:#define __UINT8_TYPE__ unsigned char
+// NVPTX32:#define __UINTMAX_C_SUFFIX__ ULL
 // NVPTX32:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // NVPTX32:#define __UINTMAX_TYPE__ long long unsigned int
 // NVPTX32:#define __UINTMAX_WIDTH__ 64
@@ -3215,35 +3725,64 @@
 // NVPTX64:#define __FLT_MIN_EXP__ (-125)
 // NVPTX64:#define __FLT_MIN__ 1.17549435e-38F
 // NVPTX64:#define __FLT_RADIX__ 2
+// NVPTX64:#define __INT16_FMTd__ "hd"
+// NVPTX64:#define __INT16_FMTi__ "hi"
 // NVPTX64:#define __INT16_MAX__ 32767
 // NVPTX64:#define __INT16_TYPE__ short
+// NVPTX64:#define __INT32_FMTd__ "d"
+// NVPTX64:#define __INT32_FMTi__ "i"
 // NVPTX64:#define __INT32_MAX__ 2147483647
 // NVPTX64:#define __INT32_TYPE__ int
 // NVPTX64:#define __INT64_C_SUFFIX__ LL
+// NVPTX64:#define __INT64_FMTd__ "lld"
+// NVPTX64:#define __INT64_FMTi__ "lli"
 // NVPTX64:#define __INT64_MAX__ 9223372036854775807L
 // NVPTX64:#define __INT64_TYPE__ long long int
+// NVPTX64:#define __INT8_FMTd__ "hhd"
+// NVPTX64:#define __INT8_FMTi__ "hhi"
 // NVPTX64:#define __INT8_MAX__ 127
 // NVPTX64:#define __INT8_TYPE__ char
+// NVPTX64:#define __INTMAX_C_SUFFIX__ LL
+// NVPTX64:#define __INTMAX_FMTd__ "lld"
+// NVPTX64:#define __INTMAX_FMTi__ "lli"
 // NVPTX64:#define __INTMAX_MAX__ 9223372036854775807LL
 // NVPTX64:#define __INTMAX_TYPE__ long long int
 // NVPTX64:#define __INTMAX_WIDTH__ 64
-// NVPTX64:#define __INTPTR_MAX__ 18446744073709551615ULL
-// NVPTX64:#define __INTPTR_TYPE__ long long unsigned int
+// NVPTX64:#define __INTPTR_FMTd__ "lld"
+// NVPTX64:#define __INTPTR_FMTi__ "lli"
+// NVPTX64:#define __INTPTR_MAX__ 9223372036854775807LL
+// NVPTX64:#define __INTPTR_TYPE__ long long int
 // NVPTX64:#define __INTPTR_WIDTH__ 64
+// NVPTX64:#define __INT_FAST16_FMTd__ "hd"
+// NVPTX64:#define __INT_FAST16_FMTi__ "hi"
 // NVPTX64:#define __INT_FAST16_MAX__ 32767
 // NVPTX64:#define __INT_FAST16_TYPE__ short
+// NVPTX64:#define __INT_FAST32_FMTd__ "d"
+// NVPTX64:#define __INT_FAST32_FMTi__ "i"
 // NVPTX64:#define __INT_FAST32_MAX__ 2147483647
 // NVPTX64:#define __INT_FAST32_TYPE__ int
+// NVPTX64:#define __INT_FAST64_FMTd__ "ld"
+// NVPTX64:#define __INT_FAST64_FMTi__ "li"
 // NVPTX64:#define __INT_FAST64_MAX__ 9223372036854775807L
 // NVPTX64:#define __INT_FAST64_TYPE__ long int
+// NVPTX64:#define __INT_FAST8_FMTd__ "hhd"
+// NVPTX64:#define __INT_FAST8_FMTi__ "hhi"
 // NVPTX64:#define __INT_FAST8_MAX__ 127
 // NVPTX64:#define __INT_FAST8_TYPE__ char
+// NVPTX64:#define __INT_LEAST16_FMTd__ "hd"
+// NVPTX64:#define __INT_LEAST16_FMTi__ "hi"
 // NVPTX64:#define __INT_LEAST16_MAX__ 32767
 // NVPTX64:#define __INT_LEAST16_TYPE__ short
+// NVPTX64:#define __INT_LEAST32_FMTd__ "d"
+// NVPTX64:#define __INT_LEAST32_FMTi__ "i"
 // NVPTX64:#define __INT_LEAST32_MAX__ 2147483647
 // NVPTX64:#define __INT_LEAST32_TYPE__ int
+// NVPTX64:#define __INT_LEAST64_FMTd__ "ld"
+// NVPTX64:#define __INT_LEAST64_FMTi__ "li"
 // NVPTX64:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // NVPTX64:#define __INT_LEAST64_TYPE__ long int
+// NVPTX64:#define __INT_LEAST8_FMTd__ "hhd"
+// NVPTX64:#define __INT_LEAST8_FMTi__ "hhi"
 // NVPTX64:#define __INT_LEAST8_MAX__ 127
 // NVPTX64:#define __INT_LEAST8_TYPE__ char
 // NVPTX64:#define __INT_MAX__ 2147483647
@@ -3294,17 +3833,18 @@
 // NVPTX64:#define __UINT32_C_SUFFIX__ U
 // NVPTX64:#define __UINT32_MAX__ 4294967295U
 // NVPTX64:#define __UINT32_TYPE__ unsigned int
-// NVPTX64:#define __UINT64_C_SUFFIX__ UL
-// NVPTX64:#define __UINT64_MAX__ 18446744073709551615UL
-// NVPTX64:#define __UINT64_TYPE__ long unsigned int
+// NVPTX64:#define __UINT64_C_SUFFIX__ ULL
+// NVPTX64:#define __UINT64_MAX__ 18446744073709551615ULL
+// NVPTX64:#define __UINT64_TYPE__ long long unsigned int
 // NVPTX64:#define __UINT8_C_SUFFIX__ U
 // NVPTX64:#define __UINT8_MAX__ 255U
 // NVPTX64:#define __UINT8_TYPE__ unsigned char
+// NVPTX64:#define __UINTMAX_C_SUFFIX__ ULL
 // NVPTX64:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // NVPTX64:#define __UINTMAX_TYPE__ long long unsigned int
 // NVPTX64:#define __UINTMAX_WIDTH__ 64
-// NVPTX64:#define __UINTPTR_MAX__ 18446744073709551615UL
-// NVPTX64:#define __UINTPTR_TYPE__ long unsigned int
+// NVPTX64:#define __UINTPTR_MAX__ 18446744073709551615ULL
+// NVPTX64:#define __UINTPTR_TYPE__ long long unsigned int
 // NVPTX64:#define __UINTPTR_WIDTH__ 64
 // NVPTX64:#define __UINT_FAST16_MAX__ 65535U
 // NVPTX64:#define __UINT_FAST16_TYPE__ unsigned short
@@ -3371,35 +3911,64 @@
 // PPC603E:#define __FLT_MIN_EXP__ (-125)
 // PPC603E:#define __FLT_MIN__ 1.17549435e-38F
 // PPC603E:#define __FLT_RADIX__ 2
+// PPC603E:#define __INT16_FMTd__ "hd"
+// PPC603E:#define __INT16_FMTi__ "hi"
 // PPC603E:#define __INT16_MAX__ 32767
 // PPC603E:#define __INT16_TYPE__ short
+// PPC603E:#define __INT32_FMTd__ "d"
+// PPC603E:#define __INT32_FMTi__ "i"
 // PPC603E:#define __INT32_MAX__ 2147483647
 // PPC603E:#define __INT32_TYPE__ int
 // PPC603E:#define __INT64_C_SUFFIX__ LL
+// PPC603E:#define __INT64_FMTd__ "lld"
+// PPC603E:#define __INT64_FMTi__ "lli"
 // PPC603E:#define __INT64_MAX__ 9223372036854775807LL
 // PPC603E:#define __INT64_TYPE__ long long int
+// PPC603E:#define __INT8_FMTd__ "hhd"
+// PPC603E:#define __INT8_FMTi__ "hhi"
 // PPC603E:#define __INT8_MAX__ 127
 // PPC603E:#define __INT8_TYPE__ char
+// PPC603E:#define __INTMAX_C_SUFFIX__ LL
+// PPC603E:#define __INTMAX_FMTd__ "lld"
+// PPC603E:#define __INTMAX_FMTi__ "lli"
 // PPC603E:#define __INTMAX_MAX__ 9223372036854775807LL
 // PPC603E:#define __INTMAX_TYPE__ long long int
 // PPC603E:#define __INTMAX_WIDTH__ 64
+// PPC603E:#define __INTPTR_FMTd__ "ld"
+// PPC603E:#define __INTPTR_FMTi__ "li"
 // PPC603E:#define __INTPTR_MAX__ 2147483647L
 // PPC603E:#define __INTPTR_TYPE__ long int
 // PPC603E:#define __INTPTR_WIDTH__ 32
+// PPC603E:#define __INT_FAST16_FMTd__ "hd"
+// PPC603E:#define __INT_FAST16_FMTi__ "hi"
 // PPC603E:#define __INT_FAST16_MAX__ 32767
 // PPC603E:#define __INT_FAST16_TYPE__ short
+// PPC603E:#define __INT_FAST32_FMTd__ "d"
+// PPC603E:#define __INT_FAST32_FMTi__ "i"
 // PPC603E:#define __INT_FAST32_MAX__ 2147483647
 // PPC603E:#define __INT_FAST32_TYPE__ int
+// PPC603E:#define __INT_FAST64_FMTd__ "lld"
+// PPC603E:#define __INT_FAST64_FMTi__ "lli"
 // PPC603E:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // PPC603E:#define __INT_FAST64_TYPE__ long long int
+// PPC603E:#define __INT_FAST8_FMTd__ "hhd"
+// PPC603E:#define __INT_FAST8_FMTi__ "hhi"
 // PPC603E:#define __INT_FAST8_MAX__ 127
 // PPC603E:#define __INT_FAST8_TYPE__ char
+// PPC603E:#define __INT_LEAST16_FMTd__ "hd"
+// PPC603E:#define __INT_LEAST16_FMTi__ "hi"
 // PPC603E:#define __INT_LEAST16_MAX__ 32767
 // PPC603E:#define __INT_LEAST16_TYPE__ short
+// PPC603E:#define __INT_LEAST32_FMTd__ "d"
+// PPC603E:#define __INT_LEAST32_FMTi__ "i"
 // PPC603E:#define __INT_LEAST32_MAX__ 2147483647
 // PPC603E:#define __INT_LEAST32_TYPE__ int
+// PPC603E:#define __INT_LEAST64_FMTd__ "lld"
+// PPC603E:#define __INT_LEAST64_FMTi__ "lli"
 // PPC603E:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // PPC603E:#define __INT_LEAST64_TYPE__ long long int
+// PPC603E:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC603E:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC603E:#define __INT_LEAST8_MAX__ 127
 // PPC603E:#define __INT_LEAST8_TYPE__ char
 // PPC603E:#define __INT_MAX__ 2147483647
@@ -3457,11 +4026,12 @@
 // PPC603E:#define __UINT8_C_SUFFIX__ U
 // PPC603E:#define __UINT8_MAX__ 255U
 // PPC603E:#define __UINT8_TYPE__ unsigned char
+// PPC603E:#define __UINTMAX_C_SUFFIX__ ULL
 // PPC603E:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // PPC603E:#define __UINTMAX_TYPE__ long long unsigned int
 // PPC603E:#define __UINTMAX_WIDTH__ 64
 // PPC603E:#define __UINTPTR_MAX__ 4294967295U
-// PPC603E:#define __UINTPTR_TYPE__ unsigned int
+// PPC603E:#define __UINTPTR_TYPE__ long unsigned int
 // PPC603E:#define __UINTPTR_WIDTH__ 32
 // PPC603E:#define __UINT_FAST16_MAX__ 65535U
 // PPC603E:#define __UINT_FAST16_TYPE__ unsigned short
@@ -3535,35 +4105,64 @@
 // PPC64:#define __FLT_MIN_EXP__ (-125)
 // PPC64:#define __FLT_MIN__ 1.17549435e-38F
 // PPC64:#define __FLT_RADIX__ 2
+// PPC64:#define __INT16_FMTd__ "hd"
+// PPC64:#define __INT16_FMTi__ "hi"
 // PPC64:#define __INT16_MAX__ 32767
 // PPC64:#define __INT16_TYPE__ short
+// PPC64:#define __INT32_FMTd__ "d"
+// PPC64:#define __INT32_FMTi__ "i"
 // PPC64:#define __INT32_MAX__ 2147483647
 // PPC64:#define __INT32_TYPE__ int
 // PPC64:#define __INT64_C_SUFFIX__ L
+// PPC64:#define __INT64_FMTd__ "ld"
+// PPC64:#define __INT64_FMTi__ "li"
 // PPC64:#define __INT64_MAX__ 9223372036854775807L
 // PPC64:#define __INT64_TYPE__ long int
+// PPC64:#define __INT8_FMTd__ "hhd"
+// PPC64:#define __INT8_FMTi__ "hhi"
 // PPC64:#define __INT8_MAX__ 127
 // PPC64:#define __INT8_TYPE__ char
+// PPC64:#define __INTMAX_C_SUFFIX__ L
+// PPC64:#define __INTMAX_FMTd__ "ld"
+// PPC64:#define __INTMAX_FMTi__ "li"
 // PPC64:#define __INTMAX_MAX__ 9223372036854775807L
 // PPC64:#define __INTMAX_TYPE__ long int
 // PPC64:#define __INTMAX_WIDTH__ 64
+// PPC64:#define __INTPTR_FMTd__ "ld"
+// PPC64:#define __INTPTR_FMTi__ "li"
 // PPC64:#define __INTPTR_MAX__ 9223372036854775807L
 // PPC64:#define __INTPTR_TYPE__ long int
 // PPC64:#define __INTPTR_WIDTH__ 64
+// PPC64:#define __INT_FAST16_FMTd__ "hd"
+// PPC64:#define __INT_FAST16_FMTi__ "hi"
 // PPC64:#define __INT_FAST16_MAX__ 32767
 // PPC64:#define __INT_FAST16_TYPE__ short
+// PPC64:#define __INT_FAST32_FMTd__ "d"
+// PPC64:#define __INT_FAST32_FMTi__ "i"
 // PPC64:#define __INT_FAST32_MAX__ 2147483647
 // PPC64:#define __INT_FAST32_TYPE__ int
+// PPC64:#define __INT_FAST64_FMTd__ "ld"
+// PPC64:#define __INT_FAST64_FMTi__ "li"
 // PPC64:#define __INT_FAST64_MAX__ 9223372036854775807L
 // PPC64:#define __INT_FAST64_TYPE__ long int
+// PPC64:#define __INT_FAST8_FMTd__ "hhd"
+// PPC64:#define __INT_FAST8_FMTi__ "hhi"
 // PPC64:#define __INT_FAST8_MAX__ 127
 // PPC64:#define __INT_FAST8_TYPE__ char
+// PPC64:#define __INT_LEAST16_FMTd__ "hd"
+// PPC64:#define __INT_LEAST16_FMTi__ "hi"
 // PPC64:#define __INT_LEAST16_MAX__ 32767
 // PPC64:#define __INT_LEAST16_TYPE__ short
+// PPC64:#define __INT_LEAST32_FMTd__ "d"
+// PPC64:#define __INT_LEAST32_FMTi__ "i"
 // PPC64:#define __INT_LEAST32_MAX__ 2147483647
 // PPC64:#define __INT_LEAST32_TYPE__ int
+// PPC64:#define __INT_LEAST64_FMTd__ "ld"
+// PPC64:#define __INT_LEAST64_FMTi__ "li"
 // PPC64:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // PPC64:#define __INT_LEAST64_TYPE__ long int
+// PPC64:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC64:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC64:#define __INT_LEAST8_MAX__ 127
 // PPC64:#define __INT_LEAST8_TYPE__ char
 // PPC64:#define __INT_MAX__ 2147483647
@@ -3622,6 +4221,7 @@
 // PPC64:#define __UINT8_C_SUFFIX__ U
 // PPC64:#define __UINT8_MAX__ 255U
 // PPC64:#define __UINT8_TYPE__ unsigned char
+// PPC64:#define __UINTMAX_C_SUFFIX__ UL
 // PPC64:#define __UINTMAX_MAX__ 18446744073709551615UL
 // PPC64:#define __UINTMAX_TYPE__ long unsigned int
 // PPC64:#define __UINTMAX_WIDTH__ 64
@@ -3702,35 +4302,64 @@
 // PPC64LE:#define __FLT_MIN_EXP__ (-125)
 // PPC64LE:#define __FLT_MIN__ 1.17549435e-38F
 // PPC64LE:#define __FLT_RADIX__ 2
+// PPC64LE:#define __INT16_FMTd__ "hd"
+// PPC64LE:#define __INT16_FMTi__ "hi"
 // PPC64LE:#define __INT16_MAX__ 32767
 // PPC64LE:#define __INT16_TYPE__ short
+// PPC64LE:#define __INT32_FMTd__ "d"
+// PPC64LE:#define __INT32_FMTi__ "i"
 // PPC64LE:#define __INT32_MAX__ 2147483647
 // PPC64LE:#define __INT32_TYPE__ int
 // PPC64LE:#define __INT64_C_SUFFIX__ L
+// PPC64LE:#define __INT64_FMTd__ "ld"
+// PPC64LE:#define __INT64_FMTi__ "li"
 // PPC64LE:#define __INT64_MAX__ 9223372036854775807L
 // PPC64LE:#define __INT64_TYPE__ long int
+// PPC64LE:#define __INT8_FMTd__ "hhd"
+// PPC64LE:#define __INT8_FMTi__ "hhi"
 // PPC64LE:#define __INT8_MAX__ 127
 // PPC64LE:#define __INT8_TYPE__ char
+// PPC64LE:#define __INTMAX_C_SUFFIX__ L
+// PPC64LE:#define __INTMAX_FMTd__ "ld"
+// PPC64LE:#define __INTMAX_FMTi__ "li"
 // PPC64LE:#define __INTMAX_MAX__ 9223372036854775807L
 // PPC64LE:#define __INTMAX_TYPE__ long int
 // PPC64LE:#define __INTMAX_WIDTH__ 64
+// PPC64LE:#define __INTPTR_FMTd__ "ld"
+// PPC64LE:#define __INTPTR_FMTi__ "li"
 // PPC64LE:#define __INTPTR_MAX__ 9223372036854775807L
 // PPC64LE:#define __INTPTR_TYPE__ long int
 // PPC64LE:#define __INTPTR_WIDTH__ 64
+// PPC64LE:#define __INT_FAST16_FMTd__ "hd"
+// PPC64LE:#define __INT_FAST16_FMTi__ "hi"
 // PPC64LE:#define __INT_FAST16_MAX__ 32767
 // PPC64LE:#define __INT_FAST16_TYPE__ short
+// PPC64LE:#define __INT_FAST32_FMTd__ "d"
+// PPC64LE:#define __INT_FAST32_FMTi__ "i"
 // PPC64LE:#define __INT_FAST32_MAX__ 2147483647
 // PPC64LE:#define __INT_FAST32_TYPE__ int
+// PPC64LE:#define __INT_FAST64_FMTd__ "ld"
+// PPC64LE:#define __INT_FAST64_FMTi__ "li"
 // PPC64LE:#define __INT_FAST64_MAX__ 9223372036854775807L
 // PPC64LE:#define __INT_FAST64_TYPE__ long int
+// PPC64LE:#define __INT_FAST8_FMTd__ "hhd"
+// PPC64LE:#define __INT_FAST8_FMTi__ "hhi"
 // PPC64LE:#define __INT_FAST8_MAX__ 127
 // PPC64LE:#define __INT_FAST8_TYPE__ char
+// PPC64LE:#define __INT_LEAST16_FMTd__ "hd"
+// PPC64LE:#define __INT_LEAST16_FMTi__ "hi"
 // PPC64LE:#define __INT_LEAST16_MAX__ 32767
 // PPC64LE:#define __INT_LEAST16_TYPE__ short
+// PPC64LE:#define __INT_LEAST32_FMTd__ "d"
+// PPC64LE:#define __INT_LEAST32_FMTi__ "i"
 // PPC64LE:#define __INT_LEAST32_MAX__ 2147483647
 // PPC64LE:#define __INT_LEAST32_TYPE__ int
+// PPC64LE:#define __INT_LEAST64_FMTd__ "ld"
+// PPC64LE:#define __INT_LEAST64_FMTi__ "li"
 // PPC64LE:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // PPC64LE:#define __INT_LEAST64_TYPE__ long int
+// PPC64LE:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC64LE:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC64LE:#define __INT_LEAST8_MAX__ 127
 // PPC64LE:#define __INT_LEAST8_TYPE__ char
 // PPC64LE:#define __INT_MAX__ 2147483647
@@ -3790,6 +4419,7 @@
 // PPC64LE:#define __UINT8_C_SUFFIX__ U
 // PPC64LE:#define __UINT8_MAX__ 255U
 // PPC64LE:#define __UINT8_TYPE__ unsigned char
+// PPC64LE:#define __UINTMAX_C_SUFFIX__ UL
 // PPC64LE:#define __UINTMAX_MAX__ 18446744073709551615UL
 // PPC64LE:#define __UINTMAX_TYPE__ long unsigned int
 // PPC64LE:#define __UINTMAX_WIDTH__ 64
@@ -4050,35 +4680,64 @@
 // PPC64-LINUX:#define __FLT_MIN_EXP__ (-125)
 // PPC64-LINUX:#define __FLT_MIN__ 1.17549435e-38F
 // PPC64-LINUX:#define __FLT_RADIX__ 2
+// PPC64-LINUX:#define __INT16_FMTd__ "hd"
+// PPC64-LINUX:#define __INT16_FMTi__ "hi"
 // PPC64-LINUX:#define __INT16_MAX__ 32767
 // PPC64-LINUX:#define __INT16_TYPE__ short
+// PPC64-LINUX:#define __INT32_FMTd__ "d"
+// PPC64-LINUX:#define __INT32_FMTi__ "i"
 // PPC64-LINUX:#define __INT32_MAX__ 2147483647
 // PPC64-LINUX:#define __INT32_TYPE__ int
 // PPC64-LINUX:#define __INT64_C_SUFFIX__ L
+// PPC64-LINUX:#define __INT64_FMTd__ "ld"
+// PPC64-LINUX:#define __INT64_FMTi__ "li"
 // PPC64-LINUX:#define __INT64_MAX__ 9223372036854775807L
 // PPC64-LINUX:#define __INT64_TYPE__ long int
+// PPC64-LINUX:#define __INT8_FMTd__ "hhd"
+// PPC64-LINUX:#define __INT8_FMTi__ "hhi"
 // PPC64-LINUX:#define __INT8_MAX__ 127
 // PPC64-LINUX:#define __INT8_TYPE__ char
+// PPC64-LINUX:#define __INTMAX_C_SUFFIX__ L
+// PPC64-LINUX:#define __INTMAX_FMTd__ "ld"
+// PPC64-LINUX:#define __INTMAX_FMTi__ "li"
 // PPC64-LINUX:#define __INTMAX_MAX__ 9223372036854775807L
 // PPC64-LINUX:#define __INTMAX_TYPE__ long int
 // PPC64-LINUX:#define __INTMAX_WIDTH__ 64
+// PPC64-LINUX:#define __INTPTR_FMTd__ "ld"
+// PPC64-LINUX:#define __INTPTR_FMTi__ "li"
 // PPC64-LINUX:#define __INTPTR_MAX__ 9223372036854775807L
 // PPC64-LINUX:#define __INTPTR_TYPE__ long int
 // PPC64-LINUX:#define __INTPTR_WIDTH__ 64
+// PPC64-LINUX:#define __INT_FAST16_FMTd__ "hd"
+// PPC64-LINUX:#define __INT_FAST16_FMTi__ "hi"
 // PPC64-LINUX:#define __INT_FAST16_MAX__ 32767
 // PPC64-LINUX:#define __INT_FAST16_TYPE__ short
+// PPC64-LINUX:#define __INT_FAST32_FMTd__ "d"
+// PPC64-LINUX:#define __INT_FAST32_FMTi__ "i"
 // PPC64-LINUX:#define __INT_FAST32_MAX__ 2147483647
 // PPC64-LINUX:#define __INT_FAST32_TYPE__ int
+// PPC64-LINUX:#define __INT_FAST64_FMTd__ "ld"
+// PPC64-LINUX:#define __INT_FAST64_FMTi__ "li"
 // PPC64-LINUX:#define __INT_FAST64_MAX__ 9223372036854775807L
 // PPC64-LINUX:#define __INT_FAST64_TYPE__ long int
+// PPC64-LINUX:#define __INT_FAST8_FMTd__ "hhd"
+// PPC64-LINUX:#define __INT_FAST8_FMTi__ "hhi"
 // PPC64-LINUX:#define __INT_FAST8_MAX__ 127
 // PPC64-LINUX:#define __INT_FAST8_TYPE__ char
+// PPC64-LINUX:#define __INT_LEAST16_FMTd__ "hd"
+// PPC64-LINUX:#define __INT_LEAST16_FMTi__ "hi"
 // PPC64-LINUX:#define __INT_LEAST16_MAX__ 32767
 // PPC64-LINUX:#define __INT_LEAST16_TYPE__ short
+// PPC64-LINUX:#define __INT_LEAST32_FMTd__ "d"
+// PPC64-LINUX:#define __INT_LEAST32_FMTi__ "i"
 // PPC64-LINUX:#define __INT_LEAST32_MAX__ 2147483647
 // PPC64-LINUX:#define __INT_LEAST32_TYPE__ int
+// PPC64-LINUX:#define __INT_LEAST64_FMTd__ "ld"
+// PPC64-LINUX:#define __INT_LEAST64_FMTi__ "li"
 // PPC64-LINUX:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // PPC64-LINUX:#define __INT_LEAST64_TYPE__ long int
+// PPC64-LINUX:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC64-LINUX:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC64-LINUX:#define __INT_LEAST8_MAX__ 127
 // PPC64-LINUX:#define __INT_LEAST8_TYPE__ char
 // PPC64-LINUX:#define __INT_MAX__ 2147483647
@@ -4137,6 +4796,7 @@
 // PPC64-LINUX:#define __UINT8_C_SUFFIX__ U
 // PPC64-LINUX:#define __UINT8_MAX__ 255U
 // PPC64-LINUX:#define __UINT8_TYPE__ unsigned char
+// PPC64-LINUX:#define __UINTMAX_C_SUFFIX__ UL
 // PPC64-LINUX:#define __UINTMAX_MAX__ 18446744073709551615UL
 // PPC64-LINUX:#define __UINTMAX_TYPE__ long unsigned int
 // PPC64-LINUX:#define __UINTMAX_WIDTH__ 64
@@ -4211,35 +4871,64 @@
 // PPC:#define __FLT_MIN_EXP__ (-125)
 // PPC:#define __FLT_MIN__ 1.17549435e-38F
 // PPC:#define __FLT_RADIX__ 2
+// PPC:#define __INT16_FMTd__ "hd"
+// PPC:#define __INT16_FMTi__ "hi"
 // PPC:#define __INT16_MAX__ 32767
 // PPC:#define __INT16_TYPE__ short
+// PPC:#define __INT32_FMTd__ "d"
+// PPC:#define __INT32_FMTi__ "i"
 // PPC:#define __INT32_MAX__ 2147483647
 // PPC:#define __INT32_TYPE__ int
 // PPC:#define __INT64_C_SUFFIX__ LL
+// PPC:#define __INT64_FMTd__ "lld"
+// PPC:#define __INT64_FMTi__ "lli"
 // PPC:#define __INT64_MAX__ 9223372036854775807LL
 // PPC:#define __INT64_TYPE__ long long int
+// PPC:#define __INT8_FMTd__ "hhd"
+// PPC:#define __INT8_FMTi__ "hhi"
 // PPC:#define __INT8_MAX__ 127
 // PPC:#define __INT8_TYPE__ char
+// PPC:#define __INTMAX_C_SUFFIX__ LL
+// PPC:#define __INTMAX_FMTd__ "lld"
+// PPC:#define __INTMAX_FMTi__ "lli"
 // PPC:#define __INTMAX_MAX__ 9223372036854775807LL
 // PPC:#define __INTMAX_TYPE__ long long int
 // PPC:#define __INTMAX_WIDTH__ 64
+// PPC:#define __INTPTR_FMTd__ "ld"
+// PPC:#define __INTPTR_FMTi__ "li"
 // PPC:#define __INTPTR_MAX__ 2147483647L
 // PPC:#define __INTPTR_TYPE__ long int
 // PPC:#define __INTPTR_WIDTH__ 32
+// PPC:#define __INT_FAST16_FMTd__ "hd"
+// PPC:#define __INT_FAST16_FMTi__ "hi"
 // PPC:#define __INT_FAST16_MAX__ 32767
 // PPC:#define __INT_FAST16_TYPE__ short
+// PPC:#define __INT_FAST32_FMTd__ "d"
+// PPC:#define __INT_FAST32_FMTi__ "i"
 // PPC:#define __INT_FAST32_MAX__ 2147483647
 // PPC:#define __INT_FAST32_TYPE__ int
+// PPC:#define __INT_FAST64_FMTd__ "lld"
+// PPC:#define __INT_FAST64_FMTi__ "lli"
 // PPC:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // PPC:#define __INT_FAST64_TYPE__ long long int
+// PPC:#define __INT_FAST8_FMTd__ "hhd"
+// PPC:#define __INT_FAST8_FMTi__ "hhi"
 // PPC:#define __INT_FAST8_MAX__ 127
 // PPC:#define __INT_FAST8_TYPE__ char
+// PPC:#define __INT_LEAST16_FMTd__ "hd"
+// PPC:#define __INT_LEAST16_FMTi__ "hi"
 // PPC:#define __INT_LEAST16_MAX__ 32767
 // PPC:#define __INT_LEAST16_TYPE__ short
+// PPC:#define __INT_LEAST32_FMTd__ "d"
+// PPC:#define __INT_LEAST32_FMTi__ "i"
 // PPC:#define __INT_LEAST32_MAX__ 2147483647
 // PPC:#define __INT_LEAST32_TYPE__ int
+// PPC:#define __INT_LEAST64_FMTd__ "lld"
+// PPC:#define __INT_LEAST64_FMTi__ "lli"
 // PPC:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // PPC:#define __INT_LEAST64_TYPE__ long long int
+// PPC:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC:#define __INT_LEAST8_MAX__ 127
 // PPC:#define __INT_LEAST8_TYPE__ char
 // PPC:#define __INT_MAX__ 2147483647
@@ -4297,11 +4986,12 @@
 // PPC:#define __UINT8_C_SUFFIX__ U
 // PPC:#define __UINT8_MAX__ 255U
 // PPC:#define __UINT8_TYPE__ unsigned char
+// PPC:#define __UINTMAX_C_SUFFIX__ ULL
 // PPC:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // PPC:#define __UINTMAX_TYPE__ long long unsigned int
 // PPC:#define __UINTMAX_WIDTH__ 64
 // PPC:#define __UINTPTR_MAX__ 4294967295U
-// PPC:#define __UINTPTR_TYPE__ unsigned int
+// PPC:#define __UINTPTR_TYPE__ long unsigned int
 // PPC:#define __UINTPTR_WIDTH__ 32
 // PPC:#define __UINT_FAST16_MAX__ 65535U
 // PPC:#define __UINT_FAST16_TYPE__ unsigned short
@@ -4367,35 +5057,64 @@
 // PPC-LINUX:#define __FLT_MIN_EXP__ (-125)
 // PPC-LINUX:#define __FLT_MIN__ 1.17549435e-38F
 // PPC-LINUX:#define __FLT_RADIX__ 2
+// PPC-LINUX:#define __INT16_FMTd__ "hd"
+// PPC-LINUX:#define __INT16_FMTi__ "hi"
 // PPC-LINUX:#define __INT16_MAX__ 32767
 // PPC-LINUX:#define __INT16_TYPE__ short
+// PPC-LINUX:#define __INT32_FMTd__ "d"
+// PPC-LINUX:#define __INT32_FMTi__ "i"
 // PPC-LINUX:#define __INT32_MAX__ 2147483647
 // PPC-LINUX:#define __INT32_TYPE__ int
 // PPC-LINUX:#define __INT64_C_SUFFIX__ LL
+// PPC-LINUX:#define __INT64_FMTd__ "lld"
+// PPC-LINUX:#define __INT64_FMTi__ "lli"
 // PPC-LINUX:#define __INT64_MAX__ 9223372036854775807LL
 // PPC-LINUX:#define __INT64_TYPE__ long long int
+// PPC-LINUX:#define __INT8_FMTd__ "hhd"
+// PPC-LINUX:#define __INT8_FMTi__ "hhi"
 // PPC-LINUX:#define __INT8_MAX__ 127
 // PPC-LINUX:#define __INT8_TYPE__ char
+// PPC-LINUX:#define __INTMAX_C_SUFFIX__ LL
+// PPC-LINUX:#define __INTMAX_FMTd__ "lld"
+// PPC-LINUX:#define __INTMAX_FMTi__ "lli"
 // PPC-LINUX:#define __INTMAX_MAX__ 9223372036854775807LL
 // PPC-LINUX:#define __INTMAX_TYPE__ long long int
 // PPC-LINUX:#define __INTMAX_WIDTH__ 64
+// PPC-LINUX:#define __INTPTR_FMTd__ "d"
+// PPC-LINUX:#define __INTPTR_FMTi__ "i"
 // PPC-LINUX:#define __INTPTR_MAX__ 2147483647
 // PPC-LINUX:#define __INTPTR_TYPE__ int
 // PPC-LINUX:#define __INTPTR_WIDTH__ 32
+// PPC-LINUX:#define __INT_FAST16_FMTd__ "hd"
+// PPC-LINUX:#define __INT_FAST16_FMTi__ "hi"
 // PPC-LINUX:#define __INT_FAST16_MAX__ 32767
 // PPC-LINUX:#define __INT_FAST16_TYPE__ short
+// PPC-LINUX:#define __INT_FAST32_FMTd__ "d"
+// PPC-LINUX:#define __INT_FAST32_FMTi__ "i"
 // PPC-LINUX:#define __INT_FAST32_MAX__ 2147483647
 // PPC-LINUX:#define __INT_FAST32_TYPE__ int
+// PPC-LINUX:#define __INT_FAST64_FMTd__ "lld"
+// PPC-LINUX:#define __INT_FAST64_FMTi__ "lli"
 // PPC-LINUX:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // PPC-LINUX:#define __INT_FAST64_TYPE__ long long int
+// PPC-LINUX:#define __INT_FAST8_FMTd__ "hhd"
+// PPC-LINUX:#define __INT_FAST8_FMTi__ "hhi"
 // PPC-LINUX:#define __INT_FAST8_MAX__ 127
 // PPC-LINUX:#define __INT_FAST8_TYPE__ char
+// PPC-LINUX:#define __INT_LEAST16_FMTd__ "hd"
+// PPC-LINUX:#define __INT_LEAST16_FMTi__ "hi"
 // PPC-LINUX:#define __INT_LEAST16_MAX__ 32767
 // PPC-LINUX:#define __INT_LEAST16_TYPE__ short
+// PPC-LINUX:#define __INT_LEAST32_FMTd__ "d"
+// PPC-LINUX:#define __INT_LEAST32_FMTi__ "i"
 // PPC-LINUX:#define __INT_LEAST32_MAX__ 2147483647
 // PPC-LINUX:#define __INT_LEAST32_TYPE__ int
+// PPC-LINUX:#define __INT_LEAST64_FMTd__ "lld"
+// PPC-LINUX:#define __INT_LEAST64_FMTi__ "lli"
 // PPC-LINUX:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // PPC-LINUX:#define __INT_LEAST64_TYPE__ long long int
+// PPC-LINUX:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC-LINUX:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC-LINUX:#define __INT_LEAST8_MAX__ 127
 // PPC-LINUX:#define __INT_LEAST8_TYPE__ char
 // PPC-LINUX:#define __INT_MAX__ 2147483647
@@ -4453,6 +5172,7 @@
 // PPC-LINUX:#define __UINT8_C_SUFFIX__ U
 // PPC-LINUX:#define __UINT8_MAX__ 255U
 // PPC-LINUX:#define __UINT8_TYPE__ unsigned char
+// PPC-LINUX:#define __UINTMAX_C_SUFFIX__ ULL
 // PPC-LINUX:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // PPC-LINUX:#define __UINTMAX_TYPE__ long long unsigned int
 // PPC-LINUX:#define __UINTMAX_WIDTH__ 64
@@ -4523,35 +5243,64 @@
 // PPC-DARWIN:#define __FLT_MIN_EXP__ (-125)
 // PPC-DARWIN:#define __FLT_MIN__ 1.17549435e-38F
 // PPC-DARWIN:#define __FLT_RADIX__ 2
+// PPC-DARWIN:#define __INT16_FMTd__ "hd"
+// PPC-DARWIN:#define __INT16_FMTi__ "hi"
 // PPC-DARWIN:#define __INT16_MAX__ 32767
 // PPC-DARWIN:#define __INT16_TYPE__ short
+// PPC-DARWIN:#define __INT32_FMTd__ "d"
+// PPC-DARWIN:#define __INT32_FMTi__ "i"
 // PPC-DARWIN:#define __INT32_MAX__ 2147483647
 // PPC-DARWIN:#define __INT32_TYPE__ int
 // PPC-DARWIN:#define __INT64_C_SUFFIX__ LL
+// PPC-DARWIN:#define __INT64_FMTd__ "lld"
+// PPC-DARWIN:#define __INT64_FMTi__ "lli"
 // PPC-DARWIN:#define __INT64_MAX__ 9223372036854775807LL
 // PPC-DARWIN:#define __INT64_TYPE__ long long int
+// PPC-DARWIN:#define __INT8_FMTd__ "hhd"
+// PPC-DARWIN:#define __INT8_FMTi__ "hhi"
 // PPC-DARWIN:#define __INT8_MAX__ 127
 // PPC-DARWIN:#define __INT8_TYPE__ char
+// PPC-DARWIN:#define __INTMAX_C_SUFFIX__ LL
+// PPC-DARWIN:#define __INTMAX_FMTd__ "lld"
+// PPC-DARWIN:#define __INTMAX_FMTi__ "lli"
 // PPC-DARWIN:#define __INTMAX_MAX__ 9223372036854775807LL
 // PPC-DARWIN:#define __INTMAX_TYPE__ long long int
 // PPC-DARWIN:#define __INTMAX_WIDTH__ 64
+// PPC-DARWIN:#define __INTPTR_FMTd__ "ld"
+// PPC-DARWIN:#define __INTPTR_FMTi__ "li"
 // PPC-DARWIN:#define __INTPTR_MAX__ 2147483647L
 // PPC-DARWIN:#define __INTPTR_TYPE__ long int
 // PPC-DARWIN:#define __INTPTR_WIDTH__ 32
+// PPC-DARWIN:#define __INT_FAST16_FMTd__ "hd"
+// PPC-DARWIN:#define __INT_FAST16_FMTi__ "hi"
 // PPC-DARWIN:#define __INT_FAST16_MAX__ 32767
 // PPC-DARWIN:#define __INT_FAST16_TYPE__ short
+// PPC-DARWIN:#define __INT_FAST32_FMTd__ "d"
+// PPC-DARWIN:#define __INT_FAST32_FMTi__ "i"
 // PPC-DARWIN:#define __INT_FAST32_MAX__ 2147483647
 // PPC-DARWIN:#define __INT_FAST32_TYPE__ int
+// PPC-DARWIN:#define __INT_FAST64_FMTd__ "lld"
+// PPC-DARWIN:#define __INT_FAST64_FMTi__ "lli"
 // PPC-DARWIN:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // PPC-DARWIN:#define __INT_FAST64_TYPE__ long long int
+// PPC-DARWIN:#define __INT_FAST8_FMTd__ "hhd"
+// PPC-DARWIN:#define __INT_FAST8_FMTi__ "hhi"
 // PPC-DARWIN:#define __INT_FAST8_MAX__ 127
 // PPC-DARWIN:#define __INT_FAST8_TYPE__ char
+// PPC-DARWIN:#define __INT_LEAST16_FMTd__ "hd"
+// PPC-DARWIN:#define __INT_LEAST16_FMTi__ "hi"
 // PPC-DARWIN:#define __INT_LEAST16_MAX__ 32767
 // PPC-DARWIN:#define __INT_LEAST16_TYPE__ short
+// PPC-DARWIN:#define __INT_LEAST32_FMTd__ "d"
+// PPC-DARWIN:#define __INT_LEAST32_FMTi__ "i"
 // PPC-DARWIN:#define __INT_LEAST32_MAX__ 2147483647
 // PPC-DARWIN:#define __INT_LEAST32_TYPE__ int
+// PPC-DARWIN:#define __INT_LEAST64_FMTd__ "lld"
+// PPC-DARWIN:#define __INT_LEAST64_FMTi__ "lli"
 // PPC-DARWIN:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // PPC-DARWIN:#define __INT_LEAST64_TYPE__ long long int
+// PPC-DARWIN:#define __INT_LEAST8_FMTd__ "hhd"
+// PPC-DARWIN:#define __INT_LEAST8_FMTi__ "hhi"
 // PPC-DARWIN:#define __INT_LEAST8_MAX__ 127
 // PPC-DARWIN:#define __INT_LEAST8_TYPE__ char
 // PPC-DARWIN:#define __INT_MAX__ 2147483647
@@ -4615,11 +5364,12 @@
 // PPC-DARWIN:#define __UINT8_C_SUFFIX__ U
 // PPC-DARWIN:#define __UINT8_MAX__ 255U
 // PPC-DARWIN:#define __UINT8_TYPE__ unsigned char
+// PPC-DARWIN:#define __UINTMAX_C_SUFFIX__ ULL
 // PPC-DARWIN:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // PPC-DARWIN:#define __UINTMAX_TYPE__ long long unsigned int
 // PPC-DARWIN:#define __UINTMAX_WIDTH__ 64
 // PPC-DARWIN:#define __UINTPTR_MAX__ 4294967295U
-// PPC-DARWIN:#define __UINTPTR_TYPE__ unsigned int
+// PPC-DARWIN:#define __UINTPTR_TYPE__ long unsigned int
 // PPC-DARWIN:#define __UINTPTR_WIDTH__ 32
 // PPC-DARWIN:#define __UINT_FAST16_MAX__ 65535U
 // PPC-DARWIN:#define __UINT_FAST16_TYPE__ unsigned short
@@ -4681,35 +5431,64 @@
 // S390X:#define __FLT_MIN_EXP__ (-125)
 // S390X:#define __FLT_MIN__ 1.17549435e-38F
 // S390X:#define __FLT_RADIX__ 2
+// S390X:#define __INT16_FMTd__ "hd"
+// S390X:#define __INT16_FMTi__ "hi"
 // S390X:#define __INT16_MAX__ 32767
 // S390X:#define __INT16_TYPE__ short
+// S390X:#define __INT32_FMTd__ "d"
+// S390X:#define __INT32_FMTi__ "i"
 // S390X:#define __INT32_MAX__ 2147483647
 // S390X:#define __INT32_TYPE__ int
 // S390X:#define __INT64_C_SUFFIX__ LL
+// S390X:#define __INT64_FMTd__ "lld"
+// S390X:#define __INT64_FMTi__ "lli"
 // S390X:#define __INT64_MAX__ 9223372036854775807LL
 // S390X:#define __INT64_TYPE__ long long int
+// S390X:#define __INT8_FMTd__ "hhd"
+// S390X:#define __INT8_FMTi__ "hhi"
 // S390X:#define __INT8_MAX__ 127
 // S390X:#define __INT8_TYPE__ char
+// S390X:#define __INTMAX_C_SUFFIX__ LL
+// S390X:#define __INTMAX_FMTd__ "lld"
+// S390X:#define __INTMAX_FMTi__ "lli"
 // S390X:#define __INTMAX_MAX__ 9223372036854775807LL
 // S390X:#define __INTMAX_TYPE__ long long int
 // S390X:#define __INTMAX_WIDTH__ 64
+// S390X:#define __INTPTR_FMTd__ "ld"
+// S390X:#define __INTPTR_FMTi__ "li"
 // S390X:#define __INTPTR_MAX__ 9223372036854775807L
 // S390X:#define __INTPTR_TYPE__ long int
 // S390X:#define __INTPTR_WIDTH__ 64
+// S390X:#define __INT_FAST16_FMTd__ "hd"
+// S390X:#define __INT_FAST16_FMTi__ "hi"
 // S390X:#define __INT_FAST16_MAX__ 32767
 // S390X:#define __INT_FAST16_TYPE__ short
+// S390X:#define __INT_FAST32_FMTd__ "d"
+// S390X:#define __INT_FAST32_FMTi__ "i"
 // S390X:#define __INT_FAST32_MAX__ 2147483647
 // S390X:#define __INT_FAST32_TYPE__ int
+// S390X:#define __INT_FAST64_FMTd__ "ld"
+// S390X:#define __INT_FAST64_FMTi__ "li"
 // S390X:#define __INT_FAST64_MAX__ 9223372036854775807L
 // S390X:#define __INT_FAST64_TYPE__ long int
+// S390X:#define __INT_FAST8_FMTd__ "hhd"
+// S390X:#define __INT_FAST8_FMTi__ "hhi"
 // S390X:#define __INT_FAST8_MAX__ 127
 // S390X:#define __INT_FAST8_TYPE__ char
+// S390X:#define __INT_LEAST16_FMTd__ "hd"
+// S390X:#define __INT_LEAST16_FMTi__ "hi"
 // S390X:#define __INT_LEAST16_MAX__ 32767
 // S390X:#define __INT_LEAST16_TYPE__ short
+// S390X:#define __INT_LEAST32_FMTd__ "d"
+// S390X:#define __INT_LEAST32_FMTi__ "i"
 // S390X:#define __INT_LEAST32_MAX__ 2147483647
 // S390X:#define __INT_LEAST32_TYPE__ int
+// S390X:#define __INT_LEAST64_FMTd__ "ld"
+// S390X:#define __INT_LEAST64_FMTi__ "li"
 // S390X:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // S390X:#define __INT_LEAST64_TYPE__ long int
+// S390X:#define __INT_LEAST8_FMTd__ "hhd"
+// S390X:#define __INT_LEAST8_FMTi__ "hhi"
 // S390X:#define __INT_LEAST8_MAX__ 127
 // S390X:#define __INT_LEAST8_TYPE__ char
 // S390X:#define __INT_MAX__ 2147483647
@@ -4755,12 +5534,13 @@
 // S390X:#define __UINT32_C_SUFFIX__ U
 // S390X:#define __UINT32_MAX__ 4294967295U
 // S390X:#define __UINT32_TYPE__ unsigned int
-// S390X:#define __UINT64_C_SUFFIX__ UL
-// S390X:#define __UINT64_MAX__ 18446744073709551615UL
-// S390X:#define __UINT64_TYPE__ long unsigned int
+// S390X:#define __UINT64_C_SUFFIX__ ULL
+// S390X:#define __UINT64_MAX__ 18446744073709551615ULL
+// S390X:#define __UINT64_TYPE__ long long unsigned int
 // S390X:#define __UINT8_C_SUFFIX__ U
 // S390X:#define __UINT8_MAX__ 255U
 // S390X:#define __UINT8_TYPE__ unsigned char
+// S390X:#define __UINTMAX_C_SUFFIX__ ULL
 // S390X:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // S390X:#define __UINTMAX_TYPE__ long long unsigned int
 // S390X:#define __UINTMAX_WIDTH__ 64
@@ -4829,35 +5609,64 @@
 // SPARC:#define __FLT_MIN_EXP__ (-125)
 // SPARC:#define __FLT_MIN__ 1.17549435e-38F
 // SPARC:#define __FLT_RADIX__ 2
+// SPARC:#define __INT16_FMTd__ "hd"
+// SPARC:#define __INT16_FMTi__ "hi"
 // SPARC:#define __INT16_MAX__ 32767
 // SPARC:#define __INT16_TYPE__ short
+// SPARC:#define __INT32_FMTd__ "d"
+// SPARC:#define __INT32_FMTi__ "i"
 // SPARC:#define __INT32_MAX__ 2147483647
 // SPARC:#define __INT32_TYPE__ int
 // SPARC:#define __INT64_C_SUFFIX__ LL
+// SPARC:#define __INT64_FMTd__ "lld"
+// SPARC:#define __INT64_FMTi__ "lli"
 // SPARC:#define __INT64_MAX__ 9223372036854775807LL
 // SPARC:#define __INT64_TYPE__ long long int
+// SPARC:#define __INT8_FMTd__ "hhd"
+// SPARC:#define __INT8_FMTi__ "hhi"
 // SPARC:#define __INT8_MAX__ 127
 // SPARC:#define __INT8_TYPE__ char
+// SPARC:#define __INTMAX_C_SUFFIX__ LL
+// SPARC:#define __INTMAX_FMTd__ "lld"
+// SPARC:#define __INTMAX_FMTi__ "lli"
 // SPARC:#define __INTMAX_MAX__ 9223372036854775807LL
 // SPARC:#define __INTMAX_TYPE__ long long int
 // SPARC:#define __INTMAX_WIDTH__ 64
+// SPARC:#define __INTPTR_FMTd__ "ld"
+// SPARC:#define __INTPTR_FMTi__ "li"
 // SPARC:#define __INTPTR_MAX__ 2147483647L
 // SPARC:#define __INTPTR_TYPE__ long int
 // SPARC:#define __INTPTR_WIDTH__ 32
+// SPARC:#define __INT_FAST16_FMTd__ "hd"
+// SPARC:#define __INT_FAST16_FMTi__ "hi"
 // SPARC:#define __INT_FAST16_MAX__ 32767
 // SPARC:#define __INT_FAST16_TYPE__ short
+// SPARC:#define __INT_FAST32_FMTd__ "d"
+// SPARC:#define __INT_FAST32_FMTi__ "i"
 // SPARC:#define __INT_FAST32_MAX__ 2147483647
 // SPARC:#define __INT_FAST32_TYPE__ int
+// SPARC:#define __INT_FAST64_FMTd__ "lld"
+// SPARC:#define __INT_FAST64_FMTi__ "lli"
 // SPARC:#define __INT_FAST64_MAX__ 9223372036854775807LL
 // SPARC:#define __INT_FAST64_TYPE__ long long int
+// SPARC:#define __INT_FAST8_FMTd__ "hhd"
+// SPARC:#define __INT_FAST8_FMTi__ "hhi"
 // SPARC:#define __INT_FAST8_MAX__ 127
 // SPARC:#define __INT_FAST8_TYPE__ char
+// SPARC:#define __INT_LEAST16_FMTd__ "hd"
+// SPARC:#define __INT_LEAST16_FMTi__ "hi"
 // SPARC:#define __INT_LEAST16_MAX__ 32767
 // SPARC:#define __INT_LEAST16_TYPE__ short
+// SPARC:#define __INT_LEAST32_FMTd__ "d"
+// SPARC:#define __INT_LEAST32_FMTi__ "i"
 // SPARC:#define __INT_LEAST32_MAX__ 2147483647
 // SPARC:#define __INT_LEAST32_TYPE__ int
+// SPARC:#define __INT_LEAST64_FMTd__ "lld"
+// SPARC:#define __INT_LEAST64_FMTi__ "lli"
 // SPARC:#define __INT_LEAST64_MAX__ 9223372036854775807LL
 // SPARC:#define __INT_LEAST64_TYPE__ long long int
+// SPARC:#define __INT_LEAST8_FMTd__ "hhd"
+// SPARC:#define __INT_LEAST8_FMTi__ "hhi"
 // SPARC:#define __INT_LEAST8_MAX__ 127
 // SPARC:#define __INT_LEAST8_TYPE__ char
 // SPARC:#define __INT_MAX__ 2147483647
@@ -4911,11 +5720,12 @@
 // SPARC:#define __UINT8_C_SUFFIX__ U
 // SPARC:#define __UINT8_MAX__ 255U
 // SPARC:#define __UINT8_TYPE__ unsigned char
+// SPARC:#define __UINTMAX_C_SUFFIX__ ULL
 // SPARC:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // SPARC:#define __UINTMAX_TYPE__ long long unsigned int
 // SPARC:#define __UINTMAX_WIDTH__ 64
 // SPARC:#define __UINTPTR_MAX__ 4294967295U
-// SPARC:#define __UINTPTR_TYPE__ unsigned int
+// SPARC:#define __UINTPTR_TYPE__ long unsigned int
 // SPARC:#define __UINTPTR_WIDTH__ 32
 // SPARC:#define __UINT_FAST16_MAX__ 65535U
 // SPARC:#define __UINT_FAST16_TYPE__ unsigned short
@@ -4982,28 +5792,51 @@
 // TCE:#define __FLT_MIN_EXP__ (-125)
 // TCE:#define __FLT_MIN__ 1.17549435e-38F
 // TCE:#define __FLT_RADIX__ 2
+// TCE:#define __INT16_FMTd__ "hd"
+// TCE:#define __INT16_FMTi__ "hi"
 // TCE:#define __INT16_MAX__ 32767
 // TCE:#define __INT16_TYPE__ short
+// TCE:#define __INT32_FMTd__ "d"
+// TCE:#define __INT32_FMTi__ "i"
 // TCE:#define __INT32_MAX__ 2147483647
 // TCE:#define __INT32_TYPE__ int
+// TCE:#define __INT8_FMTd__ "hhd"
+// TCE:#define __INT8_FMTi__ "hhi"
 // TCE:#define __INT8_MAX__ 127
 // TCE:#define __INT8_TYPE__ char
+// TCE:#define __INTMAX_C_SUFFIX__ L
+// TCE:#define __INTMAX_FMTd__ "ld"
+// TCE:#define __INTMAX_FMTi__ "li"
 // TCE:#define __INTMAX_MAX__ 2147483647L
 // TCE:#define __INTMAX_TYPE__ long int
 // TCE:#define __INTMAX_WIDTH__ 32
+// TCE:#define __INTPTR_FMTd__ "d"
+// TCE:#define __INTPTR_FMTi__ "i"
 // TCE:#define __INTPTR_MAX__ 2147483647
 // TCE:#define __INTPTR_TYPE__ int
 // TCE:#define __INTPTR_WIDTH__ 32
+// TCE:#define __INT_FAST16_FMTd__ "hd"
+// TCE:#define __INT_FAST16_FMTi__ "hi"
 // TCE:#define __INT_FAST16_MAX__ 32767
 // TCE:#define __INT_FAST16_TYPE__ short
+// TCE:#define __INT_FAST32_FMTd__ "d"
+// TCE:#define __INT_FAST32_FMTi__ "i"
 // TCE:#define __INT_FAST32_MAX__ 2147483647
 // TCE:#define __INT_FAST32_TYPE__ int
+// TCE:#define __INT_FAST8_FMTd__ "hhd"
+// TCE:#define __INT_FAST8_FMTi__ "hhi"
 // TCE:#define __INT_FAST8_MAX__ 127
 // TCE:#define __INT_FAST8_TYPE__ char
+// TCE:#define __INT_LEAST16_FMTd__ "hd"
+// TCE:#define __INT_LEAST16_FMTi__ "hi"
 // TCE:#define __INT_LEAST16_MAX__ 32767
 // TCE:#define __INT_LEAST16_TYPE__ short
+// TCE:#define __INT_LEAST32_FMTd__ "d"
+// TCE:#define __INT_LEAST32_FMTi__ "i"
 // TCE:#define __INT_LEAST32_MAX__ 2147483647
 // TCE:#define __INT_LEAST32_TYPE__ int
+// TCE:#define __INT_LEAST8_FMTd__ "hhd"
+// TCE:#define __INT_LEAST8_FMTi__ "hhi"
 // TCE:#define __INT_LEAST8_MAX__ 127
 // TCE:#define __INT_LEAST8_TYPE__ char
 // TCE:#define __INT_MAX__ 2147483647
@@ -5055,6 +5888,7 @@
 // TCE:#define __UINT8_C_SUFFIX__ U
 // TCE:#define __UINT8_MAX__ 255U
 // TCE:#define __UINT8_TYPE__ unsigned char
+// TCE:#define __UINTMAX_C_SUFFIX__ UL
 // TCE:#define __UINTMAX_MAX__ 4294967295UL
 // TCE:#define __UINTMAX_TYPE__ long unsigned int
 // TCE:#define __UINTMAX_WIDTH__ 32
@@ -5120,35 +5954,64 @@
 // X86_64:#define __FLT_MIN_EXP__ (-125)
 // X86_64:#define __FLT_MIN__ 1.17549435e-38F
 // X86_64:#define __FLT_RADIX__ 2
+// X86_64:#define __INT16_FMTd__ "hd"
+// X86_64:#define __INT16_FMTi__ "hi"
 // X86_64:#define __INT16_MAX__ 32767
 // X86_64:#define __INT16_TYPE__ short
+// X86_64:#define __INT32_FMTd__ "d"
+// X86_64:#define __INT32_FMTi__ "i"
 // X86_64:#define __INT32_MAX__ 2147483647
 // X86_64:#define __INT32_TYPE__ int
 // X86_64:#define __INT64_C_SUFFIX__ L
+// X86_64:#define __INT64_FMTd__ "ld"
+// X86_64:#define __INT64_FMTi__ "li"
 // X86_64:#define __INT64_MAX__ 9223372036854775807L
 // X86_64:#define __INT64_TYPE__ long int
+// X86_64:#define __INT8_FMTd__ "hhd"
+// X86_64:#define __INT8_FMTi__ "hhi"
 // X86_64:#define __INT8_MAX__ 127
 // X86_64:#define __INT8_TYPE__ char
+// X86_64:#define __INTMAX_C_SUFFIX__ L
+// X86_64:#define __INTMAX_FMTd__ "ld"
+// X86_64:#define __INTMAX_FMTi__ "li"
 // X86_64:#define __INTMAX_MAX__ 9223372036854775807L
 // X86_64:#define __INTMAX_TYPE__ long int
 // X86_64:#define __INTMAX_WIDTH__ 64
+// X86_64:#define __INTPTR_FMTd__ "ld"
+// X86_64:#define __INTPTR_FMTi__ "li"
 // X86_64:#define __INTPTR_MAX__ 9223372036854775807L
 // X86_64:#define __INTPTR_TYPE__ long int
 // X86_64:#define __INTPTR_WIDTH__ 64
+// X86_64:#define __INT_FAST16_FMTd__ "hd"
+// X86_64:#define __INT_FAST16_FMTi__ "hi"
 // X86_64:#define __INT_FAST16_MAX__ 32767
 // X86_64:#define __INT_FAST16_TYPE__ short
+// X86_64:#define __INT_FAST32_FMTd__ "d"
+// X86_64:#define __INT_FAST32_FMTi__ "i"
 // X86_64:#define __INT_FAST32_MAX__ 2147483647
 // X86_64:#define __INT_FAST32_TYPE__ int
+// X86_64:#define __INT_FAST64_FMTd__ "ld"
+// X86_64:#define __INT_FAST64_FMTi__ "li"
 // X86_64:#define __INT_FAST64_MAX__ 9223372036854775807L
 // X86_64:#define __INT_FAST64_TYPE__ long int
+// X86_64:#define __INT_FAST8_FMTd__ "hhd"
+// X86_64:#define __INT_FAST8_FMTi__ "hhi"
 // X86_64:#define __INT_FAST8_MAX__ 127
 // X86_64:#define __INT_FAST8_TYPE__ char
+// X86_64:#define __INT_LEAST16_FMTd__ "hd"
+// X86_64:#define __INT_LEAST16_FMTi__ "hi"
 // X86_64:#define __INT_LEAST16_MAX__ 32767
 // X86_64:#define __INT_LEAST16_TYPE__ short
+// X86_64:#define __INT_LEAST32_FMTd__ "d"
+// X86_64:#define __INT_LEAST32_FMTi__ "i"
 // X86_64:#define __INT_LEAST32_MAX__ 2147483647
 // X86_64:#define __INT_LEAST32_TYPE__ int
+// X86_64:#define __INT_LEAST64_FMTd__ "ld"
+// X86_64:#define __INT_LEAST64_FMTi__ "li"
 // X86_64:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // X86_64:#define __INT_LEAST64_TYPE__ long int
+// X86_64:#define __INT_LEAST8_FMTd__ "hhd"
+// X86_64:#define __INT_LEAST8_FMTi__ "hhi"
 // X86_64:#define __INT_LEAST8_MAX__ 127
 // X86_64:#define __INT_LEAST8_TYPE__ char
 // X86_64:#define __INT_MAX__ 2147483647
@@ -5210,6 +6073,7 @@
 // X86_64:#define __UINT8_C_SUFFIX__ U
 // X86_64:#define __UINT8_MAX__ 255U
 // X86_64:#define __UINT8_TYPE__ unsigned char
+// X86_64:#define __UINTMAX_C_SUFFIX__ UL
 // X86_64:#define __UINTMAX_MAX__ 18446744073709551615UL
 // X86_64:#define __UINTMAX_TYPE__ long unsigned int
 // X86_64:#define __UINTMAX_WIDTH__ 64
@@ -5282,35 +6146,64 @@
 // X32:#define __FLT_RADIX__ 2
 // X32:#define __ILP32__ 1
 // X32-NOT:#define __LP64__ 1
+// X32:#define __INT16_FMTd__ "hd"
+// X32:#define __INT16_FMTi__ "hi"
 // X32:#define __INT16_MAX__ 32767
 // X32:#define __INT16_TYPE__ short
+// X32:#define __INT32_FMTd__ "d"
+// X32:#define __INT32_FMTi__ "i"
 // X32:#define __INT32_MAX__ 2147483647
 // X32:#define __INT32_TYPE__ int
 // X32:#define __INT64_C_SUFFIX__ L
+// X32:#define __INT64_FMTd__ "lld"
+// X32:#define __INT64_FMTi__ "lli"
 // X32:#define __INT64_MAX__ 9223372036854775807L
 // X32:#define __INT64_TYPE__ long long int
+// X32:#define __INT8_FMTd__ "hhd"
+// X32:#define __INT8_FMTi__ "hhi"
 // X32:#define __INT8_MAX__ 127
 // X32:#define __INT8_TYPE__ char
+// X32:#define __INTMAX_C_SUFFIX__ LL
+// X32:#define __INTMAX_FMTd__ "lld"
+// X32:#define __INTMAX_FMTi__ "lli"
 // X32:#define __INTMAX_MAX__ 9223372036854775807L
 // X32:#define __INTMAX_TYPE__ long long int
 // X32:#define __INTMAX_WIDTH__ 64
+// X32:#define __INTPTR_FMTd__ "d"
+// X32:#define __INTPTR_FMTi__ "i"
 // X32:#define __INTPTR_MAX__ 2147483647
 // X32:#define __INTPTR_TYPE__ int
 // X32:#define __INTPTR_WIDTH__ 32
+// X32:#define __INT_FAST16_FMTd__ "hd"
+// X32:#define __INT_FAST16_FMTi__ "hi"
 // X32:#define __INT_FAST16_MAX__ 32767
 // X32:#define __INT_FAST16_TYPE__ short
+// X32:#define __INT_FAST32_FMTd__ "d"
+// X32:#define __INT_FAST32_FMTi__ "i"
 // X32:#define __INT_FAST32_MAX__ 2147483647
 // X32:#define __INT_FAST32_TYPE__ int
+// X32:#define __INT_FAST64_FMTd__ "lld"
+// X32:#define __INT_FAST64_FMTi__ "lli"
 // X32:#define __INT_FAST64_MAX__ 9223372036854775807L
 // X32:#define __INT_FAST64_TYPE__ long long int
+// X32:#define __INT_FAST8_FMTd__ "hhd"
+// X32:#define __INT_FAST8_FMTi__ "hhi"
 // X32:#define __INT_FAST8_MAX__ 127
 // X32:#define __INT_FAST8_TYPE__ char
+// X32:#define __INT_LEAST16_FMTd__ "hd"
+// X32:#define __INT_LEAST16_FMTi__ "hi"
 // X32:#define __INT_LEAST16_MAX__ 32767
 // X32:#define __INT_LEAST16_TYPE__ short
+// X32:#define __INT_LEAST32_FMTd__ "d"
+// X32:#define __INT_LEAST32_FMTi__ "i"
 // X32:#define __INT_LEAST32_MAX__ 2147483647
 // X32:#define __INT_LEAST32_TYPE__ int
+// X32:#define __INT_LEAST64_FMTd__ "lld"
+// X32:#define __INT_LEAST64_FMTi__ "lli"
 // X32:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // X32:#define __INT_LEAST64_TYPE__ long long int
+// X32:#define __INT_LEAST8_FMTd__ "hhd"
+// X32:#define __INT_LEAST8_FMTi__ "hhi"
 // X32:#define __INT_LEAST8_MAX__ 127
 // X32:#define __INT_LEAST8_TYPE__ char
 // X32:#define __INT_MAX__ 2147483647
@@ -5370,6 +6263,7 @@
 // X32:#define __UINT8_C_SUFFIX__ U
 // X32:#define __UINT8_MAX__ 255U
 // X32:#define __UINT8_TYPE__ unsigned char
+// X32:#define __UINTMAX_C_SUFFIX__ ULL
 // X32:#define __UINTMAX_MAX__ 18446744073709551615ULL
 // X32:#define __UINTMAX_TYPE__ long long unsigned int
 // X32:#define __UINTMAX_WIDTH__ 64
@@ -5439,35 +6333,64 @@
 // X86_64-LINUX:#define __FLT_MIN_EXP__ (-125)
 // X86_64-LINUX:#define __FLT_MIN__ 1.17549435e-38F
 // X86_64-LINUX:#define __FLT_RADIX__ 2
+// X86_64-LINUX:#define __INT16_FMTd__ "hd"
+// X86_64-LINUX:#define __INT16_FMTi__ "hi"
 // X86_64-LINUX:#define __INT16_MAX__ 32767
 // X86_64-LINUX:#define __INT16_TYPE__ short
+// X86_64-LINUX:#define __INT32_FMTd__ "d"
+// X86_64-LINUX:#define __INT32_FMTi__ "i"
 // X86_64-LINUX:#define __INT32_MAX__ 2147483647
 // X86_64-LINUX:#define __INT32_TYPE__ int
 // X86_64-LINUX:#define __INT64_C_SUFFIX__ L
+// X86_64-LINUX:#define __INT64_FMTd__ "ld"
+// X86_64-LINUX:#define __INT64_FMTi__ "li"
 // X86_64-LINUX:#define __INT64_MAX__ 9223372036854775807L
 // X86_64-LINUX:#define __INT64_TYPE__ long int
+// X86_64-LINUX:#define __INT8_FMTd__ "hhd"
+// X86_64-LINUX:#define __INT8_FMTi__ "hhi"
 // X86_64-LINUX:#define __INT8_MAX__ 127
 // X86_64-LINUX:#define __INT8_TYPE__ char
+// X86_64-LINUX:#define __INTMAX_C_SUFFIX__ L
+// X86_64-LINUX:#define __INTMAX_FMTd__ "ld"
+// X86_64-LINUX:#define __INTMAX_FMTi__ "li"
 // X86_64-LINUX:#define __INTMAX_MAX__ 9223372036854775807L
 // X86_64-LINUX:#define __INTMAX_TYPE__ long int
 // X86_64-LINUX:#define __INTMAX_WIDTH__ 64
+// X86_64-LINUX:#define __INTPTR_FMTd__ "ld"
+// X86_64-LINUX:#define __INTPTR_FMTi__ "li"
 // X86_64-LINUX:#define __INTPTR_MAX__ 9223372036854775807L
 // X86_64-LINUX:#define __INTPTR_TYPE__ long int
 // X86_64-LINUX:#define __INTPTR_WIDTH__ 64
+// X86_64-LINUX:#define __INT_FAST16_FMTd__ "hd"
+// X86_64-LINUX:#define __INT_FAST16_FMTi__ "hi"
 // X86_64-LINUX:#define __INT_FAST16_MAX__ 32767
 // X86_64-LINUX:#define __INT_FAST16_TYPE__ short
+// X86_64-LINUX:#define __INT_FAST32_FMTd__ "d"
+// X86_64-LINUX:#define __INT_FAST32_FMTi__ "i"
 // X86_64-LINUX:#define __INT_FAST32_MAX__ 2147483647
 // X86_64-LINUX:#define __INT_FAST32_TYPE__ int
+// X86_64-LINUX:#define __INT_FAST64_FMTd__ "ld"
+// X86_64-LINUX:#define __INT_FAST64_FMTi__ "li"
 // X86_64-LINUX:#define __INT_FAST64_MAX__ 9223372036854775807L
 // X86_64-LINUX:#define __INT_FAST64_TYPE__ long int
+// X86_64-LINUX:#define __INT_FAST8_FMTd__ "hhd"
+// X86_64-LINUX:#define __INT_FAST8_FMTi__ "hhi"
 // X86_64-LINUX:#define __INT_FAST8_MAX__ 127
 // X86_64-LINUX:#define __INT_FAST8_TYPE__ char
+// X86_64-LINUX:#define __INT_LEAST16_FMTd__ "hd"
+// X86_64-LINUX:#define __INT_LEAST16_FMTi__ "hi"
 // X86_64-LINUX:#define __INT_LEAST16_MAX__ 32767
 // X86_64-LINUX:#define __INT_LEAST16_TYPE__ short
+// X86_64-LINUX:#define __INT_LEAST32_FMTd__ "d"
+// X86_64-LINUX:#define __INT_LEAST32_FMTi__ "i"
 // X86_64-LINUX:#define __INT_LEAST32_MAX__ 2147483647
 // X86_64-LINUX:#define __INT_LEAST32_TYPE__ int
+// X86_64-LINUX:#define __INT_LEAST64_FMTd__ "ld"
+// X86_64-LINUX:#define __INT_LEAST64_FMTi__ "li"
 // X86_64-LINUX:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // X86_64-LINUX:#define __INT_LEAST64_TYPE__ long int
+// X86_64-LINUX:#define __INT_LEAST8_FMTd__ "hhd"
+// X86_64-LINUX:#define __INT_LEAST8_FMTi__ "hhi"
 // X86_64-LINUX:#define __INT_LEAST8_MAX__ 127
 // X86_64-LINUX:#define __INT_LEAST8_TYPE__ char
 // X86_64-LINUX:#define __INT_MAX__ 2147483647
@@ -5528,6 +6451,7 @@
 // X86_64-LINUX:#define __UINT8_C_SUFFIX__ U
 // X86_64-LINUX:#define __UINT8_MAX__ 255U
 // X86_64-LINUX:#define __UINT8_TYPE__ unsigned char
+// X86_64-LINUX:#define __UINTMAX_C_SUFFIX__ UL
 // X86_64-LINUX:#define __UINTMAX_MAX__ 18446744073709551615UL
 // X86_64-LINUX:#define __UINTMAX_TYPE__ long unsigned int
 // X86_64-LINUX:#define __UINTMAX_WIDTH__ 64
@@ -5603,35 +6527,64 @@
 // X86_64-NETBSD:#define __FLT_MIN_EXP__ (-125)
 // X86_64-NETBSD:#define __FLT_MIN__ 1.17549435e-38F
 // X86_64-NETBSD:#define __FLT_RADIX__ 2
+// X86_64-NETBSD:#define __INT16_FMTd__ "hd"
+// X86_64-NETBSD:#define __INT16_FMTi__ "hi"
 // X86_64-NETBSD:#define __INT16_MAX__ 32767
 // X86_64-NETBSD:#define __INT16_TYPE__ short
+// X86_64-NETBSD:#define __INT32_FMTd__ "d"
+// X86_64-NETBSD:#define __INT32_FMTi__ "i"
 // X86_64-NETBSD:#define __INT32_MAX__ 2147483647
 // X86_64-NETBSD:#define __INT32_TYPE__ int
 // X86_64-NETBSD:#define __INT64_C_SUFFIX__ L
+// X86_64-NETBSD:#define __INT64_FMTd__ "ld"
+// X86_64-NETBSD:#define __INT64_FMTi__ "li"
 // X86_64-NETBSD:#define __INT64_MAX__ 9223372036854775807L
 // X86_64-NETBSD:#define __INT64_TYPE__ long int
+// X86_64-NETBSD:#define __INT8_FMTd__ "hhd"
+// X86_64-NETBSD:#define __INT8_FMTi__ "hhi"
 // X86_64-NETBSD:#define __INT8_MAX__ 127
 // X86_64-NETBSD:#define __INT8_TYPE__ char
+// X86_64-NETBSD:#define __INTMAX_C_SUFFIX__ L
+// X86_64-NETBSD:#define __INTMAX_FMTd__ "ld"
+// X86_64-NETBSD:#define __INTMAX_FMTi__ "li"
 // X86_64-NETBSD:#define __INTMAX_MAX__ 9223372036854775807L
 // X86_64-NETBSD:#define __INTMAX_TYPE__ long int
 // X86_64-NETBSD:#define __INTMAX_WIDTH__ 64
+// X86_64-NETBSD:#define __INTPTR_FMTd__ "ld"
+// X86_64-NETBSD:#define __INTPTR_FMTi__ "li"
 // X86_64-NETBSD:#define __INTPTR_MAX__ 9223372036854775807L
 // X86_64-NETBSD:#define __INTPTR_TYPE__ long int
 // X86_64-NETBSD:#define __INTPTR_WIDTH__ 64
+// X86_64-NETBSD:#define __INT_FAST16_FMTd__ "hd"
+// X86_64-NETBSD:#define __INT_FAST16_FMTi__ "hi"
 // X86_64-NETBSD:#define __INT_FAST16_MAX__ 32767
 // X86_64-NETBSD:#define __INT_FAST16_TYPE__ short
+// X86_64-NETBSD:#define __INT_FAST32_FMTd__ "d"
+// X86_64-NETBSD:#define __INT_FAST32_FMTi__ "i"
 // X86_64-NETBSD:#define __INT_FAST32_MAX__ 2147483647
 // X86_64-NETBSD:#define __INT_FAST32_TYPE__ int
+// X86_64-NETBSD:#define __INT_FAST64_FMTd__ "ld"
+// X86_64-NETBSD:#define __INT_FAST64_FMTi__ "li"
 // X86_64-NETBSD:#define __INT_FAST64_MAX__ 9223372036854775807L
 // X86_64-NETBSD:#define __INT_FAST64_TYPE__ long int
+// X86_64-NETBSD:#define __INT_FAST8_FMTd__ "hhd"
+// X86_64-NETBSD:#define __INT_FAST8_FMTi__ "hhi"
 // X86_64-NETBSD:#define __INT_FAST8_MAX__ 127
 // X86_64-NETBSD:#define __INT_FAST8_TYPE__ char
+// X86_64-NETBSD:#define __INT_LEAST16_FMTd__ "hd"
+// X86_64-NETBSD:#define __INT_LEAST16_FMTi__ "hi"
 // X86_64-NETBSD:#define __INT_LEAST16_MAX__ 32767
 // X86_64-NETBSD:#define __INT_LEAST16_TYPE__ short
+// X86_64-NETBSD:#define __INT_LEAST32_FMTd__ "d"
+// X86_64-NETBSD:#define __INT_LEAST32_FMTi__ "i"
 // X86_64-NETBSD:#define __INT_LEAST32_MAX__ 2147483647
 // X86_64-NETBSD:#define __INT_LEAST32_TYPE__ int
+// X86_64-NETBSD:#define __INT_LEAST64_FMTd__ "ld"
+// X86_64-NETBSD:#define __INT_LEAST64_FMTi__ "li"
 // X86_64-NETBSD:#define __INT_LEAST64_MAX__ 9223372036854775807L
 // X86_64-NETBSD:#define __INT_LEAST64_TYPE__ long int
+// X86_64-NETBSD:#define __INT_LEAST8_FMTd__ "hhd"
+// X86_64-NETBSD:#define __INT_LEAST8_FMTi__ "hhi"
 // X86_64-NETBSD:#define __INT_LEAST8_MAX__ 127
 // X86_64-NETBSD:#define __INT_LEAST8_TYPE__ char
 // X86_64-NETBSD:#define __INT_MAX__ 2147483647
@@ -5692,6 +6645,7 @@
 // X86_64-NETBSD:#define __UINT8_C_SUFFIX__ U
 // X86_64-NETBSD:#define __UINT8_MAX__ 255U
 // X86_64-NETBSD:#define __UINT8_TYPE__ unsigned char
+// X86_64-NETBSD:#define __UINTMAX_C_SUFFIX__ UL
 // X86_64-NETBSD:#define __UINTMAX_MAX__ 18446744073709551615UL
 // X86_64-NETBSD:#define __UINTMAX_TYPE__ long unsigned int
 // X86_64-NETBSD:#define __UINTMAX_WIDTH__ 64
@@ -5727,16 +6681,20 @@
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=sparc64-none-none < /dev/null | FileCheck -check-prefix SPARCV9 %s
 // SPARCV9:#define __INT64_TYPE__ long int
+// SPARCV9:#define __INTMAX_C_SUFFIX__ L
 // SPARCV9:#define __INTMAX_TYPE__ long int
 // SPARCV9:#define __INTPTR_TYPE__ long int
 // SPARCV9:#define __LONG_MAX__ 9223372036854775807L
 // SPARCV9:#define __LP64__ 1
 // SPARCV9:#define __SIZEOF_LONG__ 8
 // SPARCV9:#define __SIZEOF_POINTER__ 8
+// SPARCV9:#define __UINTPTR_TYPE__ long unsigned int
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=sparc64-none-openbsd < /dev/null | FileCheck -check-prefix SPARC64-OBSD %s
 // SPARC64-OBSD:#define __INT64_TYPE__ long long int
+// SPARC64-OBSD:#define __INTMAX_C_SUFFIX__ LL
 // SPARC64-OBSD:#define __INTMAX_TYPE__ long long int
+// SPARC64-OBSD:#define __UINTMAX_C_SUFFIX__ ULL
 // SPARC64-OBSD:#define __UINTMAX_TYPE__ long long unsigned int
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=x86_64-pc-kfreebsd-gnu < /dev/null | FileCheck -check-prefix KFREEBSD-DEFINE %s

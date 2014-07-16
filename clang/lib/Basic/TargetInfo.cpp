@@ -52,7 +52,6 @@ TargetInfo::TargetInfo(const llvm::Triple &T) : TargetOpts(), Triple(T) {
   SizeType = UnsignedLong;
   PtrDiffType = SignedLong;
   IntMaxType = SignedLongLong;
-  UIntMaxType = UnsignedLongLong;
   IntPtrType = SignedLong;
   WCharType = SignedInt;
   WIntType = SignedInt;
@@ -132,6 +131,25 @@ const char *TargetInfo::getTypeConstantSuffix(IntType T) {
   case UnsignedInt:      return "U";
   case UnsignedLong:     return "UL";
   case UnsignedLongLong: return "ULL";
+  }
+}
+
+/// getTypeFormatModifier - Return the printf format modifier for the
+/// specified integer type enum. For example, SignedLong -> "l".
+
+const char *TargetInfo::getTypeFormatModifier(IntType T) {
+  switch (T) {
+  default: llvm_unreachable("not an integer!");
+  case SignedChar:
+  case UnsignedChar:     return "hh";
+  case SignedShort:
+  case UnsignedShort:    return "h";
+  case SignedInt:
+  case UnsignedInt:      return "";
+  case SignedLong:
+  case UnsignedLong:     return "l";
+  case SignedLongLong:
+  case UnsignedLongLong: return "ll";
   }
 }
 
@@ -278,7 +296,6 @@ void TargetInfo::adjust(const LangOptions &Opts) {
     IntPtrType = Is32BitArch ? SignedInt : SignedLong;
 
     IntMaxType = SignedLongLong;
-    UIntMaxType = UnsignedLongLong;
     Int64Type = SignedLong;
 
     HalfFormat = &llvm::APFloat::IEEEhalf;
