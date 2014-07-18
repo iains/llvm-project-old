@@ -891,7 +891,7 @@ Currently, only the following parameter attributes are defined:
     address of outgoing stack arguments.  An ``inalloca`` argument must
     be a pointer to stack memory produced by an ``alloca`` instruction.
     The alloca, or argument allocation, must also be tagged with the
-    inalloca keyword.  Only the past argument may have the ``inalloca``
+    inalloca keyword.  Only the last argument may have the ``inalloca``
     attribute, and that argument is guaranteed to be passed in memory.
 
     An argument allocation may be used by a call at most once because
@@ -8653,14 +8653,14 @@ Syntax:
 
 ::
 
-      declare i16 @llvm.convert.to.fp16(float %a)
+      declare i16 @llvm.convert.to.fp16.f32(float %a)
+      declare i16 @llvm.convert.to.fp16.f64(double %a)
 
 Overview:
 """""""""
 
-The '``llvm.convert.to.fp16``' intrinsic function performs a conversion
-from single precision floating point format to half precision floating
-point format.
+The '``llvm.convert.to.fp16``' intrinsic function performs a conversion from a
+conventional floating point type to half precision floating point format.
 
 Arguments:
 """"""""""
@@ -8671,17 +8671,16 @@ converted.
 Semantics:
 """"""""""
 
-The '``llvm.convert.to.fp16``' intrinsic function performs a conversion
-from single precision floating point format to half precision floating
-point format. The return value is an ``i16`` which contains the
-converted number.
+The '``llvm.convert.to.fp16``' intrinsic function performs a conversion from a
+conventional floating point format to half precision floating point format. The
+return value is an ``i16`` which contains the converted number.
 
 Examples:
 """""""""
 
 .. code-block:: llvm
 
-      %res = call i16 @llvm.convert.to.fp16(float %a)
+      %res = call i16 @llvm.convert.to.fp16.f32(float %a)
       store i16 %res, i16* @x, align 2
 
 .. _int_convert_from_fp16:
@@ -8694,7 +8693,8 @@ Syntax:
 
 ::
 
-      declare float @llvm.convert.from.fp16(i16 %a)
+      declare float @llvm.convert.from.fp16.f32(i16 %a)
+      declare double @llvm.convert.from.fp16.f64(i16 %a)
 
 Overview:
 """""""""

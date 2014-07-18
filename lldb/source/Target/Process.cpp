@@ -1550,6 +1550,31 @@ Process::LoadImage (const FileSpec &image_spec, Error &error)
                                 m_image_tokens.push_back (image_ptr);
                                 return image_token;
                             }
+                            else if (image_ptr == 0)
+                            {
+                                prefix = "extern \"C\" const char *dlerror(void);\n";
+                                expr.Clear();
+                                expr.PutCString("dlerror()");
+                                ClangUserExpression::Evaluate (exe_ctx,
+                                                               expr_options,
+                                                               expr.GetData(),
+                                                               prefix,
+                                                               result_valobj_sp,
+                                                               expr_error);
+                                if (result_valobj_sp && error.Success())
+                                {
+                                    if (result_valobj_sp->IsCStringContainer(true))
+                                    {
+                                        StreamString s;
+                                        size_t num_chars = result_valobj_sp->ReadPointedString (s, error);
+                                        if (error.Success() && num_chars > 0)
+                                        {
+                                            error.Clear();
+                                            error.SetErrorStringWithFormat("dlopen failed: %s", s.GetData());
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3657,11 +3682,23 @@ Process::StartPrivateStateThread (bool force)
     // Create a thread that watches our internal state and controls which
     // events make it to clients (into the DCProcess event queue).
     char thread_name[1024];
-    if (already_running)
-        snprintf(thread_name, sizeof(thread_name), "<lldb.process.internal-state-override(pid=%" PRIu64 ")>", GetID());
+
+    if (Host::MAX_THREAD_NAME_LENGTH <= 16)
+    {
+            // On platforms with abbreviated thread name lengths, choose thread names that fit within the limit.
+            if (already_running)
+                snprintf(thread_name, sizeof(thread_name), "intern-state-OV");
+            else
+                snprintf(thread_name, sizeof(thread_name), "intern-state");
+    }
     else
-        snprintf(thread_name, sizeof(thread_name), "<lldb.process.internal-state(pid=%" PRIu64 ")>", GetID());
-        
+    {
+        if (already_running)
+                snprintf(thread_name, sizeof(thread_name), "<lldb.process.internal-state-override(pid=%" PRIu64 ")>", GetID());
+        else
+                snprintf(thread_name, sizeof(thread_name), "<lldb.process.internal-state(pid=%" PRIu64 ")>", GetID());
+    }
+
     // Create the private state thread, and start it running.
     m_private_state_thread = Host::ThreadCreate (thread_name, Process::PrivateStateThread, this, NULL);
     bool success = IS_VALID_LLDB_HOST_THREAD(m_private_state_thread);
@@ -4583,8 +4620,28 @@ public:
         // interrupt the IOHandlerProcessSTDIO::Run() and we can look at the byte
         // that was written to the pipe and then call m_process->Halt() from a
         // much safer location in code.
-        char ch = 'i'; // Send 'i' for interrupt
-        return m_pipe.Write (&ch, 1) == 1;
+        if (m_active)
+        {
+            char ch = 'i'; // Send 'i' for interrupt
+            return m_pipe.Write (&ch, 1) == 1;
+        }
+        else
+        {
+            // This IOHandler might be pushed on the stack, but not being run currently
+            // so do the right thing if we aren't actively watching for STDIN by sending
+            // the interrupt to the process. Otherwise the write to the pipe above would
+            // do nothing. This can happen when the command interpreter is running and
+            // gets a "expression ...". It will be on the IOHandler thread and sending
+            // the input is complete to the delegate which will cause the expression to
+            // run, which will push the process IO handler, but not run it.
+            
+            if (StateIsRunningState(m_process->GetState()))
+            {
+                m_process->SendAsyncInterrupt();
+                return true;
+            }
+        }
+        return false;
     }
     
     virtual void

@@ -292,5 +292,17 @@
 // RTTI-NOT: "-fno-rtti-data"
 // RTTI-NOT: "-fno-rtti"
 
+// Accept "core" clang options.
+// (/Zs is for syntax-only)
+// RUN: %clang_cl \
+// RUN:     --driver-mode=cl \
+// RUN:     -ferror-limit=10 \
+// RUN:     -fmsc-version=1800 \
+// RUN:     -fno-strict-aliasing \
+// RUN:     -fstrict-aliasing \
+// RUN:     -mllvm -disable-llvm-optzns \
+// RUN:     -Wunused-variables \
+// RUN:     /Zs -- %s 2>&1
+
 
 void f() { }

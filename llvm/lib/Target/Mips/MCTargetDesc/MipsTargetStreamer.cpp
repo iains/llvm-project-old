@@ -281,26 +281,28 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
   else
     EFlags |= ELF::EF_MIPS_ARCH_1;
 
-  if (T.isArch64Bit()) {
-    if (Features & Mips::FeatureN32)
-      EFlags |= ELF::EF_MIPS_ABI2;
-    else if (Features & Mips::FeatureO32) {
-      EFlags |= ELF::EF_MIPS_ABI_O32;
-      EFlags |= ELF::EF_MIPS_32BITMODE; /* Compatibility Mode */
-    }
-    // No need to set any bit for N64 which is the default ABI at the moment
-    // for 64-bit Mips architectures.
-  } else {
-    if (Features & Mips::FeatureMips64r2 || Features & Mips::FeatureMips64)
-      EFlags |= ELF::EF_MIPS_32BITMODE;
-
-    // ABI
+  // ABI
+  // N64 does not require any ABI bits.
+  if (Features & Mips::FeatureO32)
     EFlags |= ELF::EF_MIPS_ABI_O32;
-  }
+  else if (Features & Mips::FeatureN32)
+    EFlags |= ELF::EF_MIPS_ABI2;
+
+  if (Features & Mips::FeatureGP64Bit) {
+    if (Features & Mips::FeatureO32)
+      EFlags |= ELF::EF_MIPS_32BITMODE; /* Compatibility Mode */
+  } else if (Features & Mips::FeatureMips64r2 || Features & Mips::FeatureMips64)
+    EFlags |= ELF::EF_MIPS_32BITMODE;
 
   // Other options.
   if (Features & Mips::FeatureNaN2008)
     EFlags |= ELF::EF_MIPS_NAN2008;
+
+  // -mabicalls and -mplt are not implemented but we should act as if they were
+  // given.
+  EFlags |= ELF::EF_MIPS_CPIC;
+  if (Features & Mips::FeatureN64)
+    EFlags |= ELF::EF_MIPS_PIC;
 
   MCA.setELFHeaderEFlags(EFlags);
 }
@@ -364,7 +366,8 @@ void MipsTargetELFStreamer::finish() {
     const MCSectionELF *Sec =
         Context.getELFSection(".reginfo", ELF::SHT_MIPS_REGINFO, ELF::SHF_ALLOC,
                               SectionKind::getMetadata(), 24, "");
-    MCA.getOrCreateSectionData(*Sec).setAlignment(4);
+    MCA.getOrCreateSectionData(*Sec)
+        .setAlignment(Features & Mips::FeatureN32 ? 8 : 4);
     OS.SwitchSection(Sec);
 
     OS.EmitIntValue(0, 4); // ri_gprmask

@@ -201,8 +201,13 @@ static void AddLinkerInputs(const ToolChain &TC,
       TC.AddCXXStdlibLibArgs(Args, CmdArgs);
     else if (A.getOption().matches(options::OPT_Z_reserved_lib_cckext))
       TC.AddCCKextLibArgs(Args, CmdArgs);
-    else
-      A.renderAsInput(Args, CmdArgs);
+    else if (A.getOption().matches(options::OPT_z)) {
+      // Pass -z prefix for gcc linker compatibility.
+      A.claim();
+      A.render(Args, CmdArgs);
+    } else {
+       A.renderAsInput(Args, CmdArgs);
+    }
   }
 
   // LIBRARY_PATH - included following the user specified library paths.
@@ -481,29 +486,6 @@ static bool isNoCommonDefault(const llvm::Triple &Triple) {
   case llvm::Triple::xcore:
     return true;
   }
-}
-
-// Handle -mfpu=.
-//
-// FIXME: Centralize feature selection, defaulting shouldn't be also in the
-// frontend target.
-static void getAArch64FPUFeatures(const Driver &D, const Arg *A,
-                                  const ArgList &Args,
-                                  std::vector<const char *> &Features) {
-  StringRef FPU = A->getValue();
-  if (FPU == "fp-armv8") {
-    Features.push_back("+fp-armv8");
-  } else if (FPU == "neon-fp-armv8") {
-    Features.push_back("+fp-armv8");
-    Features.push_back("+neon");
-  } else if (FPU == "crypto-neon-fp-armv8") {
-    Features.push_back("+fp-armv8");
-    Features.push_back("+neon");
-    Features.push_back("+crypto");
-  } else if (FPU == "neon") {
-    Features.push_back("+neon");
-  } else
-    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
 // Handle -mhwdiv=.
@@ -844,18 +826,21 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
 /// getAArch64TargetCPU - Get the (LLVM) name of the AArch64 cpu we are
 /// targeting.
 static std::string getAArch64TargetCPU(const ArgList &Args) {
-  // If we have -mcpu=, use that.
-  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
-    StringRef MCPU = A->getValue();
-    // Handle -mcpu=native.
-    if (MCPU == "native")
-      return llvm::sys::getHostCPUName();
-    else
-      return MCPU;
+  Arg *A;
+  std::string CPU;
+  // If we have -mtune or -mcpu, use that.
+  if ((A = Args.getLastArg(options::OPT_mtune_EQ))) {
+    CPU = A->getValue();
+  } else if ((A = Args.getLastArg(options::OPT_mcpu_EQ))) {
+    StringRef Mcpu = A->getValue();
+    CPU = Mcpu.split("+").first;
   }
 
-  // At some point, we may need to check -march here, but for now we only
-  // one arm64 architecture.
+  // Handle CPU name is 'native'.
+  if (CPU == "native")
+    return llvm::sys::getHostCPUName();
+  else if (CPU.size())
+    return CPU;
 
   // Make sure we pick "cyclone" if -arch is used.
   // FIXME: Should this be picked by checking the target triple instead?
@@ -890,9 +875,6 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
   CmdArgs.push_back("-target-abi");
   CmdArgs.push_back(ABIName);
 
-  CmdArgs.push_back("-target-cpu");
-  CmdArgs.push_back(Args.MakeArgString(getAArch64TargetCPU(Args)));
-
   if (Args.hasArg(options::OPT_mstrict_align)) {
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-aarch64-strict-align");
@@ -909,10 +891,10 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
 
 // Get CPU and ABI names. They are not independent
 // so we have to calculate them together.
-static void getMipsCPUAndABI(const ArgList &Args,
-                             const llvm::Triple &Triple,
-                             StringRef &CPUName,
-                             StringRef &ABIName) {
+void mips::getMipsCPUAndABI(const ArgList &Args,
+                            const llvm::Triple &Triple,
+                            StringRef &CPUName,
+                            StringRef &ABIName) {
   const char *DefMips32CPU = "mips32r2";
   const char *DefMips64CPU = "mips64r2";
 
@@ -1023,8 +1005,25 @@ static void AddTargetFeature(const ArgList &Args,
   }
 }
 
-static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
+static void getMIPSTargetFeatures(const Driver &D, const llvm::Triple &Triple,
+                                  const ArgList &Args,
                                   std::vector<const char *> &Features) {
+  StringRef CPUName;
+  StringRef ABIName;
+  mips::getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
+  ABIName = getGnuCompatibleMipsABIName(ABIName);
+
+  // Always override the backend's default ABI.
+  std::string ABIFeature = llvm::StringSwitch<StringRef>(ABIName)
+                               .Case("32", "+o32")
+                               .Case("n32", "+n32")
+                               .Case("64", "+n64")
+                               .Case("eabi", "+eabi")
+                               .Default(("+" + ABIName).str());
+  Features.push_back("-o32");
+  Features.push_back("-n64");
+  Features.push_back(Args.MakeArgString(ABIFeature));
+
   StringRef FloatABI = getMipsFloatABI(D, Args);
   if (FloatABI == "soft") {
     // FIXME: Note, this is a hack. We need to pass the selected float
@@ -1056,8 +1055,23 @@ static void getMIPSTargetFeatures(const Driver &D, const ArgList &Args,
                    "dspr2");
   AddTargetFeature(Args, Features, options::OPT_mmsa, options::OPT_mno_msa,
                    "msa");
-  AddTargetFeature(Args, Features, options::OPT_mfp64, options::OPT_mfp32,
-                   "fp64");
+
+  // Add the last -mfp32/-mfpxx/-mfp64 or if none are given and the ABI is O32
+  // pass -mfpxx
+  if (Arg *A = Args.getLastArg(options::OPT_mfp32, options::OPT_mfpxx,
+                               options::OPT_mfp64)) {
+    if (A->getOption().matches(options::OPT_mfp32))
+      Features.push_back(Args.MakeArgString("-fp64"));
+    else if (A->getOption().matches(options::OPT_mfpxx)) {
+      Features.push_back(Args.MakeArgString("+fpxx"));
+      Features.push_back(Args.MakeArgString("+nooddspreg"));
+    } else
+      Features.push_back(Args.MakeArgString("+fp64"));
+  } else if (mips::isFPXXDefault(Triple, CPUName, ABIName)) {
+    Features.push_back(Args.MakeArgString("+fpxx"));
+    Features.push_back(Args.MakeArgString("+nooddspreg"));
+  }
+
   AddTargetFeature(Args, Features, options::OPT_mno_odd_spreg,
                    options::OPT_modd_spreg, "nooddspreg");
 }
@@ -1068,7 +1082,7 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
   StringRef CPUName;
   StringRef ABIName;
   const llvm::Triple &Triple = getToolChain().getTriple();
-  getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
+  mips::getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
 
   CmdArgs.push_back("-target-abi");
   CmdArgs.push_back(ABIName.data());
@@ -1362,7 +1376,7 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
   case llvm::Triple::mips64el: {
     StringRef CPUName;
     StringRef ABIName;
-    getMipsCPUAndABI(Args, T, CPUName, ABIName);
+    mips::getMipsCPUAndABI(Args, T, CPUName, ABIName);
     return CPUName;
   }
 
@@ -1573,13 +1587,126 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back ("-machine-sink-split=0");
 }
 
+// Decode AArch64 features from string like +[no]featureA+[no]featureB+...
+static bool DecodeAArch64Features(const Driver &D, const StringRef &text,
+                                  std::vector<const char *> &Features) {
+  SmallVector<StringRef, 8> Split;
+  text.split(Split, StringRef("+"), -1, false);
+
+  for (unsigned I = 0, E = Split.size(); I != E; ++I) {
+    const char *result = llvm::StringSwitch<const char *>(Split[I])
+                             .Case("fp", "+fp-armv8")
+                             .Case("simd", "+neon")
+                             .Case("crc", "+crc")
+                             .Case("crypto", "+crypto")
+                             .Case("nofp", "-fp-armv8")
+                             .Case("nosimd", "-neon")
+                             .Case("nocrc", "-crc")
+                             .Case("nocrypto", "-crypto")
+                             .Default(nullptr);
+    if (result)
+      Features.push_back(result);
+    else if (Split[I] == "neon" || Split[I] == "noneon")
+      D.Diag(diag::err_drv_no_neon_modifier);
+    else
+      return false;
+  }
+  return true;
+}
+
+// Check if the CPU name and feature modifiers in -mcpu are legal. If yes,
+// decode CPU and feature.
+static bool DecodeAArch64Mcpu(const Driver &D, StringRef Mcpu, StringRef &CPU,
+                              std::vector<const char *> &Features) {
+  std::pair<StringRef, StringRef> Split = Mcpu.split("+");
+  CPU = Split.first;
+  if (CPU == "cyclone" || CPU == "cortex-a53" || CPU == "cortex-a57") {
+    Features.push_back("+neon");
+    Features.push_back("+crc");
+    Features.push_back("+crypto");
+  } else if (CPU == "generic") {
+    Features.push_back("+neon");
+  } else {
+    return false;
+  }
+
+  if (Split.second.size() && !DecodeAArch64Features(D, Split.second, Features))
+    return false;
+
+  return true;
+}
+
+static bool
+getAArch64ArchFeaturesFromMarch(const Driver &D, StringRef March,
+                                const ArgList &Args,
+                                std::vector<const char *> &Features) {
+  std::pair<StringRef, StringRef> Split = March.split("+");
+  if (Split.first != "armv8-a")
+    return false;
+
+  if (Split.second.size() && !DecodeAArch64Features(D, Split.second, Features))
+    return false;
+
+  return true;
+}
+
+static bool
+getAArch64ArchFeaturesFromMcpu(const Driver &D, StringRef Mcpu,
+                               const ArgList &Args,
+                               std::vector<const char *> &Features) {
+  StringRef CPU;
+  if (!DecodeAArch64Mcpu(D, Mcpu, CPU, Features))
+    return false;
+
+  return true;
+}
+
+static bool
+getAArch64MicroArchFeaturesFromMtune(const Driver &D, StringRef Mtune,
+                                     const ArgList &Args,
+                                     std::vector<const char *> &Features) {
+  // Handle CPU name is 'native'.
+  if (Mtune == "native")
+    Mtune = llvm::sys::getHostCPUName();
+  if (Mtune == "cyclone") {
+    Features.push_back("+zcm");
+    Features.push_back("+zcz");
+  }
+  return true;
+}
+
+static bool
+getAArch64MicroArchFeaturesFromMcpu(const Driver &D, StringRef Mcpu,
+                                    const ArgList &Args,
+                                    std::vector<const char *> &Features) {
+  StringRef CPU;
+  std::vector<const char *> DecodedFeature;
+  if (!DecodeAArch64Mcpu(D, Mcpu, CPU, DecodedFeature))
+    return false;
+
+  return getAArch64MicroArchFeaturesFromMtune(D, CPU, Args, Features);
+}
+
 static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
                                      std::vector<const char *> &Features) {
-  // Honor -mfpu=.
-  if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
-    getAArch64FPUFeatures(D, A, Args, Features);
-  else
-    Features.push_back("+neon");
+  Arg *A;
+  bool success = true;
+  // Enable NEON by default.
+  Features.push_back("+neon");
+  if ((A = Args.getLastArg(options::OPT_march_EQ)))
+    success = getAArch64ArchFeaturesFromMarch(D, A->getValue(), Args, Features);
+  else if ((A = Args.getLastArg(options::OPT_mcpu_EQ)))
+    success = getAArch64ArchFeaturesFromMcpu(D, A->getValue(), Args, Features);
+
+  if (success && (A = Args.getLastArg(options::OPT_mtune_EQ)))
+    success =
+        getAArch64MicroArchFeaturesFromMtune(D, A->getValue(), Args, Features);
+  else if (success && (A = Args.getLastArg(options::OPT_mcpu_EQ)))
+    success =
+        getAArch64MicroArchFeaturesFromMcpu(D, A->getValue(), Args, Features);
+
+  if (!success)
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 
   if (Args.getLastArg(options::OPT_mgeneral_regs_only)) {
     Features.push_back("-fp-armv8");
@@ -1608,7 +1735,7 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   case llvm::Triple::mipsel:
   case llvm::Triple::mips64:
   case llvm::Triple::mips64el:
-    getMIPSTargetFeatures(D, Args, Features);
+    getMIPSTargetFeatures(D, Triple, Args, Features);
     break;
 
   case llvm::Triple::arm:
@@ -5197,6 +5324,22 @@ bool mips::isNaN2008(const ArgList &Args, const llvm::Triple &Triple) {
   return false;
 }
 
+bool mips::isFPXXDefault(const llvm::Triple &Triple, StringRef CPUName,
+                         StringRef ABIName) {
+  if (Triple.getVendor() != llvm::Triple::ImaginationTechnologies &&
+      Triple.getVendorName() != "mti")
+    return false;
+
+  if (ABIName != "32")
+    return false;
+
+  return llvm::StringSwitch<bool>(CPUName)
+             .Cases("mips2", "mips3", "mips4", "mips5", true)
+             .Cases("mips32", "mips32r2", true)
+             .Cases("mips64", "mips64r2", true)
+             .Default(false);
+}
+
 llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
   // See arch(3) and llvm-gcc's driver-driver.c. We don't implement support for
   // archs which Darwin doesn't use.
@@ -6003,7 +6146,7 @@ void openbsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::mips64el: {
     StringRef CPUName;
     StringRef ABIName;
-    getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
+    mips::getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
 
     CmdArgs.push_back("-mabi");
     CmdArgs.push_back(getGnuCompatibleMipsABIName(ABIName).data());
@@ -6325,7 +6468,7 @@ void freebsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
            getToolChain().getArch() == llvm::Triple::mips64el) {
     StringRef CPUName;
     StringRef ABIName;
-    getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
+    mips::getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
 
     CmdArgs.push_back("-march");
     CmdArgs.push_back(CPUName.data());
@@ -6598,7 +6741,7 @@ void netbsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::mips64el: {
     StringRef CPUName;
     StringRef ABIName;
-    getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
+    mips::getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
 
     CmdArgs.push_back("-march");
     CmdArgs.push_back(CPUName.data());
@@ -6892,13 +7035,20 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
              getToolChain().getArch() == llvm::Triple::mips64el) {
     StringRef CPUName;
     StringRef ABIName;
-    getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
+    mips::getMipsCPUAndABI(Args, getToolChain().getTriple(), CPUName, ABIName);
+    ABIName = getGnuCompatibleMipsABIName(ABIName);
 
     CmdArgs.push_back("-march");
     CmdArgs.push_back(CPUName.data());
 
     CmdArgs.push_back("-mabi");
-    CmdArgs.push_back(getGnuCompatibleMipsABIName(ABIName).data());
+    CmdArgs.push_back(ABIName.data());
+
+    // LLVM doesn't support -mabicalls yet and acts as if it is always given.
+    CmdArgs.push_back("-mno-shared");
+    // LLVM doesn't support -mplt yet and acts as if it is always given.
+    // However, -mplt has no effect with the N64 ABI.
+    CmdArgs.push_back(ABIName == "64" ? "-KPIC" : "-call_nonpic");
 
     if (getToolChain().getArch() == llvm::Triple::mips ||
         getToolChain().getArch() == llvm::Triple::mips64)
@@ -6911,8 +7061,28 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back(Args.MakeArgString("-mnan=2008"));
     }
 
-    Args.AddLastArg(CmdArgs, options::OPT_mfp32, options::OPT_mfp64);
-    Args.AddLastArg(CmdArgs, options::OPT_mips16, options::OPT_mno_mips16);
+    // Add the last -mfp32/-mfpxx/-mfp64 or -mfpxx if it is enabled by default.
+    if (Arg *A = Args.getLastArg(options::OPT_mfp32, options::OPT_mfpxx,
+                                 options::OPT_mfp64)) {
+      A->claim();
+      A->render(Args, CmdArgs);
+    } else if (mips::isFPXXDefault(getToolChain().getTriple(), CPUName,
+                                   ABIName))
+      CmdArgs.push_back("-mfpxx");
+
+    // Pass on -mmips16 or -mno-mips16. However, the assembler equivalent of
+    // -mno-mips16 is actually -no-mips16.
+    if (Arg *A = Args.getLastArg(options::OPT_mips16,
+                                 options::OPT_mno_mips16)) {
+      if (A->getOption().matches(options::OPT_mips16)) {
+        A->claim();
+        A->render(Args, CmdArgs);
+      } else {
+        A->claim();
+        CmdArgs.push_back("-no-mips16");
+      }
+    }
+
     Args.AddLastArg(CmdArgs, options::OPT_mmicromips,
                     options::OPT_mno_micromips);
     Args.AddLastArg(CmdArgs, options::OPT_mdsp, options::OPT_mno_dsp);
@@ -6924,6 +7094,12 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
       if (A->getOption().matches(options::OPT_mmsa))
         CmdArgs.push_back(Args.MakeArgString("-mmsa"));
     }
+
+    Args.AddLastArg(CmdArgs, options::OPT_mhard_float,
+                    options::OPT_msoft_float);
+
+    Args.AddLastArg(CmdArgs, options::OPT_modd_spreg,
+                    options::OPT_mno_odd_spreg);
 
     NeedsKPIC = true;
   } else if (getToolChain().getArch() == llvm::Triple::systemz) {
@@ -7168,9 +7344,6 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-static");
   } else if (Args.hasArg(options::OPT_shared)) {
     CmdArgs.push_back("-shared");
-    if (isAndroid) {
-      CmdArgs.push_back("-Bsymbolic");
-    }
   }
 
   if (ToolChain.getArch() == llvm::Triple::arm ||

@@ -603,6 +603,12 @@ void OMPClausePrinter::VisitOMPIfClause(OMPIfClause *Node) {
   OS << ")";
 }
 
+void OMPClausePrinter::VisitOMPFinalClause(OMPFinalClause *Node) {
+  OS << "final(";
+  Node->getCondition()->printPretty(OS, nullptr, Policy, 0);
+  OS << ")";
+}
+
 void OMPClausePrinter::VisitOMPNumThreadsClause(OMPNumThreadsClause *Node) {
   OS << "num_threads(";
   Node->getNumThreads()->printPretty(OS, nullptr, Policy, 0);
@@ -649,6 +655,14 @@ void OMPClausePrinter::VisitOMPOrderedClause(OMPOrderedClause *) {
 
 void OMPClausePrinter::VisitOMPNowaitClause(OMPNowaitClause *) {
   OS << "nowait";
+}
+
+void OMPClausePrinter::VisitOMPUntiedClause(OMPUntiedClause *) {
+  OS << "untied";
+}
+
+void OMPClausePrinter::VisitOMPMergeableClause(OMPMergeableClause *) {
+  OS << "mergeable";
 }
 
 template<typename T>
@@ -777,7 +791,7 @@ void StmtPrinter::PrintOMPExecutableDirective(OMPExecutableDirective *S) {
       OS << ' ';
     }
   OS << "\n";
-  if (S->getAssociatedStmt()) {
+  if (S->hasAssociatedStmt() && S->getAssociatedStmt()) {
     assert(isa<CapturedStmt>(S->getAssociatedStmt()) &&
            "Expected captured statement!");
     Stmt *CS = cast<CapturedStmt>(S->getAssociatedStmt())->getCapturedStmt();
@@ -815,6 +829,11 @@ void StmtPrinter::VisitOMPSingleDirective(OMPSingleDirective *Node) {
   PrintOMPExecutableDirective(Node);
 }
 
+void StmtPrinter::VisitOMPMasterDirective(OMPMasterDirective *Node) {
+  Indent() << "#pragma omp master";
+  PrintOMPExecutableDirective(Node);
+}
+
 void StmtPrinter::VisitOMPParallelForDirective(OMPParallelForDirective *Node) {
   Indent() << "#pragma omp parallel for ";
   PrintOMPExecutableDirective(Node);
@@ -828,6 +847,11 @@ void StmtPrinter::VisitOMPParallelSectionsDirective(
 
 void StmtPrinter::VisitOMPTaskDirective(OMPTaskDirective *Node) {
   Indent() << "#pragma omp task ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPTaskyieldDirective(OMPTaskyieldDirective *Node) {
+  Indent() << "#pragma omp taskyield";
   PrintOMPExecutableDirective(Node);
 }
 

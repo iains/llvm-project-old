@@ -737,9 +737,11 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::OMPSectionsDirectiveClass:
     case Stmt::OMPSectionDirectiveClass:
     case Stmt::OMPSingleDirectiveClass:
+    case Stmt::OMPMasterDirectiveClass:
     case Stmt::OMPParallelForDirectiveClass:
     case Stmt::OMPParallelSectionsDirectiveClass:
     case Stmt::OMPTaskDirectiveClass:
+    case Stmt::OMPTaskyieldDirectiveClass:
       llvm_unreachable("Stmt should not be in analyzer evaluation loop");
 
     case Stmt::ObjCSubscriptRefExprClass:

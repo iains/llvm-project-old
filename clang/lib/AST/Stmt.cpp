@@ -1478,6 +1478,26 @@ OMPSingleDirective *OMPSingleDirective::CreateEmpty(const ASTContext &C,
   return new (Mem) OMPSingleDirective(NumClauses);
 }
 
+OMPMasterDirective *OMPMasterDirective::Create(const ASTContext &C,
+                                               SourceLocation StartLoc,
+                                               SourceLocation EndLoc,
+                                               Stmt *AssociatedStmt) {
+  unsigned Size = llvm::RoundUpToAlignment(sizeof(OMPMasterDirective),
+                                           llvm::alignOf<Stmt *>());
+  void *Mem = C.Allocate(Size + sizeof(Stmt *));
+  OMPMasterDirective *Dir = new (Mem) OMPMasterDirective(StartLoc, EndLoc);
+  Dir->setAssociatedStmt(AssociatedStmt);
+  return Dir;
+}
+
+OMPMasterDirective *OMPMasterDirective::CreateEmpty(const ASTContext &C,
+                                                    EmptyShell) {
+  unsigned Size = llvm::RoundUpToAlignment(sizeof(OMPMasterDirective),
+                                           llvm::alignOf<Stmt *>());
+  void *Mem = C.Allocate(Size + sizeof(Stmt *));
+  return new (Mem) OMPMasterDirective();
+}
+
 OMPParallelForDirective *
 OMPParallelForDirective::Create(const ASTContext &C, SourceLocation StartLoc,
                                 SourceLocation EndLoc, unsigned CollapsedNum,
@@ -1552,5 +1572,20 @@ OMPTaskDirective *OMPTaskDirective::CreateEmpty(const ASTContext &C,
   void *Mem =
       C.Allocate(Size + sizeof(OMPClause *) * NumClauses + sizeof(Stmt *));
   return new (Mem) OMPTaskDirective(NumClauses);
+}
+
+OMPTaskyieldDirective *OMPTaskyieldDirective::Create(const ASTContext &C,
+                                                     SourceLocation StartLoc,
+                                                     SourceLocation EndLoc) {
+  void *Mem = C.Allocate(sizeof(OMPTaskyieldDirective));
+  OMPTaskyieldDirective *Dir =
+      new (Mem) OMPTaskyieldDirective(StartLoc, EndLoc);
+  return Dir;
+}
+
+OMPTaskyieldDirective *OMPTaskyieldDirective::CreateEmpty(const ASTContext &C,
+                                                          EmptyShell) {
+  void *Mem = C.Allocate(sizeof(OMPTaskyieldDirective));
+  return new (Mem) OMPTaskyieldDirective();
 }
 

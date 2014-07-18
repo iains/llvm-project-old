@@ -519,9 +519,15 @@ void X86TargetLowering::resetOperationActions() {
   // If we don't have F16C support, then lower half float conversions
   // into library calls.
   if (TM.Options.UseSoftFloat || !Subtarget->hasF16C()) {
-    setOperationAction(ISD::FP16_TO_FP32, MVT::f32, Expand);
-    setOperationAction(ISD::FP32_TO_FP16, MVT::i16, Expand);
+    setOperationAction(ISD::FP16_TO_FP, MVT::f32, Expand);
+    setOperationAction(ISD::FP_TO_FP16, MVT::f32, Expand);
   }
+
+  // There's never any support for operations beyond MVT::f32.
+  setOperationAction(ISD::FP16_TO_FP, MVT::f64, Expand);
+  setOperationAction(ISD::FP16_TO_FP, MVT::f80, Expand);
+  setOperationAction(ISD::FP_TO_FP16, MVT::f64, Expand);
+  setOperationAction(ISD::FP_TO_FP16, MVT::f80, Expand);
 
   if (Subtarget->hasPOPCNT()) {
     setOperationAction(ISD::CTPOP          , MVT::i8   , Promote);
@@ -878,7 +884,12 @@ void X86TargetLowering::resetOperationActions() {
                           (MVT::SimpleValueType)InnerVT, Expand);
     setLoadExtAction(ISD::SEXTLOAD, VT, Expand);
     setLoadExtAction(ISD::ZEXTLOAD, VT, Expand);
-    setLoadExtAction(ISD::EXTLOAD, VT, Expand);
+
+    // N.b. ISD::EXTLOAD legality is basically ignored except for i1-like types,
+    // we have to deal with them whether we ask for Expansion or not. Setting
+    // Expand causes its own optimisation problems though, so leave them legal.
+    if (VT.getVectorElementType() == MVT::i1)
+      setLoadExtAction(ISD::EXTLOAD, VT, Expand);
   }
 
   // FIXME: In order to prevent SSE instructions being expanded to MMX ones
@@ -16880,6 +16891,7 @@ X86TargetLowering::isShuffleMaskLegal(const SmallVectorImpl<int> &M,
   return (SVT.getVectorNumElements() == 2 ||
           ShuffleVectorSDNode::isSplatMask(&M[0], VT) ||
           isMOVLMask(M, SVT) ||
+          isMOVHLPSMask(M, SVT) ||
           isSHUFPMask(M, SVT) ||
           isPSHUFDMask(M, SVT) ||
           isPSHUFHWMask(M, SVT, Subtarget->hasInt256()) ||
@@ -21835,8 +21847,59 @@ static SDValue PerformBrCondCombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+static SDValue performVectorCompareAndMaskUnaryOpCombine(SDNode *N,
+                                                         SelectionDAG &DAG) {
+  // Take advantage of vector comparisons producing 0 or -1 in each lane to
+  // optimize away operation when it's from a constant.
+  //
+  // The general transformation is:
+  //    UNARYOP(AND(VECTOR_CMP(x,y), constant)) -->
+  //       AND(VECTOR_CMP(x,y), constant2)
+  //    constant2 = UNARYOP(constant)
+
+  // Early exit if this isn't a vector operation or if the operand of the
+  // unary operation isn't a bitwise AND.
+  EVT VT = N->getValueType(0);
+  if (!VT.isVector() || N->getOperand(0)->getOpcode() != ISD::AND ||
+      N->getOperand(0)->getOperand(0)->getOpcode() != ISD::SETCC)
+    return SDValue();
+
+  // Now check that the other operand of the AND is a constant splat. We could
+  // make the transformation for non-constant splats as well, but it's unclear
+  // that would be a benefit as it would not eliminate any operations, just
+  // perform one more step in scalar code before moving to the vector unit.
+  if (BuildVectorSDNode *BV =
+          dyn_cast<BuildVectorSDNode>(N->getOperand(0)->getOperand(1))) {
+    // Bail out if the vector isn't a constant splat.
+    if (!BV->getConstantSplatNode())
+      return SDValue();
+
+    // Everything checks out. Build up the new and improved node.
+    SDLoc DL(N);
+    EVT IntVT = BV->getValueType(0);
+    // Create a new constant of the appropriate type for the transformed
+    // DAG.
+    SDValue SourceConst = DAG.getNode(N->getOpcode(), DL, VT, SDValue(BV, 0));
+    // The AND node needs bitcasts to/from an integer vector type around it.
+    SDValue MaskConst = DAG.getNode(ISD::BITCAST, DL, IntVT, SourceConst);
+    SDValue NewAnd = DAG.getNode(ISD::AND, DL, IntVT,
+                                 N->getOperand(0)->getOperand(0), MaskConst);
+    SDValue Res = DAG.getNode(ISD::BITCAST, DL, VT, NewAnd);
+    return Res;
+  }
+
+  return SDValue();
+}
+
 static SDValue PerformSINT_TO_FPCombine(SDNode *N, SelectionDAG &DAG,
                                         const X86TargetLowering *XTLI) {
+  // First try to optimize away the conversion entirely when it's
+  // conditionally from a constant. Vectors only.
+  SDValue Res = performVectorCompareAndMaskUnaryOpCombine(N, DAG);
+  if (Res != SDValue())
+    return Res;
+
+  // Now move on to more general possibilities.
   SDValue Op0 = N->getOperand(0);
   EVT InVT = Op0->getValueType(0);
 

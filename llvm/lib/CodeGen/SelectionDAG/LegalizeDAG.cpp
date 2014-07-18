@@ -1186,6 +1186,7 @@ void SelectionDAGLegalize::LegalizeOp(SDNode *Node) {
     if (Action != TargetLowering::Promote)
       Action = TLI.getOperationAction(Node->getOpcode(), MVT::Other);
     break;
+  case ISD::FP_TO_FP16:
   case ISD::SINT_TO_FP:
   case ISD::UINT_TO_FP:
   case ISD::EXTRACT_VECTOR_ELT:
@@ -3513,12 +3514,28 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
                                       RTLIB::FMA_F80, RTLIB::FMA_F128,
                                       RTLIB::FMA_PPCF128));
     break;
-  case ISD::FP16_TO_FP32:
-    Results.push_back(ExpandLibCall(RTLIB::FPEXT_F16_F32, Node, false));
+  case ISD::FP16_TO_FP: {
+    if (Node->getValueType(0) == MVT::f32) {
+      Results.push_back(ExpandLibCall(RTLIB::FPEXT_F16_F32, Node, false));
+      break;
+    }
+
+    // We can extend to types bigger than f32 in two steps without changing the
+    // result. Since "f16 -> f32" is much more commonly available, give CodeGen
+    // the option of emitting that before resorting to a libcall.
+    SDValue Res =
+        DAG.getNode(ISD::FP16_TO_FP, dl, MVT::f32, Node->getOperand(0));
+    Results.push_back(
+        DAG.getNode(ISD::FP_EXTEND, dl, Node->getValueType(0), Res));
     break;
-  case ISD::FP32_TO_FP16:
-    Results.push_back(ExpandLibCall(RTLIB::FPROUND_F32_F16, Node, false));
+  }
+  case ISD::FP_TO_FP16: {
+    RTLIB::Libcall LC =
+        RTLIB::getFPROUND(Node->getOperand(0).getValueType(), MVT::f16);
+    assert(LC != RTLIB::UNKNOWN_LIBCALL && "Unable to expand fp_to_fp16");
+    Results.push_back(ExpandLibCall(LC, Node, false));
     break;
+  }
   case ISD::ConstantFP: {
     ConstantFPSDNode *CFP = cast<ConstantFPSDNode>(Node);
     // Check to see if this FP immediate is already legal.

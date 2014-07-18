@@ -5,7 +5,6 @@ Base class for gdb-remote test cases.
 import errno
 import os
 import os.path
-import pexpect
 import platform
 import random
 import re
@@ -55,6 +54,7 @@ class GdbRemoteTestCaseBase(TestBase):
         self.named_pipe_path = None
         self.named_pipe = None
         self.named_pipe_fd = None
+        self.stub_sends_two_stop_notifications_on_kill = False
 
     def get_next_port(self):
         return 12000 + random.randint(0,3999)
@@ -142,6 +142,9 @@ class GdbRemoteTestCaseBase(TestBase):
         self.debug_monitor_extra_args = " --log-file=/tmp/packets-{}.log --log-flags=0x800000".format(self._testMethodName)
         if use_named_pipe:
             (self.named_pipe_path, self.named_pipe, self.named_pipe_fd) = self.create_named_pipe()
+        # The debugserver stub has a race on handling the 'k' command, so it sends an X09 right away, then sends the real X notification
+        # when the process truly dies.
+        self.stub_sends_two_stop_notifications_on_kill = True
 
     def create_socket(self):
         sock = socket.socket()
@@ -176,6 +179,7 @@ class GdbRemoteTestCaseBase(TestBase):
 
     def launch_debug_monitor(self, attach_pid=None):
         # Create the command line.
+        import pexpect
         commandline = "{}{} localhost:{}".format(self.debug_monitor_exe, self.debug_monitor_extra_args, self.port)
         if attach_pid:
             commandline += " --attach=%d" % attach_pid

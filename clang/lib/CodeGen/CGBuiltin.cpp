@@ -447,11 +447,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(Builder.CreateCall(F));
   }
   case Builtin::BI__builtin_unreachable: {
-    if (SanOpts->Unreachable)
+    if (SanOpts->Unreachable) {
+      SanitizerScope SanScope(this);
       EmitCheck(Builder.getFalse(), "builtin_unreachable",
                 EmitCheckSourceLocation(E->getExprLoc()),
                 ArrayRef<llvm::Value *>(), CRK_Unrecoverable);
-    else
+    } else
       Builder.CreateUnreachable();
 
     // We do need to preserve an insertion point.
@@ -1517,6 +1518,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__noop:
     // __noop always evaluates to an integer literal zero.
     return RValue::get(ConstantInt::get(IntTy, 0));
+  case Builtin::BI__assume:
+    // Until LLVM supports assumptions at the IR level, this becomes nothing.
+    return RValue::get(nullptr);
   case Builtin::BI_InterlockedExchange:
   case Builtin::BI_InterlockedExchangePointer:
     return EmitBinaryAtomic(*this, llvm::AtomicRMWInst::Xchg, E);

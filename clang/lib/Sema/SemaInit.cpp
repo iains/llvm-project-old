@@ -914,6 +914,15 @@ void InitListChecker::CheckSubElementType(const InitializedEntity &Entity,
     assert(SemaRef.getLangOpts().CPlusPlus &&
            "non-aggregate records are only possible in C++");
     // C++ initialization is handled later.
+  } else if (isa<ImplicitValueInitExpr>(expr)) {
+    // This happens during template instantiation when we see an InitListExpr
+    // that we've already checked once.
+    assert(SemaRef.Context.hasSameType(expr->getType(), ElemType) &&
+           "found implicit initialization for the wrong type");
+    if (!VerifyOnly)
+      UpdateStructuredListElement(StructuredList, StructuredIndex, expr);
+    ++Index;
+    return;
   }
 
   // FIXME: Need to handle atomic aggregate types with implicit init lists.
@@ -2760,10 +2769,10 @@ void InitializationSequence::Step::Destroy() {
   case SK_QualificationConversionLValue:
   case SK_LValueToRValue:
   case SK_ListInitialization:
-  case SK_ListConstructorCall:
   case SK_UnwrapInitList:
   case SK_RewrapInitList:
   case SK_ConstructorInitialization:
+  case SK_ConstructorInitializationFromList:
   case SK_ZeroInitialization:
   case SK_CAssignment:
   case SK_StringInit:
@@ -2774,6 +2783,7 @@ void InitializationSequence::Step::Destroy() {
   case SK_PassByIndirectRestore:
   case SK_ProduceObjCObject:
   case SK_StdInitializerList:
+  case SK_StdInitializerListConstructorCall:
   case SK_OCLSamplerInit:
   case SK_OCLZeroEvent:
     break;
@@ -2944,8 +2954,9 @@ InitializationSequence
                                    bool HadMultipleCandidates,
                                    bool FromInitList, bool AsInitList) {
   Step S;
-  S.Kind = FromInitList && !AsInitList ? SK_ListConstructorCall
-                                       : SK_ConstructorInitialization;
+  S.Kind = FromInitList ? AsInitList ? SK_StdInitializerListConstructorCall
+                                     : SK_ConstructorInitializationFromList
+                        : SK_ConstructorInitialization;
   S.Type = T;
   S.Function.HadMultipleCandidates = HadMultipleCandidates;
   S.Function.Function = Constructor;
@@ -5146,6 +5157,7 @@ static ExprResult CopyObject(Sema &S,
                                     ConstructorArgs,
                                     HadMultipleCandidates,
                                     /*ListInit*/ false,
+                                    /*StdInitListInit*/ false,
                                     /*ZeroInit*/ false,
                                     CXXConstructExpr::CK_Complete,
                                     SourceRange());
@@ -5267,6 +5279,7 @@ PerformConstructorInitialization(Sema &S,
                                  const InitializationSequence::Step& Step,
                                  bool &ConstructorInitRequiresZeroInit,
                                  bool IsListInitialization,
+                                 bool IsStdInitListInitialization,
                                  SourceLocation LBraceLoc,
                                  SourceLocation RBraceLoc) {
   unsigned NumArgs = Args.size();
@@ -5328,7 +5341,7 @@ PerformConstructorInitialization(Sema &S,
     CurInit = new (S.Context) CXXTemporaryObjectExpr(
         S.Context, Constructor, TSInfo, ConstructorArgs, ParenOrBraceRange,
         HadMultipleCandidates, IsListInitialization,
-        ConstructorInitRequiresZeroInit);
+        IsStdInitListInitialization, ConstructorInitRequiresZeroInit);
   } else {
     CXXConstructExpr::ConstructionKind ConstructKind =
       CXXConstructExpr::CK_Complete;
@@ -5357,6 +5370,7 @@ PerformConstructorInitialization(Sema &S,
                                         ConstructorArgs,
                                         HadMultipleCandidates,
                                         IsListInitialization,
+                                        IsStdInitListInitialization,
                                         ConstructorInitRequiresZeroInit,
                                         ConstructKind,
                                         ParenOrBraceRange);
@@ -5366,6 +5380,7 @@ PerformConstructorInitialization(Sema &S,
                                         ConstructorArgs,
                                         HadMultipleCandidates,
                                         IsListInitialization,
+                                        IsStdInitListInitialization,
                                         ConstructorInitRequiresZeroInit,
                                         ConstructKind,
                                         ParenOrBraceRange);
@@ -5781,7 +5796,8 @@ InitializationSequence::Perform(Sema &S,
   }
 
   case SK_ConstructorInitialization:
-  case SK_ListConstructorCall:
+  case SK_ConstructorInitializationFromList:
+  case SK_StdInitializerListConstructorCall:
   case SK_ZeroInitialization:
     break;
   }
@@ -5956,6 +5972,7 @@ InitializationSequence::Perform(Sema &S,
                                           ConstructorArgs,
                                           HadMultipleCandidates,
                                           /*ListInit*/ false,
+                                          /*StdInitListInit*/ false,
                                           /*ZeroInit*/ false,
                                           CXXConstructExpr::CK_Complete,
                                           SourceRange());
@@ -6109,7 +6126,7 @@ InitializationSequence::Perform(Sema &S,
       break;
     }
 
-    case SK_ListConstructorCall: {
+    case SK_ConstructorInitializationFromList: {
       // When an initializer list is passed for a parameter of type "reference
       // to object", we don't get an EK_Temporary entity, but instead an
       // EK_Parameter entity with reference type.
@@ -6128,7 +6145,8 @@ InitializationSequence::Perform(Sema &S,
                                                                    Entity,
                                                  Kind, Arg, *Step,
                                                ConstructorInitRequiresZeroInit,
-                                               /*IsListInitialization*/ true,
+                                               /*IsListInitialization*/true,
+                                               /*IsStdInitListInit*/false,
                                                InitList->getLBraceLoc(),
                                                InitList->getRBraceLoc());
       break;
@@ -6150,7 +6168,8 @@ InitializationSequence::Perform(Sema &S,
       break;
     }
 
-    case SK_ConstructorInitialization: {
+    case SK_ConstructorInitialization:
+    case SK_StdInitializerListConstructorCall: {
       // When an initializer list is passed for a parameter of type "reference
       // to object", we don't get an EK_Temporary entity, but instead an
       // EK_Parameter entity with reference type.
@@ -6160,13 +6179,15 @@ InitializationSequence::Perform(Sema &S,
       InitializedEntity TempEntity = InitializedEntity::InitializeTemporary(
                                         Entity.getType().getNonReferenceType());
       bool UseTemporary = Entity.getType()->isReferenceType();
-      CurInit = PerformConstructorInitialization(S, UseTemporary ? TempEntity
-                                                                 : Entity,
-                                                 Kind, Args, *Step,
-                                               ConstructorInitRequiresZeroInit,
-                                               /*IsListInitialization*/ false,
-                                               /*LBraceLoc*/ SourceLocation(),
-                                               /*RBraceLoc*/ SourceLocation());
+      bool IsStdInitListInit =
+          Step->Kind == SK_StdInitializerListConstructorCall;
+      CurInit = PerformConstructorInitialization(
+          S, UseTemporary ? TempEntity : Entity, Kind, Args, *Step,
+          ConstructorInitRequiresZeroInit,
+          /*IsListInitialization*/IsStdInitListInit,
+          /*IsStdInitListInitialization*/IsStdInitListInit,
+          /*LBraceLoc*/SourceLocation(),
+          /*RBraceLoc*/SourceLocation());
       break;
     }
 
@@ -6175,7 +6196,7 @@ InitializationSequence::Perform(Sema &S,
       ++NextStep;
       if (NextStep != StepEnd &&
           (NextStep->Kind == SK_ConstructorInitialization ||
-           NextStep->Kind == SK_ListConstructorCall)) {
+           NextStep->Kind == SK_ConstructorInitializationFromList)) {
         // The need for zero-initialization is recorded directly into
         // the call to the object's constructor within the next step.
         ConstructorInitRequiresZeroInit = true;
@@ -7011,10 +7032,6 @@ void InitializationSequence::dump(raw_ostream &OS) const {
       OS << "list aggregate initialization";
       break;
 
-    case SK_ListConstructorCall:
-      OS << "list initialization via constructor";
-      break;
-
     case SK_UnwrapInitList:
       OS << "unwrap reference initializer list";
       break;
@@ -7025,6 +7042,10 @@ void InitializationSequence::dump(raw_ostream &OS) const {
 
     case SK_ConstructorInitialization:
       OS << "constructor initialization";
+      break;
+
+    case SK_ConstructorInitializationFromList:
+      OS << "list initialization via constructor";
       break;
 
     case SK_ZeroInitialization:
@@ -7065,6 +7086,10 @@ void InitializationSequence::dump(raw_ostream &OS) const {
 
     case SK_StdInitializerList:
       OS << "std::initializer_list from initializer list";
+      break;
+
+    case SK_StdInitializerListConstructorCall:
+      OS << "list initialization from std::initializer_list";
       break;
 
     case SK_OCLSamplerInit:

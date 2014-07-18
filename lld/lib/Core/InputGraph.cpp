@@ -23,7 +23,7 @@ ErrorOr<File &> InputGraph::getNextFile() {
     if (_currentInputElement) {
       ErrorOr<File &> next = _currentInputElement->getNextFile();
       if (next.getError() != InputGraphError::no_more_files) {
-        for (llvm::function_ref<void(File *)> observer : _observers)
+        for (const std::function<void(File *)> &observer : _observers)
           observer(&next.get());
         return std::move(next);
       }
@@ -38,7 +38,7 @@ ErrorOr<File &> InputGraph::getNextFile() {
 
 void InputGraph::notifyProgress() { _currentInputElement->notifyProgress(); }
 
-void InputGraph::registerObserver(llvm::function_ref<void(File *)> fn) {
+void InputGraph::registerObserver(std::function<void(File *)> fn) {
   _observers.push_back(fn);
 }
 

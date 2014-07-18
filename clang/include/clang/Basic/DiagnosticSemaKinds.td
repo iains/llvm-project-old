@@ -444,6 +444,10 @@ def note_strncat_wrong_size : Note<
   "change the argument to be the free space in the destination buffer minus " 
   "the terminating null byte">;
 
+def warn_assume_side_effects : Warning<
+  "the argument to __assume has side effects that will be discarded">,
+  InGroup<DiagGroup<"assume">>;
+
 /// main()
 // static main() is not an error in C, just in C++.
 def warn_static_main : Warning<"'main' should not be declared static">,
@@ -2165,7 +2169,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "struct or union|struct, union or class|types|"
   "Objective-C instance methods|init methods of interface or class extension declarations|"
   "variables, functions and classes|Objective-C protocols|"
-  "functions and global variables|structs or typedefs}1">,
+  "functions and global variables|structs or typedefs|"
+  "interface or protocol declarations}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<warn_attribute_wrong_decl_type.Text>;
 def warn_type_attribute_wrong_type : Warning<

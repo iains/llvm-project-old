@@ -309,6 +309,8 @@ def Xassembler : Separate<["-"], "Xassembler">,
 def Xclang : Separate<["-"], "Xclang">,
   HelpText<"Pass <arg> to the clang compiler">, MetaVarName<"<arg>">,
   Flags<[DriverOption, CoreOption]>;
+def z : Separate<["-"], "z">, Flags<[LinkerInput, RenderAsInput]>,
+  HelpText<"Pass -z <arg> to the linker">, MetaVarName<"<arg>">;
 def Xlinker : Separate<["-"], "Xlinker">, Flags<[LinkerInput, RenderAsInput]>,
   HelpText<"Pass <arg> to the linker">, MetaVarName<"<arg>">;
 def Xpreprocessor : Separate<["-"], "Xpreprocessor">,
@@ -585,7 +587,7 @@ def fms_extensions : Flag<["-"], "fms-extensions">, Group<f_Group>, Flags<[CC1Op
   HelpText<"Accept some non-standard constructs supported by the Microsoft compiler">;
 def fms_compatibility : Flag<["-"], "fms-compatibility">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Enable full Microsoft Visual C++ compatibility">;
-def fmsc_version : Joined<["-"], "fmsc-version=">, Group<f_Group>, Flags<[DriverOption]>,
+def fmsc_version : Joined<["-"], "fmsc-version=">, Group<f_Group>, Flags<[DriverOption, CoreOption]>,
   HelpText<"Microsoft compiler version number to report in _MSC_VER (0 = don't define it (default))">;
 def fms_compatibility_version
     : Joined<["-"], "fms-compatibility-version=">,
@@ -1261,6 +1263,9 @@ def mips64r2 : Flag<["-"], "mips64r2">,
 def mips64r6 : Flag<["-"], "mips64r6">,
   Alias<march_EQ>, AliasArgs<["mips64r6"]>,
   HelpText<"Equivalent to -march=mips64r6">, Flags<[HelpHidden]>;
+def mfpxx : Flag<["-"], "mfpxx">, Group<m_Group>,
+  HelpText<"Avoid FPU mode dependent operations when used with the O32 ABI">,
+  Flags<[HelpHidden]>;
 def modd_spreg : Flag<["-"], "modd-spreg">, Group<m_Group>,
   HelpText<"Enable odd single-precision floating point registers">,
   Flags<[HelpHidden]>;
@@ -1386,7 +1391,7 @@ def no_system_header_prefix : Joined<["--"], "no-system-header-prefix=">,
            "system header.">;
 def : Separate<["--"], "no-system-header-prefix">, Alias<no_system_header_prefix>;
 def s : Flag<["-"], "s">;
-def target : Joined<["--"], "target=">, Flags<[DriverOption]>,
+def target : Joined<["--"], "target=">, Flags<[DriverOption, CoreOption]>,
   HelpText<"Generate code for the given target">;
 def gcc_toolchain : Joined<["--"], "gcc-toolchain=">, Flags<[DriverOption]>,
   HelpText<"Use the gcc toolchain at the given directory">;

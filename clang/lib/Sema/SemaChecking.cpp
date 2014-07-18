@@ -175,6 +175,10 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
     if (SemaBuiltinPrefetch(TheCall))
       return ExprError();
     break;
+  case Builtin::BI__assume:
+    if (SemaBuiltinAssume(TheCall))
+      return ExprError();
+    break;
   case Builtin::BI__builtin_object_size:
     if (SemaBuiltinConstantArgRange(TheCall, 1, 0, 3))
       return ExprError();
@@ -645,7 +649,18 @@ bool Sema::CheckAArch64BuiltinFunctionCall(unsigned BuiltinID,
   if (CheckNeonBuiltinFunctionCall(BuiltinID, TheCall))
     return true;
 
-  return false;
+  // For intrinsics which take an immediate value as part of the instruction,
+  // range check them here.
+  unsigned i = 0, l = 0, u = 0;
+  switch (BuiltinID) {
+  default: return false;
+  case AArch64::BI__builtin_arm_dmb:
+  case AArch64::BI__builtin_arm_dsb:
+  case AArch64::BI__builtin_arm_isb: l = 0; u = 15; break;
+  }
+
+  // FIXME: VFP Intrinsics should error if VFP not present.
+  return SemaBuiltinConstantArgRange(TheCall, i, l, u + l);
 }
 
 bool Sema::CheckMipsBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
@@ -1938,6 +1953,20 @@ bool Sema::SemaBuiltinPrefetch(CallExpr *TheCall) {
   for (unsigned i = 1; i != NumArgs; ++i)
     if (SemaBuiltinConstantArgRange(TheCall, i, 0, i == 1 ? 1 : 3))
       return true;
+
+  return false;
+}
+
+/// SemaBuiltinAssume - Handle __assume (MS Extension).
+// __assume does not evaluate its arguments, and should warn if its argument
+// has side effects.
+bool Sema::SemaBuiltinAssume(CallExpr *TheCall) {
+  Expr *Arg = TheCall->getArg(0);
+  if (Arg->isInstantiationDependent()) return false;
+
+  if (Arg->HasSideEffects(Context))
+    return Diag(Arg->getLocStart(), diag::warn_assume_side_effects)
+      << Arg->getSourceRange();
 
   return false;
 }

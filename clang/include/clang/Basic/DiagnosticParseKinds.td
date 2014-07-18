@@ -811,6 +811,8 @@ def warn_pragma_extra_tokens_at_eol : Warning<
   InGroup<IgnoredPragmas>;
 def warn_pragma_expected_punc : Warning<
   "expected ')' or ',' in '#pragma %0'">, InGroup<IgnoredPragmas>;
+def warn_pragma_expected_non_wide_string : Warning<
+  "expected non-wide string literal in '#pragma %0'">, InGroup<IgnoredPragmas>;
 // - #pragma options
 def warn_pragma_options_expected_align : Warning<
   "expected 'align' following '#pragma options' - ignored">,
@@ -906,6 +908,8 @@ def err_omp_unexpected_clause : Error<
   "unexpected OpenMP clause '%0' in directive '#pragma omp %1'">;
 def err_omp_more_one_clause : Error<
   "directive '#pragma omp %0' cannot contain more than one '%1' clause">;
+def err_omp_immediate_directive : Error<
+  "'#pragma omp %0' cannot be an immediate substatement">;
 
 // Pragma loop support.
 def err_pragma_loop_invalid_option : Error<

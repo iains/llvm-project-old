@@ -194,6 +194,9 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::OMPSingleDirectiveClass:
     EmitOMPSingleDirective(cast<OMPSingleDirective>(*S));
     break;
+  case Stmt::OMPMasterDirectiveClass:
+    EmitOMPMasterDirective(cast<OMPMasterDirective>(*S));
+    break;
   case Stmt::OMPParallelForDirectiveClass:
     EmitOMPParallelForDirective(cast<OMPParallelForDirective>(*S));
     break;
@@ -202,6 +205,9 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     break;
   case Stmt::OMPTaskDirectiveClass:
     EmitOMPTaskDirective(cast<OMPTaskDirective>(*S));
+    break;
+  case Stmt::OMPTaskyieldDirectiveClass:
+    EmitOMPTaskyieldDirective(cast<OMPTaskyieldDirective>(*S));
     break;
   }
 }
