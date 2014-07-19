@@ -956,22 +956,20 @@ Expr* ReturnStmt::getRetValue() {
   return cast_or_null<Expr>(RetExpr);
 }
 
-SEHTryStmt::SEHTryStmt(bool IsCXXTry,
-                       SourceLocation TryLoc,
-                       Stmt *TryBlock,
-                       Stmt *Handler)
-  : Stmt(SEHTryStmtClass),
-    IsCXXTry(IsCXXTry),
-    TryLoc(TryLoc)
-{
-  Children[TRY]     = TryBlock;
+SEHTryStmt::SEHTryStmt(bool IsCXXTry, SourceLocation TryLoc, Stmt *TryBlock,
+                       Stmt *Handler, int HandlerIndex, int HandlerParentIndex)
+    : Stmt(SEHTryStmtClass), IsCXXTry(IsCXXTry), TryLoc(TryLoc),
+      HandlerIndex(HandlerIndex), HandlerParentIndex(HandlerParentIndex) {
+  Children[TRY] = TryBlock;
   Children[HANDLER] = Handler;
 }
 
-SEHTryStmt* SEHTryStmt::Create(const ASTContext &C, bool IsCXXTry,
+SEHTryStmt *SEHTryStmt::Create(const ASTContext &C, bool IsCXXTry,
                                SourceLocation TryLoc, Stmt *TryBlock,
-                               Stmt *Handler) {
-  return new(C) SEHTryStmt(IsCXXTry,TryLoc,TryBlock,Handler);
+                               Stmt *Handler, int HandlerIndex,
+                               int HandlerParentIndex) {
+  return new (C) SEHTryStmt(IsCXXTry, TryLoc, TryBlock, Handler, HandlerIndex,
+                            HandlerParentIndex);
 }
 
 SEHExceptStmt* SEHTryStmt::getExceptHandler() const {
@@ -1587,5 +1585,33 @@ OMPTaskyieldDirective *OMPTaskyieldDirective::CreateEmpty(const ASTContext &C,
                                                           EmptyShell) {
   void *Mem = C.Allocate(sizeof(OMPTaskyieldDirective));
   return new (Mem) OMPTaskyieldDirective();
+}
+
+OMPBarrierDirective *OMPBarrierDirective::Create(const ASTContext &C,
+                                                 SourceLocation StartLoc,
+                                                 SourceLocation EndLoc) {
+  void *Mem = C.Allocate(sizeof(OMPBarrierDirective));
+  OMPBarrierDirective *Dir = new (Mem) OMPBarrierDirective(StartLoc, EndLoc);
+  return Dir;
+}
+
+OMPBarrierDirective *OMPBarrierDirective::CreateEmpty(const ASTContext &C,
+                                                      EmptyShell) {
+  void *Mem = C.Allocate(sizeof(OMPBarrierDirective));
+  return new (Mem) OMPBarrierDirective();
+}
+
+OMPTaskwaitDirective *OMPTaskwaitDirective::Create(const ASTContext &C,
+                                                   SourceLocation StartLoc,
+                                                   SourceLocation EndLoc) {
+  void *Mem = C.Allocate(sizeof(OMPTaskwaitDirective));
+  OMPTaskwaitDirective *Dir = new (Mem) OMPTaskwaitDirective(StartLoc, EndLoc);
+  return Dir;
+}
+
+OMPTaskwaitDirective *OMPTaskwaitDirective::CreateEmpty(const ASTContext &C,
+                                                        EmptyShell) {
+  void *Mem = C.Allocate(sizeof(OMPTaskwaitDirective));
+  return new (Mem) OMPTaskwaitDirective();
 }
 

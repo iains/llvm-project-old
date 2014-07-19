@@ -1044,6 +1044,22 @@ void Sema::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, Scope *CurScope) {
                              Params);
     break;
   }
+  case OMPD_barrier: {
+    Sema::CapturedParamNameType Params[] = {
+        std::make_pair(StringRef(), QualType()) // __context with shared vars
+    };
+    ActOnCapturedRegionStart(DSAStack->getConstructLoc(), CurScope, CR_OpenMP,
+                             Params);
+    break;
+  }
+  case OMPD_taskwait: {
+    Sema::CapturedParamNameType Params[] = {
+        std::make_pair(StringRef(), QualType()) // __context with shared vars
+    };
+    ActOnCapturedRegionStart(DSAStack->getConstructLoc(), CurScope, CR_OpenMP,
+                             Params);
+    break;
+  }
   case OMPD_threadprivate:
     llvm_unreachable("OpenMP Directive is not allowed");
   case OMPD_unknown:
@@ -1069,6 +1085,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | parallel         |parallel sections| *                                  |
   // | parallel         | task            | *                                  |
   // | parallel         | taskyield       | *                                  |
+  // | parallel         | barrier         | *                                  |
+  // | parallel         | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | for              | parallel        | *                                  |
   // | for              | for             | +                                  |
@@ -1081,6 +1099,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | for              |parallel sections| *                                  |
   // | for              | task            | *                                  |
   // | for              | taskyield       | *                                  |
+  // | for              | barrier         | +                                  |
+  // | for              | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | master           | parallel        | *                                  |
   // | master           | for             | +                                  |
@@ -1093,6 +1113,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | master           |parallel sections| *                                  |
   // | master           | task            | *                                  |
   // | master           | taskyield       | *                                  |
+  // | master           | barrier         | +                                  |
+  // | master           | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | simd             | parallel        |                                    |
   // | simd             | for             |                                    |
@@ -1105,6 +1127,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | simd             |parallel sections|                                    |
   // | simd             | task            |                                    |
   // | simd             | taskyield       |                                    |
+  // | simd             | barrier         |                                    |
+  // | simd             | taskwait        |                                    |
   // +------------------+-----------------+------------------------------------+
   // | sections         | parallel        | *                                  |
   // | sections         | for             | +                                  |
@@ -1117,6 +1141,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | sections         |parallel sections| *                                  |
   // | sections         | task            | *                                  |
   // | sections         | taskyield       | *                                  |
+  // | sections         | barrier         | +                                  |
+  // | sections         | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | section          | parallel        | *                                  |
   // | section          | for             | +                                  |
@@ -1129,6 +1155,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | section          |parallel sections| *                                  |
   // | section          | task            | *                                  |
   // | section          | taskyield       | *                                  |
+  // | section          | barrier         | +                                  |
+  // | section          | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | single           | parallel        | *                                  |
   // | single           | for             | +                                  |
@@ -1141,6 +1169,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | single           |parallel sections| *                                  |
   // | single           | task            | *                                  |
   // | single           | taskyield       | *                                  |
+  // | single           | barrier         | +                                  |
+  // | single           | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | parallel for     | parallel        | *                                  |
   // | parallel for     | for             | +                                  |
@@ -1153,6 +1183,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | parallel for     |parallel sections| *                                  |
   // | parallel for     | task            | *                                  |
   // | parallel for     | taskyield       | *                                  |
+  // | parallel for     | barrier         | +                                  |
+  // | parallel for     | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | parallel sections| parallel        | *                                  |
   // | parallel sections| for             | +                                  |
@@ -1165,6 +1197,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | parallel sections|parallel sections| *                                  |
   // | parallel sections| task            | *                                  |
   // | parallel sections| taskyield       | *                                  |
+  // | parallel sections| barrier         | +                                  |
+  // | parallel sections| taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   // | task             | parallel        | *                                  |
   // | task             | for             | +                                  |
@@ -1177,6 +1211,8 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | task             |parallel sections| *                                  |
   // | task             | task            | *                                  |
   // | task             | taskyield       | *                                  |
+  // | task             | barrier         | +                                  |
+  // | task             | taskwait        | *                                  |
   // +------------------+-----------------+------------------------------------+
   if (Stack->getCurScope()) {
     auto ParentRegion = Stack->getParentDirective();
@@ -1209,6 +1245,14 @@ bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
       // atomic (TODO), or explicit task region.
       NestingProhibited = isOpenMPWorksharingDirective(ParentRegion) ||
                           ParentRegion == OMPD_task;
+    } else if (CurrentRegion == OMPD_barrier) {
+      // OpenMP [2.16, Nesting of Regions]
+      // A barrier region may not be closely nested inside a worksharing,
+      // explicit task, critical(TODO), ordered(TODO), atomic(TODO), or master
+      // region.
+      NestingProhibited = isOpenMPWorksharingDirective(ParentRegion) ||
+                          ParentRegion == OMPD_task ||
+                          ParentRegion == OMPD_master;
     } else if (isOpenMPWorksharingDirective(CurrentRegion) &&
                !isOpenMPParallelDirective(CurrentRegion) &&
                !isOpenMPSimdDirective(CurrentRegion)) {
@@ -1317,6 +1361,20 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(OpenMPDirectiveKind Kind,
     assert(AStmt == nullptr &&
            "No associated statement allowed for 'omp taskyield' directive");
     Res = ActOnOpenMPTaskyieldDirective(StartLoc, EndLoc);
+    break;
+  case OMPD_barrier:
+    assert(ClausesWithImplicit.empty() &&
+           "No clauses are allowed for 'omp barrier' directive");
+    assert(AStmt == nullptr &&
+           "No associated statement allowed for 'omp barrier' directive");
+    Res = ActOnOpenMPBarrierDirective(StartLoc, EndLoc);
+    break;
+  case OMPD_taskwait:
+    assert(ClausesWithImplicit.empty() &&
+           "No clauses are allowed for 'omp taskwait' directive");
+    assert(AStmt == nullptr &&
+           "No associated statement allowed for 'omp taskwait' directive");
+    Res = ActOnOpenMPTaskwaitDirective(StartLoc, EndLoc);
     break;
   case OMPD_threadprivate:
     llvm_unreachable("OpenMP Directive is not allowed");
@@ -2064,6 +2122,16 @@ StmtResult Sema::ActOnOpenMPTaskDirective(ArrayRef<OMPClause *> Clauses,
 StmtResult Sema::ActOnOpenMPTaskyieldDirective(SourceLocation StartLoc,
                                                SourceLocation EndLoc) {
   return OMPTaskyieldDirective::Create(Context, StartLoc, EndLoc);
+}
+
+StmtResult Sema::ActOnOpenMPBarrierDirective(SourceLocation StartLoc,
+                                             SourceLocation EndLoc) {
+  return OMPBarrierDirective::Create(Context, StartLoc, EndLoc);
+}
+
+StmtResult Sema::ActOnOpenMPTaskwaitDirective(SourceLocation StartLoc,
+                                              SourceLocation EndLoc) {
+  return OMPTaskwaitDirective::Create(Context, StartLoc, EndLoc);
 }
 
 OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,

@@ -1,10 +1,18 @@
 // RUN: %clang_cc1 -std=c++11 -fsanitize=signed-integer-overflow,integer-divide-by-zero,float-divide-by-zero,shift,unreachable,return,vla-bound,alignment,null,vptr,object-size,float-cast-overflow,bool,enum,array-bounds,function -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s
+// RUN: %clang_cc1 -std=c++11 -fsanitize=vptr,address -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=CHECK-ASAN
+// RUN: %clang_cc1 -std=c++11 -fsanitize=vptr -emit-llvm %s -o - -triple x86_64-linux-gnu | FileCheck %s --check-prefix=DOWNCAST-NULL
 
 struct S {
   double d;
   int a, b;
   virtual int f();
 };
+
+// Check that type descriptor global is not modified by ASan.
+// CHECK-ASAN: [[TYPE_DESCR:@[0-9]+]] = private unnamed_addr constant { i16, i16, [4 x i8] } { i16 -1, i16 0, [4 x i8] c"'S'\00" }
+
+// Check that type mismatch handler is not modified by ASan.
+// CHECK-ASAN: private unnamed_addr global { { [{{.*}} x i8]*, i32, i32 }, { i16, i16, [4 x i8] }*, i8*, i8 } { {{.*}}, { i16, i16, [4 x i8] }* [[TYPE_DESCR]], {{.*}} }
 
 struct T : S {};
 
@@ -31,6 +39,7 @@ void reference_binding(int *p, S *q) {
 }
 
 // CHECK-LABEL: @_Z13member_access
+// CHECK-ASAN-LABEL: @_Z13member_access
 void member_access(S *p) {
   // (1a) Check 'p' is appropriately sized and aligned for member access.
 
@@ -182,9 +191,14 @@ int bad_enum_value() {
 }
 
 // CHECK-LABEL: @_Z20bad_downcast_pointer
+// DOWNCAST-NULL-LABEL: @_Z20bad_downcast_pointer
 void bad_downcast_pointer(S *p) {
   // CHECK: %[[NONNULL:.*]] = icmp ne {{.*}}, null
   // CHECK: br i1 %[[NONNULL]],
+
+  // A null poiner access is guarded without -fsanitize=null.
+  // DOWNCAST-NULL: %[[NONNULL:.*]] = icmp ne {{.*}}, null
+  // DOWNCAST-NULL: br i1 %[[NONNULL]],
 
   // CHECK: %[[SIZE:.*]] = call i64 @llvm.objectsize.i64.p0i8(
   // CHECK: %[[E1:.*]] = icmp uge i64 %[[SIZE]], 24
@@ -357,7 +371,7 @@ void downcast_pointer(B *b) {
   // CHECK-NEXT: br i1 [[AND]]
 }
 
-// CHECK-LABEL: define void @_Z18downcast_referenceR1B(%class.B* nonnull %b)
+// CHECK-LABEL: define void @_Z18downcast_referenceR1B(%class.B* dereferenceable({{[0-9]+}}) %b)
 void downcast_reference(B &b) {
   (void) static_cast<C&>(b);
   // Alignment check from EmitTypeCheck(TCK_DowncastReference, ...)

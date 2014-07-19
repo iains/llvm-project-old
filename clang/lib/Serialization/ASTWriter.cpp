@@ -1900,6 +1900,12 @@ static bool shouldIgnoreMacro(MacroDirective *MD, bool IsModule,
       return true;
 
   if (IsModule) {
+    // Re-export any imported directives.
+    // FIXME: Also ensure we re-export imported #undef directives.
+    if (auto *DMD = dyn_cast<DefMacroDirective>(MD))
+      if (DMD->isImported())
+        return false;
+
     SourceLocation Loc = MD->getLocation();
     if (Loc.isInvalid())
       return true;

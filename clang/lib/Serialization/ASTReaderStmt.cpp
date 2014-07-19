@@ -1995,6 +1995,16 @@ void ASTStmtReader::VisitOMPTaskyieldDirective(OMPTaskyieldDirective *D) {
   VisitOMPExecutableDirective(D);
 }
 
+void ASTStmtReader::VisitOMPBarrierDirective(OMPBarrierDirective *D) {
+  VisitStmt(D);
+  VisitOMPExecutableDirective(D);
+}
+
+void ASTStmtReader::VisitOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
+  VisitStmt(D);
+  VisitOMPExecutableDirective(D);
+}
+
 //===----------------------------------------------------------------------===//
 // ASTReader Implementation
 //===----------------------------------------------------------------------===//
@@ -2531,6 +2541,14 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
 
     case STMT_OMP_TASKYIELD_DIRECTIVE:
       S = OMPTaskyieldDirective::CreateEmpty(Context, Empty);
+      break;
+
+    case STMT_OMP_BARRIER_DIRECTIVE:
+      S = OMPBarrierDirective::CreateEmpty(Context, Empty);
+      break;
+
+    case STMT_OMP_TASKWAIT_DIRECTIVE:
+      S = OMPTaskwaitDirective::CreateEmpty(Context, Empty);
       break;
 
     case EXPR_CXX_OPERATOR_CALL:

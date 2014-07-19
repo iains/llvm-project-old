@@ -9,3 +9,6 @@ module b {
 module c {
   module c1 { header "c1.h" export * }
 }
+module d {
+  module d1 { header "d1.h" export * }
+}

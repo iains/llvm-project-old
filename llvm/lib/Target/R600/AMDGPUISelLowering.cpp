@@ -242,6 +242,12 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
   }
 
+  setOperationAction(ISD::FP16_TO_FP, MVT::f64, Expand);
+
+  setLoadExtAction(ISD::EXTLOAD, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f32, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f64, MVT::f16, Expand);
+
   const MVT ScalarIntVTs[] = { MVT::i32, MVT::i64 };
   for (MVT VT : ScalarIntVTs) {
     setOperationAction(ISD::SREM, VT, Expand);

@@ -112,3 +112,11 @@ void CodeGenFunction::EmitOMPTaskyieldDirective(const OMPTaskyieldDirective &) {
   llvm_unreachable("CodeGen for 'omp taskyield' is not supported yet.");
 }
 
+void CodeGenFunction::EmitOMPBarrierDirective(const OMPBarrierDirective &) {
+  llvm_unreachable("CodeGen for 'omp barrier' is not supported yet.");
+}
+
+void CodeGenFunction::EmitOMPTaskwaitDirective(const OMPTaskwaitDirective &) {
+  llvm_unreachable("CodeGen for 'omp taskwait' is not supported yet.");
+}
+
