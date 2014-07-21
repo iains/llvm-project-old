@@ -49,6 +49,7 @@ set( LLDB_USED_LIBS
   lldbPluginSymbolFileSymtab
   lldbPluginDynamicLoaderStatic
   lldbPluginDynamicLoaderPosixDYLD
+  lldbPluginDynamicLoaderHexagonDYLD
 
   lldbPluginObjectFileMachO
   lldbPluginObjectFileELF
@@ -78,6 +79,7 @@ set( LLDB_USED_LIBS
   lldbPluginABIMacOSX_arm64
   lldbPluginABIMacOSX_i386
   lldbPluginABISysV_x86_64
+  lldbPluginABISysV_hexagon
   lldbPluginInstructionARM
   lldbPluginInstructionARM64
   lldbPluginObjectFilePECOFF
@@ -197,8 +199,14 @@ set( LLVM_LINK_COMPONENTS
 
 
 if ( NOT LLDB_DISABLE_PYTHON )
-  set_source_files_properties(${LLDB_BINARY_DIR}/scripts/LLDBWrapPython.cpp PROPERTIES GENERATED 1)
   set(LLDB_WRAP_PYTHON ${LLDB_BINARY_DIR}/scripts/LLDBWrapPython.cpp)
+
+  set_source_files_properties(${LLDB_WRAP_PYTHON} PROPERTIES GENERATED 1)
+  if (LLVM_COMPILER_IS_GCC_COMPATIBLE AND
+      NOT "${CMAKE_SYSTEM_NAME}" MATCHES "Darwin")
+    set_property(SOURCE ${LLDB_WRAP_PYTHON}
+                 APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-sequence-point")
+  endif ()
 endif()
 set(SHARED_LIBRARY 1)
 
@@ -331,7 +339,6 @@ endif ()
 if ( LLDB_ENABLE_PYTHON_SCRIPTS_SWIG_API_GENERATION )
 	# Add a Post-Build Event to copy over Python files and create the symlink to liblldb.so for the Python API(hardlink on Windows)
 	if ( NOT LLDB_DISABLE_PYTHON )
-        message("Adding post build step to run finishSwigWrapperClasses.py")
 	    add_custom_command( TARGET liblldb
 	        POST_BUILD
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/finishSwigWrapperClasses.py
