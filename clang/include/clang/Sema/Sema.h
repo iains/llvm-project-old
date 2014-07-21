@@ -7303,14 +7303,15 @@ public:
   DeclGroupPtrTy ActOnOpenMPThreadprivateDirective(
                                      SourceLocation Loc,
                                      ArrayRef<Expr *> VarList);
-  // \brief Builds a new OpenMPThreadPrivateDecl and checks its correctness.
+  /// \brief Builds a new OpenMPThreadPrivateDecl and checks its correctness.
   OMPThreadPrivateDecl *CheckOMPThreadPrivateDecl(
                                      SourceLocation Loc,
                                      ArrayRef<Expr *> VarList);
 
-  // brief Initialization of captured region for OpenMP region.
+  /// \brief Initialization of captured region for OpenMP region.
   void ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, Scope *CurScope);
   StmtResult ActOnOpenMPExecutableDirective(OpenMPDirectiveKind Kind,
+                                            const DeclarationNameInfo &DirName,
                                             ArrayRef<OMPClause *> Clauses,
                                             Stmt *AStmt,
                                             SourceLocation StartLoc,
@@ -7351,6 +7352,11 @@ public:
   /// associated statement.
   StmtResult ActOnOpenMPMasterDirective(Stmt *AStmt, SourceLocation StartLoc,
                                         SourceLocation EndLoc);
+  /// \brief Called on well-formed '\#pragma omp critical' after parsing of the
+  /// associated statement.
+  StmtResult ActOnOpenMPCriticalDirective(const DeclarationNameInfo &DirName,
+                                          Stmt *AStmt, SourceLocation StartLoc,
+                                          SourceLocation EndLoc);
   /// \brief Called on well-formed '\#pragma omp parallel for' after parsing
   /// of the  associated statement.
   StmtResult ActOnOpenMPParallelForDirective(
@@ -7376,7 +7382,11 @@ public:
                                          SourceLocation EndLoc);
   /// \brief Called on well-formed '\#pragma omp taskwait'.
   StmtResult ActOnOpenMPTaskwaitDirective(SourceLocation StartLoc,
-                                         SourceLocation EndLoc);
+                                          SourceLocation EndLoc);
+  /// \brief Called on well-formed '\#pragma omp flush'.
+  StmtResult ActOnOpenMPFlushDirective(ArrayRef<OMPClause *> Clauses,
+                                       SourceLocation StartLoc,
+                                       SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
                                          Expr *Expr,
@@ -7514,6 +7524,11 @@ public:
                                           SourceLocation StartLoc,
                                           SourceLocation LParenLoc,
                                           SourceLocation EndLoc);
+  /// \brief Called on well-formed 'flush' pseudo clause.
+  OMPClause *ActOnOpenMPFlushClause(ArrayRef<Expr *> VarList,
+                                    SourceLocation StartLoc,
+                                    SourceLocation LParenLoc,
+                                    SourceLocation EndLoc);
 
   /// \brief The kind of conversion being performed.
   enum CheckedConversionKind {

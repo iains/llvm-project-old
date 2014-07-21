@@ -2300,6 +2300,11 @@ DEF_TRAVERSE_STMT(OMPSingleDirective,
 DEF_TRAVERSE_STMT(OMPMasterDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
+DEF_TRAVERSE_STMT(OMPCriticalDirective, {
+  TRY_TO(TraverseDeclarationNameInfo(S->getDirectiveName()));
+  TRY_TO(TraverseOMPExecutableDirective(S));
+})
+
 DEF_TRAVERSE_STMT(OMPParallelForDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
@@ -2316,6 +2321,9 @@ DEF_TRAVERSE_STMT(OMPBarrierDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
 DEF_TRAVERSE_STMT(OMPTaskwaitDirective,
+                  { TRY_TO(TraverseOMPExecutableDirective(S)); })
+
+DEF_TRAVERSE_STMT(OMPFlushDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
 // OpenMP clauses.
@@ -2473,6 +2481,12 @@ bool
 RecursiveASTVisitor<Derived>::VisitOMPReductionClause(OMPReductionClause *C) {
   TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
   TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
+  TRY_TO(VisitOMPClauseList(C));
+  return true;
+}
+
+template <typename Derived>
+bool RecursiveASTVisitor<Derived>::VisitOMPFlushClause(OMPFlushClause *C) {
   TRY_TO(VisitOMPClauseList(C));
   return true;
 }

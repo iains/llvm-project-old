@@ -2171,21 +2171,29 @@ enum CXCursorKind {
    */
   CXCursor_OMPMasterDirective            = 241,
 
+  /** \brief OpenMP critical directive.
+   */
+  CXCursor_OMPCriticalDirective          = 242,
+
   /** \brief OpenMP taskyield directive.
    */
-  CXCursor_OMPTaskyieldDirective         = 242,
+  CXCursor_OMPTaskyieldDirective         = 243,
 
   /** \brief OpenMP barrier directive.
    */
-  CXCursor_OMPBarrierDirective           = 243,
+  CXCursor_OMPBarrierDirective           = 244,
 
   /** \brief OpenMP taskwait directive.
    */
-  CXCursor_OMPTaskwaitDirective          = 244,
+  CXCursor_OMPTaskwaitDirective          = 245,
+
+  /** \brief OpenMP flush directive.
+   */
+  CXCursor_OMPFlushDirective             = 246,
 
   /** \brief Windows Structured Exception Handling's leave statement.
    */
-  CXCursor_SEHLeaveStmt                  = 245,
+  CXCursor_SEHLeaveStmt                  = 247,
 
   CXCursor_LastStmt                      = CXCursor_SEHLeaveStmt,
 

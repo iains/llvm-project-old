@@ -1805,6 +1805,13 @@ void OMPClauseWriter::VisitOMPCopyprivateClause(OMPCopyprivateClause *C) {
     Writer->Writer.AddStmt(VE);
 }
 
+void OMPClauseWriter::VisitOMPFlushClause(OMPFlushClause *C) {
+  Record.push_back(C->varlist_size());
+  Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);
+  for (auto *VE : C->varlists())
+    Writer->Writer.AddStmt(VE);
+}
+
 //===----------------------------------------------------------------------===//
 // OpenMP Directives.
 //===----------------------------------------------------------------------===//
@@ -1868,6 +1875,13 @@ void ASTStmtWriter::VisitOMPMasterDirective(OMPMasterDirective *D) {
   Code = serialization::STMT_OMP_MASTER_DIRECTIVE;
 }
 
+void ASTStmtWriter::VisitOMPCriticalDirective(OMPCriticalDirective *D) {
+  VisitStmt(D);
+  VisitOMPExecutableDirective(D);
+  Writer.AddDeclarationNameInfo(D->getDirectiveName(), Record);
+  Code = serialization::STMT_OMP_CRITICAL_DIRECTIVE;
+}
+
 void ASTStmtWriter::VisitOMPParallelForDirective(OMPParallelForDirective *D) {
   VisitStmt(D);
   Record.push_back(D->getNumClauses());
@@ -1907,6 +1921,13 @@ void ASTStmtWriter::VisitOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
   VisitStmt(D);
   VisitOMPExecutableDirective(D);
   Code = serialization::STMT_OMP_TASKWAIT_DIRECTIVE;
+}
+
+void ASTStmtWriter::VisitOMPFlushDirective(OMPFlushDirective *D) {
+  VisitStmt(D);
+  Record.push_back(D->getNumClauses());
+  VisitOMPExecutableDirective(D);
+  Code = serialization::STMT_OMP_FLUSH_DIRECTIVE;
 }
 
 //===----------------------------------------------------------------------===//

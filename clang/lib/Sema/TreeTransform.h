@@ -1298,12 +1298,12 @@ public:
   /// By default, performs semantic analysis to build the new statement.
   /// Subclasses may override this routine to provide different behavior.
   StmtResult RebuildOMPExecutableDirective(OpenMPDirectiveKind Kind,
+                                           DeclarationNameInfo DirName,
                                            ArrayRef<OMPClause *> Clauses,
-                                           Stmt *AStmt,
-                                           SourceLocation StartLoc,
+                                           Stmt *AStmt, SourceLocation StartLoc,
                                            SourceLocation EndLoc) {
-    return getSema().ActOnOpenMPExecutableDirective(Kind, Clauses, AStmt,
-                                                    StartLoc, EndLoc);
+    return getSema().ActOnOpenMPExecutableDirective(Kind, DirName, Clauses,
+                                                    AStmt, StartLoc, EndLoc);
   }
 
   /// \brief Build a new OpenMP 'if' clause.
@@ -1515,6 +1515,18 @@ public:
                                          SourceLocation EndLoc) {
     return getSema().ActOnOpenMPCopyprivateClause(VarList, StartLoc, LParenLoc,
                                                   EndLoc);
+  }
+
+  /// \brief Build a new OpenMP 'flush' pseudo clause.
+  ///
+  /// By default, performs semantic analysis to build the new OpenMP clause.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPFlushClause(ArrayRef<Expr *> VarList,
+                                   SourceLocation StartLoc,
+                                   SourceLocation LParenLoc,
+                                   SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPFlushClause(VarList, StartLoc, LParenLoc,
+                                            EndLoc);
   }
 
   /// \brief Rebuild the operand to an Objective-C \@synchronized statement.
@@ -6445,9 +6457,16 @@ StmtResult TreeTransform<Derived>::TransformOMPExecutableDirective(
     return StmtError();
   }
 
+  // Transform directive name for 'omp critical' directive.
+  DeclarationNameInfo DirName;
+  if (D->getDirectiveKind() == OMPD_critical) {
+    DirName = cast<OMPCriticalDirective>(D)->getDirectiveName();
+    DirName = getDerived().TransformDeclarationNameInfo(DirName);
+  }
+
   return getDerived().RebuildOMPExecutableDirective(
-      D->getDirectiveKind(), TClauses, AssociatedStmt.get(), D->getLocStart(),
-      D->getLocEnd());
+      D->getDirectiveKind(), DirName, TClauses, AssociatedStmt.get(),
+      D->getLocStart(), D->getLocEnd());
 }
 
 template <typename Derived>
@@ -6528,6 +6547,16 @@ TreeTransform<Derived>::TransformOMPMasterDirective(OMPMasterDirective *D) {
 }
 
 template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformOMPCriticalDirective(OMPCriticalDirective *D) {
+  getDerived().getSema().StartOpenMPDSABlock(
+      OMPD_critical, D->getDirectiveName(), nullptr, D->getLocStart());
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
 StmtResult TreeTransform<Derived>::TransformOMPParallelForDirective(
     OMPParallelForDirective *D) {
   DeclarationNameInfo DirName;
@@ -6587,6 +6616,17 @@ StmtResult
 TreeTransform<Derived>::TransformOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
   DeclarationNameInfo DirName;
   getDerived().getSema().StartOpenMPDSABlock(OMPD_taskwait, DirName, nullptr,
+                                             D->getLocStart());
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformOMPFlushDirective(OMPFlushDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_flush, DirName, nullptr,
                                              D->getLocStart());
   StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
   getDerived().getSema().EndOpenMPDSABlock(Res.get());
@@ -6850,6 +6890,20 @@ TreeTransform<Derived>::TransformOMPCopyprivateClause(OMPCopyprivateClause *C) {
   }
   return getDerived().RebuildOMPCopyprivateClause(
       Vars, C->getLocStart(), C->getLParenLoc(), C->getLocEnd());
+}
+
+template <typename Derived>
+OMPClause *TreeTransform<Derived>::TransformOMPFlushClause(OMPFlushClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (auto *VE : C->varlists()) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(VE));
+    if (EVar.isInvalid())
+      return nullptr;
+    Vars.push_back(EVar.get());
+  }
+  return getDerived().RebuildOMPFlushClause(Vars, C->getLocStart(),
+                                            C->getLParenLoc(), C->getLocEnd());
 }
 
 //===----------------------------------------------------------------------===//

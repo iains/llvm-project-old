@@ -12,6 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifdef _MSC_VER
+// Provide M_PI.
+#define _USE_MATH_DEFINES
+#include <cmath>
+#endif
+
 #include "SIISelLowering.h"
 #include "AMDGPU.h"
 #include "AMDGPUIntrinsicInfo.h"
@@ -79,6 +85,9 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::ADDE, MVT::i32, Legal);
   setOperationAction(ISD::SUBC, MVT::i32, Legal);
   setOperationAction(ISD::SUBE, MVT::i32, Legal);
+
+  setOperationAction(ISD::FSIN, MVT::f32, Custom);
+  setOperationAction(ISD::FCOS, MVT::f32, Custom);
 
   // We need to custom lower vector stores from local memory
   setOperationAction(ISD::LOAD, MVT::v2i32, Custom);
@@ -637,6 +646,9 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     }
   }
 
+  case ISD::FSIN:
+  case ISD::FCOS:
+    return LowerTrig(Op, DAG);
   case ISD::SELECT: return LowerSELECT(Op, DAG);
   case ISD::FDIV: return LowerFDIV(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
@@ -1116,6 +1128,23 @@ SDValue SITargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   return Chain;
 }
 
+SDValue SITargetLowering::LowerTrig(SDValue Op, SelectionDAG &DAG) const {
+  EVT VT = Op.getValueType();
+  SDValue Arg = Op.getOperand(0);
+  SDValue FractPart = DAG.getNode(AMDGPUISD::FRACT, SDLoc(Op), VT,
+        DAG.getNode(ISD::FMUL, SDLoc(Op), VT, Arg,
+          DAG.getConstantFP(0.5 / M_PI, VT)));
+
+  switch (Op.getOpcode()) {
+  case ISD::FCOS:
+    return DAG.getNode(AMDGPUISD::COS_HW, SDLoc(Op), VT, FractPart);
+  case ISD::FSIN:
+    return DAG.getNode(AMDGPUISD::SIN_HW, SDLoc(Op), VT, FractPart);
+  default:
+    llvm_unreachable("Wrong trig opcode");
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Custom DAG optimizations
 //===----------------------------------------------------------------------===//
@@ -1218,20 +1247,6 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
 
   switch (N->getOpcode()) {
     default: return AMDGPUTargetLowering::PerformDAGCombine(N, DCI);
-    case ISD::SELECT_CC: {
-      ConstantSDNode *True, *False;
-      // i1 selectcc(l, r, -1, 0, cc) -> i1 setcc(l, r, cc)
-      if ((True = dyn_cast<ConstantSDNode>(N->getOperand(2)))
-          && (False = dyn_cast<ConstantSDNode>(N->getOperand(3)))
-          && True->isAllOnesValue()
-          && False->isNullValue()
-          && VT == MVT::i1) {
-        return DAG.getNode(ISD::SETCC, DL, VT, N->getOperand(0),
-                           N->getOperand(1), N->getOperand(4));
-
-      }
-      break;
-    }
     case ISD::SETCC: {
       SDValue Arg0 = N->getOperand(0);
       SDValue Arg1 = N->getOperand(1);
