@@ -227,6 +227,9 @@ void Parser::initializePragmaHandlers() {
 
   UnrollHintHandler.reset(new PragmaUnrollHintHandler("unroll"));
   PP.AddPragmaHandler(UnrollHintHandler.get());
+
+  NoUnrollHintHandler.reset(new PragmaUnrollHintHandler("nounroll"));
+  PP.AddPragmaHandler(NoUnrollHintHandler.get());
 }
 
 void Parser::resetPragmaHandlers() {
@@ -290,6 +293,9 @@ void Parser::resetPragmaHandlers() {
 
   PP.RemovePragmaHandler(UnrollHintHandler.get());
   UnrollHintHandler.reset();
+
+  PP.RemovePragmaHandler(NoUnrollHintHandler.get());
+  NoUnrollHintHandler.reset();
 }
 
 /// \brief Handle the annotation token produced for #pragma unused(...)
@@ -1719,8 +1725,7 @@ void PragmaOptimizeHandler::HandlePragma(Preprocessor &PP,
   PP.Lex(Tok);
   if (Tok.is(tok::eod)) {
     PP.Diag(Tok.getLocation(), diag::err_pragma_missing_argument)
-        << "clang optimize"
-        << "'on' or 'off'";
+        << "clang optimize" << /*Expected=*/true << "'on' or 'off'";
     return;
   }
   if (Tok.isNot(tok::identifier)) {
@@ -1767,8 +1772,12 @@ static bool ParseLoopHintValue(Preprocessor &PP, Token Tok, Token &PragmaName,
                "Unexpected pragma name");
         PragmaString = "unroll";
       }
+      // Don't try to emit what the pragma is expecting with the diagnostic
+      // because the logic is non-trivial and we give expected values in sema
+      // diagnostics if an invalid argument is given.  Here, just note that the
+      // pragma is missing an argument.
       PP.Diag(Tok.getLocation(), diag::err_pragma_missing_argument)
-          << PragmaString << "a positive integer value";
+          << PragmaString << /*Expected=*/false;
       return true;
     }
   }
@@ -1800,13 +1809,17 @@ static bool ParseLoopHintValue(Preprocessor &PP, Token Tok, Token &PragmaName,
 ///  loop-hint:
 ///    'vectorize' '(' loop-hint-keyword ')'
 ///    'interleave' '(' loop-hint-keyword ')'
-///    'unroll' '(' loop-hint-keyword ')'
+///    'unroll' '(' unroll-hint-keyword ')'
 ///    'vectorize_width' '(' loop-hint-value ')'
 ///    'interleave_count' '(' loop-hint-value ')'
 ///    'unroll_count' '(' loop-hint-value ')'
 ///
 ///  loop-hint-keyword:
 ///    'enable'
+///    'disable'
+///
+///  unroll-hint-keyword:
+///    'full'
 ///    'disable'
 ///
 ///  loop-hint-value:
@@ -1823,12 +1836,10 @@ static bool ParseLoopHintValue(Preprocessor &PP, Token Tok, Token &PragmaName,
 /// only works on inner loops.
 ///
 /// The unroll and unroll_count directives control the concatenation
-/// unroller. Specifying unroll(enable) instructs llvm to try to
+/// unroller. Specifying unroll(full) instructs llvm to try to
 /// unroll the loop completely, and unroll(disable) disables unrolling
 /// for the loop. Specifying unroll_count(_value_) instructs llvm to
 /// try to unroll the loop the number of times indicated by the value.
-/// If unroll(enable) and unroll_count are both specified only
-/// unroll_count takes effect.
 void PragmaLoopHintHandler::HandlePragma(Preprocessor &PP,
                                          PragmaIntroducerKind Introducer,
                                          Token &Tok) {
@@ -1903,29 +1914,36 @@ void PragmaLoopHintHandler::HandlePragma(Preprocessor &PP,
 ///  #pragma unroll
 ///  #pragma unroll unroll-hint-value
 ///  #pragma unroll '(' unroll-hint-value ')'
+///  #pragma nounroll
 ///
 ///  unroll-hint-value:
 ///    constant-expression
 ///
-/// Loop unrolling hints are specified with '#pragma unroll'. '#pragma unroll'
-/// can take a numeric argument optionally contained in parentheses. With no
-/// argument the directive instructs llvm to try to unroll the loop
-/// completely. A positive integer argument can be specified to indicate the
-/// number of times the loop should be unrolled.  To maximize compatibility with
-/// other compilers the unroll count argument can be specified with or without
-/// parentheses.
+/// Loop unrolling hints can be specified with '#pragma unroll' or
+/// '#pragma nounroll'. '#pragma unroll' can take a numeric argument optionally
+/// contained in parentheses. With no argument the directive instructs llvm to
+/// try to unroll the loop completely. A positive integer argument can be
+/// specified to indicate the number of times the loop should be unrolled.  To
+/// maximize compatibility with other compilers the unroll count argument can be
+/// specified with or without parentheses.  Specifying, '#pragma nounroll'
+/// disables unrolling of the loop.
 void PragmaUnrollHintHandler::HandlePragma(Preprocessor &PP,
                                            PragmaIntroducerKind Introducer,
                                            Token &Tok) {
-  // Incoming token is "unroll" of "#pragma unroll".
+  // Incoming token is "unroll" for "#pragma unroll", or "nounroll" for
+  // "#pragma nounroll".
   Token PragmaName = Tok;
   PP.Lex(Tok);
   auto *Info = new (PP.getPreprocessorAllocator()) PragmaLoopHintInfo;
   if (Tok.is(tok::eod)) {
-    // Unroll pragma without an argument.
+    // nounroll or unroll pragma without an argument.
     Info->PragmaName = PragmaName;
     Info->Option = PragmaName;
     Info->HasValue = false;
+  } else if (PragmaName.getIdentifierInfo()->getName() == "nounroll") {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "nounroll";
+    return;
   } else {
     // Unroll pragma with an argument: "#pragma unroll N" or
     // "#pragma unroll(N)".

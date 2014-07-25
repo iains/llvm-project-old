@@ -16,6 +16,8 @@
 
 #include <mutex>
 
+using llvm::COFF::WindowsSubsystem;
+
 namespace lld {
 namespace pecoff {
 
@@ -232,13 +234,12 @@ private:
 // next visit.
 class ExportedSymbolRenameFile : public impl::VirtualArchiveLibraryFile {
 public:
-  ExportedSymbolRenameFile(const PECOFFLinkingContext &ctx)
-      : VirtualArchiveLibraryFile("<export>") {
+  ExportedSymbolRenameFile(const PECOFFLinkingContext &ctx,
+                           std::shared_ptr<ResolvableSymbols> syms)
+      : VirtualArchiveLibraryFile("<export>"), _syms(syms) {
     for (const PECOFFLinkingContext::ExportDesc &desc : ctx.getDllExports())
       _exportedSyms.insert(desc.name);
   }
-
-  void addResolvableSymbols(File *file) { _syms.add(file); }
 
   const File *find(StringRef sym, bool dataSymbolOnly) const override {
     if (_exportedSyms.count(sym) == 0)
@@ -254,7 +255,7 @@ private:
   // by @number suffix.
   bool findSymbolWithAtsignSuffix(std::string sym, std::string &res) const {
     sym.append("@");
-    const std::set<std::string> &defined = _syms.defined();
+    const std::set<std::string> &defined = _syms->defined();
     auto it = defined.lower_bound(sym);
     for (auto e = defined.end(); it != e; ++it) {
       if (!StringRef(*it).startswith(sym))
@@ -271,8 +272,109 @@ private:
   }
 
   std::set<std::string> _exportedSyms;
-  mutable ResolvableSymbols _syms;
+  mutable std::shared_ptr<ResolvableSymbols> _syms;
   mutable llvm::BumpPtrAllocator _alloc;
+};
+
+// Windows has not only one but many entry point functions. The
+// appropriate one is automatically selected based on the subsystem
+// setting and the user-supplied entry point function.
+//
+// http://msdn.microsoft.com/en-us/library/f9t8842e.aspx
+class EntryPointFile : public SimpleFile {
+public:
+  EntryPointFile(const PECOFFLinkingContext &ctx,
+                 std::shared_ptr<ResolvableSymbols> syms)
+      : SimpleFile("<entry>"), _ctx(const_cast<PECOFFLinkingContext *>(&ctx)),
+        _syms(syms), _firstTime(true) {}
+
+  const atom_collection<UndefinedAtom> &undefined() const override {
+    return const_cast<EntryPointFile *>(this)->getUndefinedAtoms();
+  }
+
+private:
+  const atom_collection<UndefinedAtom> &getUndefinedAtoms() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_firstTime)
+      return _undefinedAtoms;
+    _firstTime = false;
+
+    if (_ctx->hasEntry()) {
+      StringRef entrySym = _ctx->allocate(_ctx->decorateSymbol(getEntry()));
+      _undefinedAtoms._atoms.push_back(
+          new (_alloc) SimpleUndefinedAtom(*this, entrySym));
+      _ctx->setHasEntry(true);
+      _ctx->setEntrySymbolName(entrySym);
+      if (_ctx->deadStrip())
+        _ctx->addDeadStripRoot(entrySym);
+    }
+    return _undefinedAtoms;
+  }
+
+  // Returns the entry point function name. It also sets the inferred
+  // subsystem if it's unknown.
+  std::string getEntry() const {
+    StringRef opt = _ctx->getEntrySymbolName();
+    if (!opt.empty())
+      return opt;
+
+    const std::string wWinMainCRTStartup = "wWinMainCRTStartup";
+    const std::string WinMainCRTStartup = "WinMainCRTStartup";
+    const std::string wmainCRTStartup = "wmainCRTStartup";
+    const std::string mainCRTStartup = "mainCRTStartup";
+    auto windows = WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI;
+    auto console = WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+
+    if (_ctx->isDll()) {
+      _ctx->setSubsystem(windows);
+      if (_ctx->getMachineType() == llvm::COFF::IMAGE_FILE_MACHINE_I386)
+        return "_DllMainCRTStartup@12";
+      return "_DllMainCRTStartup";
+    }
+
+    // Returns true if a given name exists in an input object file.
+    auto defined = [&](StringRef name) -> bool {
+      return _syms->defined().count(_ctx->decorateSymbol(name));
+    };
+
+    switch (_ctx->getSubsystem()) {
+    case WindowsSubsystem::IMAGE_SUBSYSTEM_UNKNOWN: {
+      if (defined("wWinMain")) {
+        _ctx->setSubsystem(windows);
+        return wWinMainCRTStartup;
+      }
+      if (defined("WinMain")) {
+        _ctx->setSubsystem(windows);
+        return WinMainCRTStartup;
+      }
+      if (defined("wmain")) {
+        _ctx->setSubsystem(console);
+        return wmainCRTStartup;
+      }
+      if (!defined("main"))
+        llvm::errs() << "Cannot infer subsystem; assuming /subsystem:console\n";
+      _ctx->setSubsystem(console);
+      return mainCRTStartup;
+    }
+    case WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI:
+      if (defined("WinMain"))
+        return WinMainCRTStartup;
+      return wWinMainCRTStartup;
+    case WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_CUI:
+      if (defined("wmain"))
+        return wmainCRTStartup;
+      return mainCRTStartup;
+    default:
+      return mainCRTStartup;
+    }
+  }
+
+  PECOFFLinkingContext *_ctx;
+  atom_collection_vector<UndefinedAtom> _undefinedAtoms;
+  std::mutex _mutex;
+  std::shared_ptr<ResolvableSymbols> _syms;
+  llvm::BumpPtrAllocator _alloc;
+  bool _firstTime;
 };
 
 } // end namespace pecoff

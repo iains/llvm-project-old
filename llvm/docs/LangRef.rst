@@ -921,6 +921,13 @@ Currently, only the following parameter attributes are defined:
     the first parameter. This is not a valid attribute for return
     values.
 
+``align <n>``
+    This indicates that the pointer value may be assumed by the optimizer to
+    have the specified alignment.
+
+    Note that this attribute has additional semantics when combined with the
+    ``byval`` attribute.
+
 .. _noalias:
 
 ``noalias``
@@ -2822,6 +2829,67 @@ Note that the fields need not be contiguous. In this example, there is a
 4 byte gap between the two fields. This gap represents padding which
 does not carry useful data and need not be preserved.
 
+'``noalias``' and '``alias.scope``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``noalias`` and ``alias.scope`` metadata provide the ability to specify generic
+noalias memory-access sets. This means that some collection of memory access
+instructions (loads, stores, memory-accessing calls, etc.) that carry
+``noalias`` metadata can specifically be specified not to alias with some other
+collection of memory access instructions that carry ``alias.scope`` metadata.
+Each type of metadata specifies a list of scopes where each scope has an id and
+a domain. When evaluating an aliasing query, if for some some domain, the set
+of scopes with that domain in one instruction's ``alias.scope`` list is a
+subset of (or qual to) the set of scopes for that domain in another
+instruction's ``noalias`` list, then the two memory accesses are assumed not to
+alias.
+
+The metadata identifying each domain is itself a list containing one or two
+entries. The first entry is the name of the domain. Note that if the name is a
+string then it can be combined accross functions and translation units. A
+self-reference can be used to create globally unique domain names. A
+descriptive string may optionally be provided as a second list entry.
+
+The metadata identifying each scope is also itself a list containing two or
+three entries. The first entry is the name of the scope. Note that if the name
+is a string then it can be combined accross functions and translation units. A
+self-reference can be used to create globally unique scope names. A metadata
+reference to the scope's domain is the second entry. A descriptive string may
+optionally be provided as a third list entry.
+
+For example,
+
+.. code-block:: llvm
+
+    ; Two scope domains:
+    !0 = metadata !{metadata !0}
+    !1 = metadata !{metadata !1}
+
+    ; Some scopes in these domains:
+    !2 = metadata !{metadata !2, metadata !0}
+    !3 = metadata !{metadata !3, metadata !0}
+    !4 = metadata !{metadata !4, metadata !1}
+
+    ; Some scope lists:
+    !5 = metadata !{metadata !4} ; A list containing only scope !4
+    !6 = metadata !{metadata !4, metadata !3, metadata !2}
+    !7 = metadata !{metadata !3}
+
+    ; These two instructions don't alias:
+    %0 = load float* %c, align 4, !alias.scope !5
+    store float %0, float* %arrayidx.i, align 4, !noalias !5
+
+    ; These two instructions also don't alias (for domain !1, the set of scopes
+    ; in the !alias.scope equals that in the !noalias list):
+    %2 = load float* %c, align 4, !alias.scope !5
+    store float %2, float* %arrayidx.i2, align 4, !noalias !6
+
+    ; These two instructions don't alias (for domain !0, the set of scopes in
+    ; the !noalias list is not a superset of, or equal to, the scopes in the
+    ; !alias.scope list):
+    %2 = load float* %c, align 4, !alias.scope !6
+    store float %0, float* %arrayidx.i, align 4, !noalias !7
+
 '``fpmath``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -2942,7 +3010,7 @@ multiple iterations of the loop.  If ``llvm.loop.interleave.count`` is set to 0
 then the interleave count will be determined automatically.
 
 '``llvm.loop.vectorize.enable``' Metadata
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This metadata selectively enables or disables vectorization for the loop. The
 first operand is the string ``llvm.loop.vectorize.enable`` and the second operand
@@ -2980,20 +3048,6 @@ identification metadata. The ``llvm.loop.unroll`` metadata are only
 optimization hints and the unrolling will only be performed if the
 optimizer believes it is safe to do so.
 
-'``llvm.loop.unroll.enable``' Metadata
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-This metadata either disables loop unrolling or suggests that the loop
-be unrolled fully. The first operand is the string
-``llvm.loop.unroll.enable`` and the second operand is a bit.  If the
-bit operand value is 0 loop unrolling is disabled. A value of 1
-indicates that the loop should be fully unrolled. For example:
-
-.. code-block:: llvm
-
-   !0 = metadata !{ metadata !"llvm.loop.unroll.enable", i1 0 }
-   !1 = metadata !{ metadata !"llvm.loop.unroll.enable", i1 1 }
-
 '``llvm.loop.unroll.count``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -3009,12 +3063,26 @@ example:
 If the trip count of the loop is less than the unroll count the loop
 will be partially unrolled.
 
-If a loop has both a ``llvm.loop.unroll.enable`` metadata and
-``llvm.loop.unroll.count`` metadata the behavior depends upon the
-value of the ``llvm.loop.unroll.enable`` operand.  If the value is 0,
-the loop will not be unrolled.  If the value is 1, the loop will be
-unrolled with a factor determined by the ``llvm.loop.unroll.count``
-operand effectively ignoring the ``llvm.loop.unroll.enable`` metadata.
+'``llvm.loop.unroll.disable``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata either disables loop unrolling. The metadata has a single operand
+which is the string ``llvm.loop.unroll.disable``.  For example:
+
+.. code-block:: llvm
+
+   !0 = metadata !{ metadata !"llvm.loop.unroll.disable" }
+
+'``llvm.loop.unroll.full``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata either suggests that the loop should be unrolled fully. The
+metadata has a single operand which is the string ``llvm.loop.unroll.disable``.
+For example:
+
+.. code-block:: llvm
+
+   !0 = metadata !{ metadata !"llvm.loop.unroll.full" }
 
 '``llvm.mem``'
 ^^^^^^^^^^^^^^^

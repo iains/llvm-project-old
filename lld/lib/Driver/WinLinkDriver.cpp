@@ -638,22 +638,6 @@ static void processLibEnv(PECOFFLinkingContext &ctx) {
       ctx.appendInputSearchPath(ctx.allocate(path));
 }
 
-// Returns a default entry point symbol name depending on context image type and
-// subsystem. These default names are MS CRT compliant.
-static StringRef getDefaultEntrySymbolName(PECOFFLinkingContext &ctx) {
-  if (ctx.isDll()) {
-    if (ctx.getMachineType() == llvm::COFF::IMAGE_FILE_MACHINE_I386)
-      return "_DllMainCRTStartup@12";
-    return "_DllMainCRTStartup";
-  }
-  llvm::COFF::WindowsSubsystem subsystem = ctx.getSubsystem();
-  if (subsystem == llvm::COFF::WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_GUI)
-    return "WinMainCRTStartup";
-  if (subsystem == llvm::COFF::WindowsSubsystem::IMAGE_SUBSYSTEM_WINDOWS_CUI)
-    return "mainCRTStartup";
-  return "";
-}
-
 namespace {
 class DriverStringSaver : public llvm::cl::StringSaver {
 public:
@@ -1196,6 +1180,10 @@ bool WinLinkDriver::parse(int argc, const char *argv[],
       ctx.addInitialUndefinedSymbol(ctx.allocate(inputArg->getValue()));
       break;
 
+    case OPT_noentry:
+      ctx.setHasEntry(false);
+      break;
+
     case OPT_nodefaultlib_all:
       ctx.setNoDefaultLibAll(true);
       break;
@@ -1281,15 +1269,8 @@ bool WinLinkDriver::parse(int argc, const char *argv[],
     }
   }
 
-  // Use the default entry name if /entry option is not given.
-  if (ctx.entrySymbolName().empty() && !parsedArgs->getLastArg(OPT_noentry))
-    ctx.setEntrySymbolName(getDefaultEntrySymbolName(ctx));
-  StringRef entry = ctx.entrySymbolName();
-  if (!entry.empty())
-    ctx.addInitialUndefinedSymbol(entry);
-
   // Specify /noentry without /dll is an error.
-  if (parsedArgs->getLastArg(OPT_noentry) && !parsedArgs->getLastArg(OPT_dll)) {
+  if (!ctx.hasEntry() && !parsedArgs->getLastArg(OPT_dll)) {
     diag << "/noentry must be specified with /dll\n";
     return false;
   }
@@ -1334,7 +1315,13 @@ bool WinLinkDriver::parse(int argc, const char *argv[],
 
   // Add the library group to the input graph.
   if (!isReadingDirectiveSection) {
-    auto group = std::unique_ptr<Group>(new PECOFFGroup(ctx));
+    // The container for the entry point file.
+    std::unique_ptr<SimpleFileNode> entry(new SimpleFileNode("<entry>"));
+    ctx.setEntryNode(entry.get());
+    ctx.getInputGraph().addInputElement(std::move(entry));
+
+    // The container for all library files.
+    std::unique_ptr<Group> group(new PECOFFGroup(ctx));
     ctx.setLibraryGroup(group.get());
     ctx.getInputGraph().addInputElement(std::move(group));
   }

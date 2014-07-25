@@ -615,9 +615,13 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
 
   // Patch the pointer to LLVM function in debug info descriptor.
   auto DI = FunctionDIs.find(F);
-  if (DI != FunctionDIs.end())
-    DI->second.replaceFunction(NF);
-  
+  if (DI != FunctionDIs.end()) {
+    DISubprogram SP = DI->second;
+    SP.replaceFunction(NF);
+    FunctionDIs.erase(DI);
+    FunctionDIs[NF] = SP;
+  }
+
   DEBUG(dbgs() << "ARG PROMOTION:  Promoting to:" << *NF << "\n"
         << "From: " << *F);
   
@@ -716,9 +720,11 @@ CallGraphNode *ArgPromotion::DoPromotion(Function *F,
           // of the previous load.
           LoadInst *newLoad = new LoadInst(V, V->getName()+".val", Call);
           newLoad->setAlignment(OrigLoad->getAlignment());
-          // Transfer the TBAA info too.
-          newLoad->setMetadata(LLVMContext::MD_tbaa,
-                               OrigLoad->getMetadata(LLVMContext::MD_tbaa));
+          // Transfer the AA info too.
+          AAMDNodes AAInfo;
+          OrigLoad->getAAMetadata(AAInfo);
+          newLoad->setAAMetadata(AAInfo);
+
           Args.push_back(newLoad);
           AA.copyValue(OrigLoad, Args.back());
         }

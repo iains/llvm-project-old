@@ -192,6 +192,13 @@ static bool checkUInt32Argument(Sema &S, const AttributeList &Attr,
         << Expr->getSourceRange();
     return false;
   }
+
+  if (!I.isIntN(32)) {
+    S.Diag(Expr->getExprLoc(), diag::err_ice_too_large)
+        << I.toString(10, false) << 32 << /* Unsigned */ 1;
+    return false;
+  }
+
   Val = (uint32_t)I.getZExtValue();
   return true;
 }

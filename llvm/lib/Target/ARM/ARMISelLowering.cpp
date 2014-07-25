@@ -8606,7 +8606,7 @@ static SDValue PerformSTORECombine(SDNode *N,
   return DAG.getStore(St->getChain(), dl, V, St->getBasePtr(),
                       St->getPointerInfo(), St->isVolatile(),
                       St->isNonTemporal(), St->getAlignment(),
-                      St->getTBAAInfo());
+                      St->getAAInfo());
 }
 
 /// hasNormalLoadOperand - Check if any of the operands of a BUILD_VECTOR node
@@ -10802,6 +10802,11 @@ bool ARMTargetLowering::shouldExpandAtomicInIR(Instruction *Inst) const {
   // and up to 64 bits on the non-M profiles
   unsigned AtomicLimit = IsMClass ? 32 : 64;
   return Inst->getType()->getPrimitiveSizeInBits() <= AtomicLimit;
+}
+
+// This has so far only been implemented for MachO.
+bool ARMTargetLowering::useLoadStackGuardNode() const {
+  return Subtarget->getTargetTriple().getObjectFormat() == Triple::MachO;
 }
 
 Value *ARMTargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,

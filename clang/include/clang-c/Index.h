@@ -2195,7 +2195,15 @@ enum CXCursorKind {
    */
   CXCursor_SEHLeaveStmt                  = 247,
 
-  CXCursor_LastStmt                      = CXCursor_SEHLeaveStmt,
+  /** \brief OpenMP ordered directive.
+   */
+  CXCursor_OMPOrderedDirective           = 248,
+
+  /** \brief OpenMP atomic directive.
+   */
+  CXCursor_OMPAtomicDirective            = 249,
+
+  CXCursor_LastStmt                      = CXCursor_OMPAtomicDirective,
 
   /**
    * \brief Cursor that represents the translation unit itself.

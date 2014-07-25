@@ -44,6 +44,8 @@ set(LLVM_TEST_DEPENDS
           llvm-rtdyld
           llvm-symbolizer
           llvm-tblgen
+          llvm-uselistorder
+          llvm-vtabledump
           macho-dump
           opt
           FileCheck

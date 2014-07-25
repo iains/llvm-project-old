@@ -58,9 +58,11 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const AttributeList &A,
       St->getStmtClass() != Stmt::ForStmtClass &&
       St->getStmtClass() != Stmt::CXXForRangeStmtClass &&
       St->getStmtClass() != Stmt::WhileStmtClass) {
-    const char *Pragma = PragmaNameLoc->Ident->getName() == "unroll"
-                             ? "#pragma unroll"
-                             : "#pragma clang loop";
+    const char *Pragma =
+        llvm::StringSwitch<const char *>(PragmaNameLoc->Ident->getName())
+            .Case("unroll", "#pragma unroll")
+            .Case("nounroll", "#pragma nounroll")
+            .Default("#pragma clang loop");
     S.Diag(St->getLocStart(), diag::err_pragma_loop_precedes_nonloop) << Pragma;
     return nullptr;
   }
@@ -70,6 +72,9 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const AttributeList &A,
   if (PragmaNameLoc->Ident->getName() == "unroll") {
     Option = ValueLoc ? LoopHintAttr::UnrollCount : LoopHintAttr::Unroll;
     Spelling = LoopHintAttr::Pragma_unroll;
+  } else if (PragmaNameLoc->Ident->getName() == "nounroll") {
+    Option = LoopHintAttr::Unroll;
+    Spelling = LoopHintAttr::Pragma_nounroll;
   } else {
     Option = llvm::StringSwitch<LoopHintAttr::OptionType>(OptionInfo->getName())
                  .Case("vectorize", LoopHintAttr::Vectorize)
@@ -86,19 +91,28 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const AttributeList &A,
   if (Option == LoopHintAttr::Unroll &&
       Spelling == LoopHintAttr::Pragma_unroll) {
     ValueInt = 1;
+  } else if (Option == LoopHintAttr::Unroll &&
+             Spelling == LoopHintAttr::Pragma_nounroll) {
+    ValueInt = 0;
   } else if (Option == LoopHintAttr::Vectorize ||
              Option == LoopHintAttr::Interleave ||
              Option == LoopHintAttr::Unroll) {
+    // Unrolling uses the keyword "full" rather than "enable" to indicate full
+    // unrolling.
+    const char *TrueKeyword =
+        Option == LoopHintAttr::Unroll ? "full" : "enable";
     if (!ValueInfo) {
-      S.Diag(ValueLoc->Loc, diag::err_pragma_loop_invalid_keyword);
+      S.Diag(ValueLoc->Loc, diag::err_pragma_loop_invalid_keyword)
+          << TrueKeyword;
       return nullptr;
     }
     if (ValueInfo->isStr("disable"))
       ValueInt = 0;
-    else if (ValueInfo->isStr("enable"))
+    else if (ValueInfo->getName() == TrueKeyword)
       ValueInt = 1;
     else {
-      S.Diag(ValueLoc->Loc, diag::err_pragma_loop_invalid_keyword);
+      S.Diag(ValueLoc->Loc, diag::err_pragma_loop_invalid_keyword)
+          << TrueKeyword;
       return nullptr;
     }
   } else if (Option == LoopHintAttr::VectorizeWidth ||
@@ -121,12 +135,14 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const AttributeList &A,
 
 static void CheckForIncompatibleAttributes(
     Sema &S, const SmallVectorImpl<const Attr *> &Attrs) {
-  // There are 3 categories of loop hints: vectorize, interleave, and
-  // unroll. Each comes in two variants: an enable/disable form and a
-  // form which takes a numeric argument. For example:
-  // unroll(enable|disable) and unroll_count(N). The following array
-  // accumulate the hints encountered while iterating through the
-  // attributes to check for compatibility.
+  // There are 3 categories of loop hints attributes: vectorize, interleave, and
+  // unroll. Each comes in two variants: a boolean form and a numeric form.  The
+  // boolean hints selectively enables/disables the transformation for the loop
+  // (for unroll, a nonzero value indicates full unrolling rather than enabling
+  // the transformation).  The numeric hint provides an integer hint (for
+  // example, unroll count) to the transformer. The following array accumulates
+  // the hints encountered while iterating through the attributes to check for
+  // compatibility.
   struct {
     const LoopHintAttr *EnableAttr;
     const LoopHintAttr *NumericAttr;
@@ -141,18 +157,19 @@ static void CheckForIncompatibleAttributes(
 
     int Option = LH->getOption();
     int Category;
+    enum { Vectorize, Interleave, Unroll };
     switch (Option) {
     case LoopHintAttr::Vectorize:
     case LoopHintAttr::VectorizeWidth:
-      Category = 0;
+      Category = Vectorize;
       break;
     case LoopHintAttr::Interleave:
     case LoopHintAttr::InterleaveCount:
-      Category = 1;
+      Category = Interleave;
       break;
     case LoopHintAttr::Unroll:
     case LoopHintAttr::UnrollCount:
-      Category = 2;
+      Category = Unroll;
       break;
     };
 
@@ -176,10 +193,11 @@ static void CheckForIncompatibleAttributes(
           << /*Duplicate=*/true << PrevAttr->getDiagnosticName()
           << LH->getDiagnosticName();
 
-    if (CategoryState.EnableAttr && !CategoryState.EnableAttr->getValue() &&
-        CategoryState.NumericAttr) {
-      // Disable hints are not compatible with numeric hints of the
-      // same category.
+    if (CategoryState.EnableAttr && CategoryState.NumericAttr &&
+        (Category == Unroll || !CategoryState.EnableAttr->getValue())) {
+      // Disable hints are not compatible with numeric hints of the same
+      // category.  As a special case, numeric unroll hints are also not
+      // compatible with "enable" form of the unroll pragma, unroll(full).
       S.Diag(OptionLoc, diag::err_pragma_loop_compatibility)
           << /*Duplicate=*/false
           << CategoryState.EnableAttr->getDiagnosticName()

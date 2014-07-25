@@ -2766,11 +2766,7 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
 
   // Constant fold unary operations with a vector integer operand.
   if (BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(Operand.getNode())) {
-    APInt Val;
-    APInt DummyUndefs;
-    unsigned SplatBitSize;
-    bool DummyHasUndefs;
-    if (BV->isConstantSplat(Val, DummyUndefs, SplatBitSize, DummyHasUndefs)) {
+    if (BV->isConstant()) {
       switch (Opcode) {
       default:
         // FIXME: Entirely reasonable to perform folding of other unary
@@ -2778,13 +2774,16 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
         break;
       case ISD::UINT_TO_FP:
       case ISD::SINT_TO_FP: {
-        APFloat APF(
-            EVTToAPFloatSemantics(VT.getVectorElementType()),
-            APInt::getNullValue(VT.getVectorElementType().getSizeInBits()));
-        (void)APF.convertFromAPInt(Val, Opcode == ISD::SINT_TO_FP,
-                                   APFloat::rmNearestTiesToEven);
-
-        return getConstantFP(APF, VT);
+        SmallVector<SDValue, 8> Ops;
+        for (int i = 0, e = VT.getVectorNumElements(); i != e; ++i) {
+          SDValue OpN = BV->getOperand(i);
+          // Let the above scalar folding handle the conversion of each
+          // element.
+          OpN = getNode(ISD::SINT_TO_FP, DL, VT.getVectorElementType(),
+                        OpN);
+          Ops.push_back(OpN);
+        }
+        return getNode(ISD::BUILD_VECTOR, DL, VT, Ops);
       }
       }
     }
@@ -4646,7 +4645,7 @@ SelectionDAG::getLoad(ISD::MemIndexedMode AM, ISD::LoadExtType ExtType,
                       SDValue Ptr, SDValue Offset,
                       MachinePointerInfo PtrInfo, EVT MemVT,
                       bool isVolatile, bool isNonTemporal, bool isInvariant,
-                      unsigned Alignment, const MDNode *TBAAInfo,
+                      unsigned Alignment, const AAMDNodes &AAInfo,
                       const MDNode *Ranges) {
   assert(Chain.getValueType() == MVT::Other &&
         "Invalid chain type");
@@ -4669,7 +4668,7 @@ SelectionDAG::getLoad(ISD::MemIndexedMode AM, ISD::LoadExtType ExtType,
   MachineFunction &MF = getMachineFunction();
   MachineMemOperand *MMO =
     MF.getMachineMemOperand(PtrInfo, Flags, MemVT.getStoreSize(), Alignment,
-                            TBAAInfo, Ranges);
+                            AAInfo, Ranges);
   return getLoad(AM, ExtType, VT, dl, Chain, Ptr, Offset, MemVT, MMO);
 }
 
@@ -4727,12 +4726,12 @@ SDValue SelectionDAG::getLoad(EVT VT, SDLoc dl,
                               MachinePointerInfo PtrInfo,
                               bool isVolatile, bool isNonTemporal,
                               bool isInvariant, unsigned Alignment,
-                              const MDNode *TBAAInfo,
+                              const AAMDNodes &AAInfo,
                               const MDNode *Ranges) {
   SDValue Undef = getUNDEF(Ptr.getValueType());
   return getLoad(ISD::UNINDEXED, ISD::NON_EXTLOAD, VT, dl, Chain, Ptr, Undef,
                  PtrInfo, VT, isVolatile, isNonTemporal, isInvariant, Alignment,
-                 TBAAInfo, Ranges);
+                 AAInfo, Ranges);
 }
 
 SDValue SelectionDAG::getLoad(EVT VT, SDLoc dl,
@@ -4747,11 +4746,11 @@ SDValue SelectionDAG::getExtLoad(ISD::LoadExtType ExtType, SDLoc dl, EVT VT,
                                  SDValue Chain, SDValue Ptr,
                                  MachinePointerInfo PtrInfo, EVT MemVT,
                                  bool isVolatile, bool isNonTemporal,
-                                 unsigned Alignment, const MDNode *TBAAInfo) {
+                                 unsigned Alignment, const AAMDNodes &AAInfo) {
   SDValue Undef = getUNDEF(Ptr.getValueType());
   return getLoad(ISD::UNINDEXED, ExtType, VT, dl, Chain, Ptr, Undef,
                  PtrInfo, MemVT, isVolatile, isNonTemporal, false, Alignment,
-                 TBAAInfo);
+                 AAInfo);
 }
 
 
@@ -4778,7 +4777,7 @@ SelectionDAG::getIndexedLoad(SDValue OrigLoad, SDLoc dl, SDValue Base,
 SDValue SelectionDAG::getStore(SDValue Chain, SDLoc dl, SDValue Val,
                                SDValue Ptr, MachinePointerInfo PtrInfo,
                                bool isVolatile, bool isNonTemporal,
-                               unsigned Alignment, const MDNode *TBAAInfo) {
+                               unsigned Alignment, const AAMDNodes &AAInfo) {
   assert(Chain.getValueType() == MVT::Other &&
         "Invalid chain type");
   if (Alignment == 0)  // Ensure that codegen never sees alignment 0
@@ -4797,7 +4796,7 @@ SDValue SelectionDAG::getStore(SDValue Chain, SDLoc dl, SDValue Val,
   MachineMemOperand *MMO =
     MF.getMachineMemOperand(PtrInfo, Flags,
                             Val.getValueType().getStoreSize(), Alignment,
-                            TBAAInfo);
+                            AAInfo);
 
   return getStore(Chain, dl, Val, Ptr, MMO);
 }
@@ -4833,7 +4832,7 @@ SDValue SelectionDAG::getTruncStore(SDValue Chain, SDLoc dl, SDValue Val,
                                     SDValue Ptr, MachinePointerInfo PtrInfo,
                                     EVT SVT,bool isVolatile, bool isNonTemporal,
                                     unsigned Alignment,
-                                    const MDNode *TBAAInfo) {
+                                    const AAMDNodes &AAInfo) {
   assert(Chain.getValueType() == MVT::Other &&
         "Invalid chain type");
   if (Alignment == 0)  // Ensure that codegen never sees alignment 0
@@ -4851,7 +4850,7 @@ SDValue SelectionDAG::getTruncStore(SDValue Chain, SDLoc dl, SDValue Val,
   MachineFunction &MF = getMachineFunction();
   MachineMemOperand *MMO =
     MF.getMachineMemOperand(PtrInfo, Flags, SVT.getStoreSize(), Alignment,
-                            TBAAInfo);
+                            AAInfo);
 
   return getTruncStore(Chain, dl, Val, Ptr, SVT, MMO);
 }

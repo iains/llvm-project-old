@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "MachONormalizedFile.h"
+#include "Atoms.h"
 
 #include "lld/Core/LLVM.h"
 #include "lld/Core/Reference.h"
@@ -136,6 +137,35 @@ public:
                                         FindAddressForAtom,
                                         normalized::Relocations&) = 0;
 
+  /// Add arch-specific References.
+  virtual void addAdditionalReferences(MachODefinedAtom &atom) { }
+
+  // Add Reference for data-in-code marker.
+  virtual void addDataInCodeReference(MachODefinedAtom &atom, uint32_t atomOff,
+                                      uint16_t length, uint16_t kind) { }
+
+  /// Returns true if the specificed Reference value marks the start or end
+  /// of a data-in-code range in an atom.
+  virtual bool isDataInCodeTransition(Reference::KindValue refKind) {
+    return false;
+  }
+
+  /// Returns the Reference value for a Reference that marks that start of
+  /// a data-in-code range.
+  virtual Reference::KindValue dataInCodeTransitionStart(
+                                                const MachODefinedAtom &atom) {
+    return 0;
+  }
+
+  /// Returns the Reference value for a Reference that marks that end of
+  /// a data-in-code range.
+  virtual Reference::KindValue dataInCodeTransitionEnd(
+                                                const MachODefinedAtom &atom) {
+    return 0;
+  }
+
+  /// Only relevant for 32-bit arm archs.
+  virtual bool isThumbFunction(const DefinedAtom &atom) { return false; }
 
   struct ReferenceInfo {
     Reference::KindArch arch;
@@ -185,7 +215,11 @@ protected:
     rLength1   = 0x0000,
     rLength2   = 0x0100,
     rLength4   = 0x0200,
-    rLength8   = 0x0300
+    rLength8   = 0x0300,
+    rLenArmLo  = rLength1,
+    rLenArmHi  = rLength2,
+    rLenThmbLo = rLength4,
+    rLenThmbHi = rLength8
   };
   /// Extract RelocPattern from normalized mach-o relocation.
   static RelocPattern relocPattern(const normalized::Relocation &reloc);
