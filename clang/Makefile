@@ -19,7 +19,7 @@ DIRS := utils/TableGen include lib tools runtime docs unittests
 PARALLEL_DIRS :=
 
 ifeq ($(BUILD_EXAMPLES),1)
-  PARALLEL_DIRS += examples
+  DIRS += examples
 endif
 endif
 
