@@ -777,14 +777,15 @@ public:
   ///
   /// This function returns true if the target allows unaligned memory accesses
   /// of the specified type in the given address space. If true, it also returns
-  /// whether the unaligned memory access is "fast" in the third argument by
+  /// whether the unaligned memory access is "fast" in the last argument by
   /// reference. This is used, for example, in situations where an array
   /// copy/move/set is converted to a sequence of store operations. Its use
   /// helps to ensure that such replacements don't generate code that causes an
   /// alignment error (trap) on the target machine.
-  virtual bool allowsUnalignedMemoryAccesses(EVT,
-                                             unsigned AddrSpace = 0,
-                                             bool * /*Fast*/ = nullptr) const {
+  virtual bool allowsMisalignedMemoryAccesses(EVT,
+                                              unsigned AddrSpace = 0,
+                                              unsigned Align = 1,
+                                              bool * /*Fast*/ = nullptr) const {
     return false;
   }
 

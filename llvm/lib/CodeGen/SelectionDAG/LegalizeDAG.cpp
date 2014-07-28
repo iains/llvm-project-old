@@ -36,6 +36,8 @@
 #include "llvm/Target/TargetMachine.h"
 using namespace llvm;
 
+#define DEBUG_TYPE "legalizedag"
+
 //===----------------------------------------------------------------------===//
 /// SelectionDAGLegalize - This takes an arbitrary SelectionDAG as input and
 /// hacks on it until the target machine can handle it.  This involves
@@ -180,6 +182,9 @@ public:
     }
   }
   void ReplaceNode(SDNode *Old, SDNode *New) {
+    DEBUG(dbgs() << " ... replacing: "; Old->dump(&DAG);
+          dbgs() << "     with:      "; New->dump(&DAG));
+
     assert(Old->getNumValues() == New->getNumValues() &&
            "Replacing one node with another that produces a different number "
            "of values!");
@@ -191,6 +196,9 @@ public:
     ReplacedNode(Old);
   }
   void ReplaceNode(SDValue Old, SDValue New) {
+    DEBUG(dbgs() << " ... replacing: "; Old->dump(&DAG);
+          dbgs() << "     with:      "; New->dump(&DAG));
+
     DAG.ReplaceAllUsesWith(Old, New);
     DAG.TransferDbgValues(Old, New);
     if (UpdatedNodes)
@@ -198,11 +206,17 @@ public:
     ReplacedNode(Old.getNode());
   }
   void ReplaceNode(SDNode *Old, const SDValue *New) {
+    DEBUG(dbgs() << " ... replacing: "; Old->dump(&DAG));
+
     DAG.ReplaceAllUsesWith(Old, New);
-    for (unsigned i = 0, e = Old->getNumValues(); i != e; ++i)
+    for (unsigned i = 0, e = Old->getNumValues(); i != e; ++i) {
+      DEBUG(dbgs() << (i == 0 ? "     with:      "
+                              : "      and:      ");
+            New[i]->dump(&DAG));
       DAG.TransferDbgValues(SDValue(Old, i), New[i]);
-    if (UpdatedNodes)
-      UpdatedNodes->insert(New->getNode());
+      if (UpdatedNodes)
+        UpdatedNodes->insert(New[i].getNode());
+    }
     ReplacedNode(Old);
   }
 };
@@ -724,10 +738,11 @@ void SelectionDAGLegalize::LegalizeStoreOps(SDNode *Node) {
           // If this is an unaligned store and the target doesn't support it,
           // expand it.
           unsigned AS = ST->getAddressSpace();
-          if (!TLI.allowsUnalignedMemoryAccesses(ST->getMemoryVT(), AS)) {
+          unsigned Align = ST->getAlignment();
+          if (!TLI.allowsMisalignedMemoryAccesses(ST->getMemoryVT(), AS, Align)) {
             Type *Ty = ST->getMemoryVT().getTypeForEVT(*DAG.getContext());
             unsigned ABIAlignment= TLI.getDataLayout()->getABITypeAlignment(Ty);
-            if (ST->getAlignment() < ABIAlignment)
+            if (Align < ABIAlignment)
               ExpandUnalignedStore(cast<StoreSDNode>(Node),
                                    DAG, TLI, this);
           }
@@ -835,12 +850,13 @@ void SelectionDAGLegalize::LegalizeStoreOps(SDNode *Node) {
         default: llvm_unreachable("This action is not supported yet!");
         case TargetLowering::Legal: {
           unsigned AS = ST->getAddressSpace();
+          unsigned Align = ST->getAlignment();
           // If this is an unaligned store and the target doesn't support it,
           // expand it.
-          if (!TLI.allowsUnalignedMemoryAccesses(ST->getMemoryVT(), AS)) {
+          if (!TLI.allowsMisalignedMemoryAccesses(ST->getMemoryVT(), AS, Align)) {
             Type *Ty = ST->getMemoryVT().getTypeForEVT(*DAG.getContext());
             unsigned ABIAlignment= TLI.getDataLayout()->getABITypeAlignment(Ty);
-            if (ST->getAlignment() < ABIAlignment)
+            if (Align < ABIAlignment)
               ExpandUnalignedStore(cast<StoreSDNode>(Node), DAG, TLI, this);
           }
           break;
@@ -886,13 +902,14 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
     default: llvm_unreachable("This action is not supported yet!");
     case TargetLowering::Legal: {
       unsigned AS = LD->getAddressSpace();
+      unsigned Align = LD->getAlignment();
       // If this is an unaligned load and the target doesn't support it,
       // expand it.
-      if (!TLI.allowsUnalignedMemoryAccesses(LD->getMemoryVT(), AS)) {
+      if (!TLI.allowsMisalignedMemoryAccesses(LD->getMemoryVT(), AS, Align)) {
         Type *Ty = LD->getMemoryVT().getTypeForEVT(*DAG.getContext());
         unsigned ABIAlignment =
           TLI.getDataLayout()->getABITypeAlignment(Ty);
-        if (LD->getAlignment() < ABIAlignment){
+        if (Align < ABIAlignment){
           ExpandUnalignedLoad(cast<LoadSDNode>(Node), DAG, TLI, RVal, RChain);
         }
       }
@@ -1077,12 +1094,13 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
         // it, expand it.
         EVT MemVT = LD->getMemoryVT();
         unsigned AS = LD->getAddressSpace();
-        if (!TLI.allowsUnalignedMemoryAccesses(MemVT, AS)) {
+        unsigned Align = LD->getAlignment();
+        if (!TLI.allowsMisalignedMemoryAccesses(MemVT, AS, Align)) {
           Type *Ty =
             LD->getMemoryVT().getTypeForEVT(*DAG.getContext());
           unsigned ABIAlignment =
             TLI.getDataLayout()->getABITypeAlignment(Ty);
-          if (LD->getAlignment() < ABIAlignment){
+          if (Align < ABIAlignment){
             ExpandUnalignedLoad(cast<LoadSDNode>(Node),
                                 DAG, TLI, Value, Chain);
           }
@@ -1156,6 +1174,8 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
 /// LegalizeOp - Return a legal replacement for the given operation, with
 /// all legal operands.
 void SelectionDAGLegalize::LegalizeOp(SDNode *Node) {
+  DEBUG(dbgs() << "\nLegalizing: "; Node->dump(&DAG));
+
   if (Node->getOpcode() == ISD::TargetConstant) // Allow illegal target nodes.
     return;
 

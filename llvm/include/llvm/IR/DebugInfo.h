@@ -128,6 +128,7 @@ public:
   bool isDerivedType() const;
   bool isCompositeType() const;
   bool isBasicType() const;
+  bool isTrivialType() const;
   bool isVariable() const;
   bool isSubprogram() const;
   bool isGlobalVariable() const;
@@ -166,16 +167,19 @@ public:
   bool Verify() const;
 };
 
-/// DIArray - This descriptor holds an array of descriptors.
-class DIArray : public DIDescriptor {
+/// DITypedArray - This descriptor holds an array of nodes with type T.
+template <typename T> class DITypedArray : public DIDescriptor {
 public:
-  explicit DIArray(const MDNode *N = nullptr) : DIDescriptor(N) {}
-
-  unsigned getNumElements() const;
-  DIDescriptor getElement(unsigned Idx) const {
-    return getDescriptorField(Idx);
+  explicit DITypedArray(const MDNode *N = nullptr) : DIDescriptor(N) {}
+  unsigned getNumElements() const {
+    return DbgNode ? DbgNode->getNumOperands() : 0;
+  }
+  T getElement(unsigned Idx) const {
+    return getFieldAs<T>(Idx);
   }
 };
+
+typedef DITypedArray<DIDescriptor> DIArray;
 
 /// DIEnumerator - A wrapper for an enumerator (e.g. X and Y in 'enum {X,Y}').
 /// FIXME: it seems strange that this doesn't have either a reference to the
@@ -195,6 +199,7 @@ public:
 template <typename T> class DIRef;
 typedef DIRef<DIScope> DIScopeRef;
 typedef DIRef<DIType> DITypeRef;
+typedef DITypedArray<DITypeRef> DITypeArray;
 
 /// DIScope - A base class for various scopes.
 ///
@@ -302,15 +307,36 @@ public:
   /// Verify - Verify that a type descriptor is well formed.
   bool Verify() const;
 
-  DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(2); }
-  StringRef getName() const { return getStringField(3); }
-  unsigned getLineNumber() const { return getUnsignedField(4); }
-  uint64_t getSizeInBits() const { return getUInt64Field(5); }
-  uint64_t getAlignInBits() const { return getUInt64Field(6); }
+  DIScopeRef getContext() const { 
+    assert(!isTrivialType() && "no context for DITrivialType");
+    return getFieldAs<DIScopeRef>(2);
+  }
+  StringRef getName() const {
+    assert(!isTrivialType() && "no name for DITrivialType");
+    return getStringField(3);
+  }
+  unsigned getLineNumber() const {
+    assert(!isTrivialType() && "no line number for DITrivialType");
+    return getUnsignedField(4);
+  }
+  uint64_t getSizeInBits() const {
+    assert(!isTrivialType() && "no SizeInBits for DITrivialType");
+    return getUInt64Field(5);
+  }
+  uint64_t getAlignInBits() const {
+    assert(!isTrivialType() && "no AlignInBits for DITrivialType");
+    return getUInt64Field(6);
+  }
   // FIXME: Offset is only used for DW_TAG_member nodes.  Making every type
   // carry this is just plain insane.
-  uint64_t getOffsetInBits() const { return getUInt64Field(7); }
-  unsigned getFlags() const { return getUnsignedField(8); }
+  uint64_t getOffsetInBits() const {
+    assert(!isTrivialType() && "no OffsetInBits for DITrivialType");
+    return getUInt64Field(7);
+  }
+  unsigned getFlags() const {
+    assert(!isTrivialType() && "no flag for DITrivialType");
+    return getUnsignedField(8);
+  }
   bool isPrivate() const { return (getFlags() & FlagPrivate) != 0; }
   bool isProtected() const { return (getFlags() & FlagProtected) != 0; }
   bool isForwardDecl() const { return (getFlags() & FlagFwdDecl) != 0; }
@@ -341,6 +367,12 @@ public:
   /// this descriptor.
   void replaceAllUsesWith(LLVMContext &VMContext, DIDescriptor D);
   void replaceAllUsesWith(MDNode *D);
+};
+
+class DITrivialType : public DIType {
+public:
+  explicit DITrivialType(const MDNode *N = nullptr) : DIType(N) {}
+  bool Verify() const;
 };
 
 /// DIBasicType - A basic type, like 'int' or 'float'.
@@ -393,12 +425,19 @@ public:
 class DICompositeType : public DIDerivedType {
   friend class DIDescriptor;
   void printInternal(raw_ostream &OS) const;
+  void setArraysHelper(MDNode *Elements, MDNode *TParams);
 
 public:
   explicit DICompositeType(const MDNode *N = nullptr) : DIDerivedType(N) {}
 
-  DIArray getTypeArray() const { return getFieldAs<DIArray>(10); }
-  void setTypeArray(DIArray Elements, DIArray TParams = DIArray());
+  DIArray getElements() const { return getFieldAs<DIArray>(10); }
+  template <typename T>
+  void setArrays(DITypedArray<T> Elements, DIArray TParams = DIArray()) {
+    assert((!TParams || DbgNode->getNumOperands() == 15) &&
+           "If you're setting the template parameters this should include a slot "
+           "for that!");
+    setArraysHelper(Elements, TParams);
+  }
   unsigned getRunTimeLang() const { return getUnsignedField(11); }
   DITypeRef getContainingType() const { return getFieldAs<DITypeRef>(12); }
   void setContainingType(DICompositeType ContainingType);
@@ -568,14 +607,6 @@ public:
   DIScope getContext() const { return getFieldAs<DIScope>(2); }
   StringRef getName() const { return getStringField(3); }
   unsigned getLineNumber() const { return getUnsignedField(4); }
-  bool Verify() const;
-};
-
-/// DIUnspecifiedParameter - This is a wrapper for unspecified parameters.
-class DIUnspecifiedParameter : public DIDescriptor {
-public:
-  explicit DIUnspecifiedParameter(const MDNode *N = nullptr)
-    : DIDescriptor(N) {}
   bool Verify() const;
 };
 

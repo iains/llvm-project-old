@@ -240,14 +240,12 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
 // TargetLowering queries
 //===----------------------------------------------------------------------===//
 
-bool SITargetLowering::allowsUnalignedMemoryAccesses(EVT  VT,
-                                                     unsigned AddrSpace,
-                                                     bool *IsFast) const {
+bool SITargetLowering::allowsMisalignedMemoryAccesses(EVT  VT,
+                                                      unsigned AddrSpace,
+                                                      unsigned Align,
+                                                      bool *IsFast) const {
   if (IsFast)
     *IsFast = false;
-
-  // XXX: This depends on the address space and also we may want to revist
-  // the alignment values we specify in the DataLayout.
 
   // TODO: I think v3i32 should allow unaligned accesses on CI with DS_READ_B96,
   // which isn't a simple VT.
@@ -261,8 +259,12 @@ bool SITargetLowering::allowsUnalignedMemoryAccesses(EVT  VT,
   // XXX - The only mention I see of this in the ISA manual is for LDS direct
   // reads the "byte address and must be dword aligned". Is it also true for the
   // normal loads and stores?
-  if (AddrSpace == AMDGPUAS::LOCAL_ADDRESS)
-    return false;
+  if (AddrSpace == AMDGPUAS::LOCAL_ADDRESS) {
+    // ds_read/write_b64 require 8-byte alignment, but we can do a 4 byte
+    // aligned, 8 byte access in a single operation using ds_read2/write2_b32
+    // with adjacent offsets.
+    return Align % 4 == 0;
+  }
 
   // 8.1.6 - For Dword or larger reads or writes, the two LSBs of the
   // byte-address are ignored, thus forcing Dword alignment.
@@ -270,6 +272,26 @@ bool SITargetLowering::allowsUnalignedMemoryAccesses(EVT  VT,
   if (IsFast)
     *IsFast = true;
   return VT.bitsGT(MVT::i32);
+}
+
+EVT SITargetLowering::getOptimalMemOpType(uint64_t Size, unsigned DstAlign,
+                                          unsigned SrcAlign, bool IsMemset,
+                                          bool ZeroMemset,
+                                          bool MemcpyStrSrc,
+                                          MachineFunction &MF) const {
+  // FIXME: Should account for address space here.
+
+  // The default fallback uses the private pointer size as a guess for a type to
+  // use. Make sure we switch these to 64-bit accesses.
+
+  if (Size >= 16 && DstAlign >= 4) // XXX: Should only do for global
+    return MVT::v4i32;
+
+  if (Size >= 8 && DstAlign >= 4)
+    return MVT::v2i32;
+
+  // Use the default.
+  return MVT::Other;
 }
 
 TargetLoweringBase::LegalizeTypeAction
@@ -288,19 +310,27 @@ bool SITargetLowering::shouldConvertConstantLoadToIntImm(const APInt &Imm,
 }
 
 SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT, EVT MemVT,
-                                         SDLoc DL, SDValue Chain,
+                                         SDLoc SL, SDValue Chain,
                                          unsigned Offset, bool Signed) const {
-  MachineRegisterInfo &MRI = DAG.getMachineFunction().getRegInfo();
-  PointerType *PtrTy = PointerType::get(VT.getTypeForEVT(*DAG.getContext()),
-                                            AMDGPUAS::CONSTANT_ADDRESS);
-  SDValue BasePtr =  DAG.getCopyFromReg(Chain, DL,
-                           MRI.getLiveInVirtReg(AMDGPU::SGPR0_SGPR1), MVT::i64);
-  SDValue Ptr = DAG.getNode(ISD::ADD, DL, MVT::i64, BasePtr,
-                                             DAG.getConstant(Offset, MVT::i64));
-  return DAG.getExtLoad(Signed ? ISD::SEXTLOAD : ISD::ZEXTLOAD, DL, VT, Chain, Ptr,
-                            MachinePointerInfo(UndefValue::get(PtrTy)), MemVT,
-                            false, false, MemVT.getSizeInBits() >> 3);
+  const DataLayout *DL = getDataLayout();
 
+  Type *Ty = VT.getTypeForEVT(*DAG.getContext());
+
+  MachineRegisterInfo &MRI = DAG.getMachineFunction().getRegInfo();
+  PointerType *PtrTy = PointerType::get(Ty, AMDGPUAS::CONSTANT_ADDRESS);
+  SDValue BasePtr =  DAG.getCopyFromReg(Chain, SL,
+                           MRI.getLiveInVirtReg(AMDGPU::SGPR0_SGPR1), MVT::i64);
+  SDValue Ptr = DAG.getNode(ISD::ADD, SL, MVT::i64, BasePtr,
+                                             DAG.getConstant(Offset, MVT::i64));
+  SDValue PtrOffset = DAG.getUNDEF(getPointerTy(AMDGPUAS::CONSTANT_ADDRESS));
+  MachinePointerInfo PtrInfo(UndefValue::get(PtrTy));
+
+  return DAG.getLoad(ISD::UNINDEXED, Signed ? ISD::SEXTLOAD : ISD::ZEXTLOAD,
+                     VT, SL, Chain, Ptr, PtrOffset, PtrInfo, MemVT,
+                     false, // isVolatile
+                     true, // isNonTemporal
+                     true, // isInvariant
+                     DL->getABITypeAlignment(Ty)); // Alignment
 }
 
 SDValue SITargetLowering::LowerFormalArguments(

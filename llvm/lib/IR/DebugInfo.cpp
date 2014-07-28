@@ -39,6 +39,7 @@ bool DIDescriptor::Verify() const {
   return DbgNode &&
          (DIDerivedType(DbgNode).Verify() ||
           DICompositeType(DbgNode).Verify() || DIBasicType(DbgNode).Verify() ||
+          DITrivialType(DbgNode).Verify() ||
           DIVariable(DbgNode).Verify() || DISubprogram(DbgNode).Verify() ||
           DIGlobalVariable(DbgNode).Verify() || DIFile(DbgNode).Verify() ||
           DICompileUnit(DbgNode).Verify() || DINameSpace(DbgNode).Verify() ||
@@ -46,7 +47,6 @@ bool DIDescriptor::Verify() const {
           DILexicalBlockFile(DbgNode).Verify() ||
           DISubrange(DbgNode).Verify() || DIEnumerator(DbgNode).Verify() ||
           DIObjCProperty(DbgNode).Verify() ||
-          DIUnspecifiedParameter(DbgNode).Verify() ||
           DITemplateTypeParameter(DbgNode).Verify() ||
           DITemplateValueParameter(DbgNode).Verify() ||
           DIImportedEntity(DbgNode).Verify());
@@ -155,6 +155,10 @@ MDNode *DIVariable::getInlinedAt() const { return getNodeField(DbgNode, 7); }
 // Predicates
 //===----------------------------------------------------------------------===//
 
+bool DIDescriptor::isTrivialType() const {
+  return DbgNode && getTag() == dwarf::DW_TAG_unspecified_parameters;
+}
+
 /// isBasicType - Return true if the specified tag is legal for
 /// DIBasicType.
 bool DIDescriptor::isBasicType() const {
@@ -225,7 +229,8 @@ bool DIDescriptor::isVariable() const {
 
 /// isType - Return true if the specified tag is legal for DIType.
 bool DIDescriptor::isType() const {
-  return isBasicType() || isCompositeType() || isDerivedType();
+  return isBasicType() || isCompositeType() || isDerivedType() ||
+         isTrivialType();
 }
 
 /// isSubprogram - Return true if the specified tag is legal for
@@ -332,12 +337,6 @@ bool DIDescriptor::isImportedEntity() const {
 //===----------------------------------------------------------------------===//
 // Simple Descriptor Constructors and other Methods
 //===----------------------------------------------------------------------===//
-
-unsigned DIArray::getNumElements() const {
-  if (!DbgNode)
-    return 0;
-  return DbgNode->getNumOperands();
-}
 
 /// replaceAllUsesWith - Replace all uses of the MDNode used by this
 /// type with the one in the passed descriptor.
@@ -456,7 +455,7 @@ bool DIType::Verify() const {
 
   // FIXME: Sink this into the various subclass verifies.
   uint16_t Tag = getTag();
-  if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
+  if (!isBasicType() && !isTrivialType() && Tag != dwarf::DW_TAG_const_type &&
       Tag != dwarf::DW_TAG_volatile_type && Tag != dwarf::DW_TAG_pointer_type &&
       Tag != dwarf::DW_TAG_ptr_to_member_type &&
       Tag != dwarf::DW_TAG_reference_type &&
@@ -471,6 +470,8 @@ bool DIType::Verify() const {
   // a CompositeType.
   if (isBasicType())
     return DIBasicType(DbgNode).Verify();
+  else if (isTrivialType())
+    return DITrivialType(DbgNode).Verify();
   else if (isCompositeType())
     return DICompositeType(DbgNode).Verify();
   else if (isDerivedType())
@@ -482,6 +483,10 @@ bool DIType::Verify() const {
 /// Verify - Verify that a basic type descriptor is well formed.
 bool DIBasicType::Verify() const {
   return isBasicType() && DbgNode->getNumOperands() == 10;
+}
+
+bool DITrivialType::Verify() const {
+  return isTrivialType() && DbgNode->getNumOperands() == 1;
 }
 
 /// Verify - Verify that a derived type descriptor is well formed.
@@ -624,11 +629,6 @@ bool DILexicalBlockFile::Verify() const {
   return isLexicalBlockFile() && DbgNode->getNumOperands() == 3;
 }
 
-/// \brief Verify that an unspecified parameter descriptor is well formed.
-bool DIUnspecifiedParameter::Verify() const {
-  return isUnspecifiedParameter() && DbgNode->getNumOperands() == 1;
-}
-
 /// \brief Verify that the template type parameter descriptor is well formed.
 bool DITemplateTypeParameter::Verify() const {
   return isTemplateTypeParameter() && DbgNode->getNumOperands() == 7;
@@ -670,10 +670,7 @@ static void VerifySubsetOf(const MDNode *LHS, const MDNode *RHS) {
 #endif
 
 /// \brief Set the array of member DITypes.
-void DICompositeType::setTypeArray(DIArray Elements, DIArray TParams) {
-  assert((!TParams || DbgNode->getNumOperands() == 15) &&
-         "If you're setting the template parameters this should include a slot "
-         "for that!");
+void DICompositeType::setArraysHelper(MDNode *Elements, MDNode *TParams) {
   TrackingVH<MDNode> N(*this);
   if (Elements) {
 #ifndef NDEBUG
@@ -1058,7 +1055,7 @@ void DebugInfoFinder::processType(DIType DT) {
   if (DT.isCompositeType()) {
     DICompositeType DCT(DT);
     processType(DCT.getTypeDerivedFrom().resolve(TypeIdentifierMap));
-    DIArray DA = DCT.getTypeArray();
+    DIArray DA = DCT.getElements();
     for (unsigned i = 0, e = DA.getNumElements(); i != e; ++i) {
       DIDescriptor D = DA.getElement(i);
       if (D.isType())
@@ -1290,7 +1287,7 @@ void DIEnumerator::printInternal(raw_ostream &OS) const {
 }
 
 void DIType::printInternal(raw_ostream &OS) const {
-  if (!DbgNode)
+  if (!DbgNode || isTrivialType())
     return;
 
   StringRef Res = getName();
@@ -1341,7 +1338,7 @@ void DIDerivedType::printInternal(raw_ostream &OS) const {
 
 void DICompositeType::printInternal(raw_ostream &OS) const {
   DIType::printInternal(OS);
-  DIArray A = getTypeArray();
+  DIArray A = getElements();
   OS << " [" << A.getNumElements() << " elements]";
 }
 
