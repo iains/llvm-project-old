@@ -468,8 +468,8 @@ DIE *DwarfDebug::createScopeChildrenDIE(
 
     // If this is a variadic function, add an unspecified parameter.
     DISubprogram SP(Scope->getScopeNode());
-    DIArray FnArgs = SP.getType().getElements();
-    if (FnArgs.getElement(FnArgs.getNumElements() - 1)
+    DITypeArray FnArgs = SP.getType().getTypeArray();
+    if (resolve(FnArgs.getElement(FnArgs.getNumElements() - 1))
             .isUnspecifiedParameter()) {
       Children.push_back(
           make_unique<DIE>(dwarf::DW_TAG_unspecified_parameters));
@@ -762,8 +762,13 @@ void DwarfDebug::beginModule() {
     for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i)
       SPMap.insert(std::make_pair(SPs.getElement(i), &CU));
     DIArray EnumTypes = CUNode.getEnumTypes();
-    for (unsigned i = 0, e = EnumTypes.getNumElements(); i != e; ++i)
-      CU.getOrCreateTypeDIE(EnumTypes.getElement(i));
+    for (unsigned i = 0, e = EnumTypes.getNumElements(); i != e; ++i) {
+      DIType Ty(EnumTypes.getElement(i));
+      // The enum types array by design contains pointers to
+      // MDNodes rather than DIRefs. Unique them here.
+      DIType UniqueTy(resolve(Ty.getRef()));
+      CU.getOrCreateTypeDIE(UniqueTy);
+    }
     DIArray RetainedTypes = CUNode.getRetainedTypes();
     for (unsigned i = 0, e = RetainedTypes.getNumElements(); i != e; ++i) {
       DIType Ty(RetainedTypes.getElement(i));

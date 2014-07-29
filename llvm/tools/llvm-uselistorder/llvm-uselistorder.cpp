@@ -40,6 +40,14 @@ static cl::opt<std::string> InputFilename(cl::Positional,
                                           cl::init("-"),
                                           cl::value_desc("filename"));
 
+static cl::opt<bool> SaveTemps("save-temps", cl::desc("Save temp files"),
+                               cl::init(false));
+
+static cl::opt<unsigned>
+    NumShuffles("num-shuffles",
+                cl::desc("Number of times to shuffle and verify use-lists"),
+                cl::init(1));
+
 namespace {
 
 struct TempFile {
@@ -89,7 +97,7 @@ bool TempFile::init(const std::string &Ext) {
   assert(!Vector.empty());
 
   Filename.assign(Vector.data(), Vector.data() + Vector.size());
-  Remover.setFile(Filename);
+  Remover.setFile(Filename, !SaveTemps);
   DEBUG(dbgs() << " - filename = " << Filename << "\n");
   return false;
 }
@@ -367,13 +375,19 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  shuffleUseLists(*M);
-  if (!verifyBitcodeUseListOrder(*M))
-    report_fatal_error("bitcode use-list order changed");
+  for (unsigned I = 0, E = NumShuffles; I != E; ++I) {
+    DEBUG(dbgs() << "*** iteration: " << I << " ***\n");
 
-  if (shouldPreserveBitcodeUseListOrder())
-    if (!verifyAssemblyUseListOrder(*M))
-      report_fatal_error("assembly use-list order changed");
+    // Shuffle with a different seed each time so that use-lists that aren't
+    // modified the first time are likely to be modified the next time.
+    shuffleUseLists(*M, I);
+    if (!verifyBitcodeUseListOrder(*M))
+      report_fatal_error("bitcode use-list order changed");
+
+    if (shouldPreserveAssemblyUseListOrder())
+      if (!verifyAssemblyUseListOrder(*M))
+        report_fatal_error("assembly use-list order changed");
+  }
 
   return 0;
 }
