@@ -26,7 +26,31 @@
 using namespace llvm;
 
 namespace {
-typedef DenseMap<const Value *, std::pair<unsigned, bool>> OrderMap;
+struct OrderMap {
+  DenseMap<const Value *, std::pair<unsigned, bool>> IDs;
+  unsigned LastGlobalConstantID;
+  unsigned LastGlobalValueID;
+
+  OrderMap() : LastGlobalConstantID(0), LastGlobalValueID(0) {}
+
+  bool isGlobalConstant(unsigned ID) const {
+    return ID <= LastGlobalConstantID;
+  }
+  bool isGlobalValue(unsigned ID) const {
+    return ID <= LastGlobalValueID && !isGlobalConstant(ID);
+  }
+
+  unsigned size() const { return IDs.size(); }
+  std::pair<unsigned, bool> &operator[](const Value *V) { return IDs[V]; }
+  std::pair<unsigned, bool> lookup(const Value *V) const {
+    return IDs.lookup(V);
+  }
+  void index(const Value *V) {
+    // Explicitly sequence get-size and insert-value operations to avoid UB.
+    unsigned ID = IDs.size() + 1;
+    IDs[V].first = ID;
+  }
+};
 }
 
 static void orderValue(const Value *V, OrderMap &OM) {
@@ -36,12 +60,12 @@ static void orderValue(const Value *V, OrderMap &OM) {
   if (const Constant *C = dyn_cast<Constant>(V))
     if (C->getNumOperands() && !isa<GlobalValue>(C))
       for (const Value *Op : C->operands())
-        if (!isa<BasicBlock>(Op))
+        if (!isa<BasicBlock>(Op) && !isa<GlobalValue>(Op))
           orderValue(Op, OM);
 
   // Note: we cannot cache this lookup above, since inserting into the map
-  // changes the map's size, and thus affects the ID.
-  OM[V].first = OM.size() + 1;
+  // changes the map's size, and thus affects the other IDs.
+  OM.index(V);
 }
 
 static OrderMap orderModule(const Module *M) {
@@ -49,12 +73,11 @@ static OrderMap orderModule(const Module *M) {
   // and ValueEnumerator::incorporateFunction().
   OrderMap OM;
 
-  for (const GlobalVariable &G : M->globals())
-    orderValue(&G, OM);
-  for (const Function &F : *M)
-    orderValue(&F, OM);
-  for (const GlobalAlias &A : M->aliases())
-    orderValue(&A, OM);
+  // In the reader, initializers of GlobalValues are set *after* all the
+  // globals have been read.  Rather than awkwardly modeling this behaviour
+  // directly in predictValueUseListOrderImpl(), just assign IDs to
+  // initializers of GlobalValues before GlobalValues themselves to model this
+  // implicitly.
   for (const GlobalVariable &G : M->globals())
     if (G.hasInitializer())
       orderValue(G.getInitializer(), OM);
@@ -63,6 +86,23 @@ static OrderMap orderModule(const Module *M) {
   for (const Function &F : *M)
     if (F.hasPrefixData())
       orderValue(F.getPrefixData(), OM);
+  OM.LastGlobalConstantID = OM.size();
+
+  // Initializers of GlobalValues are processed in
+  // BitcodeReader::ResolveGlobalAndAliasInits().  Match the order there rather
+  // than ValueEnumerator, and match the code in predictValueUseListOrderImpl()
+  // by giving IDs in reverse order.
+  //
+  // Since GlobalValues never reference each other directly (just through
+  // initializers), their relative IDs only matter for determining order of
+  // uses in their initializers.
+  for (const Function &F : *M)
+    orderValue(&F, OM);
+  for (const GlobalAlias &A : M->aliases())
+    orderValue(&A, OM);
+  for (const GlobalVariable &G : M->globals())
+    orderValue(&G, OM);
+  OM.LastGlobalValueID = OM.size();
 
   for (const Function &F : *M) {
     if (F.isDeclaration())
@@ -102,8 +142,8 @@ static void predictValueUseListOrderImpl(const Value *V, const Function *F,
     // We may have lost some users.
     return;
 
-  std::sort(List.begin(), List.end(),
-            [&OM, ID](const Entry &L, const Entry &R) {
+  bool IsGlobalValue = OM.isGlobalValue(ID);
+  std::sort(List.begin(), List.end(), [&](const Entry &L, const Entry &R) {
     const Use *LU = L.first;
     const Use *RU = R.first;
     if (LU == RU)
@@ -111,22 +151,36 @@ static void predictValueUseListOrderImpl(const Value *V, const Function *F,
 
     auto LID = OM.lookup(LU->getUser()).first;
     auto RID = OM.lookup(RU->getUser()).first;
+
+    // Global values are processed in reverse order.
+    //
+    // Moreover, initializers of GlobalValues are set *after* all the globals
+    // have been read (despite having earlier IDs).  Rather than awkwardly
+    // modeling this behaviour here, orderModule() has assigned IDs to
+    // initializers of GlobalValues before GlobalValues themselves.
+    if (OM.isGlobalValue(LID) && OM.isGlobalValue(RID))
+      return LID < RID;
+
     // If ID is 4, then expect: 7 6 5 1 2 3.
     if (LID < RID) {
       if (RID < ID)
-        return true;
+        if (!IsGlobalValue) // GlobalValue uses don't get reversed.
+          return true;
       return false;
     }
     if (RID < LID) {
       if (LID < ID)
-        return false;
+        if (!IsGlobalValue) // GlobalValue uses don't get reversed.
+          return false;
       return true;
     }
+
     // LID and RID are equal, so we have different operands of the same user.
     // Assume operands are added in order for all instructions.
-    if (LU->getOperandNo() < RU->getOperandNo())
-      return LID < ID;
-    return ID < LID;
+    if (LID < ID)
+      if (!IsGlobalValue) // GlobalValue uses don't get reversed.
+        return LU->getOperandNo() < RU->getOperandNo();
+    return LU->getOperandNo() > RU->getOperandNo();
   });
 
   if (std::is_sorted(
@@ -136,11 +190,10 @@ static void predictValueUseListOrderImpl(const Value *V, const Function *F,
     return;
 
   // Store the shuffle.
-  UseListOrder O(V, F, List.size());
-  assert(List.size() == O.Shuffle.size() && "Wrong size");
+  Stack.emplace_back(V, F, List.size());
+  assert(List.size() == Stack.back().Shuffle.size() && "Wrong size");
   for (size_t I = 0, E = List.size(); I != E; ++I)
-    O.Shuffle[I] = List[I].second;
-  Stack.emplace_back(std::move(O));
+    Stack.back().Shuffle[I] = List[I].second;
 }
 
 static void predictValueUseListOrder(const Value *V, const Function *F,

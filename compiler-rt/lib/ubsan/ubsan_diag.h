@@ -206,11 +206,17 @@ public:
 
 void MaybePrintStackTrace(uptr pc, uptr bp);
 
-#define MAYBE_PRINT_STACK_TRACE() do { \
-  GET_CALLER_PC_BP_SP; \
-  (void)sp; \
-  MaybePrintStackTrace(pc, bp); \
-} while (0)
+/// \brief Instantiate this class before printing diagnostics in the error
+/// report. This class ensures that reports from different threads and from
+/// different sanitizers won't be mixed. If DieAfterReport is specified, it
+/// will terminate the program in the destructor.
+class ScopedReport {
+  bool DieAfterReport;
+
+public:
+  ScopedReport(bool DieAfterReport);
+  ~ScopedReport();
+};
 
 } // namespace __ubsan
 

@@ -62,6 +62,10 @@ public:
     return RI;
   }
 
+  bool getLdStBaseRegImmOfs(MachineInstr *LdSt,
+                            unsigned &BaseReg, unsigned &Offset,
+                            const TargetRegisterInfo *TRI) const final;
+
   void copyPhysReg(MachineBasicBlock &MBB,
                    MachineBasicBlock::iterator MI, DebugLoc DL,
                    unsigned DestReg, unsigned SrcReg,
@@ -98,6 +102,8 @@ public:
   bool isDS(uint16_t Opcode) const;
   bool isMIMG(uint16_t Opcode) const;
   bool isSMRD(uint16_t Opcode) const;
+  bool isMUBUF(uint16_t Opcode) const;
+  bool isMTBUF(uint16_t Opcode) const;
   bool isVOP1(uint16_t Opcode) const;
   bool isVOP2(uint16_t Opcode) const;
   bool isVOP3(uint16_t Opcode) const;
