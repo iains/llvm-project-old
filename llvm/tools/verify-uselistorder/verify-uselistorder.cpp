@@ -1,4 +1,4 @@
-//===- llvm-uselistorder.cpp - The LLVM Modular Optimizer -----------------===//
+//===- verify-uselistorder.cpp - The LLVM Modular Optimizer ---------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Verify that use-list order can be serialized correctly.
+// Verify that use-list order can be serialized correctly.  After reading the
+// provided IR, this tool shuffles the use-lists and then writes and reads to a
+// separate Module whose use-list orders are compared to the original.
 //
 //===----------------------------------------------------------------------===//
 
@@ -137,7 +139,7 @@ std::unique_ptr<Module> TempFile::readBitcode(LLVMContext &Context) const {
   }
 
   std::unique_ptr<MemoryBuffer> Buffer = std::move(BufferOr.get());
-  ErrorOr<Module *> ModuleOr = parseBitcodeFile(Buffer.release(), Context);
+  ErrorOr<Module *> ModuleOr = parseBitcodeFile(Buffer.get(), Context);
   if (!ModuleOr) {
     DEBUG(dbgs() << "error: " << ModuleOr.getError().message() << "\n");
     return nullptr;

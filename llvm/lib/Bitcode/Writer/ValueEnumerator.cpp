@@ -80,12 +80,15 @@ static OrderMap orderModule(const Module *M) {
   // implicitly.
   for (const GlobalVariable &G : M->globals())
     if (G.hasInitializer())
-      orderValue(G.getInitializer(), OM);
+      if (!isa<GlobalValue>(G.getInitializer()))
+        orderValue(G.getInitializer(), OM);
   for (const GlobalAlias &A : M->aliases())
-    orderValue(A.getAliasee(), OM);
+    if (!isa<GlobalValue>(A.getAliasee()))
+      orderValue(A.getAliasee(), OM);
   for (const Function &F : *M)
     if (F.hasPrefixData())
-      orderValue(F.getPrefixData(), OM);
+      if (!isa<GlobalValue>(F.getPrefixData()))
+        orderValue(F.getPrefixData(), OM);
   OM.LastGlobalConstantID = OM.size();
 
   // Initializers of GlobalValues are processed in
@@ -211,9 +214,9 @@ static void predictValueUseListOrder(const Value *V, const Function *F,
 
   // Recursive descent into constants.
   if (const Constant *C = dyn_cast<Constant>(V))
-    if (C->getNumOperands() && !isa<GlobalValue>(C))
+    if (C->getNumOperands()) // Visit GlobalValues.
       for (const Value *Op : C->operands())
-        if (isa<Constant>(Op) && !isa<GlobalValue>(Op))
+        if (isa<Constant>(Op)) // Visit GlobalValues.
           predictValueUseListOrder(Op, F, OM, Stack);
 }
 
@@ -241,8 +244,7 @@ static UseListOrderStack predictUseListOrder(const Module *M) {
     for (const BasicBlock &BB : F)
       for (const Instruction &I : BB)
         for (const Value *Op : I.operands())
-          if ((isa<Constant>(*Op) && !isa<GlobalValue>(*Op)) ||
-              isa<InlineAsm>(*Op))
+          if (isa<Constant>(*Op) || isa<InlineAsm>(*Op)) // Visit GlobalValues.
             predictValueUseListOrder(Op, &F, OM, Stack);
     for (const BasicBlock &BB : F)
       for (const Instruction &I : BB)

@@ -3103,10 +3103,25 @@ def TLBIEL : XForm_16b<31, 274, (outs), (ins gprc:$RB),
 def TLBIE : XForm_26<31, 306, (outs), (ins gprc:$RS, gprc:$RB),
                           "tlbie $RB,$RS", IIC_SprTLBIE, []>;
 
+def TLBSX : XForm_tlb<914, (outs), (ins gprc:$A, gprc:$B), "tlbsx $A, $B",
+                IIC_LdStLoad>, Requires<[IsBookE]>;
+
+def TLBIVAX : XForm_tlb<786, (outs), (ins gprc:$A, gprc:$B), "tlbivax $A, $B",
+                IIC_LdStLoad>, Requires<[IsBookE]>;
+
+def TLBRE : XForm_24_eieio<31, 946, (outs), (ins),
+                           "tlbre", IIC_LdStLoad, []>, Requires<[IsBookE]>;
+
+def TLBWE : XForm_24_eieio<31, 978, (outs), (ins),
+                           "tlbwe", IIC_LdStLoad, []>, Requires<[IsBookE]>;
+
 def RFI : XForm_0<19, 50, (outs), (ins), "rfi", IIC_BrB, []>,
                   Requires<[IsBookE]>;
 def RFCI : XForm_0<19, 51, (outs), (ins), "rfci", IIC_BrB, []>,
                    Requires<[IsBookE]>;
+
+def RFDI : XForm_0<19, 39, (outs), (ins), "rfdi", IIC_BrB, []>;
+def RFMCI : XForm_0<19, 38, (outs), (ins), "rfmci", IIC_BrB, []>;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Assembler Instruction Aliases
@@ -3175,6 +3190,9 @@ def : InstAlias<"mfcfar $Rx", (MFSPR gprc:$Rx, 28)>;
 
 def : InstAlias<"mtamr $Rx", (MTSPR 29, gprc:$Rx)>;
 def : InstAlias<"mfamr $Rx", (MFSPR gprc:$Rx, 29)>;
+
+def : InstAlias<"mtpid $Rx", (MTSPR 48, gprc:$Rx)>, Requires<[IsBookE]>;
+def : InstAlias<"mfpid $Rx", (MFSPR gprc:$Rx, 48)>, Requires<[IsBookE]>;
 
 def : InstAlias<"mftb $Rx", (MFTB gprc:$Rx, 268)>;
 def : InstAlias<"mftbu $Rx", (MFTB gprc:$Rx, 269)>;

@@ -1,4 +1,4 @@
-; RUN: llvm-uselistorder < %s -preserve-bc-use-list-order -num-shuffles=5
+; RUN: verify-uselistorder < %s -preserve-bc-use-list-order -num-shuffles=5
 
 @a = global [4 x i1] [i1 0, i1 1, i1 0, i1 1]
 @b = alias i1* getelementptr ([4 x i1]* @a, i64 0, i64 2)
@@ -16,6 +16,24 @@
 @var1 = global i3* @target
 @var2 = global i3* @target
 @var3 = global i3* @target
+
+; Check use-list order for a global when used both by a global and in a
+; function.
+@globalAndFunction = global i4 4
+@globalAndFunctionGlobalUser = global i4* @globalAndFunction
+
+; Check use-list order for constants used by globals that are themselves used
+; as aliases.  This confirms that this globals are recognized as GlobalValues
+; (not general constants).
+@const.global = global i63 0
+@const.global.ptr = global i63* @const.global
+@const.global.2 = global i63 0
+
+; Same as above, but for aliases.
+@const.target = global i62 1
+@const.alias = alias i62* @const.target
+@const.alias.ptr = alias i62* @const.alias
+@const.alias.2 = alias i62* @const.target
 
 define i64 @f(i64 %f) {
 entry:
@@ -93,4 +111,10 @@ first:
   %gh = mul i32 %g, %h
   %gotosecond = icmp slt i32 %gh, -9
   br i1 %gotosecond, label %second, label %exit
+}
+
+define i4 @globalAndFunctionFunctionUser() {
+entry:
+  %local = load i4* @globalAndFunction
+  ret i4 %local
 }

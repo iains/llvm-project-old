@@ -3473,6 +3473,12 @@
 # CHECK-BE: mfspr 2, 29                     # encoding: [0x7c,0x5d,0x02,0xa6]
 # CHECK-LE: mfspr 2, 29                     # encoding: [0xa6,0x02,0x5d,0x7c]
             mfamr 2
+# CHECK-BE: mtspr 48, 2                     # encoding: [0x7c,0x50,0x0b,0xa6]
+# CHECK-LE: mtspr 48, 2                     # encoding: [0xa6,0x0b,0x50,0x7c]
+            mtpid 2
+# CHECK-BE: mfspr 2, 48                     # encoding: [0x7c,0x50,0x0a,0xa6]
+# CHECK-LE: mfspr 2, 48                     # encoding: [0xa6,0x0a,0x50,0x7c]
+            mfpid 2
 # CHECK-BE: mtlr 2                          # encoding: [0x7c,0x48,0x03,0xa6]
 # CHECK-LE: mtlr 2                          # encoding: [0xa6,0x03,0x48,0x7c]
             mtlr 2
@@ -3579,3 +3585,11 @@
 # CHECK-BE: mtspr 275, 4                    # encoding: [0x7c,0x93,0x43,0xa6]
 # CHECK-LE: mtspr 275, 4                    # encoding: [0xa6,0x43,0x93,0x7c]
             mtsprg3 %r4
+
+# e500/e500mc instructions:
+# CHECK-BE: rfdi                            # encoding: [0x4c,0x00,0x00,0x4e]
+# CHECK-LE: rfdi                            # encoding: [0x4e,0x00,0x00,0x4c]
+            rfdi
+# CHECK-BE: rfmci                            # encoding: [0x4c,0x00,0x00,0x4c]
+# CHECK-LE: rfmci                            # encoding: [0x4c,0x00,0x00,0x4c]
+            rfmci
