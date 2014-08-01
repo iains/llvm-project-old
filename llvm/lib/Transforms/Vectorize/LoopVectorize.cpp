@@ -1021,24 +1021,20 @@ public:
 
   std::string emitRemark() const {
     Report R;
-    R << "vectorization ";
-    switch (Force) {
-    case LoopVectorizeHints::FK_Disabled:
-      R << "is explicitly disabled";
-      break;
-    case LoopVectorizeHints::FK_Enabled:
-      R << "is explicitly enabled";
-      if (Width != 0 && Unroll != 0)
-        R << " with width " << Width << " and interleave count " << Unroll;
-      else if (Width != 0)
-        R << " with width " << Width;
-      else if (Unroll != 0)
-        R << " with interleave count " << Unroll;
-      break;
-    case LoopVectorizeHints::FK_Undefined:
-      R << "was not specified";
-      break;
+    if (Force == LoopVectorizeHints::FK_Disabled)
+      R << "vectorization is explicitly disabled";
+    else {
+      R << "use -Rpass-analysis=loop-vectorize for more info";
+      if (Force == LoopVectorizeHints::FK_Enabled) {
+        R << " (Force=true";
+        if (Width != 0)
+          R << ", Vector Width=" << Width;
+        if (Unroll != 0)
+          R << ", Interleave Count=" << Unroll;
+        R << ")";
+      }
     }
+
     return R.str();
   }
 
@@ -3590,8 +3586,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           // identified reduction value with an outside user.
           if (!hasOutsideLoopUser(TheLoop, it, AllowedExit))
             continue;
-          emitAnalysis(Report(it) << "value that could not be identified as "
-                                     "reduction is used outside the loop");
+          emitAnalysis(Report(it) << "value could not be identified as "
+                                     "an induction or reduction variable");
           return false;
         }
 
@@ -3676,7 +3672,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           continue;
         }
 
-        emitAnalysis(Report(it) << "unvectorizable operation");
+        emitAnalysis(Report(it) << "value that could not be identified as "
+                                   "reduction is used outside the loop");
         DEBUG(dbgs() << "LV: Found an unidentified PHI."<< *Phi <<"\n");
         return false;
       }// end of PHI handling

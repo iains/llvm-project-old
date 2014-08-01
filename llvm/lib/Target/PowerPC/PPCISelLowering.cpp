@@ -1866,7 +1866,7 @@ SDValue PPCTargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG,
   // gpr_index
   SDValue GprIndex = DAG.getExtLoad(ISD::ZEXTLOAD, dl, MVT::i32, InChain,
                                     VAListPtr, MachinePointerInfo(SV), MVT::i8,
-                                    false, false, 0);
+                                    false, false, false, 0);
   InChain = GprIndex.getValue(1);
 
   if (VT == MVT::i64) {
@@ -1889,7 +1889,7 @@ SDValue PPCTargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG,
   // fpr
   SDValue FprIndex = DAG.getExtLoad(ISD::ZEXTLOAD, dl, MVT::i32, InChain,
                                     FprPtr, MachinePointerInfo(SV), MVT::i8,
-                                    false, false, 0);
+                                    false, false, false, 0);
   InChain = FprIndex.getValue(1);
 
   SDValue RegSaveAreaPtr = DAG.getNode(ISD::ADD, dl, PtrVT, VAListPtr,
@@ -4331,7 +4331,7 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
         if (GPR_idx != NumGPRs) {
           SDValue Load = DAG.getExtLoad(ISD::EXTLOAD, dl, PtrVT, Chain, Arg,
                                         MachinePointerInfo(), VT,
-                                        false, false, 0);
+                                        false, false, false, 0);
           MemOpChains.push_back(Load.getValue(1));
           RegsToPass.push_back(std::make_pair(GPR[GPR_idx], Load));
 
@@ -4801,7 +4801,7 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
         if (GPR_idx != NumGPRs) {
           SDValue Load = DAG.getExtLoad(ISD::EXTLOAD, dl, PtrVT, Chain, Arg,
                                         MachinePointerInfo(), VT,
-                                        false, false, 0);
+                                        false, false, false, 0);
           MemOpChains.push_back(Load.getValue(1));
           RegsToPass.push_back(std::make_pair(GPR[GPR_idx++], Load));
 
@@ -7549,16 +7549,12 @@ SDValue PPCTargetLowering::DAGCombineFastRecipFSQRT(SDValue Op,
   return SDValue();
 }
 
-// Like SelectionDAG::isConsecutiveLoad, but also works for stores, and does
-// not enforce equality of the chain operands.
-static bool isConsecutiveLS(LSBaseSDNode *LS, LSBaseSDNode *Base,
+static bool isConsecutiveLSLoc(SDValue Loc, EVT VT, LSBaseSDNode *Base,
                             unsigned Bytes, int Dist,
                             SelectionDAG &DAG) {
-  EVT VT = LS->getMemoryVT();
   if (VT.getSizeInBits() / 8 != Bytes)
     return false;
 
-  SDValue Loc = LS->getBasePtr();
   SDValue BaseLoc = Base->getBasePtr();
   if (Loc.getOpcode() == ISD::FrameIndex) {
     if (BaseLoc.getOpcode() != ISD::FrameIndex)
@@ -7589,6 +7585,64 @@ static bool isConsecutiveLS(LSBaseSDNode *LS, LSBaseSDNode *Base,
   return false;
 }
 
+// Like SelectionDAG::isConsecutiveLoad, but also works for stores, and does
+// not enforce equality of the chain operands.
+static bool isConsecutiveLS(SDNode *N, LSBaseSDNode *Base,
+                            unsigned Bytes, int Dist,
+                            SelectionDAG &DAG) {
+  if (LSBaseSDNode *LS = dyn_cast<LSBaseSDNode>(N)) {
+    EVT VT = LS->getMemoryVT();
+    SDValue Loc = LS->getBasePtr();
+    return isConsecutiveLSLoc(Loc, VT, Base, Bytes, Dist, DAG);
+  }
+
+  if (N->getOpcode() == ISD::INTRINSIC_W_CHAIN) {
+    EVT VT;
+    switch (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue()) {
+    default: return false;
+    case Intrinsic::ppc_altivec_lvx:
+    case Intrinsic::ppc_altivec_lvxl:
+      VT = MVT::v4i32;
+      break;
+    case Intrinsic::ppc_altivec_lvebx:
+      VT = MVT::i8;
+      break;
+    case Intrinsic::ppc_altivec_lvehx:
+      VT = MVT::i16;
+      break;
+    case Intrinsic::ppc_altivec_lvewx:
+      VT = MVT::i32;
+      break;
+    }
+
+    return isConsecutiveLSLoc(N->getOperand(2), VT, Base, Bytes, Dist, DAG);
+  }
+
+  if (N->getOpcode() == ISD::INTRINSIC_VOID) {
+    EVT VT;
+    switch (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue()) {
+    default: return false;
+    case Intrinsic::ppc_altivec_stvx:
+    case Intrinsic::ppc_altivec_stvxl:
+      VT = MVT::v4i32;
+      break;
+    case Intrinsic::ppc_altivec_stvebx:
+      VT = MVT::i8;
+      break;
+    case Intrinsic::ppc_altivec_stvehx:
+      VT = MVT::i16;
+      break;
+    case Intrinsic::ppc_altivec_stvewx:
+      VT = MVT::i32;
+      break;
+    }
+
+    return isConsecutiveLSLoc(N->getOperand(3), VT, Base, Bytes, Dist, DAG);
+  }
+
+  return false;
+}
+
 // Return true is there is a nearyby consecutive load to the one provided
 // (regardless of alignment). We search up and down the chain, looking though
 // token factors and other loads (but nothing else). As a result, a true result
@@ -7610,7 +7664,7 @@ static bool findConsecutiveLoad(LoadSDNode *LD, SelectionDAG &DAG) {
     if (!Visited.insert(ChainNext))
       continue;
 
-    if (LoadSDNode *ChainLD = dyn_cast<LoadSDNode>(ChainNext)) {
+    if (MemSDNode *ChainLD = dyn_cast<MemSDNode>(ChainNext)) {
       if (isConsecutiveLS(ChainLD, LD, VT.getStoreSize(), 1, DAG))
         return true;
 
@@ -7641,14 +7695,14 @@ static bool findConsecutiveLoad(LoadSDNode *LD, SelectionDAG &DAG) {
       if (!Visited.insert(LoadRoot))
         continue;
 
-      if (LoadSDNode *ChainLD = dyn_cast<LoadSDNode>(LoadRoot))
+      if (MemSDNode *ChainLD = dyn_cast<MemSDNode>(LoadRoot))
         if (isConsecutiveLS(ChainLD, LD, VT.getStoreSize(), 1, DAG))
           return true;
 
       for (SDNode::use_iterator UI = LoadRoot->use_begin(),
            UE = LoadRoot->use_end(); UI != UE; ++UI)
-        if (((isa<LoadSDNode>(*UI) &&
-            cast<LoadSDNode>(*UI)->getChain().getNode() == LoadRoot) ||
+        if (((isa<MemSDNode>(*UI) &&
+            cast<MemSDNode>(*UI)->getChain().getNode() == LoadRoot) ||
             UI->getOpcode() == ISD::TokenFactor) && !Visited.count(*UI))
           Queue.push_back(*UI);
     }
@@ -8432,17 +8486,25 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                             Intrinsic::ppc_altivec_lvsl);
       SDValue PermCntl = BuildIntrinsicOp(Intr, Ptr, DAG, dl, MVT::v16i8);
 
-      // Refine the alignment of the original load (a "new" load created here
-      // which was identical to the first except for the alignment would be
-      // merged with the existing node regardless).
+      // Create the new MMO for the new base load. It is like the original MMO,
+      // but represents an area in memory almost twice the vector size centered
+      // on the original address. If the address is unaligned, we might start
+      // reading up to (sizeof(vector)-1) bytes below the address of the
+      // original unaligned load.
       MachineFunction &MF = DAG.getMachineFunction();
-      MachineMemOperand *MMO =
-        MF.getMachineMemOperand(LD->getPointerInfo(),
-                                LD->getMemOperand()->getFlags(),
-                                LD->getMemoryVT().getStoreSize(),
-                                ABIAlignment);
-      LD->refineAlignment(MMO);
-      SDValue BaseLoad = SDValue(LD, 0);
+      MachineMemOperand *BaseMMO =
+        MF.getMachineMemOperand(LD->getMemOperand(),
+                                -LD->getMemoryVT().getStoreSize()+1,
+                                2*LD->getMemoryVT().getStoreSize()-1);
+
+      // Create the new base load.
+      SDValue LDXIntID = DAG.getTargetConstant(Intrinsic::ppc_altivec_lvx,
+                                               getPointerTy());
+      SDValue BaseLoadOps[] = { Chain, LDXIntID, Ptr };
+      SDValue BaseLoad =
+        DAG.getMemIntrinsicNode(ISD::INTRINSIC_W_CHAIN, dl,
+                                DAG.getVTList(MVT::v4i32, MVT::Other),
+                                BaseLoadOps, MVT::v4i32, BaseMMO);
 
       // Note that the value of IncOffset (which is provided to the next
       // load's pointer info offset value, and thus used to calculate the
@@ -8464,20 +8526,17 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       SDValue Increment = DAG.getConstant(IncValue, getPointerTy());
       Ptr = DAG.getNode(ISD::ADD, dl, Ptr.getValueType(), Ptr, Increment);
 
+      MachineMemOperand *ExtraMMO =
+        MF.getMachineMemOperand(LD->getMemOperand(),
+                                1, 2*LD->getMemoryVT().getStoreSize()-1);
+      SDValue ExtraLoadOps[] = { Chain, LDXIntID, Ptr };
       SDValue ExtraLoad =
-        DAG.getLoad(VT, dl, Chain, Ptr,
-                    LD->getPointerInfo().getWithOffset(IncOffset),
-                    LD->isVolatile(), LD->isNonTemporal(),
-                    LD->isInvariant(), ABIAlignment);
+        DAG.getMemIntrinsicNode(ISD::INTRINSIC_W_CHAIN, dl,
+                                DAG.getVTList(MVT::v4i32, MVT::Other),
+                                ExtraLoadOps, MVT::v4i32, ExtraMMO);
 
       SDValue TF = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
         BaseLoad.getValue(1), ExtraLoad.getValue(1));
-
-      if (BaseLoad.getValueType() != MVT::v4i32)
-        BaseLoad = DAG.getNode(ISD::BITCAST, dl, MVT::v4i32, BaseLoad);
-
-      if (ExtraLoad.getValueType() != MVT::v4i32)
-        ExtraLoad = DAG.getNode(ISD::BITCAST, dl, MVT::v4i32, ExtraLoad);
 
       // Because vperm has a big-endian bias, we must reverse the order
       // of the input vectors and complement the permute control vector
@@ -8495,36 +8554,9 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       if (VT != MVT::v4i32)
         Perm = DAG.getNode(ISD::BITCAST, dl, VT, Perm);
 
-      // Now we need to be really careful about how we update the users of the
-      // original load. We cannot just call DCI.CombineTo (or
-      // DAG.ReplaceAllUsesWith for that matter), because the load still has
-      // uses created here (the permutation for example) that need to stay.
-      SDNode::use_iterator UI = N->use_begin(), UE = N->use_end();
-      while (UI != UE) {
-        SDUse &Use = UI.getUse();
-        SDNode *User = *UI;
-        // Note: BaseLoad is checked here because it might not be N, but a
-        // bitcast of N.
-        if (User == Perm.getNode() || User == BaseLoad.getNode() ||
-            User == TF.getNode() || Use.getResNo() > 1) {
-          ++UI;
-          continue;
-        }
-
-        SDValue To = Use.getResNo() ? TF : Perm;
-        ++UI;
-
-        SmallVector<SDValue, 8> Ops;
-        for (const SDUse &O : User->ops()) {
-          if (O == Use)
-            Ops.push_back(To);
-          else
-            Ops.push_back(O);
-        }
-
-        DAG.UpdateNodeOperands(User, Ops);
-      }
-
+      // The output of the permutation is our loaded result, the TokenFactor is
+      // our new chain.
+      DCI.CombineTo(N, Perm, TF);
       return SDValue(N, 0);
     }
     }

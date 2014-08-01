@@ -3990,7 +3990,7 @@ static SDValue getMemcpyLoadsAndStores(SelectionDAG &DAG, SDLoc dl,
       Value = DAG.getExtLoad(ISD::EXTLOAD, dl, NVT, Chain,
                              getMemBasePlusOffset(Src, SrcOff, dl, DAG),
                              SrcPtrInfo.getWithOffset(SrcOff), VT, isVol, false,
-                             MinAlign(SrcAlign, SrcOff));
+                             false, MinAlign(SrcAlign, SrcOff));
       Store = DAG.getTruncStore(Chain, dl, Value,
                                 getMemBasePlusOffset(Dst, DstOff, dl, DAG),
                                 DstPtrInfo.getWithOffset(DstOff), VT, isVol,
@@ -4746,11 +4746,12 @@ SDValue SelectionDAG::getExtLoad(ISD::LoadExtType ExtType, SDLoc dl, EVT VT,
                                  SDValue Chain, SDValue Ptr,
                                  MachinePointerInfo PtrInfo, EVT MemVT,
                                  bool isVolatile, bool isNonTemporal,
-                                 unsigned Alignment, const AAMDNodes &AAInfo) {
+                                 bool isInvariant, unsigned Alignment,
+                                 const AAMDNodes &AAInfo) {
   SDValue Undef = getUNDEF(Ptr.getValueType());
   return getLoad(ISD::UNINDEXED, ExtType, VT, dl, Chain, Ptr, Undef,
-                 PtrInfo, MemVT, isVolatile, isNonTemporal, false, Alignment,
-                 AAInfo);
+                 PtrInfo, MemVT, isVolatile, isNonTemporal, isInvariant,
+                 Alignment, AAInfo);
 }
 
 
@@ -6216,7 +6217,10 @@ MemSDNode::MemSDNode(unsigned Opc, unsigned Order, DebugLoc dl, SDVTList VTs,
   assert(isVolatile() == MMO->isVolatile() && "Volatile encoding error!");
   assert(isNonTemporal() == MMO->isNonTemporal() &&
          "Non-temporal encoding error!");
-  assert(memvt.getStoreSize() == MMO->getSize() && "Size mismatch!");
+  // We check here that the size of the memory operand fits within the size of
+  // the MMO. This is because the MMO might indicate only a possible address
+  // range instead of specifying the affected memory addresses precisely.
+  assert(memvt.getStoreSize() <= MMO->getSize() && "Size mismatch!");
 }
 
 MemSDNode::MemSDNode(unsigned Opc, unsigned Order, DebugLoc dl, SDVTList VTs,
@@ -6226,7 +6230,7 @@ MemSDNode::MemSDNode(unsigned Opc, unsigned Order, DebugLoc dl, SDVTList VTs,
   SubclassData = encodeMemSDNodeFlags(0, ISD::UNINDEXED, MMO->isVolatile(),
                                       MMO->isNonTemporal(), MMO->isInvariant());
   assert(isVolatile() == MMO->isVolatile() && "Volatile encoding error!");
-  assert(memvt.getStoreSize() == MMO->getSize() && "Size mismatch!");
+  assert(memvt.getStoreSize() <= MMO->getSize() && "Size mismatch!");
 }
 
 /// Profile - Gather unique data for the node.

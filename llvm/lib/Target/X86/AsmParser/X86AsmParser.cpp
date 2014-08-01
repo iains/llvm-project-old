@@ -1550,7 +1550,7 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseIntelOperand() {
   if (Size) {
     Parser.Lex(); // Eat operand size (e.g., byte, word).
     if (Tok.getString() != "PTR" && Tok.getString() != "ptr")
-      return ErrorOperand(Start, "Expected 'PTR' or 'ptr' token!");
+      return ErrorOperand(Tok.getLoc(), "Expected 'PTR' or 'ptr' token!");
     Parser.Lex(); // Eat ptr.
   }
   Start = Tok.getLoc();
@@ -1631,6 +1631,9 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseATTOperand() {
     // of a memory reference, otherwise this is a normal register reference.
     if (getLexer().isNot(AsmToken::Colon))
       return X86Operand::CreateReg(RegNo, Start, End);
+
+    if (!X86MCRegisterClasses[X86::SEGMENT_REGRegClassID].contains(RegNo))
+      return ErrorOperand(Start, "invalid segment register");
 
     getParser().Lex(); // Eat the colon.
     return ParseMemOperand(RegNo, Start);
@@ -1877,8 +1880,10 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseMemOperand(unsigned SegReg,
     return nullptr;
   }
 
-  return X86Operand::CreateMem(SegReg, Disp, BaseReg, IndexReg, Scale,
-                               MemStart, MemEnd);
+  if (SegReg || BaseReg || IndexReg)
+    return X86Operand::CreateMem(SegReg, Disp, BaseReg, IndexReg, Scale,
+                                 MemStart, MemEnd);
+  return X86Operand::CreateMem(Disp, MemStart, MemEnd);
 }
 
 bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
@@ -2284,9 +2289,8 @@ static const char *getSubtargetFeatureName(unsigned Val);
 
 void X86AsmParser::EmitInstruction(MCInst &Inst, OperandVector &Operands,
                                    MCStreamer &Out) {
-  Instrumentation->InstrumentInstruction(Inst, Operands, getContext(), MII,
-                                         Out);
-  Out.EmitInstruction(Inst, STI);
+  Instrumentation->InstrumentAndEmitInstruction(Inst, Operands, getContext(),
+                                                MII, Out);
 }
 
 bool X86AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
