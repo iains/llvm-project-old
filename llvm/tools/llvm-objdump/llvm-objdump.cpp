@@ -813,10 +813,12 @@ static void PrintUnwindInfo(const ObjectFile *o) {
 
   if (const COFFObjectFile *coff = dyn_cast<COFFObjectFile>(o)) {
     printCOFFUnwindInfo(coff);
-  } else {
+  } else if (const MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o))
+    printMachOUnwindInfo(MachO);
+  else {
     // TODO: Extract DWARF dump tool to objdump.
     errs() << "This operation is only currently supported "
-              "for COFF object files.\n";
+              "for COFF and MachO object files.\n";
     return;
   }
 }
@@ -889,11 +891,11 @@ static void DumpInput(StringRef file) {
     errs() << ToolName << ": '" << file << "': " << EC.message() << ".\n";
     return;
   }
-  std::unique_ptr<Binary> binary = std::move(BinaryOrErr.get());
+  Binary &Binary = *BinaryOrErr.get();
 
-  if (Archive *a = dyn_cast<Archive>(binary.get()))
+  if (Archive *a = dyn_cast<Archive>(&Binary))
     DumpArchive(a);
-  else if (ObjectFile *o = dyn_cast<ObjectFile>(binary.get()))
+  else if (ObjectFile *o = dyn_cast<ObjectFile>(&Binary))
     DumpObject(o);
   else
     errs() << ToolName << ": '" << file << "': " << "Unrecognized file type.\n";

@@ -17,6 +17,7 @@
 #include "AArch64Subtarget.h"
 #include "AArch64TargetMachine.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/FunctionLoweringInfo.h"
@@ -418,6 +419,13 @@ bool AArch64FastISel::ComputeAddress(const Value *Obj, Address &Addr) {
     }
     break;
   }
+  case Instruction::Add:
+    // Adds of constants are common and easy enough.
+    if (const ConstantInt *CI = dyn_cast<ConstantInt>(U->getOperand(1))) {
+      Addr.setOffset(Addr.getOffset() + (uint64_t)CI->getSExtValue());
+      return ComputeAddress(U->getOperand(0), Addr);
+    }
+    break;
   }
 
   // Try to get this in a register if nothing else has worked.
@@ -843,7 +851,13 @@ bool AArch64FastISel::SelectBranch(const Instruction *I) {
       BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AArch64::Bcc))
           .addImm(CC)
           .addMBB(TBB);
-      FuncInfo.MBB->addSuccessor(TBB);
+
+      // Obtain the branch weight and add the TrueBB to the successor list.
+      uint32_t BranchWeight = 0;
+      if (FuncInfo.BPI)
+        BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                  TBB->getBasicBlock());
+      FuncInfo.MBB->addSuccessor(TBB, BranchWeight);
 
       FastEmitBranch(FBB, DbgLoc);
       return true;
@@ -881,7 +895,14 @@ bool AArch64FastISel::SelectBranch(const Instruction *I) {
       BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AArch64::Bcc))
           .addImm(CC)
           .addMBB(TBB);
-      FuncInfo.MBB->addSuccessor(TBB);
+
+      // Obtain the branch weight and add the TrueBB to the successor list.
+      uint32_t BranchWeight = 0;
+      if (FuncInfo.BPI)
+        BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                  TBB->getBasicBlock());
+      FuncInfo.MBB->addSuccessor(TBB, BranchWeight);
+
       FastEmitBranch(FBB, DbgLoc);
       return true;
     }
@@ -891,7 +912,13 @@ bool AArch64FastISel::SelectBranch(const Instruction *I) {
     MachineBasicBlock *Target = (Imm == 0) ? FBB : TBB;
     BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AArch64::B))
         .addMBB(Target);
-    FuncInfo.MBB->addSuccessor(Target);
+
+    // Obtain the branch weight and add the target to the successor list.
+    uint32_t BranchWeight = 0;
+    if (FuncInfo.BPI)
+      BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                 Target->getBasicBlock());
+    FuncInfo.MBB->addSuccessor(Target, BranchWeight);
     return true;
   } else if (foldXALUIntrinsic(CC, I, BI->getCondition())) {
     // Fake request the condition, otherwise the intrinsic might be completely
@@ -904,7 +931,13 @@ bool AArch64FastISel::SelectBranch(const Instruction *I) {
     BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AArch64::Bcc))
       .addImm(CC)
       .addMBB(TBB);
-    FuncInfo.MBB->addSuccessor(TBB);
+
+    // Obtain the branch weight and add the TrueBB to the successor list.
+    uint32_t BranchWeight = 0;
+    if (FuncInfo.BPI)
+      BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                 TBB->getBasicBlock());
+    FuncInfo.MBB->addSuccessor(TBB, BranchWeight);
 
     FastEmitBranch(FBB, DbgLoc);
     return true;
@@ -935,7 +968,14 @@ bool AArch64FastISel::SelectBranch(const Instruction *I) {
   BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AArch64::Bcc))
       .addImm(CC)
       .addMBB(TBB);
-  FuncInfo.MBB->addSuccessor(TBB);
+
+  // Obtain the branch weight and add the TrueBB to the successor list.
+  uint32_t BranchWeight = 0;
+  if (FuncInfo.BPI)
+    BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                               TBB->getBasicBlock());
+  FuncInfo.MBB->addSuccessor(TBB, BranchWeight);
+
   FastEmitBranch(FBB, DbgLoc);
   return true;
 }
