@@ -3094,6 +3094,9 @@ def SLBMFEE : XForm_26<31, 915, (outs gprc:$RT), (ins gprc:$RB),
 
 def SLBIA : XForm_0<31, 498, (outs), (ins), "slbia", IIC_SprSLBIA, []>;
 
+def TLBIA : XForm_0<31, 370, (outs), (ins),
+                        "tlbia", IIC_SprTLBIA, []>;
+
 def TLBSYNC : XForm_0<31, 566, (outs), (ins),
                         "tlbsync", IIC_SprTLBSYNC, []>;
 
@@ -3122,6 +3125,11 @@ def RFCI : XForm_0<19, 51, (outs), (ins), "rfci", IIC_BrB, []>,
 
 def RFDI : XForm_0<19, 39, (outs), (ins), "rfdi", IIC_BrB, []>;
 def RFMCI : XForm_0<19, 38, (outs), (ins), "rfmci", IIC_BrB, []>;
+
+def MFDCR : XFXForm_1<31, 323, (outs gprc:$RT), (ins i32imm:$SPR),
+                      "mfdcr $RT, $SPR", IIC_SprMFSPR>;
+def MTDCR : XFXForm_1<31, 451, (outs), (ins gprc:$RT, i32imm:$SPR),
+                      "mtdcr $SPR, $RT", IIC_SprMTSPR>;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Assembler Instruction Aliases
