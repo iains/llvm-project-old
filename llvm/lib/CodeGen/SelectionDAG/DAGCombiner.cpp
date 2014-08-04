@@ -1152,14 +1152,6 @@ void DAGCombiner::Run(CombineLevel AtLevel) {
     if (recursivelyDeleteUnusedNodes(N))
       continue;
 
-    // Add any operands of the new node which have not yet been combined to the
-    // worklist as well. Because the worklist uniques things already, this
-    // won't repeatedly process the same operand.
-    CombinedNodes.insert(N);
-    for (unsigned i = 0, e = N->getNumOperands(); i != e; ++i)
-      if (!CombinedNodes.count(N->getOperand(i).getNode()))
-        AddToWorklist(N->getOperand(i).getNode());
-
     WorklistRemover DeadNodes(*this);
 
     // If this combine is running after legalizing the DAG, re-legalize any
@@ -1177,6 +1169,14 @@ void DAGCombiner::Run(CombineLevel AtLevel) {
     }
 
     DEBUG(dbgs() << "\nCombining: "; N->dump(&DAG));
+
+    // Add any operands of the new node which have not yet been combined to the
+    // worklist as well. Because the worklist uniques things already, this
+    // won't repeatedly process the same operand.
+    CombinedNodes.insert(N);
+    for (unsigned i = 0, e = N->getNumOperands(); i != e; ++i)
+      if (!CombinedNodes.count(N->getOperand(i).getNode()))
+        AddToWorklist(N->getOperand(i).getNode());
 
     SDValue RV = combine(N);
 
@@ -7311,6 +7311,8 @@ SDValue DAGCombiner::visitFNEG(SDNode *N) {
 
   // Transform fneg(bitconvert(x)) -> bitconvert(x^sign) to avoid loading
   // constant pool values.
+  // TODO: We can also optimize for vectors here, but we need to make sure
+  // that the sign mask is created properly for each vector element.
   if (!TLI.isFNegFree(VT) && N0.getOpcode() == ISD::BITCAST &&
       !VT.isVector() &&
       N0.getNode()->hasOneUse() &&
@@ -7403,10 +7405,12 @@ SDValue DAGCombiner::visitFABS(SDNode *N) {
 
   // Transform fabs(bitconvert(x)) -> bitconvert(x&~sign) to avoid loading
   // constant pool values.
+  // TODO: We can also optimize for vectors here, but we need to make sure
+  // that the sign mask is created properly for each vector element.
   if (!TLI.isFAbsFree(VT) &&
       N0.getOpcode() == ISD::BITCAST && N0.getNode()->hasOneUse() &&
       N0.getOperand(0).getValueType().isInteger() &&
-      !N0.getOperand(0).getValueType().isVector()) {
+      !VT.isVector()) {
     SDValue Int = N0.getOperand(0);
     EVT IntVT = Int.getValueType();
     if (IntVT.isInteger() && !IntVT.isVector()) {
