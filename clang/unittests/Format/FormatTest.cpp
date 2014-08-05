@@ -4147,6 +4147,17 @@ TEST_F(FormatTest, AlignsStringLiterals) {
                getLLVMStyleWithColumns(25));
 }
 
+TEST_F(FormatTest, AlwaysBreakAfterDefinitionReturnType) {
+  FormatStyle AfterType = getLLVMStyle();
+  AfterType.AlwaysBreakAfterDefinitionReturnType = true;
+  verifyFormat("const char *\n"
+               "f(void) {\n"  // Break here.
+               "  return \"\";\n"
+               "}\n"
+               "const char *bar(void);\n",  // No break here.
+               AfterType);
+}
+
 TEST_F(FormatTest, AlwaysBreakBeforeMultilineStrings) {
   FormatStyle NoBreak = getLLVMStyle();
   NoBreak.AlwaysBreakBeforeMultilineStrings = false;
@@ -7529,6 +7540,7 @@ TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
                "default:\n"
                "  break;\n"
                "}", NoSpace);
+  verifyFormat("auto i = std::make_unique<int>(5);", NoSpace);
 
   FormatStyle Space = getLLVMStyle();
   Space.SpaceBeforeParens = FormatStyle::SBPO_Always;
@@ -7565,6 +7577,7 @@ TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
   verifyFormat("#if defined(x)\n"
                "#endif",
                Space);
+  verifyFormat("auto i = std::make_unique<int> (5);", Space);
 }
 
 TEST_F(FormatTest, ConfigurableSpacesInParentheses) {
@@ -7675,6 +7688,17 @@ TEST_F(FormatTest, StroustrupBraceBreaking) {
                "  void g() { return; }\n"
                "}\n"
                "}",
+               BreakBeforeBrace);
+
+  verifyFormat("void foo()\n"
+               "{\n"
+               "  if (a) {\n"
+               "    a();\n"
+               "  }\n"
+               "  else {\n"
+               "    b();\n"
+               "  }\n"
+               "}\n",
                BreakBeforeBrace);
 
   verifyFormat("#ifdef _DEBUG\n"
@@ -8137,6 +8161,7 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(AllowShortBlocksOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortIfStatementsOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortLoopsOnASingleLine);
+  CHECK_PARSE_BOOL(AlwaysBreakAfterDefinitionReturnType);
   CHECK_PARSE_BOOL(AlwaysBreakTemplateDeclarations);
   CHECK_PARSE_BOOL(BinPackParameters);
   CHECK_PARSE_BOOL(BreakBeforeBinaryOperators);

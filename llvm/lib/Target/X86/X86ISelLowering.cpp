@@ -3464,6 +3464,7 @@ static SDValue getTargetShuffleNode(unsigned Opc, SDLoc dl, EVT VT,
   switch(Opc) {
   default: llvm_unreachable("Unknown x86 shuffle node");
   case X86ISD::PALIGNR:
+  case X86ISD::VALIGN:
   case X86ISD::SHUFP:
   case X86ISD::VPERM2X128:
     return DAG.getNode(Opc, dl, VT, V1, V2,
@@ -3802,16 +3803,12 @@ static bool isPSHUFLWMask(ArrayRef<int> Mask, MVT VT, bool HasInt256) {
   return true;
 }
 
-/// isPALIGNRMask - Return true if the node specifies a shuffle of elements that
-/// is suitable for input to PALIGNR.
-static bool isPALIGNRMask(ArrayRef<int> Mask, MVT VT,
-                          const X86Subtarget *Subtarget) {
-  if ((VT.is128BitVector() && !Subtarget->hasSSSE3()) ||
-      (VT.is256BitVector() && !Subtarget->hasInt256()))
-    return false;
-
+/// \brief Return true if the mask specifies a shuffle of elements that is
+/// suitable for input to intralane (palignr) or interlane (valign) vector
+/// right-shift.
+static bool isAlignrMask(ArrayRef<int> Mask, MVT VT, bool InterLane) {
   unsigned NumElts = VT.getVectorNumElements();
-  unsigned NumLanes = VT.is512BitVector() ? 1: VT.getSizeInBits()/128;
+  unsigned NumLanes = InterLane ? 1: VT.getSizeInBits()/128;
   unsigned NumLaneElts = NumElts/NumLanes;
 
   // Do not handle 64-bit element shuffles with palignr.
@@ -3873,6 +3870,28 @@ static bool isPALIGNRMask(ArrayRef<int> Mask, MVT VT,
   }
 
   return true;
+}
+
+/// \brief Return true if the node specifies a shuffle of elements that is
+/// suitable for input to PALIGNR.
+static bool isPALIGNRMask(ArrayRef<int> Mask, MVT VT,
+                          const X86Subtarget *Subtarget) {
+  if ((VT.is128BitVector() && !Subtarget->hasSSSE3()) ||
+      (VT.is256BitVector() && !Subtarget->hasInt256()))
+    // FIXME: Add AVX512BW.
+    return false;
+
+  return isAlignrMask(Mask, VT, false);
+}
+
+/// \brief Return true if the node specifies a shuffle of elements that is
+/// suitable for input to VALIGN.
+static bool isVALIGNMask(ArrayRef<int> Mask, MVT VT,
+                          const X86Subtarget *Subtarget) {
+  // FIXME: Add AVX512VL.
+  if (!VT.is512BitVector() || !Subtarget->hasAVX512())
+    return false;
+  return isAlignrMask(Mask, VT, true);
 }
 
 /// CommuteVectorShuffleMask - Change values in a shuffle permute mask assuming
@@ -4699,11 +4718,13 @@ static unsigned getShufflePSHUFLWImmediate(ShuffleVectorSDNode *N) {
   return Mask;
 }
 
-/// getShufflePALIGNRImmediate - Return the appropriate immediate to shuffle
-/// the specified VECTOR_SHUFFLE mask with the PALIGNR instruction.
-static unsigned getShufflePALIGNRImmediate(ShuffleVectorSDNode *SVOp) {
+/// \brief Return the appropriate immediate to shuffle the specified
+/// VECTOR_SHUFFLE mask with the PALIGNR (if InterLane is false) or with
+/// VALIGN (if Interlane is true) instructions.
+static unsigned getShuffleAlignrImmediate(ShuffleVectorSDNode *SVOp,
+                                           bool InterLane) {
   MVT VT = SVOp->getSimpleValueType(0);
-  unsigned EltSize = VT.is512BitVector() ? 1 :
+  unsigned EltSize = InterLane ? 1 :
     VT.getVectorElementType().getSizeInBits() >> 3;
 
   unsigned NumElts = VT.getVectorNumElements();
@@ -4723,6 +4744,19 @@ static unsigned getShufflePALIGNRImmediate(ShuffleVectorSDNode *SVOp) {
   assert(Val - i > 0 && "PALIGNR imm should be positive");
   return (Val - i) * EltSize;
 }
+
+/// \brief Return the appropriate immediate to shuffle the specified
+/// VECTOR_SHUFFLE mask with the PALIGNR instruction.
+static unsigned getShufflePALIGNRImmediate(ShuffleVectorSDNode *SVOp) {
+  return getShuffleAlignrImmediate(SVOp, false);
+}
+
+/// \brief Return the appropriate immediate to shuffle the specified
+/// VECTOR_SHUFFLE mask with the VALIGN instruction.
+static unsigned getShuffleVALIGNImmediate(ShuffleVectorSDNode *SVOp) {
+  return getShuffleAlignrImmediate(SVOp, true);
+}
+
 
 static unsigned getExtractVEXTRACTImmediate(SDNode *N, unsigned vecWidth) {
   assert((vecWidth == 128 || vecWidth == 256) && "Unsupported vector width");
@@ -7628,34 +7662,37 @@ static SDValue lowerV8I16BasicBlendVectorShuffle(SDLoc DL, SDValue V1,
       if (GoodInputs.size() == 2) {
         // If the low inputs are spread across two dwords, pack them into
         // a single dword.
-        MoveMask[Mask[GoodInputs[0]] % 2 + MoveOffset] =
-            Mask[GoodInputs[0]] - MaskOffset;
-        MoveMask[Mask[GoodInputs[1]] % 2 + MoveOffset] =
-            Mask[GoodInputs[1]] - MaskOffset;
-        Mask[GoodInputs[0]] = Mask[GoodInputs[0]] % 2 + MoveOffset + MaskOffset;
-        Mask[GoodInputs[1]] = Mask[GoodInputs[0]] % 2 + MoveOffset + MaskOffset;
+        MoveMask[MoveOffset] = Mask[GoodInputs[0]] - MaskOffset;
+        MoveMask[MoveOffset + 1] = Mask[GoodInputs[1]] - MaskOffset;
+        Mask[GoodInputs[0]] = MoveOffset + MaskOffset;
+        Mask[GoodInputs[1]] = MoveOffset + 1 + MaskOffset;
       } else {
-        // Otherwise pin the low inputs.
+        // Otherwise pin the good inputs.
         for (int GoodInput : GoodInputs)
           MoveMask[Mask[GoodInput] - MaskOffset] = Mask[GoodInput] - MaskOffset;
       }
 
-      int MoveMaskIdx =
-          std::find(std::begin(MoveMask) + MoveOffset, std::end(MoveMask), -1) -
-          std::begin(MoveMask);
-      assert(MoveMaskIdx >= MoveOffset && "Established above");
-
       if (BadInputs.size() == 2) {
+        // If we have two bad inputs then there may be either one or two good
+        // inputs fixed in place. Find a fixed input, and then find the *other*
+        // two adjacent indices by using modular arithmetic.
+        int GoodMaskIdx =
+            std::find_if(std::begin(MoveMask) + MoveOffset, std::end(MoveMask),
+                         [](int M) { return M >= 0; }) -
+            std::begin(MoveMask);
+        int MoveMaskIdx =
+            (((GoodMaskIdx - MoveOffset) & ~1) + 2 % 4) + MoveOffset;
         assert(MoveMask[MoveMaskIdx] == -1 && "Expected empty slot");
         assert(MoveMask[MoveMaskIdx + 1] == -1 && "Expected empty slot");
-        MoveMask[MoveMaskIdx + Mask[BadInputs[0]] % 2] =
-            Mask[BadInputs[0]] - MaskOffset;
-        MoveMask[MoveMaskIdx + Mask[BadInputs[1]] % 2] =
-            Mask[BadInputs[1]] - MaskOffset;
-        Mask[BadInputs[0]] = MoveMaskIdx + Mask[BadInputs[0]] % 2 + MaskOffset;
-        Mask[BadInputs[1]] = MoveMaskIdx + Mask[BadInputs[1]] % 2 + MaskOffset;
+        MoveMask[MoveMaskIdx] = Mask[BadInputs[0]] - MaskOffset;
+        MoveMask[MoveMaskIdx + 1] = Mask[BadInputs[1]] - MaskOffset;
+        Mask[BadInputs[0]] = MoveMaskIdx + MaskOffset;
+        Mask[BadInputs[1]] = MoveMaskIdx + 1 + MaskOffset;
       } else {
         assert(BadInputs.size() == 1 && "All sizes handled");
+        int MoveMaskIdx = std::find(std::begin(MoveMask) + MoveOffset,
+                                    std::end(MoveMask), -1) -
+                          std::begin(MoveMask);
         MoveMask[MoveMaskIdx] = Mask[BadInputs[0]] - MaskOffset;
         Mask[BadInputs[0]] = MoveMaskIdx + MaskOffset;
       }
@@ -9604,6 +9641,11 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   if (isPALIGNRMask(M, VT, Subtarget))
     return getTargetShuffleNode(X86ISD::PALIGNR, dl, VT, V1, V2,
                                 getShufflePALIGNRImmediate(SVOp),
+                                DAG);
+
+  if (isVALIGNMask(M, VT, Subtarget))
+    return getTargetShuffleNode(X86ISD::VALIGN, dl, VT, V1, V2,
+                                getShuffleVALIGNImmediate(SVOp),
                                 DAG);
 
   // Check if this can be converted into a logical shift.
@@ -17077,6 +17119,7 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::PACKSS:             return "X86ISD::PACKSS";
   case X86ISD::PACKUS:             return "X86ISD::PACKUS";
   case X86ISD::PALIGNR:            return "X86ISD::PALIGNR";
+  case X86ISD::VALIGN:             return "X86ISD::VALIGN";
   case X86ISD::PSHUFD:             return "X86ISD::PSHUFD";
   case X86ISD::PSHUFHW:            return "X86ISD::PSHUFHW";
   case X86ISD::PSHUFLW:            return "X86ISD::PSHUFLW";
@@ -19376,7 +19419,11 @@ static bool combineRedundantHalfShuffle(SDValue N, MutableArrayRef<int> Mask,
     // We fell out of the loop without finding a viable combining instruction.
     return false;
 
-  // Record the old value to use in RAUW-ing.
+  // Combine away the bottom node as its shuffle will be accumulated into
+  // a preceding shuffle.
+  DCI.CombineTo(N.getNode(), N.getOperand(0), /*AddTo*/ true);
+
+  // Record the old value.
   SDValue Old = V;
 
   // Merge this node's mask and our incoming mask (adjusted to account for all
@@ -19387,12 +19434,13 @@ static bool combineRedundantHalfShuffle(SDValue N, MutableArrayRef<int> Mask,
   V = DAG.getNode(V.getOpcode(), DL, MVT::v8i16, V.getOperand(0),
                   getV4X86ShuffleImm8ForMask(Mask, DAG));
 
-  // Replace N with its operand as we're going to combine that shuffle away.
-  DAG.ReplaceAllUsesWith(N, N.getOperand(0));
+  // Check that the shuffles didn't cancel each other out. If not, we need to
+  // combine to the new one.
+  if (Old != V)
+    // Replace the combinable shuffle with the combined one, updating all users
+    // so that we re-evaluate the chain here.
+    DCI.CombineTo(Old.getNode(), V, /*AddTo*/ true);
 
-  // Replace the combinable shuffle with the combined one, updating all users
-  // so that we re-evaluate the chain here.
-  DCI.CombineTo(Old.getNode(), V, /*AddTo*/ true);
   return true;
 }
 
