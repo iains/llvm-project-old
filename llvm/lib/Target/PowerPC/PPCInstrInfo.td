@@ -3106,6 +3106,11 @@ def TLBSYNC : XForm_0<31, 566, (outs), (ins),
 def TLBIEL : XForm_16b<31, 274, (outs), (ins gprc:$RB),
                           "tlbiel $RB", IIC_SprTLBIEL, []>;
 
+def TLBLD : XForm_16b<31, 978, (outs), (ins gprc:$RB),
+                          "tlbld $RB", IIC_LdStLoad, []>, Requires<[IsPPC6xx]>;
+def TLBLI : XForm_16b<31, 1010, (outs), (ins gprc:$RB),
+                          "tlbli $RB", IIC_LdStLoad, []>, Requires<[IsPPC6xx]>;
+
 def TLBIE : XForm_26<31, 306, (outs), (ins gprc:$RS, gprc:$RB),
                           "tlbie $RB,$RS", IIC_SprTLBIE, []>;
 
@@ -3120,6 +3125,20 @@ def TLBRE : XForm_24_eieio<31, 946, (outs), (ins),
 
 def TLBWE : XForm_24_eieio<31, 978, (outs), (ins),
                            "tlbwe", IIC_LdStLoad, []>, Requires<[IsBookE]>;
+
+def TLBRE2 : XForm_tlbws<31, 946, (outs gprc:$RS), (ins gprc:$A, i1imm:$WS),
+               "tlbre $RS, $A, $WS", IIC_LdStLoad, []>, Requires<[IsPPC4xx]>;
+
+def TLBWE2 : XForm_tlbws<31, 978, (outs), (ins gprc:$RS, gprc:$A, i1imm:$WS),
+               "tlbwe $RS, $A, $WS", IIC_LdStLoad, []>, Requires<[IsPPC4xx]>;
+
+def TLBSX2 : XForm_base_r3xo<31, 914, (outs), (ins gprc:$RST, gprc:$A, gprc:$B),
+                             "tlbsx $RST, $A, $B", IIC_LdStLoad, []>,
+                             Requires<[IsPPC4xx]>;
+def TLBSX2D : XForm_base_r3xo<31, 914, (outs),
+                              (ins gprc:$RST, gprc:$A, gprc:$B),
+                              "tlbsx. $RST, $A, $B", IIC_LdStLoad, []>,
+                              Requires<[IsPPC4xx]>, isDOT;
 
 def RFI : XForm_0<19, 50, (outs), (ins), "rfi", IIC_BrB, []>,
                   Requires<[IsBookE]>;
@@ -3208,6 +3227,7 @@ def : InstAlias<"mtpid $Rx", (MTSPR 48, gprc:$Rx)>, Requires<[IsBookE]>;
 def : InstAlias<"mfpid $Rx", (MFSPR gprc:$Rx, 48)>, Requires<[IsBookE]>;
 
 def : InstAlias<"mftb $Rx", (MFTB gprc:$Rx, 268)>;
+def : InstAlias<"mftbl $Rx", (MFTB gprc:$Rx, 268)>;
 def : InstAlias<"mftbu $Rx", (MFTB gprc:$Rx, 269)>;
 
 def : InstAlias<"xnop", (XORI R0, R0, 0)>;
@@ -3246,6 +3266,21 @@ foreach BATR = 0-3 in {
                     (MFSPR gprc:$Rx, !add(BATR, !add(BATR, 529)))>,
                     Requires<[IsPPC6xx]>;
 }
+
+def : InstAlias<"mtdccr $Rx", (MTSPR 1018, gprc:$Rx)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"mfdccr $Rx", (MFSPR gprc:$Rx, 1018)>, Requires<[IsPPC4xx]>;
+
+def : InstAlias<"mticcr $Rx", (MTSPR 1019, gprc:$Rx)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"mficcr $Rx", (MFSPR gprc:$Rx, 1019)>, Requires<[IsPPC4xx]>;
+
+def : InstAlias<"mtdear $Rx", (MTSPR 981, gprc:$Rx)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"mfdear $Rx", (MFSPR gprc:$Rx, 981)>, Requires<[IsPPC4xx]>;
+
+def : InstAlias<"mtesr $Rx", (MTSPR 980, gprc:$Rx)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"mfesr $Rx", (MFSPR gprc:$Rx, 980)>, Requires<[IsPPC4xx]>;
+
+def : InstAlias<"mttcr $Rx", (MTSPR 986, gprc:$Rx)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"mftcr $Rx", (MFSPR gprc:$Rx, 986)>, Requires<[IsPPC4xx]>;
 
 def LAx : PPCAsmPseudo<"la $rA, $addr", (ins gprc:$rA, memri:$addr)>;
 
@@ -3299,6 +3334,15 @@ def : InstAlias<"mtsrr0 $RT", (MTSPR 26, gprc:$RT)>;
 def : InstAlias<"mtsrr1 $RT", (MTSPR 27, gprc:$RT)>;
 
 def : InstAlias<"tlbie $RB", (TLBIE R0, gprc:$RB)>;
+
+def : InstAlias<"tlbrehi $RS, $A", (TLBRE2 gprc:$RS, gprc:$A, 0)>,
+                Requires<[IsPPC4xx]>;
+def : InstAlias<"tlbrelo $RS, $A", (TLBRE2 gprc:$RS, gprc:$A, 1)>,
+                Requires<[IsPPC4xx]>;
+def : InstAlias<"tlbwehi $RS, $A", (TLBWE2 gprc:$RS, gprc:$A, 0)>,
+                Requires<[IsPPC4xx]>;
+def : InstAlias<"tlbwelo $RS, $A", (TLBWE2 gprc:$RS, gprc:$A, 1)>,
+                Requires<[IsPPC4xx]>;
 
 def EXTLWI : PPCAsmPseudo<"extlwi $rA, $rS, $n, $b",
                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;

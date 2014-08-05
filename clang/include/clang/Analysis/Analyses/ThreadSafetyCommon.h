@@ -58,10 +58,10 @@ inline bool matches(const til::SExpr *E1, const til::SExpr *E2) {
 }
 
 inline bool partiallyMatches(const til::SExpr *E1, const til::SExpr *E2) {
-  auto *PE1 = dyn_cast_or_null<til::Project>(E1);
+  const auto *PE1 = dyn_cast_or_null<til::Project>(E1);
   if (!PE1)
     return false;
-  auto *PE2 = dyn_cast_or_null<til::Project>(E2);
+  const auto *PE2 = dyn_cast_or_null<til::Project>(E2);
   if (!PE2)
     return false;
   return PE1->clangDecl() == PE2->clangDecl();
@@ -257,8 +257,8 @@ class CapabilityExpr {
   // translateAttrExpr needs it, but that should be moved too.
 
 private:
-  const til::SExpr* CapExpr;   //< The capability expression.
-  bool Negated;                //< True if this is a negative capability
+  const til::SExpr* CapExpr;   ///< The capability expression.
+  bool Negated;                ///< True if this is a negative capability
 
 public:
   CapabilityExpr(const til::SExpr *E, bool Neg) : CapExpr(E), Negated(Neg) {}

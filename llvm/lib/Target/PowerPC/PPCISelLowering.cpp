@@ -858,20 +858,21 @@ static bool isConstantOrUndef(int Op, int Val) {
 /// For the latter, the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVPKUHUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
                                SelectionDAG &DAG) {
+  bool IsLE = DAG.getSubtarget().getDataLayout()->isLittleEndian();
   if (ShuffleKind == 0) {
-    if (DAG.getTarget().getDataLayout()->isLittleEndian())
+    if (IsLE)
       return false;
     for (unsigned i = 0; i != 16; ++i)
       if (!isConstantOrUndef(N->getMaskElt(i), i*2+1))
         return false;
   } else if (ShuffleKind == 2) {
-    if (!DAG.getTarget().getDataLayout()->isLittleEndian())
+    if (!IsLE)
       return false;
     for (unsigned i = 0; i != 16; ++i)
       if (!isConstantOrUndef(N->getMaskElt(i), i*2))
         return false;
   } else if (ShuffleKind == 1) {
-    unsigned j = DAG.getTarget().getDataLayout()->isLittleEndian() ? 0 : 1;
+    unsigned j = IsLE ? 0 : 1;
     for (unsigned i = 0; i != 8; ++i)
       if (!isConstantOrUndef(N->getMaskElt(i),    i*2+j) ||
           !isConstantOrUndef(N->getMaskElt(i+8),  i*2+j))
@@ -888,22 +889,23 @@ bool PPC::isVPKUHUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
 /// For the latter, the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVPKUWUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
                                SelectionDAG &DAG) {
+  bool IsLE = DAG.getSubtarget().getDataLayout()->isLittleEndian();
   if (ShuffleKind == 0) {
-    if (DAG.getTarget().getDataLayout()->isLittleEndian())
+    if (IsLE)
       return false;
     for (unsigned i = 0; i != 16; i += 2)
       if (!isConstantOrUndef(N->getMaskElt(i  ),  i*2+2) ||
           !isConstantOrUndef(N->getMaskElt(i+1),  i*2+3))
         return false;
   } else if (ShuffleKind == 2) {
-    if (!DAG.getTarget().getDataLayout()->isLittleEndian())
+    if (!IsLE)
       return false;
     for (unsigned i = 0; i != 16; i += 2)
       if (!isConstantOrUndef(N->getMaskElt(i  ),  i*2) ||
           !isConstantOrUndef(N->getMaskElt(i+1),  i*2+1))
         return false;
   } else if (ShuffleKind == 1) {
-    unsigned j = DAG.getTarget().getDataLayout()->isLittleEndian() ? 0 : 2;
+    unsigned j = IsLE ? 0 : 2;
     for (unsigned i = 0; i != 8; i += 2)
       if (!isConstantOrUndef(N->getMaskElt(i  ),  i*2+j)   ||
           !isConstantOrUndef(N->getMaskElt(i+1),  i*2+j+1) ||
@@ -942,7 +944,7 @@ static bool isVMerge(ShuffleVectorSDNode *N, unsigned UnitSize,
 /// the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVMRGLShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
                              unsigned ShuffleKind, SelectionDAG &DAG) {
-  if (DAG.getTarget().getDataLayout()->isLittleEndian()) {
+  if (DAG.getSubtarget().getDataLayout()->isLittleEndian()) {
     if (ShuffleKind == 1) // unary
       return isVMerge(N, UnitSize, 0, 0);
     else if (ShuffleKind == 2) // swapped
@@ -967,7 +969,7 @@ bool PPC::isVMRGLShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
 /// the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVMRGHShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
                              unsigned ShuffleKind, SelectionDAG &DAG) {
-  if (DAG.getTarget().getDataLayout()->isLittleEndian()) {
+  if (DAG.getSubtarget().getDataLayout()->isLittleEndian()) {
     if (ShuffleKind == 1) // unary
       return isVMerge(N, UnitSize, 8, 8);
     else if (ShuffleKind == 2) // swapped
@@ -1005,38 +1007,20 @@ int PPC::isVSLDOIShuffleMask(SDNode *N, bool isUnary, SelectionDAG &DAG) {
   unsigned ShiftAmt = SVOp->getMaskElt(i);
   if (ShiftAmt < i) return -1;
 
-  if (DAG.getTarget().getDataLayout()->isLittleEndian()) {
+  ShiftAmt -= i;
 
-    ShiftAmt += i;
-
-    if (!isUnary) {
-      // Check the rest of the elements to see if they are consecutive.
-      for (++i; i != 16; ++i)
-        if (!isConstantOrUndef(SVOp->getMaskElt(i), ShiftAmt - i))
-          return -1;
-    } else {
-      // Check the rest of the elements to see if they are consecutive.
-      for (++i; i != 16; ++i)
-        if (!isConstantOrUndef(SVOp->getMaskElt(i), (ShiftAmt - i) & 15))
-          return -1;
-    }
-
-  } else {  // Big Endian
-
-    ShiftAmt -= i;
-
-    if (!isUnary) {
-      // Check the rest of the elements to see if they are consecutive.
-      for (++i; i != 16; ++i)
-        if (!isConstantOrUndef(SVOp->getMaskElt(i), ShiftAmt+i))
-          return -1;
-    } else {
-      // Check the rest of the elements to see if they are consecutive.
-      for (++i; i != 16; ++i)
-        if (!isConstantOrUndef(SVOp->getMaskElt(i), (ShiftAmt+i) & 15))
-          return -1;
-    }
+  if (!isUnary) {
+    // Check the rest of the elements to see if they are consecutive.
+    for (++i; i != 16; ++i)
+      if (!isConstantOrUndef(SVOp->getMaskElt(i), ShiftAmt+i))
+        return -1;
+  } else {
+    // Check the rest of the elements to see if they are consecutive.
+    for (++i; i != 16; ++i)
+      if (!isConstantOrUndef(SVOp->getMaskElt(i), (ShiftAmt+i) & 15))
+        return -1;
   }
+
   return ShiftAmt;
 }
 
@@ -1092,7 +1076,7 @@ unsigned PPC::getVSPLTImmediate(SDNode *N, unsigned EltSize,
                                 SelectionDAG &DAG) {
   ShuffleVectorSDNode *SVOp = cast<ShuffleVectorSDNode>(N);
   assert(isSplatShuffleMask(SVOp, EltSize));
-  if (DAG.getTarget().getDataLayout()->isLittleEndian())
+  if (DAG.getSubtarget().getDataLayout()->isLittleEndian())
     return (16 / EltSize) - 1 - (SVOp->getMaskElt(0) / EltSize);
   else
     return SVOp->getMaskElt(0) / EltSize;
@@ -2313,7 +2297,8 @@ static bool CalculateStackSlotUsed(EVT ArgVT, EVT OrigVT,
 /// ensure minimum alignment required for target.
 static unsigned EnsureStackAlignment(const TargetMachine &Target,
                                      unsigned NumBytes) {
-  unsigned TargetAlign = Target.getFrameLowering()->getStackAlignment();
+  unsigned TargetAlign =
+      Target.getSubtargetImpl()->getFrameLowering()->getStackAlignment();
   unsigned AlignMask = TargetAlign - 1;
   NumBytes = (NumBytes + AlignMask) & ~AlignMask;
   return NumBytes;
@@ -3816,7 +3801,8 @@ PPCTargetLowering::FinishCall(CallingConv::ID CallConv, SDLoc dl,
      getTargetMachine().Options.GuaranteedTailCallOpt) ? NumBytes : 0;
 
   // Add a register mask operand representing the call-preserved registers.
-  const TargetRegisterInfo *TRI = getTargetMachine().getRegisterInfo();
+  const TargetRegisterInfo *TRI =
+      getTargetMachine().getSubtargetImpl()->getRegisterInfo();
   const uint32_t *Mask = TRI->getCallPreservedMask(CallConv);
   assert(Mask && "Missing call preserved mask for calling convention");
   Ops.push_back(DAG.getRegisterMask(Mask));
@@ -6546,7 +6532,8 @@ MachineBasicBlock *
 PPCTargetLowering::EmitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
                                     bool is64bit, unsigned BinOpcode) const {
   // This also handles ATOMIC_SWAP, indicated by BinOpcode==0.
-  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+  const TargetInstrInfo *TII =
+      getTargetMachine().getSubtargetImpl()->getInstrInfo();
 
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
   MachineFunction *F = BB->getParent();
@@ -6608,7 +6595,8 @@ PPCTargetLowering::EmitPartwordAtomicBinary(MachineInstr *MI,
                                             bool is8bit,    // operation
                                             unsigned BinOpcode) const {
   // This also handles ATOMIC_SWAP, indicated by BinOpcode==0.
-  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+  const TargetInstrInfo *TII =
+      getTargetMachine().getSubtargetImpl()->getInstrInfo();
   // In 64 bit mode we have to use 64 bits for addresses, even though the
   // lwarx/stwcx are 32 bits.  With the 32-bit atomics we can use address
   // registers without caring whether they're 32 or 64, but here we're
@@ -6736,7 +6724,8 @@ llvm::MachineBasicBlock*
 PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
                                     MachineBasicBlock *MBB) const {
   DebugLoc DL = MI->getDebugLoc();
-  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+  const TargetInstrInfo *TII =
+      getTargetMachine().getSubtargetImpl()->getInstrInfo();
 
   MachineFunction *MF = MBB->getParent();
   MachineRegisterInfo &MRI = MF->getRegInfo();
@@ -6835,7 +6824,7 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
   // Setup
   MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::BCLalways)).addMBB(mainMBB);
   const PPCRegisterInfo *TRI =
-    static_cast<const PPCRegisterInfo*>(getTargetMachine().getRegisterInfo());
+      getTargetMachine().getSubtarget<PPCSubtarget>().getRegisterInfo();
   MIB.addRegMask(TRI->getNoPreservedMask());
 
   BuildMI(*thisMBB, MI, DL, TII->get(PPC::LI), restoreDstReg).addImm(1);
@@ -6884,7 +6873,8 @@ MachineBasicBlock *
 PPCTargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
                                      MachineBasicBlock *MBB) const {
   DebugLoc DL = MI->getDebugLoc();
-  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+  const TargetInstrInfo *TII =
+      getTargetMachine().getSubtargetImpl()->getInstrInfo();
 
   MachineFunction *MF = MBB->getParent();
   MachineRegisterInfo &MRI = MF->getRegInfo();
@@ -6996,7 +6986,8 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     return emitEHSjLjLongJmp(MI, BB);
   }
 
-  const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+  const TargetInstrInfo *TII =
+      getTargetMachine().getSubtargetImpl()->getInstrInfo();
 
   // To "insert" these instructions we actually have to insert their
   // control-flow patterns.
@@ -7019,7 +7010,8 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     Cond.push_back(MI->getOperand(1));
 
     DebugLoc dl = MI->getDebugLoc();
-    const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+    const TargetInstrInfo *TII =
+        getTargetMachine().getSubtargetImpl()->getInstrInfo();
     TII->insertSelect(*BB, MI, dl, MI->getOperand(0).getReg(),
                       Cond, MI->getOperand(2).getReg(),
                       MI->getOperand(3).getReg());
@@ -8984,7 +8976,8 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
   // the AsmName field from *RegisterInfo.td, then this would not be necessary.
   if (R.first && VT == MVT::i64 && Subtarget.isPPC64() &&
       PPC::GPRCRegClass.contains(R.first)) {
-    const TargetRegisterInfo *TRI = getTargetMachine().getRegisterInfo();
+    const TargetRegisterInfo *TRI =
+        getTargetMachine().getSubtargetImpl()->getRegisterInfo();
     return std::make_pair(TRI->getMatchingSuperReg(R.first,
                             PPC::sub_32, &PPC::G8RCRegClass),
                           &PPC::G8RCRegClass);
