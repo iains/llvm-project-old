@@ -1274,7 +1274,7 @@ public:
       : FormatTok(nullptr), IsFirstToken(true), GreaterStashed(false),
         Column(0), TrailingWhitespace(0), Lex(Lex), SourceMgr(SourceMgr),
         Style(Style), IdentTable(getFormattingLangOpts()), Encoding(Encoding),
-        FirstInLineIndex(0) {
+        FirstInLineIndex(0), FormattingDisabled(false) {
     Lex.SetKeepWhitespaceMode(true);
 
     for (const std::string &ForEachMacro : Style.ForEachMacros)
@@ -1648,6 +1648,8 @@ private:
   SmallVector<FormatToken *, 16> Tokens;
   SmallVector<IdentifierInfo *, 8> ForEachMacros;
 
+  bool FormattingDisabled;
+
   void readRawToken(FormatToken &Tok) {
     Lex.LexFromRawLexer(Tok.Tok);
     Tok.TokenText = StringRef(SourceMgr.getCharacterData(Tok.Tok.getLocation()),
@@ -1663,6 +1665,11 @@ private:
         Tok.Tok.setKind(tok::char_constant);
       }
     }
+    if (Tok.is(tok::comment) && Tok.TokenText == "// clang-format on")
+      FormattingDisabled = false;
+    Tok.Finalized = FormattingDisabled;
+    if (Tok.is(tok::comment) && Tok.TokenText == "// clang-format off")
+      FormattingDisabled = true;
   }
 };
 

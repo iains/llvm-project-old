@@ -2105,7 +2105,8 @@ static void addClangRTLinux(
 
 static void addProfileRT(
     const ToolChain &TC, const ArgList &Args, ArgStringList &CmdArgs) {
-  if (!(Args.hasArg(options::OPT_fprofile_arcs) ||
+  if (!(Args.hasFlag(options::OPT_fprofile_arcs, options::OPT_fno_profile_arcs,
+                     false) ||
         Args.hasArg(options::OPT_fprofile_generate) ||
         Args.hasArg(options::OPT_fprofile_instr_generate) ||
         Args.hasArg(options::OPT_fcreate_profile) ||
@@ -3226,7 +3227,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_ftest_coverage) ||
       Args.hasArg(options::OPT_coverage))
     CmdArgs.push_back("-femit-coverage-notes");
-  if (Args.hasArg(options::OPT_fprofile_arcs) ||
+  if (Args.hasFlag(options::OPT_fprofile_arcs, options::OPT_fno_profile_arcs,
+                   false) ||
       Args.hasArg(options::OPT_coverage))
     CmdArgs.push_back("-femit-coverage-data");
 
@@ -3374,6 +3376,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // precompiling.
   Args.ClaimAllArgs(options::OPT_flto);
 
+  Args.AddAllArgs(CmdArgs, options::OPT_R_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_W_Group);
   if (Args.hasFlag(options::OPT_pedantic, options::OPT_no_pedantic, false))
     CmdArgs.push_back("-pedantic");
@@ -3734,15 +3737,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       A->render(Args, CmdArgs);
   }
-
-  if (Arg *A = Args.getLastArg(options::OPT_Rpass_EQ))
-    A->render(Args, CmdArgs);
-
-  if (Arg *A = Args.getLastArg(options::OPT_Rpass_missed_EQ))
-    A->render(Args, CmdArgs);
-
-  if (Arg *A = Args.getLastArg(options::OPT_Rpass_analysis_EQ))
-    A->render(Args, CmdArgs);
 
   if (Args.hasArg(options::OPT_mkernel)) {
     if (!Args.hasArg(options::OPT_fapple_kext) && types::isCXX(InputType))
