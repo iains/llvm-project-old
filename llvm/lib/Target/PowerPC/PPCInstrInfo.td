@@ -632,6 +632,7 @@ def IsNotBookE  : Predicate<"!PPCSubTarget->isBookE()">;
 def IsPPC4xx  : Predicate<"PPCSubTarget->isPPC4xx()">;
 def IsPPC6xx  : Predicate<"PPCSubTarget->isPPC6xx()">;
 def IsE500  : Predicate<"PPCSubTarget->isE500()">;
+def HasSPE  : Predicate<"PPCSubTarget->HasSPE()">;
 
 //===----------------------------------------------------------------------===//
 // PowerPC Multiclass Definitions.
@@ -2521,6 +2522,7 @@ def : Pat<(fcopysign f32:$frB, f64:$frA),
           (FCPSGNS (COPY_TO_REGCLASS $frA, F4RC), $frB)>;
 
 include "PPCInstrAltivec.td"
+include "PPCInstrSPE.td"
 include "PPCInstr64Bit.td"
 include "PPCInstrVSX.td"
 
@@ -3166,7 +3168,9 @@ def TLBSX2D : XForm_base_r3xo<31, 914, (outs),
                               "tlbsx. $RST, $A, $B", IIC_LdStLoad, []>,
                               Requires<[IsPPC4xx]>, isDOT;
 
-def RFI : XForm_0<19, 50, (outs), (ins), "rfi", IIC_BrB, []>,
+def RFID : XForm_0<19, 18, (outs), (ins), "rfid", IIC_IntRFID, []>;
+
+def RFI : XForm_0<19, 50, (outs), (ins), "rfi", IIC_SprRFI, []>,
                   Requires<[IsBookE]>;
 def RFCI : XForm_0<19, 51, (outs), (ins), "rfci", IIC_BrB, []>,
                    Requires<[IsBookE]>;
@@ -3222,6 +3226,9 @@ def : InstAlias<"crnot $bx, $by", (CRNOR crbitrc:$bx, crbitrc:$by, crbitrc:$by)>
 def : InstAlias<"mtxer $Rx", (MTSPR 1, gprc:$Rx)>;
 def : InstAlias<"mfxer $Rx", (MFSPR gprc:$Rx, 1)>;
 
+def : InstAlias<"mfrtcu $Rx", (MFSPR gprc:$Rx, 4)>;
+def : InstAlias<"mfrtcl $Rx", (MFSPR gprc:$Rx, 5)>;
+
 def : InstAlias<"mtdscr $Rx", (MTSPR 17, gprc:$Rx)>;
 def : InstAlias<"mfdscr $Rx", (MFSPR gprc:$Rx, 17)>;
 
@@ -3261,6 +3268,9 @@ def : InstAlias<"mfpid $Rx", (MFSPR gprc:$Rx, 48)>, Requires<[IsBookE]>;
 def : InstAlias<"mftb $Rx", (MFTB gprc:$Rx, 268)>;
 def : InstAlias<"mftbl $Rx", (MFTB gprc:$Rx, 268)>;
 def : InstAlias<"mftbu $Rx", (MFTB gprc:$Rx, 269)>;
+
+def : InstAlias<"mttbl $Rx", (MTSPR 284, gprc:$Rx)>;
+def : InstAlias<"mttbu $Rx", (MTSPR 285, gprc:$Rx)>;
 
 def : InstAlias<"mftblo $Rx", (MFSPR gprc:$Rx, 989)>, Requires<[IsPPC4xx]>;
 def : InstAlias<"mttblo $Rx", (MTSPR 989, gprc:$Rx)>, Requires<[IsPPC4xx]>;
@@ -3325,6 +3335,9 @@ def : InstAlias<"mfdear $Rx", (MFSPR gprc:$Rx, 981)>, Requires<[IsPPC4xx]>;
 def : InstAlias<"mtesr $Rx", (MTSPR 980, gprc:$Rx)>, Requires<[IsPPC4xx]>;
 def : InstAlias<"mfesr $Rx", (MFSPR gprc:$Rx, 980)>, Requires<[IsPPC4xx]>;
 
+def : InstAlias<"mfspefscr $Rx", (MFSPR gprc:$Rx, 512)>;
+def : InstAlias<"mtspefscr $Rx", (MTSPR 512, gprc:$Rx)>;
+
 def : InstAlias<"mttcr $Rx", (MTSPR 986, gprc:$Rx)>, Requires<[IsPPC4xx]>;
 def : InstAlias<"mftcr $Rx", (MFSPR gprc:$Rx, 986)>, Requires<[IsPPC4xx]>;
 
@@ -3346,6 +3359,9 @@ def : InstAlias<"subc. $rA, $rB, $rC", (SUBFC8o g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
 
 def : InstAlias<"mtmsrd $RS", (MTMSRD gprc:$RS, 0)>;
 def : InstAlias<"mtmsr $RS", (MTMSR gprc:$RS, 0)>;
+
+def : InstAlias<"mfasr $RT", (MFSPR gprc:$RT, 280)>;
+def : InstAlias<"mtasr $RT", (MTSPR 280, gprc:$RT)>;
 
 foreach SPRG = 0-3 in {
   def : InstAlias<"mfsprg $RT, "#SPRG, (MFSPR gprc:$RT, !add(SPRG, 272))>;
@@ -3637,4 +3653,3 @@ defm : TrapExtendedMnemonic<"lgt", 1>;
 defm : TrapExtendedMnemonic<"lnl", 5>;
 defm : TrapExtendedMnemonic<"lng", 6>;
 defm : TrapExtendedMnemonic<"u", 31>;
-

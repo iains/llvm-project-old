@@ -3419,6 +3419,12 @@
 # CHECK-BE: mfspr 2, 1                      # encoding: [0x7c,0x41,0x02,0xa6]
 # CHECK-LE: mfspr 2, 1                      # encoding: [0xa6,0x02,0x41,0x7c]
             mfxer 2
+# CHECK-BE: mfspr 2, 4                      # encoding: [0x7c,0x44,0x02,0xa6]
+# CHECK-LE: mfspr 2, 4                      # encoding: [0xa6,0x02,0x44,0x7c]
+            mfrtcu 2
+# CHECK-BE: mfspr 2, 5                      # encoding: [0x7c,0x45,0x02,0xa6]
+# CHECK-LE: mfspr 2, 5                      # encoding: [0xa6,0x02,0x45,0x7c]
+            mfrtcl 2
 # CHECK-BE: mtspr 17, 2                     # encoding: [0x7c,0x51,0x03,0xa6]
 # CHECK-LE: mtspr 17, 2                     # encoding: [0xa6,0x03,0x51,0x7c]
             mtdscr 2
@@ -3616,3 +3622,14 @@
 # CHECK-BE: stswi 8, 6, 7                    # encoding: [0x7d,0x06,0x3d,0xaa]
 # CHECK-LE: stswi 8, 6, 7                    # encoding: [0xaa,0x3d,0x06,0x7d]
             stswi %r8, %r6, 7
+
+# CHECK-BE: rfid                            # encoding: [0x4c,0x00,0x00,0x24]
+# CHECK-LE: rfid                            # encoding: [0x24,0x00,0x00,0x4c]
+            rfid
+
+# CHECK-BE: mfspr 2, 280                     # encoding: [0x7c,0x58,0x42,0xa6]
+# CHECK-LE: mfspr 2, 280                     # encoding: [0xa6,0x42,0x58,0x7c]
+            mfasr 2
+# CHECK-BE: mtspr 280, 2                     # encoding: [0x7c,0x58,0x43,0xa6]
+# CHECK-LE: mtspr 280, 2                     # encoding: [0xa6,0x43,0x58,0x7c]
+            mtasr 2

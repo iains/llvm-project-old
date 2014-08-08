@@ -659,8 +659,7 @@ void X86TargetLowering::resetOperationActions() {
   setOperationAction(ISD::STACKSAVE,          MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE,       MVT::Other, Expand);
 
-  setOperationAction(ISD::DYNAMIC_STACKALLOC, Subtarget->is64Bit() ?
-                     MVT::i64 : MVT::i32, Custom);
+  setOperationAction(ISD::DYNAMIC_STACKALLOC, getPointerTy(), Custom);
 
   if (!TM.Options.UseSoftFloat && X86ScalarSSEf64) {
     // f32 and f64 use SSE.
@@ -2063,8 +2062,8 @@ bool X86TargetLowering::isUsedByReturnOnly(SDNode *N, SDValue &Chain) const {
   return true;
 }
 
-MVT
-X86TargetLowering::getTypeForExtArgOrReturn(MVT VT,
+EVT
+X86TargetLowering::getTypeForExtArgOrReturn(LLVMContext &Context, EVT VT,
                                             ISD::NodeType ExtendKind) const {
   MVT ReturnMVT;
   // TODO: Is this also valid on 32-bit?
@@ -2073,7 +2072,7 @@ X86TargetLowering::getTypeForExtArgOrReturn(MVT VT,
   else
     ReturnMVT = MVT::i32;
 
-  MVT MinVT = getRegisterType(ReturnMVT);
+  EVT MinVT = getRegisterType(Context, ReturnMVT);
   return VT.bitsLT(MinVT) ? MinVT : VT;
 }
 
@@ -7450,7 +7449,7 @@ static SDValue lowerV8I16SingleInputVectorShuffle(
                 Input - SourceOffset;
             // We have to swap the uses in our half mask in one sweep.
             for (int &M : HalfMask)
-              if (M == SourceHalfMask[Input - SourceOffset])
+              if (M == SourceHalfMask[Input - SourceOffset] + SourceOffset)
                 M = Input;
               else if (M == Input)
                 M = SourceHalfMask[Input - SourceOffset] + SourceOffset;
@@ -7547,10 +7546,10 @@ static SDValue lowerV8I16SingleInputVectorShuffle(
           // We also have to update the final source mask in this case because
           // it may need to undo the above swap.
           for (int &M : FinalSourceHalfMask)
-            if (M == (InputsFixed[0] ^ 1))
-              M = InputsFixed[1];
-            else if (M == InputsFixed[1])
-              M = InputsFixed[0] ^ 1;
+            if (M == (InputsFixed[0] ^ 1) + SourceOffset)
+              M = InputsFixed[1] + SourceOffset;
+            else if (M == InputsFixed[1] + SourceOffset)
+              M = (InputsFixed[0] ^ 1) + SourceOffset;
 
           InputsFixed[1] = InputsFixed[0] ^ 1;
         }
@@ -7736,7 +7735,7 @@ static SDValue lowerV8I16BasicBlendVectorShuffle(SDLoc DL, SDValue V1,
                          [](int M) { return M >= 0; }) -
             std::begin(MoveMask);
         int MoveMaskIdx =
-            (((GoodMaskIdx - MoveOffset) & ~1) + 2 % 4) + MoveOffset;
+            ((((GoodMaskIdx - MoveOffset) & ~1) + 2) % 4) + MoveOffset;
         assert(MoveMask[MoveMaskIdx] == -1 && "Expected empty slot");
         assert(MoveMask[MoveMaskIdx + 1] == -1 && "Expected empty slot");
         MoveMask[MoveMaskIdx] = Mask[BadInputs[0]] - MaskOffset;
@@ -8234,10 +8233,11 @@ static SDValue lower128BitVectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   }
 }
 
-/// \brief Tiny helper function to test whether adjacent masks are sequential.
-static bool areAdjacentMasksSequential(ArrayRef<int> Mask) {
+/// \brief Tiny helper function to test whether a shuffle mask could be
+/// simplified by widening the elements being shuffled.
+static bool canWidenShuffleElements(ArrayRef<int> Mask) {
   for (int i = 0, Size = Mask.size(); i < Size; i += 2)
-    if (Mask[i] + 1 != Mask[i+1])
+    if (Mask[i] % 2 != 0 || Mask[i] + 1 != Mask[i+1])
       return false;
 
   return true;
@@ -8291,7 +8291,7 @@ static SDValue lowerVectorShuffle(SDValue Op, const X86Subtarget *Subtarget,
   // but it might be interesting to form i128 integers to handle flipping the
   // low and high halves of AVX 256-bit vectors.
   if (VT.isInteger() && VT.getScalarSizeInBits() < 64 &&
-      areAdjacentMasksSequential(Mask)) {
+      canWidenShuffleElements(Mask)) {
     SmallVector<int, 8> NewMask;
     for (int i = 0, Size = Mask.size(); i < Size; i += 2)
       NewMask.push_back(Mask[i] / 2);
@@ -19517,8 +19517,7 @@ static SDValue PerformTargetShuffleCombine(SDValue N, SelectionDAG &DAG,
 
     // See if this reduces to a PSHUFD which is no more expensive and can
     // combine with more operations.
-    if (Mask[0] % 2 == 0 && Mask[2] % 2 == 0 &&
-        areAdjacentMasksSequential(Mask)) {
+    if (canWidenShuffleElements(Mask)) {
       int DMask[] = {-1, -1, -1, -1};
       int DOffset = N.getOpcode() == X86ISD::PSHUFLW ? 0 : 2;
       DMask[DOffset + 0] = DOffset + Mask[0] / 2;
