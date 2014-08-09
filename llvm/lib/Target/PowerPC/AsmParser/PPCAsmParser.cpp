@@ -413,6 +413,15 @@ public:
   bool isU5Imm() const { return Kind == Immediate && isUInt<5>(getImm()); }
   bool isS5Imm() const { return Kind == Immediate && isInt<5>(getImm()); }
   bool isU6Imm() const { return Kind == Immediate && isUInt<6>(getImm()); }
+  bool isU6ImmX2() const { return Kind == Immediate &&
+                                  isUInt<6>(getImm()) &&
+                                  (getImm() & 1) == 0; }
+  bool isU7ImmX4() const { return Kind == Immediate &&
+                                  isUInt<7>(getImm()) &&
+                                  (getImm() & 3) == 0; }
+  bool isU8ImmX8() const { return Kind == Immediate &&
+                                  isUInt<8>(getImm()) &&
+                                  (getImm() & 7) == 0; }
   bool isU16Imm() const { return Kind == Expression ||
                                  (Kind == Immediate && isUInt<16>(getImm())); }
   bool isS16Imm() const { return Kind == Expression ||
@@ -423,9 +432,23 @@ public:
   bool isS17Imm() const { return Kind == Expression ||
                                  (Kind == Immediate && isInt<17>(getImm())); }
   bool isTLSReg() const { return Kind == TLSRegister; }
-  bool isDirectBr() const { return Kind == Expression ||
-                                   (Kind == Immediate && isInt<26>(getImm()) &&
-                                    (getImm() & 3) == 0); }
+  bool isDirectBr() const {
+    if (Kind == Expression)
+      return true;
+    if (Kind != Immediate)
+      return false;
+    // Operand must be 64-bit aligned, signed 27-bit immediate.
+    if ((getImm() & 3) != 0)
+      return false;
+    if (isInt<26>(getImm()))
+      return true;
+    if (!IsPPC64) {
+      // In 32-bit mode, large 32-bit quantities wrap around.
+      if (isUInt<32>(getImm()) && isInt<26>(static_cast<int32_t>(getImm())))
+        return true;
+    }
+    return false;
+  }
   bool isCondBr() const { return Kind == Expression ||
                                  (Kind == Immediate && isInt<16>(getImm()) &&
                                   (getImm() & 3) == 0); }
