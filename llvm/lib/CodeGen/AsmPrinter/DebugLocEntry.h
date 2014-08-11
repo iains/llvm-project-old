@@ -76,6 +76,13 @@ public:
       llvm_unreachable("unhandled EntryKind");
     }
 
+    // Compare two pieces based on their offset.
+    bool operator<(const Value &other) const {
+      DIVariable Var(Variable);
+      DIVariable OtherVar(other.Variable);
+      return Var.getPieceOffset() < OtherVar.getPieceOffset();
+    }
+
     bool isLocation() const { return EntryKind == E_Location; }
     bool isInt() const { return EntryKind == E_Integer; }
     bool isConstantFP() const { return EntryKind == E_ConstantFP; }
@@ -87,34 +94,39 @@ public:
     const MDNode *getVariable() const { return Variable; }
   };
 private:
-  /// A list of locations/constants belonging to this entry.
+  /// A nonempty list of locations/constants belonging to this entry,
+  /// sorted by offset.
   SmallVector<Value, 1> Values;
 
 public:
-  DebugLocEntry() : Begin(nullptr), End(nullptr) {}
   DebugLocEntry(const MCSymbol *B, const MCSymbol *E, Value Val)
       : Begin(B), End(E) {
     Values.push_back(std::move(Val));
+  }
+
+  /// \brief If this and Next are describing different pieces of the same
+  // variable, merge them by appending Next's values to the current
+  // list of values.
+  // Return true if the merge was successful.
+  bool MergeValues(const DebugLocEntry &Next) {
+    if (Begin == Next.Begin && Values.size() > 0 && Next.Values.size() > 0) {
+      DIVariable Var(Values[0].Variable);
+      DIVariable NextVar(Next.Values[0].Variable);
+      if (Var.getName() == NextVar.getName() &&
+          Var.isVariablePiece() && NextVar.isVariablePiece()) {
+        addValues(Next.Values);
+        End = Next.End;
+        return true;
+      }
+    }
+    return false;
   }
 
   /// \brief Attempt to merge this DebugLocEntry with Next and return
   /// true if the merge was successful. Entries can be merged if they
   /// share the same Loc/Constant and if Next immediately follows this
   /// Entry.
-  bool Merge(const DebugLocEntry &Next) {
-    // If this and Next are describing different pieces of the same
-    // variable, merge them by appending next's values to the current
-    // list of values.
-    if (Begin == Next.Begin && Values.size() > 0 && Next.Values.size() > 0) {
-      DIVariable Var(Values[0].Variable);
-      DIVariable NextVar(Next.Values[0].Variable);
-      if (Var.getName() == NextVar.getName() &&
-          Var.isVariablePiece() && NextVar.isVariablePiece()) {
-        Values.append(Next.Values.begin(), Next.Values.end());
-        End = Next.End;
-        return true;
-      }
-    }
+  bool MergeRanges(const DebugLocEntry &Next) {
     // If this and Next are describing the same variable, merge them.
     if ((End == Next.Begin && Values == Next.Values)) {
       End = Next.End;
@@ -126,10 +138,19 @@ public:
   const MCSymbol *getBeginSym() const { return Begin; }
   const MCSymbol *getEndSym() const { return End; }
   const ArrayRef<Value> getValues() const { return Values; }
-  void addValue(Value Val) {
-    assert(DIVariable(Val.Variable).isVariablePiece() &&
-           "multi-value DebugLocEntries must be pieces");
-    Values.push_back(Val);
+  void addValues(ArrayRef<DebugLocEntry::Value> Vals) {
+    Values.append(Vals.begin(), Vals.end());
+    sortUniqueValues();
+    assert(std::all_of(Values.begin(), Values.end(), [](DebugLocEntry::Value V){
+          return DIVariable(V.Variable).isVariablePiece();
+        }) && "value must be a piece");
+  }
+
+  // Sort the pieces by offset.
+  // Remove any duplicate entries by dropping all but the first.
+  void sortUniqueValues() {
+    std::sort(Values.begin(), Values.end());
+    Values.erase(std::unique(Values.begin(), Values.end()), Values.end());
   }
 };
 

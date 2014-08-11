@@ -1233,8 +1233,7 @@ static bool piecesOverlap(DIVariable P1, DIVariable P2) {
 void
 DwarfDebug::buildLocationList(SmallVectorImpl<DebugLocEntry> &DebugLoc,
                               const DbgValueHistoryMap::InstrRanges &Ranges) {
-  typedef std::pair<DIVariable, DebugLocEntry::Value> Range;
-  SmallVector<Range, 4> OpenRanges;
+  SmallVector<DebugLocEntry::Value, 4> OpenRanges;
 
   for (auto I = Ranges.begin(), E = Ranges.end(); I != E; ++I) {
     const MachineInstr *Begin = I->first;
@@ -1251,9 +1250,10 @@ DwarfDebug::buildLocationList(SmallVectorImpl<DebugLocEntry> &DebugLoc,
 
     // If this piece overlaps with any open ranges, truncate them.
     DIVariable DIVar = Begin->getDebugVariable();
-    auto Last = std::remove_if(OpenRanges.begin(), OpenRanges.end(), [&](Range R){
-        return piecesOverlap(DIVar, R.first);
-      });
+    auto Last = std::remove_if(OpenRanges.begin(), OpenRanges.end(),
+                  [&](DebugLocEntry::Value R) {
+                    return piecesOverlap(DIVar, DIVariable(R.getVariable()));
+                  });
     OpenRanges.erase(Last, OpenRanges.end());
 
     const MCSymbol *StartLabel = getLabelBeforeInsn(Begin);
@@ -1272,18 +1272,37 @@ DwarfDebug::buildLocationList(SmallVectorImpl<DebugLocEntry> &DebugLoc,
 
     auto Value = getDebugLocValue(Begin);
     DebugLocEntry Loc(StartLabel, EndLabel, Value);
-    if (DebugLoc.empty() || !DebugLoc.back().Merge(Loc)) {
-      // Add all values from still valid non-overlapping pieces.
-      for (auto Range : OpenRanges)
-        Loc.addValue(Range.second);
+    bool couldMerge = false;
+
+    // If this is a piece, it may belong to the current DebugLocEntry.
+    if (DIVar.isVariablePiece()) {
+      // Add this value to the list of open ranges.
+      OpenRanges.push_back(Value);
+
+      // Attempt to add the piece to the last entry.
+      if (!DebugLoc.empty())
+        if (DebugLoc.back().MergeValues(Loc))
+          couldMerge = true;
+    }
+
+    if (!couldMerge) {
+      // Need to add a new DebugLocEntry. Add all values from still
+      // valid non-overlapping pieces.
+      if (OpenRanges.size())
+        Loc.addValues(OpenRanges);
+
       DebugLoc.push_back(std::move(Loc));
     }
-    // Add this value to the list of open ranges.
-    if (DIVar.isVariablePiece())
-      OpenRanges.push_back(std::make_pair(DIVar, Value));
+
+    // Attempt to coalesce the ranges of two otherwise identical
+    // DebugLocEntries.
+    auto CurEntry = DebugLoc.rbegin();
+    auto PrevEntry = std::next(CurEntry);
+    if (PrevEntry != DebugLoc.rend() && PrevEntry->MergeRanges(*CurEntry))
+      DebugLoc.pop_back();
 
     DEBUG(dbgs() << "Values:\n";
-          for (auto Value : DebugLoc.back().getValues())
+          for (auto Value : CurEntry->getValues())
             Value.getVariable()->dump();
           dbgs() << "-----\n");
   }
@@ -2047,30 +2066,18 @@ void DwarfDebug::emitDebugStr() {
 void DwarfDebug::emitLocPieces(ByteStreamer &Streamer,
                                const DITypeIdentifierMap &Map,
                                ArrayRef<DebugLocEntry::Value> Values) {
-  typedef DebugLocEntry::Value Piece;
-  SmallVector<Piece, 4> Pieces(Values.begin(), Values.end());
-  assert(std::all_of(Pieces.begin(), Pieces.end(), [](Piece &P) {
+  assert(std::all_of(Values.begin(), Values.end(), [](DebugLocEntry::Value P) {
         return DIVariable(P.getVariable()).isVariablePiece();
       }) && "all values are expected to be pieces");
-
-  // Sort the pieces so they can be emitted using DW_OP_piece.
-  std::sort(Pieces.begin(), Pieces.end(), [](const Piece &A, const Piece &B) {
-      DIVariable VarA(A.getVariable());
-      DIVariable VarB(B.getVariable());
-      return VarA.getPieceOffset() < VarB.getPieceOffset();
-    });
-  // Remove any duplicate entries by dropping all but the first.
-  Pieces.erase(std::unique(Pieces.begin(), Pieces.end(),
-                           [] (const Piece &A,const Piece &B){
-                             return A.getVariable() == B.getVariable();
-                           }), Pieces.end());
+  assert(std::is_sorted(Values.begin(), Values.end()) &&
+         "pieces are expected to be sorted");
 
   unsigned Offset = 0;
-  for (auto Piece : Pieces) {
+  for (auto Piece : Values) {
     DIVariable Var(Piece.getVariable());
     unsigned PieceOffset = Var.getPieceOffset();
     unsigned PieceSize = Var.getPieceSize();
-    assert(Offset <= PieceOffset && "overlapping pieces in DebugLocEntry");
+    assert(Offset <= PieceOffset && "overlapping or duplicate pieces");
     if (Offset < PieceOffset) {
       // The DWARF spec seriously mandates pieces with no locations for gaps.
       Asm->EmitDwarfOpPiece(Streamer, (PieceOffset-Offset)*8);
