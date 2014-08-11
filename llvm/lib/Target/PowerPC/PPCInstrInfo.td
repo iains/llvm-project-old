@@ -458,7 +458,7 @@ def u6imm   : Operand<i32> {
 }
 def PPCS16ImmAsmOperand : AsmOperandClass {
   let Name = "S16Imm"; let PredicateMethod = "isS16Imm";
-  let RenderMethod = "addImmOperands";
+  let RenderMethod = "addS16ImmOperands";
 }
 def s16imm  : Operand<i32> {
   let PrintMethod = "printS16ImmOperand";
@@ -468,7 +468,7 @@ def s16imm  : Operand<i32> {
 }
 def PPCU16ImmAsmOperand : AsmOperandClass {
   let Name = "U16Imm"; let PredicateMethod = "isU16Imm";
-  let RenderMethod = "addImmOperands";
+  let RenderMethod = "addU16ImmOperands";
 }
 def u16imm  : Operand<i32> {
   let PrintMethod = "printU16ImmOperand";
@@ -478,7 +478,7 @@ def u16imm  : Operand<i32> {
 }
 def PPCS17ImmAsmOperand : AsmOperandClass {
   let Name = "S17Imm"; let PredicateMethod = "isS17Imm";
-  let RenderMethod = "addImmOperands";
+  let RenderMethod = "addS16ImmOperands";
 }
 def s17imm  : Operand<i32> {
   // This operand type is used for addis/lis to allow the assembler parser
@@ -554,7 +554,7 @@ def ptr_rc_idx : Operand<iPTR>, PointerLikeRegClass<0> {
 
 def PPCDispRIOperand : AsmOperandClass {
  let Name = "DispRI"; let PredicateMethod = "isS16Imm";
- let RenderMethod = "addImmOperands";
+ let RenderMethod = "addS16ImmOperands";
 }
 def dispRI : Operand<iPTR> {
   let ParserMatchClass = PPCDispRIOperand;
@@ -3128,21 +3128,15 @@ def WRTEEI: I<31, (outs), (ins i1imm:$E), "wrteei $E", IIC_SprMTMSR>,
   let Inst{21-30} = 163;
 }
 
-def DCI: I<31, (outs), (ins u4imm:$CT), "dci $CT", IIC_LdStLoad>,
-              Requires<[IsPPC4xx]> {
-  bits<4> CT;
+def DCCCI : XForm_tlb<454, (outs), (ins gprc:$A, gprc:$B),
+               "dccci $A, $B", IIC_LdStLoad>, Requires<[IsPPC4xx]>;
+def ICCCI : XForm_tlb<966, (outs), (ins gprc:$A, gprc:$B),
+               "iccci $A, $B", IIC_LdStLoad>, Requires<[IsPPC4xx]>;
 
-  let Inst{7-10} = CT;
-  let Inst{21-30} = 454;
-}
-
-def ICI: I<31, (outs), (ins u4imm:$CT), "ici $CT", IIC_LdStLoad>,
-              Requires<[IsPPC4xx]> {
-  bits<4> CT;
-
-  let Inst{7-10} = CT;
-  let Inst{21-30} = 966;
-}
+def : InstAlias<"dci 0", (DCCCI R0, R0)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"dccci", (DCCCI R0, R0)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"ici 0", (ICCCI R0, R0)>, Requires<[IsPPC4xx]>;
+def : InstAlias<"iccci", (ICCCI R0, R0)>, Requires<[IsPPC4xx]>;
 
 def MFMSR : XForm_rs<31, 83, (outs gprc:$RT), (ins),
                   "mfmsr $RT", IIC_SprMFMSR, []>;

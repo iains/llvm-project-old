@@ -1127,7 +1127,7 @@ void X86TargetLowering::resetOperationActions() {
     setLoadExtAction(ISD::SEXTLOAD, MVT::v2i16, Custom);
     setLoadExtAction(ISD::SEXTLOAD, MVT::v2i32, Custom);
 
-    // i8 and i16 vectors are custom , because the source register and source
+    // i8 and i16 vectors are custom because the source register and source
     // source memory operand types are not the same width.  f32 vectors are
     // custom since the immediate controlling the insert encodes additional
     // information.
@@ -1141,7 +1141,7 @@ void X86TargetLowering::resetOperationActions() {
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, MVT::v4i32, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, MVT::v4f32, Custom);
 
-    // FIXME: these should be Legal but thats only for the case where
+    // FIXME: these should be Legal, but that's only for the case where
     // the index is constant.  For now custom expand to deal with that.
     if (Subtarget->is64Bit()) {
       setOperationAction(ISD::INSERT_VECTOR_ELT,  MVT::v2i64, Custom);
@@ -2495,7 +2495,7 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
 
       if (TotalNumXMMRegs != 0 && NumXMMRegs != TotalNumXMMRegs) {
         // Now store the XMM (fp + vector) parameter registers.
-        SmallVector<SDValue, 11> SaveXMMOps;
+        SmallVector<SDValue, 12> SaveXMMOps;
         SaveXMMOps.push_back(Chain);
 
         unsigned AL = MF.addLiveIn(X86::AL, &X86::GR8RegClass);
@@ -13330,7 +13330,7 @@ static SDValue LowerExtendedLoad(SDValue Op, const X86Subtarget *Subtarget,
            "We can't implement an sext load without a arithmetic right shift!");
 
     // Redistribute the loaded elements into the different locations.
-    SmallVector<int, 8> ShuffleVec(NumElems * SizeRatio, -1);
+    SmallVector<int, 16> ShuffleVec(NumElems * SizeRatio, -1);
     for (unsigned i = 0; i != NumElems; ++i)
       ShuffleVec[i * SizeRatio + SizeRatio - 1] = i;
 
@@ -13350,7 +13350,7 @@ static SDValue LowerExtendedLoad(SDValue Op, const X86Subtarget *Subtarget,
   }
 
   // Redistribute the loaded elements into the different locations.
-  SmallVector<int, 8> ShuffleVec(NumElems * SizeRatio, -1);
+  SmallVector<int, 16> ShuffleVec(NumElems * SizeRatio, -1);
   for (unsigned i = 0; i != NumElems; ++i)
     ShuffleVec[i * SizeRatio] = i;
 
