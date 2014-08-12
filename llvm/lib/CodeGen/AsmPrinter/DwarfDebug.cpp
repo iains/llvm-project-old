@@ -796,9 +796,7 @@ void DwarfDebug::beginModule() {
 void DwarfDebug::finishVariableDefinitions() {
   for (const auto &Var : ConcreteVariables) {
     DIE *VariableDie = Var->getDIE();
-    // FIXME: There shouldn't be any variables without DIEs.
-    if (!VariableDie)
-      continue;
+    assert(VariableDie);
     // FIXME: Consider the time-space tradeoff of just storing the unit pointer
     // in the ConcreteVariables list, rather than looking it up again here.
     // DIE::getUnit isn't simple - it walks parent pointers, etc.
@@ -1251,9 +1249,9 @@ DwarfDebug::buildLocationList(SmallVectorImpl<DebugLocEntry> &DebugLoc,
     // If this piece overlaps with any open ranges, truncate them.
     DIVariable DIVar = Begin->getDebugVariable();
     auto Last = std::remove_if(OpenRanges.begin(), OpenRanges.end(),
-                  [&](DebugLocEntry::Value R) {
-                    return piecesOverlap(DIVar, DIVariable(R.getVariable()));
-                  });
+                               [&](DebugLocEntry::Value R) {
+                                 return piecesOverlap(DIVar, R.getVariable());
+                               });
     OpenRanges.erase(Last, OpenRanges.end());
 
     const MCSymbol *StartLabel = getLabelBeforeInsn(Begin);
@@ -2067,14 +2065,14 @@ void DwarfDebug::emitLocPieces(ByteStreamer &Streamer,
                                const DITypeIdentifierMap &Map,
                                ArrayRef<DebugLocEntry::Value> Values) {
   assert(std::all_of(Values.begin(), Values.end(), [](DebugLocEntry::Value P) {
-        return DIVariable(P.getVariable()).isVariablePiece();
+        return P.isVariablePiece();
       }) && "all values are expected to be pieces");
   assert(std::is_sorted(Values.begin(), Values.end()) &&
          "pieces are expected to be sorted");
 
   unsigned Offset = 0;
   for (auto Piece : Values) {
-    DIVariable Var(Piece.getVariable());
+    DIVariable Var = Piece.getVariable();
     unsigned PieceOffset = Var.getPieceOffset();
     unsigned PieceSize = Var.getPieceSize();
     assert(Offset <= PieceOffset && "overlapping or duplicate pieces");
@@ -2110,8 +2108,7 @@ void DwarfDebug::emitLocPieces(ByteStreamer &Streamer,
 void DwarfDebug::emitDebugLocEntry(ByteStreamer &Streamer,
                                    const DebugLocEntry &Entry) {
   const DebugLocEntry::Value Value = Entry.getValues()[0];
-  DIVariable DV(Value.getVariable());
-  if (DV.isVariablePiece())
+  if (Value.isVariablePiece())
     // Emit all pieces that belong to the same variable and range.
     return emitLocPieces(Streamer, TypeIdentifierMap, Entry.getValues());
 
@@ -2121,7 +2118,7 @@ void DwarfDebug::emitDebugLocEntry(ByteStreamer &Streamer,
 
 void DwarfDebug::emitDebugLocValue(ByteStreamer &Streamer,
                                    const DebugLocEntry::Value &Value) {
-  DIVariable DV(Value.getVariable());
+  DIVariable DV = Value.getVariable();
   // Regular entry.
   if (Value.isInt()) {
     DIBasicType BTy(resolve(DV.getType()));
