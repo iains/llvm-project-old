@@ -1134,18 +1134,28 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
 
   // Module map file
   if (WritingModule) {
-    BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
-    Abbrev->Add(BitCodeAbbrevOp(MODULE_MAP_FILE));
-    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Filename
-    unsigned AbbrevCode = Stream.EmitAbbrev(Abbrev);
+    Record.clear();
+    auto addModMap = [&](const FileEntry *F) {
+      SmallString<128> ModuleMap(F->getName());
+      llvm::sys::fs::make_absolute(ModuleMap);
+      AddString(ModuleMap.str(), Record);
+    };
 
-    const FileEntry *ModMapFile = PP.getHeaderSearchInfo().getModuleMap().
-        getModuleMapFileForUniquing(WritingModule);
-    SmallString<128> ModuleMap(ModMapFile->getName());
-    llvm::sys::fs::make_absolute(ModuleMap);
-    RecordData Record;
-    Record.push_back(MODULE_MAP_FILE);
-    Stream.EmitRecordWithBlob(AbbrevCode, Record, ModuleMap.str());
+    auto &Map = PP.getHeaderSearchInfo().getModuleMap();
+
+    // Primary module map file.
+    addModMap(Map.getModuleMapFileForUniquing(WritingModule));
+
+    // Additional module map files.
+    if (auto *AdditionalModMaps = Map.getAdditionalModuleMapFiles(WritingModule)) {
+      Record.push_back(AdditionalModMaps->size());
+      for (const FileEntry *F : *AdditionalModMaps)
+        addModMap(F);
+    } else {
+      Record.push_back(0);
+    }
+
+    Stream.EmitRecord(MODULE_MAP_FILE, Record);
   }
 
   // Imports
@@ -3469,6 +3479,18 @@ void ASTWriter::WriteIdentifierTable(Preprocessor &PP,
 // DeclContext's Name Lookup Table Serialization
 //===----------------------------------------------------------------------===//
 
+/// Determine the declaration that should be put into the name lookup table to
+/// represent the given declaration in this module. This is usually D itself,
+/// but if D was imported and merged into a local declaration, we want the most
+/// recent local declaration instead. The chosen declaration will be the most
+/// recent declaration in any module that imports this one.
+static NamedDecl *getDeclForLocalLookup(NamedDecl *D) {
+  for (Decl *Redecl = D; Redecl; Redecl = Redecl->getPreviousDecl())
+    if (!Redecl->isFromASTFile())
+      return cast<NamedDecl>(Redecl);
+  return D;
+}
+
 namespace {
 // Trait used for the on-disk hash table used in the method pool.
 class ASTDeclContextNameLookupTrait {
@@ -3586,7 +3608,7 @@ public:
     LE.write<uint16_t>(Lookup.size());
     for (DeclContext::lookup_iterator I = Lookup.begin(), E = Lookup.end();
          I != E; ++I)
-      LE.write<uint32_t>(Writer.GetDeclRef(*I));
+      LE.write<uint32_t>(Writer.GetDeclRef(getDeclForLocalLookup(*I)));
 
     assert(Out.tell() - Start == DataLen && "Data length is wrong");
   }
@@ -3632,7 +3654,7 @@ void ASTWriter::AddUpdatedDeclContext(const DeclContext *DC) {
                             [&](DeclarationName Name,
                                 DeclContext::lookup_const_result Result) {
       for (auto *Decl : Result)
-        GetDeclRef(Decl);
+        GetDeclRef(getDeclForLocalLookup(Decl));
     });
   }
 }
