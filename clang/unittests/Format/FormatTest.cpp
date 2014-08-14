@@ -5234,6 +5234,8 @@ TEST_F(FormatTest, HandlesIncludeDirectives) {
                "#include <strstream>\n"
                "#endif");
 
+  verifyFormat("#define MY_IMPORT <a/b>");
+
   // Protocol buffer definition or missing "#".
   verifyFormat("import \"aaaaaaaaaaaaaaaaa/aaaaaaaaaaaaaaa\";",
                getLLVMStyleWithColumns(30));
@@ -5439,6 +5441,13 @@ TEST_F(FormatTest, LayoutCxx11BraceInitializers) {
                "    kkkkkk,\n"
                "};",
                NoBinPacking);
+  verifyFormat(
+      "const Aaaaaa aaaaa = {\n"
+      "    aaaaa,  bbbbb,  ccccc,  ddddd,  eeeee,  ffffff, ggggg, hhhhhh,\n"
+      "    iiiiii, jjjjjj, kkkkkk, aaaaa,  bbbbb,  ccccc,  ddddd, eeeee,\n"
+      "    ffffff, ggggg,  hhhhhh, iiiiii, jjjjjj, kkkkkk,\n"
+      "};",
+      NoBinPacking);
 
   // FIXME: The alignment of these trailing comments might be bad. Then again,
   // this might be utterly useless in real code.
@@ -9189,6 +9198,10 @@ TEST_F(FormatTest, DisableRegions) {
                    "  int j;\n"
                    " // clang-format on\n"
                    "   int   k;"));
+}
+
+TEST_F(FormatTest, DoNotCrashOnInvalidInput) {
+  format("? ) =");
 }
 
 } // end namespace tooling
