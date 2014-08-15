@@ -8334,6 +8334,91 @@ static SDValue lower128BitVectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   }
 }
 
+/// \brief Generic routine to split a 256-bit vector shuffle into 128-bit
+/// shuffles.
+///
+/// There is a severely limited set of shuffles available in AVX1 for 256-bit
+/// vectors resulting in routinely needing to split the shuffle into two 128-bit
+/// shuffles. This can be done generically for any 256-bit vector shuffle and so
+/// we encode the logic here for specific shuffle lowering routines to bail to
+/// when they exhaust the features avaible to more directly handle the shuffle.
+static SDValue splitAndLower256BitVectorShuffle(SDValue Op, SDValue V1,
+                                                SDValue V2,
+                                                const X86Subtarget *Subtarget,
+                                                SelectionDAG &DAG) {
+  SDLoc DL(Op);
+  MVT VT = Op.getSimpleValueType();
+  assert(VT.getSizeInBits() == 256 && "Only for 256-bit vector shuffles!");
+  assert(V1.getSimpleValueType() == VT && "Bad operand type!");
+  assert(V2.getSimpleValueType() == VT && "Bad operand type!");
+  ShuffleVectorSDNode *SVOp = cast<ShuffleVectorSDNode>(Op);
+  ArrayRef<int> Mask = SVOp->getMask();
+
+  ArrayRef<int> LoMask = Mask.slice(0, Mask.size()/2);
+  ArrayRef<int> HiMask = Mask.slice(Mask.size()/2);
+
+  int NumElements = VT.getVectorNumElements();
+  int SplitNumElements = NumElements / 2;
+  MVT ScalarVT = VT.getScalarType();
+  MVT SplitVT = MVT::getVectorVT(ScalarVT, NumElements / 2);
+
+  SDValue LoV1 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SplitVT, V1,
+                             DAG.getIntPtrConstant(0));
+  SDValue HiV1 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SplitVT, V1,
+                             DAG.getIntPtrConstant(SplitNumElements));
+  SDValue LoV2 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SplitVT, V2,
+                             DAG.getIntPtrConstant(0));
+  SDValue HiV2 = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SplitVT, V2,
+                             DAG.getIntPtrConstant(SplitNumElements));
+
+  // Now create two 4-way blends of these half-width vectors.
+  auto HalfBlend = [&](ArrayRef<int> HalfMask) {
+    SmallVector<int, 16> V1BlendMask, V2BlendMask, BlendMask;
+    for (int i = 0; i < SplitNumElements; ++i) {
+      int M = HalfMask[i];
+      if (M >= NumElements) {
+        V2BlendMask.push_back(M - NumElements);
+        V1BlendMask.push_back(-1);
+        BlendMask.push_back(SplitNumElements + i);
+      } else if (M >= 0) {
+        V2BlendMask.push_back(-1);
+        V1BlendMask.push_back(M);
+        BlendMask.push_back(i);
+      } else {
+        V2BlendMask.push_back(-1);
+        V1BlendMask.push_back(-1);
+        BlendMask.push_back(-1);
+      }
+    }
+    SDValue V1Blend = DAG.getVectorShuffle(SplitVT, DL, LoV1, HiV1, V1BlendMask);
+    SDValue V2Blend = DAG.getVectorShuffle(SplitVT, DL, LoV2, HiV2, V2BlendMask);
+    return DAG.getVectorShuffle(SplitVT, DL, V1Blend, V2Blend, BlendMask);
+  };
+  SDValue Lo = HalfBlend(LoMask);
+  SDValue Hi = HalfBlend(HiMask);
+  return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, Lo, Hi);
+}
+
+/// \brief High-level routine to lower various 256-bit x86 vector shuffles.
+///
+/// This routine either breaks down the specific type of a 256-bit x86 vector
+/// shuffle or splits it into two 128-bit shuffles and fuses the results back
+/// together based on the available instructions.
+static SDValue lower256BitVectorShuffle(SDValue Op, SDValue V1, SDValue V2,
+                                        MVT VT, const X86Subtarget *Subtarget,
+                                        SelectionDAG &DAG) {
+  // FIXME: We should detect symmetric patterns and re-use the 128-bit shuffle
+  // lowering logic with wider types in that case.
+
+  // FIXME: We should detect when we can use AVX2 cross-half shuffles to either
+  // implement the shuffle completely, more effectively build symmetry, or
+  // minimize half-blends.
+
+  // Fall back to the basic pattern of extracting the high half and forming
+  // a 4-way blend.
+  return splitAndLower256BitVectorShuffle(Op, V1, V2, Subtarget, DAG);
+}
+
 /// \brief Tiny helper function to test whether a shuffle mask could be
 /// simplified by widening the elements being shuffled.
 static bool canWidenShuffleElements(ArrayRef<int> Mask) {
@@ -8436,6 +8521,9 @@ static SDValue lowerVectorShuffle(SDValue Op, const X86Subtarget *Subtarget,
   // For each vector width, delegate to a specialized lowering routine.
   if (VT.getSizeInBits() == 128)
     return lower128BitVectorShuffle(Op, V1, V2, VT, Subtarget, DAG);
+
+  if (VT.getSizeInBits() == 256)
+    return lower256BitVectorShuffle(Op, V1, V2, VT, Subtarget, DAG);
 
   llvm_unreachable("Unimplemented!");
 }
@@ -14136,6 +14224,69 @@ static SDValue getTargetVShiftNode(unsigned Opc, SDLoc dl, MVT VT,
   return DAG.getNode(Opc, dl, VT, SrcOp, ShAmt);
 }
 
+/// \brief Return (vselect \p Mask, \p Op, \p PreservedSrc) along with the
+/// necessary casting for \p Mask when lowering masking intrinsics.
+static SDValue getVectorMaskingNode(SDValue Op, SDValue Mask,
+                                    SDValue PreservedSrc, SelectionDAG &DAG) {
+    EVT VT = Op.getValueType();
+    EVT MaskVT = EVT::getVectorVT(*DAG.getContext(),
+                                  MVT::i1, VT.getVectorNumElements());
+    SDLoc dl(Op);
+
+    assert(MaskVT.isSimple() && "invalid mask type");
+    return DAG.getNode(ISD::VSELECT, dl, VT,
+                       DAG.getNode(ISD::BITCAST, dl, MaskVT, Mask),
+                       Op, PreservedSrc);
+}
+
+static unsigned getOpcodeForFMAIntrinsic(unsigned IntNo) {
+    switch (IntNo) {
+    default: llvm_unreachable("Impossible intrinsic");  // Can't reach here.
+    case Intrinsic::x86_fma_vfmadd_ps:
+    case Intrinsic::x86_fma_vfmadd_pd:
+    case Intrinsic::x86_fma_vfmadd_ps_256:
+    case Intrinsic::x86_fma_vfmadd_pd_256:
+    case Intrinsic::x86_fma_mask_vfmadd_ps_512:
+    case Intrinsic::x86_fma_mask_vfmadd_pd_512:
+      return X86ISD::FMADD;
+    case Intrinsic::x86_fma_vfmsub_ps:
+    case Intrinsic::x86_fma_vfmsub_pd:
+    case Intrinsic::x86_fma_vfmsub_ps_256:
+    case Intrinsic::x86_fma_vfmsub_pd_256:
+    case Intrinsic::x86_fma_mask_vfmsub_ps_512:
+    case Intrinsic::x86_fma_mask_vfmsub_pd_512:
+      return X86ISD::FMSUB;
+    case Intrinsic::x86_fma_vfnmadd_ps:
+    case Intrinsic::x86_fma_vfnmadd_pd:
+    case Intrinsic::x86_fma_vfnmadd_ps_256:
+    case Intrinsic::x86_fma_vfnmadd_pd_256:
+    case Intrinsic::x86_fma_mask_vfnmadd_ps_512:
+    case Intrinsic::x86_fma_mask_vfnmadd_pd_512:
+      return X86ISD::FNMADD;
+    case Intrinsic::x86_fma_vfnmsub_ps:
+    case Intrinsic::x86_fma_vfnmsub_pd:
+    case Intrinsic::x86_fma_vfnmsub_ps_256:
+    case Intrinsic::x86_fma_vfnmsub_pd_256:
+    case Intrinsic::x86_fma_mask_vfnmsub_ps_512:
+    case Intrinsic::x86_fma_mask_vfnmsub_pd_512:
+      return X86ISD::FNMSUB;
+    case Intrinsic::x86_fma_vfmaddsub_ps:
+    case Intrinsic::x86_fma_vfmaddsub_pd:
+    case Intrinsic::x86_fma_vfmaddsub_ps_256:
+    case Intrinsic::x86_fma_vfmaddsub_pd_256:
+    case Intrinsic::x86_fma_mask_vfmaddsub_ps_512:
+    case Intrinsic::x86_fma_mask_vfmaddsub_pd_512:
+      return X86ISD::FMADDSUB;
+    case Intrinsic::x86_fma_vfmsubadd_ps:
+    case Intrinsic::x86_fma_vfmsubadd_pd:
+    case Intrinsic::x86_fma_vfmsubadd_ps_256:
+    case Intrinsic::x86_fma_vfmsubadd_pd_256:
+    case Intrinsic::x86_fma_mask_vfmsubadd_ps_512:
+    case Intrinsic::x86_fma_mask_vfmsubadd_pd_512:
+      return X86ISD::FMSUBADD;
+    }
+}
+
 static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   SDLoc dl(Op);
   unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
@@ -14514,20 +14665,13 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
     return DAG.getNode(ISD::FSQRT, dl, Op.getValueType(), Op.getOperand(1));
 
   case Intrinsic::x86_avx512_mask_valign_q_512:
-  case Intrinsic::x86_avx512_mask_valign_d_512: {
-    EVT VT = Op.getValueType();
-    EVT MaskVT = EVT::getVectorVT(*DAG.getContext(),
-                                  MVT::i1, VT.getVectorNumElements());
-    assert(MaskVT.isSimple() && "invalid valign mask type");
+  case Intrinsic::x86_avx512_mask_valign_d_512:
     // Vector source operands are swapped.
-    return DAG.getNode(ISD::VSELECT, dl, VT,
-                       DAG.getNode(ISD::BITCAST, dl, MaskVT,
-                                   Op.getOperand(5)),
-                       DAG.getNode(X86ISD::VALIGN, dl, VT,
-                                   Op.getOperand(2), Op.getOperand(1),
-                                   Op.getOperand(3)),
-                       Op.getOperand(4));
-  }
+    return getVectorMaskingNode(DAG.getNode(X86ISD::VALIGN, dl,
+                                            Op.getValueType(), Op.getOperand(2),
+                                            Op.getOperand(1),
+                                            Op.getOperand(3)),
+                                Op.getOperand(5), Op.getOperand(4), DAG);
 
   // ptest and testp intrinsics. The intrinsic these come from are designed to
   // return an integer value, not just an instruction so lower it to the ptest
@@ -14775,6 +14919,31 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
     SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::i32);
     return DAG.getNode(Opcode, dl, VTs, NewOps);
   }
+
+  case Intrinsic::x86_fma_mask_vfmadd_ps_512:
+  case Intrinsic::x86_fma_mask_vfmadd_pd_512:
+  case Intrinsic::x86_fma_mask_vfmsub_ps_512:
+  case Intrinsic::x86_fma_mask_vfmsub_pd_512:
+  case Intrinsic::x86_fma_mask_vfnmadd_ps_512:
+  case Intrinsic::x86_fma_mask_vfnmadd_pd_512:
+  case Intrinsic::x86_fma_mask_vfnmsub_ps_512:
+  case Intrinsic::x86_fma_mask_vfnmsub_pd_512:
+  case Intrinsic::x86_fma_mask_vfmaddsub_ps_512:
+  case Intrinsic::x86_fma_mask_vfmaddsub_pd_512:
+  case Intrinsic::x86_fma_mask_vfmsubadd_ps_512:
+  case Intrinsic::x86_fma_mask_vfmsubadd_pd_512: {
+    auto *SAE = cast<ConstantSDNode>(Op.getOperand(5));
+    if (SAE->getZExtValue() == X86::STATIC_ROUNDING::CUR_DIRECTION)
+      return getVectorMaskingNode(DAG.getNode(getOpcodeForFMAIntrinsic(IntNo),
+                                              dl, Op.getValueType(),
+                                              Op.getOperand(1),
+                                              Op.getOperand(2),
+                                              Op.getOperand(3)),
+                                  Op.getOperand(4), Op.getOperand(1), DAG);
+    else
+      return SDValue();
+  }
+
   case Intrinsic::x86_fma_vfmadd_ps:
   case Intrinsic::x86_fma_vfmadd_pd:
   case Intrinsic::x86_fma_vfmsub_ps:
@@ -14799,74 +14968,8 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   case Intrinsic::x86_fma_vfmaddsub_pd_256:
   case Intrinsic::x86_fma_vfmsubadd_ps_256:
   case Intrinsic::x86_fma_vfmsubadd_pd_256:
-  case Intrinsic::x86_fma_vfmadd_ps_512:
-  case Intrinsic::x86_fma_vfmadd_pd_512:
-  case Intrinsic::x86_fma_vfmsub_ps_512:
-  case Intrinsic::x86_fma_vfmsub_pd_512:
-  case Intrinsic::x86_fma_vfnmadd_ps_512:
-  case Intrinsic::x86_fma_vfnmadd_pd_512:
-  case Intrinsic::x86_fma_vfnmsub_ps_512:
-  case Intrinsic::x86_fma_vfnmsub_pd_512:
-  case Intrinsic::x86_fma_vfmaddsub_ps_512:
-  case Intrinsic::x86_fma_vfmaddsub_pd_512:
-  case Intrinsic::x86_fma_vfmsubadd_ps_512:
-  case Intrinsic::x86_fma_vfmsubadd_pd_512: {
-    unsigned Opc;
-    switch (IntNo) {
-    default: llvm_unreachable("Impossible intrinsic");  // Can't reach here.
-    case Intrinsic::x86_fma_vfmadd_ps:
-    case Intrinsic::x86_fma_vfmadd_pd:
-    case Intrinsic::x86_fma_vfmadd_ps_256:
-    case Intrinsic::x86_fma_vfmadd_pd_256:
-    case Intrinsic::x86_fma_vfmadd_ps_512:
-    case Intrinsic::x86_fma_vfmadd_pd_512:
-      Opc = X86ISD::FMADD;
-      break;
-    case Intrinsic::x86_fma_vfmsub_ps:
-    case Intrinsic::x86_fma_vfmsub_pd:
-    case Intrinsic::x86_fma_vfmsub_ps_256:
-    case Intrinsic::x86_fma_vfmsub_pd_256:
-    case Intrinsic::x86_fma_vfmsub_ps_512:
-    case Intrinsic::x86_fma_vfmsub_pd_512:
-      Opc = X86ISD::FMSUB;
-      break;
-    case Intrinsic::x86_fma_vfnmadd_ps:
-    case Intrinsic::x86_fma_vfnmadd_pd:
-    case Intrinsic::x86_fma_vfnmadd_ps_256:
-    case Intrinsic::x86_fma_vfnmadd_pd_256:
-    case Intrinsic::x86_fma_vfnmadd_ps_512:
-    case Intrinsic::x86_fma_vfnmadd_pd_512:
-      Opc = X86ISD::FNMADD;
-      break;
-    case Intrinsic::x86_fma_vfnmsub_ps:
-    case Intrinsic::x86_fma_vfnmsub_pd:
-    case Intrinsic::x86_fma_vfnmsub_ps_256:
-    case Intrinsic::x86_fma_vfnmsub_pd_256:
-    case Intrinsic::x86_fma_vfnmsub_ps_512:
-    case Intrinsic::x86_fma_vfnmsub_pd_512:
-      Opc = X86ISD::FNMSUB;
-      break;
-    case Intrinsic::x86_fma_vfmaddsub_ps:
-    case Intrinsic::x86_fma_vfmaddsub_pd:
-    case Intrinsic::x86_fma_vfmaddsub_ps_256:
-    case Intrinsic::x86_fma_vfmaddsub_pd_256:
-    case Intrinsic::x86_fma_vfmaddsub_ps_512:
-    case Intrinsic::x86_fma_vfmaddsub_pd_512:
-      Opc = X86ISD::FMADDSUB;
-      break;
-    case Intrinsic::x86_fma_vfmsubadd_ps:
-    case Intrinsic::x86_fma_vfmsubadd_pd:
-    case Intrinsic::x86_fma_vfmsubadd_ps_256:
-    case Intrinsic::x86_fma_vfmsubadd_pd_256:
-    case Intrinsic::x86_fma_vfmsubadd_ps_512:
-    case Intrinsic::x86_fma_vfmsubadd_pd_512:
-      Opc = X86ISD::FMSUBADD;
-      break;
-    }
-
-    return DAG.getNode(Opc, dl, Op.getValueType(), Op.getOperand(1),
-                       Op.getOperand(2), Op.getOperand(3));
-  }
+    return DAG.getNode(getOpcodeForFMAIntrinsic(IntNo), dl, Op.getValueType(),
+                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
   }
 }
 
@@ -19232,7 +19335,9 @@ static bool combineX86ShuffleChain(SDValue Op, SDValue Root, ArrayRef<int> Mask,
     assert(Mask.size() <= 16 && "Can't shuffle elements smaller than bytes!");
     int Ratio = 16 / Mask.size();
     for (unsigned i = 0; i < 16; ++i) {
-      int M = Ratio * Mask[i / Ratio] + i % Ratio;
+      int M = Mask[i / Ratio] != SM_SentinelZero
+                  ? Ratio * Mask[i / Ratio] + i % Ratio
+                  : 255;
       PSHUFBMask.push_back(DAG.getConstant(M, MVT::i8));
     }
     Op = DAG.getNode(ISD::BITCAST, DL, MVT::v16i8, Input);
@@ -19281,8 +19386,9 @@ static bool combineX86ShuffleChain(SDValue Op, SDValue Root, ArrayRef<int> Mask,
 /// combine-ordering. To fix this, we should do the redundant instruction
 /// combining in this recursive walk.
 static bool combineX86ShufflesRecursively(SDValue Op, SDValue Root,
-                                          ArrayRef<int> IncomingMask, int Depth,
-                                          bool HasPSHUFB, SelectionDAG &DAG,
+                                          ArrayRef<int> RootMask,
+                                          int Depth, bool HasPSHUFB,
+                                          SelectionDAG &DAG,
                                           TargetLowering::DAGCombinerInfo &DCI,
                                           const X86Subtarget *Subtarget) {
   // Bound the depth of our recursive combine because this is ultimately
@@ -19318,28 +19424,44 @@ static bool combineX86ShufflesRecursively(SDValue Op, SDValue Root,
 
   assert(VT.getVectorNumElements() == OpMask.size() &&
          "Different mask size from vector size!");
+  assert(((RootMask.size() > OpMask.size() &&
+           RootMask.size() % OpMask.size() == 0) ||
+          (OpMask.size() > RootMask.size() &&
+           OpMask.size() % RootMask.size() == 0) ||
+          OpMask.size() == RootMask.size()) &&
+         "The smaller number of elements must divide the larger.");
+  int RootRatio = std::max<int>(1, OpMask.size() / RootMask.size());
+  int OpRatio = std::max<int>(1, RootMask.size() / OpMask.size());
+  assert(((RootRatio == 1 && OpRatio == 1) ||
+          (RootRatio == 1) != (OpRatio == 1)) &&
+         "Must not have a ratio for both incoming and op masks!");
 
   SmallVector<int, 16> Mask;
-  Mask.reserve(std::max(OpMask.size(), IncomingMask.size()));
+  Mask.reserve(std::max(OpMask.size(), RootMask.size()));
 
-  // Merge this shuffle operation's mask into our accumulated mask. This is
-  // a bit tricky as the shuffle may have a different size from the root.
-  if (OpMask.size() == IncomingMask.size()) {
-    for (int M : IncomingMask)
-      Mask.push_back(OpMask[M]);
-  } else if (OpMask.size() < IncomingMask.size()) {
-    assert(IncomingMask.size() % OpMask.size() == 0 &&
-           "The smaller number of elements must divide the larger.");
-    int Ratio = IncomingMask.size() / OpMask.size();
-    for (int M : IncomingMask)
-      Mask.push_back(Ratio * OpMask[M / Ratio] + M % Ratio);
-  } else {
-    assert(OpMask.size() > IncomingMask.size() && "All other cases handled!");
-    assert(OpMask.size() % IncomingMask.size() == 0 &&
-           "The smaller number of elements must divide the larger.");
-    int Ratio = OpMask.size() / IncomingMask.size();
-    for (int i = 0, e = OpMask.size(); i < e; ++i)
-      Mask.push_back(OpMask[Ratio * IncomingMask[i / Ratio] + i % Ratio]);
+  // Merge this shuffle operation's mask into our accumulated mask. Note that
+  // this shuffle's mask will be the first applied to the input, followed by the
+  // root mask to get us all the way to the root value arrangement. The reason
+  // for this order is that we are recursing up the operation chain.
+  for (int i = 0, e = std::max(OpMask.size(), RootMask.size()); i < e; ++i) {
+    int RootIdx = i / RootRatio;
+    if (RootMask[RootIdx] == SM_SentinelZero) {
+      // This is a zero-ed lane, we're done.
+      Mask.push_back(SM_SentinelZero);
+      continue;
+    }
+
+    int RootMaskedIdx = RootMask[RootIdx] * RootRatio + i % RootRatio;
+    int OpIdx = RootMaskedIdx / OpRatio;
+    if (OpMask[OpIdx] == SM_SentinelZero) {
+      // The incoming lanes are zero, it doesn't matter which ones we are using.
+      Mask.push_back(SM_SentinelZero);
+      continue;
+    }
+
+    // Ok, we have non-zero lanes, map them through.
+    Mask.push_back(OpMask[OpIdx] * OpRatio +
+                   RootMaskedIdx % OpRatio);
   }
 
   // See if we can recurse into the operand to combine more things.
@@ -19374,7 +19496,7 @@ static bool combineX86ShufflesRecursively(SDValue Op, SDValue Root,
   while (Mask.size() > 1) {
     SmallVector<int, 16> NewMask;
     for (int i = 0, e = Mask.size()/2; i < e; ++i) {
-      if (Mask[2*i] % 2 != 0 || Mask[2*i] != Mask[2*i + 1] + 1) {
+      if (Mask[2*i] % 2 != 0 || Mask[2*i] + 1 != Mask[2*i + 1]) {
         NewMask.clear();
         break;
       }

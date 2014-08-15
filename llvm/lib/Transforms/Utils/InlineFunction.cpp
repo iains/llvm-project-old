@@ -356,11 +356,35 @@ static void CloneAliasScopeMetadata(CallSite CS, ValueToValueMapTy &VMap) {
     if (!NI)
       continue;
 
-    if (MDNode *M = NI->getMetadata(LLVMContext::MD_alias_scope))
-      NI->setMetadata(LLVMContext::MD_alias_scope, MDMap[M]);
+    if (MDNode *M = NI->getMetadata(LLVMContext::MD_alias_scope)) {
+      MDNode *NewMD = MDMap[M];
+      // If the call site also had alias scope metadata (a list of scopes to
+      // which instructions inside it might belong), propagate those scopes to
+      // the inlined instructions.
+      if (MDNode *CSM =
+          CS.getInstruction()->getMetadata(LLVMContext::MD_alias_scope))
+        NewMD = MDNode::concatenate(NewMD, CSM);
+      NI->setMetadata(LLVMContext::MD_alias_scope, NewMD);
+    } else if (NI->mayReadOrWriteMemory()) {
+      if (MDNode *M =
+          CS.getInstruction()->getMetadata(LLVMContext::MD_alias_scope))
+        NI->setMetadata(LLVMContext::MD_alias_scope, M);
+    }
 
-    if (MDNode *M = NI->getMetadata(LLVMContext::MD_noalias))
-      NI->setMetadata(LLVMContext::MD_noalias, MDMap[M]);
+    if (MDNode *M = NI->getMetadata(LLVMContext::MD_noalias)) {
+      MDNode *NewMD = MDMap[M];
+      // If the call site also had noalias metadata (a list of scopes with
+      // which instructions inside it don't alias), propagate those scopes to
+      // the inlined instructions.
+      if (MDNode *CSM =
+          CS.getInstruction()->getMetadata(LLVMContext::MD_noalias))
+        NewMD = MDNode::concatenate(NewMD, CSM);
+      NI->setMetadata(LLVMContext::MD_noalias, NewMD);
+    } else if (NI->mayReadOrWriteMemory()) {
+      if (MDNode *M =
+          CS.getInstruction()->getMetadata(LLVMContext::MD_noalias))
+        NI->setMetadata(LLVMContext::MD_noalias, M);
+    }
   }
 
   // Now that everything has been replaced, delete the dummy nodes.
@@ -449,17 +473,28 @@ static void AddAliasScopeMetadata(CallSite CS, ValueToValueMapTy &VMap,
         PtrArgs.push_back(CXI->getPointerOperand());
       else if (const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(I))
         PtrArgs.push_back(RMWI->getPointerOperand());
-      else if (const MemIntrinsic *MI = dyn_cast<MemIntrinsic>(I)) {
-        PtrArgs.push_back(MI->getRawDest());
-        if (const MemTransferInst *MTI = dyn_cast<MemTransferInst>(MI))
-          PtrArgs.push_back(MTI->getRawSource());
+      else if (ImmutableCallSite ICS = ImmutableCallSite(I)) {
+	// If we know that the call does not access memory, then we'll still
+	// know that about the inlined clone of this call site, and we don't
+	// need to add metadata.
+        if (ICS.doesNotAccessMemory())
+          continue;
+
+        for (ImmutableCallSite::arg_iterator AI = ICS.arg_begin(),
+             AE = ICS.arg_end(); AI != AE; ++AI)
+	  // We need to check the underlying objects of all arguments, not just
+	  // the pointer arguments, because we might be passing pointers as
+	  // integers, etc.
+          // FIXME: If we know that the call only accesses pointer arguments,
+          // then we only need to check the pointer arguments.
+          PtrArgs.push_back(*AI);
       }
 
       // If we found no pointers, then this instruction is not suitable for
       // pairing with an instruction to receive aliasing metadata.
-      // Simplification during cloning could make this happen, and skip these
-      // cases for now.
-      if (PtrArgs.empty())
+      // However, if this is a call, this we might just alias with none of the
+      // noalias arguments.
+      if (PtrArgs.empty() && !isa<CallInst>(I) && !isa<InvokeInst>(I))
         continue;
 
       // It is possible that there is only one underlying object, but you
