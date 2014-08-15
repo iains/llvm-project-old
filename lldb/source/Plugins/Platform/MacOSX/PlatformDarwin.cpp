@@ -23,6 +23,7 @@
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/Timer.h"
 #include "lldb/Host/Host.h"
+#include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Symbols.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolFile.h"
@@ -139,7 +140,11 @@ PlatformDarwin::ResolveExecutable (const FileSpec &exe_file,
     {
         // If we have "ls" as the exe_file, resolve the executable loation based on
         // the current path variables
-        if (!resolved_exe_file.Exists())
+        if (resolved_exe_file.Exists())
+        {
+            
+        }
+        else
         {
             exe_file.GetPath (exe_path, sizeof(exe_path));
             resolved_exe_file.SetFile(exe_path, true);
@@ -155,8 +160,11 @@ PlatformDarwin::ResolveExecutable (const FileSpec &exe_file,
             error.Clear();
         else
         {
-            exe_file.GetPath (exe_path, sizeof(exe_path));
-            error.SetErrorStringWithFormat ("unable to find executable for '%s'", exe_path);
+            const uint32_t permissions = resolved_exe_file.GetPermissions();
+            if (permissions && (permissions & eFilePermissionsEveryoneR) == 0)
+                error.SetErrorStringWithFormat ("executable '%s' is not readable", resolved_exe_file.GetPath().c_str());
+            else
+                error.SetErrorStringWithFormat ("unable to find executable for '%s'", resolved_exe_file.GetPath().c_str());
         }
     }
     else
@@ -231,10 +239,17 @@ PlatformDarwin::ResolveExecutable (const FileSpec &exe_file,
             
             if (error.Fail() || !exe_module_sp)
             {
-                error.SetErrorStringWithFormat ("'%s' doesn't contain any '%s' platform architectures: %s",
-                                                exe_file.GetPath().c_str(),
-                                                GetPluginName().GetCString(),
-                                                arch_names.GetString().c_str());
+                if (exe_file.Readable())
+                {
+                    error.SetErrorStringWithFormat ("'%s' doesn't contain any '%s' platform architectures: %s",
+                                                    exe_file.GetPath().c_str(),
+                                                    GetPluginName().GetCString(),
+                                                    arch_names.GetString().c_str());
+                }
+                else
+                {
+                    error.SetErrorStringWithFormat("'%s' is not readable", exe_file.GetPath().c_str());
+                }
             }
         }
     }
@@ -273,7 +288,7 @@ static lldb_private::Error
 MakeCacheFolderForFile (const FileSpec& module_cache_spec)
 {
     FileSpec module_cache_folder = module_cache_spec.CopyByRemovingLastPathComponent();
-    return Host::MakeDirectory(module_cache_folder.GetPath().c_str(), eFilePermissionsDirectoryDefault);
+    return FileSystem::MakeDirectory(module_cache_folder.GetPath().c_str(), eFilePermissionsDirectoryDefault);
 }
 
 static lldb_private::Error
@@ -352,7 +367,7 @@ PlatformDarwin::GetSharedModuleWithLocalCache (const lldb_private::ModuleSpec &m
                     // when going over the *slow* GDB remote transfer mechanism we first check
                     // the hashes of the files - and only do the actual transfer if they differ
                     uint64_t high_local,high_remote,low_local,low_remote;
-                    Host::CalculateMD5 (module_cache_spec, low_local, high_local);
+                    FileSystem::CalculateMD5(module_cache_spec, low_local, high_local);
                     m_remote_platform_sp->CalculateMD5(module_spec.GetFileSpec(), low_remote, high_remote);
                     if (low_local != low_remote || high_local != high_remote)
                     {

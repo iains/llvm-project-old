@@ -743,7 +743,7 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     // On v8, we have particularly efficient implementations of atomic fences
     // if they can be combined with nearby atomic loads and stores.
     if (!Subtarget->hasV8Ops()) {
-      // Automatically insert fences (dmb ist) around ATOMIC_SWAP etc.
+      // Automatically insert fences (dmb ish) around ATOMIC_SWAP etc.
       setInsertFencesForAtomic(true);
     }
   } else {
@@ -869,6 +869,18 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     }
   }
 
+  // ARMv8 implements a lot of rounding-like FP operations.
+  if (Subtarget->hasV8Ops()) {
+    static MVT RoundingTypes[] = {MVT::f32, MVT::f64};
+    for (const auto Ty : RoundingTypes) {
+      setOperationAction(ISD::FFLOOR, Ty, Legal);
+      setOperationAction(ISD::FCEIL, Ty, Legal);
+      setOperationAction(ISD::FROUND, Ty, Legal);
+      setOperationAction(ISD::FTRUNC, Ty, Legal);
+      setOperationAction(ISD::FNEARBYINT, Ty, Legal);
+      setOperationAction(ISD::FRINT, Ty, Legal);
+    }
+  }
   // We have target-specific dag combine patterns for the following nodes:
   // ARMISD::VMOVRRD  - No need to call setTargetDAGCombine
   setTargetDAGCombine(ISD::ADD);

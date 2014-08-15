@@ -1390,7 +1390,7 @@ defm V_SUBBREV_U32 : VOP2bInst <0x0000002a, "V_SUBBREV_U32",
 } // End isCommutable = 1, Defs = [VCC]
 
 defm V_LDEXP_F32 : VOP2Inst <0x0000002b, "V_LDEXP_F32",
-  VOP_F32_F32_F32
+  VOP_F32_F32_I32, AMDGPUldexp
 >;
 ////def V_CVT_PKACCUM_U8_F32 : VOP2_U8 <0x0000002c, "V_CVT_PKACCUM_U8_F32", []>;
 ////def V_CVT_PKNORM_I16_F32 : VOP2_I16 <0x0000002d, "V_CVT_PKNORM_I16_F32", []>;
@@ -1509,7 +1509,7 @@ defm V_MAX_F64 : VOP3Inst <0x00000167, "V_MAX_F64",
 } // isCommutable = 1
 
 defm V_LDEXP_F64 : VOP3Inst <0x00000168, "V_LDEXP_F64",
-  VOP_F32_F32_I32
+  VOP_F64_F64_I32, AMDGPUldexp
 >;
 
 let isCommutable = 1 in {
@@ -2322,44 +2322,50 @@ def : Pat <
 /********** Floating point absolute/negative **********/
 /********** ================================ **********/
 
-// Manipulate the sign bit directly, as e.g. using the source negation modifier
-// in V_ADD_F32_e64 $src, 0, [...] does not result in -0.0 for $src == +0.0,
-// breaking the piglit *s-floatBitsToInt-neg* tests
+// Prevent expanding both fneg and fabs.
 
-// TODO: Look into not implementing isFNegFree/isFAbsFree for SI, and possibly
-// removing these patterns
-
+// FIXME: Should use S_OR_B32
 def : Pat <
   (fneg (fabs f32:$src)),
   (V_OR_B32_e32 $src, (V_MOV_B32_e32 0x80000000)) /* Set sign bit */
 >;
 
-def FABS_SI : AMDGPUShaderInst <
-  (outs VReg_32:$dst),
-  (ins VSrc_32:$src0),
-  "FABS_SI $dst, $src0",
-  []
-> {
-  let usesCustomInserter = 1;
-}
+// FIXME: Should use S_OR_B32
+def : Pat <
+  (fneg (fabs f64:$src)),
+    (f64 (INSERT_SUBREG
+      (INSERT_SUBREG (f64 (IMPLICIT_DEF)),
+       (i32 (EXTRACT_SUBREG f64:$src, sub0)), sub0),
+    (V_OR_B32_e32 (EXTRACT_SUBREG f64:$src, sub1),
+                  (V_MOV_B32_e32 0x80000000)), sub1)) // Set sign bit.
+>;
 
 def : Pat <
   (fabs f32:$src),
-  (FABS_SI f32:$src)
+  (V_AND_B32_e32 $src, (V_MOV_B32_e32 0x7fffffff))
 >;
-
-def FNEG_SI : AMDGPUShaderInst <
-  (outs VReg_32:$dst),
-  (ins VSrc_32:$src0),
-  "FNEG_SI $dst, $src0",
-  []
-> {
-  let usesCustomInserter = 1;
-}
 
 def : Pat <
   (fneg f32:$src),
-  (FNEG_SI f32:$src)
+  (V_XOR_B32_e32 $src, (V_MOV_B32_e32 0x80000000))
+>;
+
+def : Pat <
+  (fabs f64:$src),
+    (f64 (INSERT_SUBREG
+      (INSERT_SUBREG (f64 (IMPLICIT_DEF)),
+       (i32 (EXTRACT_SUBREG f64:$src, sub0)), sub0),
+    (V_AND_B32_e32 (EXTRACT_SUBREG f64:$src, sub1),
+                    (V_MOV_B32_e32 0x7fffffff)), sub1)) // Set sign bit.
+>;
+
+def : Pat <
+  (fneg f64:$src),
+    (f64 (INSERT_SUBREG
+      (INSERT_SUBREG (f64 (IMPLICIT_DEF)),
+       (i32 (EXTRACT_SUBREG f64:$src, sub0)), sub0),
+    (V_XOR_B32_e32 (EXTRACT_SUBREG f64:$src, sub1),
+                    (V_MOV_B32_e32 0x80000000)), sub1))
 >;
 
 /********** ================== **********/
