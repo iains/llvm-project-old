@@ -1,3 +1,7 @@
+// RUN: cat %s > %t.cpp
+// RUN: clang-rename -offset=170 -new-name=hector %t.cpp -i --
+// RUN: sed 's,//.*,,' %t.cpp | FileCheck %s
+// REQUIRES: shell
 namespace A {
 int foo;  // CHECK: int hector;
 }
@@ -18,7 +22,5 @@ void fun1() {
   }
   foo = b.foo; // CHECK: foo = b.foo;
 }
-// REQUIRES: shell
-// RUN: cat %s > %t.cpp
-// RUN: clang-rename -offset=$(grep -FUbo 'foo;' %t.cpp | head -1 | cut -d: -f1) -new-name=hector %t.cpp -i --
-// RUN: sed 's,//.*,,' %t.cpp | FileCheck %s
+// Use grep -FUbo 'foo;' <file> to get the correct offset of foo when changing
+// this file.

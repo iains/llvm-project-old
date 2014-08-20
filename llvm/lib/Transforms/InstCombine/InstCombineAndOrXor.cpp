@@ -614,7 +614,7 @@ static unsigned foldLogOpOfMaskedICmpsHelper(Value*& A,
   } else if (R1->getType()->isIntegerTy()) {
     if (!match(R1, m_And(m_Value(R11), m_Value(R12)))) {
       // As before, model no mask as a trivial mask if it'll let us do an
-      // optimisation.
+      // optimization.
       R11 = R1;
       R12 = Constant::getAllOnesValue(R1->getType());
     }
@@ -2520,6 +2520,16 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
     // (~A | B) ^ (A | ~B) -> A ^ B
     if (match(Op0I, m_Or(m_Not(m_Value(A)), m_Value(B))) &&
         match(Op1I, m_Or(m_Specific(A), m_Not(m_Specific(B))))) {
+      return BinaryOperator::CreateXor(A, B);
+    }
+    // (A & ~B) ^ (~A & B) -> A ^ B
+    if (match(Op0I, m_And(m_Value(A), m_Not(m_Value(B)))) &&
+        match(Op1I, m_And(m_Not(m_Specific(A)), m_Specific(B)))) {
+      return BinaryOperator::CreateXor(A, B);
+    }
+    // (~A & B) ^ (A & ~B) -> A ^ B
+    if (match(Op0I, m_And(m_Not(m_Value(A)), m_Value(B))) &&
+        match(Op1I, m_And(m_Specific(A), m_Not(m_Specific(B))))) {
       return BinaryOperator::CreateXor(A, B);
     }
     // (A ^ B)^(A | B) -> A & B

@@ -22,6 +22,11 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#if SANITIZER_WINDOWS && defined(_MSC_VER) && _MSC_VER < 1800 &&               \
+      !defined(va_copy)
+# define va_copy(dst, src) ((dst) = (src))
+#endif
+
 namespace __sanitizer {
 
 StaticSpinMutex CommonSanitizerReportMutex;
