@@ -2052,6 +2052,13 @@ bool X86TargetLowering::isUsedByReturnOnly(SDNode *N, SDValue &Chain) const {
        UI != UE; ++UI) {
     if (UI->getOpcode() != X86ISD::RET_FLAG)
       return false;
+    // If we are returning more than one value, we can definitely
+    // not make a tail call see PR19530
+    if (UI->getNumOperands() > 4)
+      return false;
+    if (UI->getNumOperands() == 4 &&
+        UI->getOperand(UI->getNumOperands()-1).getValueType() != MVT::Glue)
+      return false;
     HasRet = true;
   }
 
@@ -2293,6 +2300,7 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
     CCInfo.AllocateStack(32, 8);
 
   CCInfo.AnalyzeFormalArguments(Ins, CC_X86);
+  CCInfo.AlignStack(Is64Bit ? 8 : 4);
 
   unsigned LastVal = ~0U;
   SDValue ArgValue;
@@ -10408,6 +10416,13 @@ static SDValue LowerVSELECTtoBlend(SDValue Op, const X86Subtarget *Subtarget,
 }
 
 SDValue X86TargetLowering::LowerVSELECT(SDValue Op, SelectionDAG &DAG) const {
+  // A vselect where all conditions and data are constants can be optimized into
+  // a single vector load by SelectionDAGLegalize::ExpandBUILD_VECTOR().
+  if (ISD::isBuildVectorOfConstantSDNodes(Op.getOperand(0).getNode()) &&
+      ISD::isBuildVectorOfConstantSDNodes(Op.getOperand(1).getNode()) &&
+      ISD::isBuildVectorOfConstantSDNodes(Op.getOperand(2).getNode()))
+    return SDValue();
+  
   SDValue BlendOp = LowerVSELECTtoBlend(Op, Subtarget, DAG);
   if (BlendOp.getNode())
     return BlendOp;
@@ -20409,6 +20424,12 @@ TransformVSELECTtoBlendVECTOR_SHUFFLE(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   if (!ISD::isBuildVectorOfConstantSDNodes(Cond.getNode()))
+    return SDValue();
+
+  // A vselect where all conditions and data are constants can be optimized into
+  // a single vector load by SelectionDAGLegalize::ExpandBUILD_VECTOR().
+  if (ISD::isBuildVectorOfConstantSDNodes(LHS.getNode()) &&
+      ISD::isBuildVectorOfConstantSDNodes(RHS.getNode()))
     return SDValue();
 
   unsigned MaskValue = 0;

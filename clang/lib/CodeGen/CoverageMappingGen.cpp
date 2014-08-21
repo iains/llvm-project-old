@@ -836,6 +836,7 @@ struct CounterCoverageMappingBuilder
     // Counter tracks the body of the loop.
     RegionMapper Cnt(this, S);
     BreakContinueStack.push_back(BreakContinue());
+    Cnt.beginRegion();
     VisitSubStmtRBraceState(S->getBody());
     BreakContinue BC = BreakContinueStack.pop_back_val();
     Cnt.adjustForControlFlow();
@@ -1041,6 +1042,16 @@ struct CounterCoverageMappingBuilder
 
   void VisitImaginaryLiteral(const ImaginaryLiteral *E) {
     mapToken(E->getLocStart());
+  }
+
+  void VisitObjCMessageExpr(const ObjCMessageExpr *E) {
+    mapToken(E->getLeftLoc());
+    for (Stmt::const_child_range I = static_cast<const Stmt*>(E)->children(); I;
+         ++I) {
+      if (*I)
+        this->Visit(*I);
+    }
+    mapToken(E->getRightLoc());
   }
 };
 }
