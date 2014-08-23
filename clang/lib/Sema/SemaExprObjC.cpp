@@ -995,7 +995,11 @@ ExprResult Sema::BuildObjCEncodeExpression(SourceLocation AtLoc,
         return ExprError();
 
     std::string Str;
-    Context.getObjCEncodingForType(EncodedType, Str);
+    QualType NotEncodedT;
+    Context.getObjCEncodingForType(EncodedType, Str, nullptr, &NotEncodedT);
+    if (!NotEncodedT.isNull())
+      Diag(AtLoc, diag::warn_incomplete_encoded_type)
+        << EncodedType << NotEncodedT;
 
     // The type of @encode is the same as the type of the corresponding string,
     // which is an array type.
@@ -1137,6 +1141,7 @@ ExprResult Sema::ParseObjCSelectorExpression(Selector Sel,
     case OMF_mutableCopy:
     case OMF_new:
     case OMF_self:
+    case OMF_initialize:
     case OMF_performSelector:
       break;
     }
@@ -2230,6 +2235,18 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
       RequireCompleteType(LBracLoc, Method->getReturnType(),
                           diag::err_illegal_message_expr_incomplete_type))
     return ExprError();
+  
+  // Warn about explicit call of +initialize on its own class. But not on 'super'.
+  if (Method && Method->getMethodFamily() == OMF_initialize &&
+      !SuperLoc.isValid()) {
+    const ObjCInterfaceDecl *ID =
+      dyn_cast<ObjCInterfaceDecl>(Method->getDeclContext());
+    if (ID == Class) {
+      Diag(Loc, diag::warn_direct_initialize_call);
+      Diag(Method->getLocation(), diag::note_method_declared_at)
+      << Method->getDeclName();
+    }
+  }
 
   // Construct the appropriate ObjCMessageExpr.
   ObjCMessageExpr *Result;
@@ -2652,6 +2669,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     case OMF_mutableCopy:
     case OMF_new:
     case OMF_self:
+    case OMF_initialize:
       break;
 
     case OMF_dealloc:

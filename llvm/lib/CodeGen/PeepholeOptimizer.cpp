@@ -94,7 +94,7 @@ DisablePeephole("disable-peephole", cl::Hidden, cl::init(false),
                 cl::desc("Disable the peephole optimizer"));
 
 static cl::opt<bool>
-DisableAdvCopyOpt("disable-adv-copy-opt", cl::Hidden, cl::init(true),
+DisableAdvCopyOpt("disable-adv-copy-opt", cl::Hidden, cl::init(false),
                   cl::desc("Disable advanced copy optimization"));
 
 STATISTIC(NumReuse,      "Number of extension results reused");
@@ -899,7 +899,11 @@ bool PeepholeOptimizer::optimizeCoalescableCopy(MachineInstr *MI) {
     if (!findNextSource(NewSrc, NewSubReg) || SrcReg == NewSrc)
       continue;
     // Rewrite source.
-    Changed |= CpyRewriter->RewriteCurrentSource(NewSrc, NewSubReg);
+    if (CpyRewriter->RewriteCurrentSource(NewSrc, NewSubReg)) {
+      // We may have extended the live-range of NewSrc, account for that.
+      MRI->clearKillFlags(NewSrc);
+      Changed = true;
+    }
   }
   // TODO: We could have a clean-up method to tidy the instruction.
   // E.g., v0 = INSERT_SUBREG v1, v1.sub0, sub0

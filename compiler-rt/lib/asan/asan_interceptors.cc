@@ -309,6 +309,10 @@ INTERCEPTOR(int, _except_handler3, void *a, void *b, void *c, void *d) {
   return REAL(_except_handler3)(a, b, c, d);
 }
 
+#if ASAN_DYNAMIC
+// This handler is named differently in -MT and -MD CRTs.
+#define _except_handler4 _except_handler4_common
+#endif
 INTERCEPTOR(int, _except_handler4, void *a, void *b, void *c, void *d) {
   CHECK(REAL(_except_handler4));
   __asan_handle_no_return();
@@ -550,7 +554,7 @@ INTERCEPTOR(char*, strdup, const char *s) {
 }
 #endif
 
-INTERCEPTOR(unsigned, strlen, const char *s) {
+INTERCEPTOR(SIZE_T, strlen, const char *s) {
   if (UNLIKELY(!asan_inited)) return internal_strlen(s);
   // strlen is called from malloc_default_purgeable_zone()
   // in __asan::ReplaceSystemAlloc() on Mac.
@@ -558,15 +562,15 @@ INTERCEPTOR(unsigned, strlen, const char *s) {
     return REAL(strlen)(s);
   }
   ENSURE_ASAN_INITED();
-  unsigned length = REAL(strlen)(s);
+  SIZE_T length = REAL(strlen)(s);
   if (flags()->replace_str) {
     ASAN_READ_RANGE(s, length + 1);
   }
   return length;
 }
 
-INTERCEPTOR(unsigned, wcslen, const wchar_t *s) {
-  unsigned length = REAL(wcslen)(s);
+INTERCEPTOR(SIZE_T, wcslen, const wchar_t *s) {
+  SIZE_T length = REAL(wcslen)(s);
   if (!asan_init_is_running) {
     ENSURE_ASAN_INITED();
     ASAN_READ_RANGE(s, (length + 1) * sizeof(wchar_t));
@@ -829,7 +833,7 @@ void InitializeAsanInterceptors() {
 
   // Intercept exception handling functions.
 #if ASAN_INTERCEPT___CXA_THROW
-  INTERCEPT_FUNCTION(__cxa_throw);
+  ASAN_INTERCEPT_FUNC(__cxa_throw);
 #endif
 
   // Intercept threading-related functions
