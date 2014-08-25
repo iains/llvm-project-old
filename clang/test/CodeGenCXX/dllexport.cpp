@@ -579,11 +579,33 @@ USEMEMFUNC(PartiallySpecializedClassTemplate<void*>, f);
 // M32-DAG: define linkonce_odr x86_thiscallcc void @"\01?f@?$PartiallySpecializedClassTemplate@PAX@@QAEXXZ"
 // G32-DAG: define weak_odr dllexport x86_thiscallcc void @_ZN33PartiallySpecializedClassTemplateIPvE1fEv
 
+// Attributes on explicit specializations are honored.
 template <typename T> struct ExplicitlySpecializedClassTemplate {};
 template <> struct __declspec(dllexport) ExplicitlySpecializedClassTemplate<void*> { void f() {} };
 USEMEMFUNC(ExplicitlySpecializedClassTemplate<void*>, f);
 // M32-DAG: define weak_odr dllexport x86_thiscallcc void @"\01?f@?$ExplicitlySpecializedClassTemplate@PAX@@QAEXXZ"
 // G32-DAG: define weak_odr dllexport x86_thiscallcc void @_ZN34ExplicitlySpecializedClassTemplateIPvE1fEv
+
+// MS inherits DLL attributes to partial specializations.
+template <typename T> struct __declspec(dllexport) PartiallySpecializedExportedClassTemplate {};
+template <typename T> struct PartiallySpecializedExportedClassTemplate<T*> { void f() {} };
+USEMEMFUNC(PartiallySpecializedExportedClassTemplate<void*>, f);
+// M32-DAG: define weak_odr dllexport x86_thiscallcc void @"\01?f@?$PartiallySpecializedExportedClassTemplate@PAX@@QAEXXZ"
+// G32-DAG: define linkonce_odr x86_thiscallcc void @_ZN41PartiallySpecializedExportedClassTemplateIPvE1fEv
+
+// MS ignores DLL attributes on partial specializations; inheritance still works though.
+template <typename T> struct __declspec(dllexport) PartiallySpecializedExportedClassTemplate2 {};
+template <typename T> struct __declspec(dllimport) PartiallySpecializedExportedClassTemplate2<T*> { void f() {} };
+USEMEMFUNC(PartiallySpecializedExportedClassTemplate2<void*>, f);
+// M32-DAG: define weak_odr dllexport x86_thiscallcc void @"\01?f@?$PartiallySpecializedExportedClassTemplate2@PAX@@QAEXXZ"
+// G32-DAG: declare dllimport x86_thiscallcc void @_ZN42PartiallySpecializedExportedClassTemplate2IPvE1fEv
+
+// Attributes on the instantiation take precedence over attributes on the template.
+template <typename T> struct __declspec(dllimport) ExplicitlyInstantiatedWithDifferentAttr { void f() {} };
+template struct __declspec(dllexport) ExplicitlyInstantiatedWithDifferentAttr<int>;
+USEMEMFUNC(ExplicitlyInstantiatedWithDifferentAttr<int>, f);
+// M32-DAG: define weak_odr dllexport x86_thiscallcc void @"\01?f@?$ExplicitlyInstantiatedWithDifferentAttr@H@@QAEXXZ"
+
 
 //===----------------------------------------------------------------------===//
 // Classes with template base classes

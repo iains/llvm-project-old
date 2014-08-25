@@ -4421,7 +4421,42 @@ static void CheckAbstractClassUsage(AbstractUsageInfo &Info,
 /// \brief Check class-level dllimport/dllexport attribute.
 static void checkDLLAttribute(Sema &S, CXXRecordDecl *Class) {
   Attr *ClassAttr = getDLLAttr(Class);
+
+  // MSVC inherits DLL attributes to partial class template specializations.
+  if (S.Context.getTargetInfo().getCXXABI().isMicrosoft() && !ClassAttr) {
+    if (auto *Spec = dyn_cast<ClassTemplatePartialSpecializationDecl>(Class)) {
+      if (Attr *TemplateAttr =
+              getDLLAttr(Spec->getSpecializedTemplate()->getTemplatedDecl())) {
+        auto *A = cast<InheritableAttr>(TemplateAttr->clone(S.getASTContext()));
+        A->setInherited(true);
+        ClassAttr = A;
+      }
+    }
+  }
+
   if (!ClassAttr)
+    return;
+
+  if (S.Context.getTargetInfo().getCXXABI().isMicrosoft() &&
+      !ClassAttr->isInherited()) {
+    // Diagnose dll attributes on members of class with dll attribute.
+    for (Decl *Member : Class->decls()) {
+      if (!isa<VarDecl>(Member) && !isa<CXXMethodDecl>(Member))
+        continue;
+      InheritableAttr *MemberAttr = getDLLAttr(Member);
+      if (!MemberAttr || MemberAttr->isInherited() || Member->isInvalidDecl())
+        continue;
+
+      S.Diag(MemberAttr->getLocation(),
+             diag::err_attribute_dll_member_of_dll_class)
+          << MemberAttr << ClassAttr;
+      S.Diag(ClassAttr->getLocation(), diag::note_previous_attribute);
+      Member->setInvalidDecl();
+    }
+  }
+
+  if (Class->getDescribedClassTemplate())
+    // Don't inherit dll attribute until the template is instantiated.
     return;
 
   bool ClassExported = ClassAttr->getKind() == attr::DLLExport;
@@ -4454,46 +4489,34 @@ static void checkDLLAttribute(Sema &S, CXXRecordDecl *Class) {
       continue;
     }
 
-    if (InheritableAttr *MemberAttr = getDLLAttr(Member)) {
-      if (S.Context.getTargetInfo().getCXXABI().isMicrosoft() &&
-          !MemberAttr->isInherited() && !ClassAttr->isInherited()) {
-        S.Diag(MemberAttr->getLocation(),
-               diag::err_attribute_dll_member_of_dll_class)
-            << MemberAttr << ClassAttr;
-        S.Diag(ClassAttr->getLocation(), diag::note_previous_attribute);
-        Member->setInvalidDecl();
-        continue;
-      }
-    } else {
+    if (!getDLLAttr(Member)) {
       auto *NewAttr =
           cast<InheritableAttr>(ClassAttr->clone(S.getASTContext()));
       NewAttr->setInherited(true);
       Member->addAttr(NewAttr);
     }
 
-    if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Member)) {
-      if (ClassExported) {
-        if (MD->isUserProvided()) {
-          // Instantiate non-default methods..
+    if (MD && ClassExported) {
+      if (MD->isUserProvided()) {
+        // Instantiate non-default methods..
 
-          // .. except for certain kinds of template specializations.
-          if (TSK == TSK_ExplicitInstantiationDeclaration)
-            continue;
-          if (TSK == TSK_ImplicitInstantiation && !ClassAttr->isInherited())
-            continue;
+        // .. except for certain kinds of template specializations.
+        if (TSK == TSK_ExplicitInstantiationDeclaration)
+          continue;
+        if (TSK == TSK_ImplicitInstantiation && !ClassAttr->isInherited())
+          continue;
 
-          S.MarkFunctionReferenced(Class->getLocation(), MD);
-        } else if (!MD->isTrivial() || MD->isExplicitlyDefaulted() ||
-                   MD->isCopyAssignmentOperator() ||
-                   MD->isMoveAssignmentOperator()) {
-          // Instantiate non-trivial or explicitly defaulted methods, and the
-          // copy assignment / move assignment operators.
-          S.MarkFunctionReferenced(Class->getLocation(), MD);
-          // Resolve its exception specification; CodeGen needs it.
-          auto *FPT = MD->getType()->getAs<FunctionProtoType>();
-          S.ResolveExceptionSpec(Class->getLocation(), FPT);
-          S.ActOnFinishInlineMethodDef(MD);
-        }
+        S.MarkFunctionReferenced(Class->getLocation(), MD);
+      } else if (!MD->isTrivial() || MD->isExplicitlyDefaulted() ||
+                 MD->isCopyAssignmentOperator() ||
+                 MD->isMoveAssignmentOperator()) {
+        // Instantiate non-trivial or explicitly defaulted methods, and the
+        // copy assignment / move assignment operators.
+        S.MarkFunctionReferenced(Class->getLocation(), MD);
+        // Resolve its exception specification; CodeGen needs it.
+        auto *FPT = MD->getType()->getAs<FunctionProtoType>();
+        S.ResolveExceptionSpec(Class->getLocation(), FPT);
+        S.ActOnFinishInlineMethodDef(MD);
       }
     }
   }

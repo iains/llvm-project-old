@@ -267,14 +267,10 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
       { RTLIB::ADD_F64, "__aeabi_dadd", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
       { RTLIB::DIV_F64, "__aeabi_ddiv", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
       { RTLIB::MUL_F64, "__aeabi_dmul", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: double __aeabi_drsub(double x, double y) (rsub)
       { RTLIB::SUB_F64, "__aeabi_dsub", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Double-precision floating-point comparison helper functions
       // RTABI chapter 4.1.2, Table 3
-      // FIXME: void __aeabi_cdcmpeq(double, double)
-      // FIXME: void __aeabi_cdcmple(double, double)
-      // FIXME: void __aeabi_cdrcmple(double, double)
       { RTLIB::OEQ_F64, "__aeabi_dcmpeq", CallingConv::ARM_AAPCS, ISD::SETNE },
       { RTLIB::UNE_F64, "__aeabi_dcmpeq", CallingConv::ARM_AAPCS, ISD::SETEQ },
       { RTLIB::OLT_F64, "__aeabi_dcmplt", CallingConv::ARM_AAPCS, ISD::SETNE },
@@ -289,14 +285,10 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
       { RTLIB::ADD_F32, "__aeabi_fadd", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
       { RTLIB::DIV_F32, "__aeabi_fdiv", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
       { RTLIB::MUL_F32, "__aeabi_fmul", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: void __aeabi_frsub(float x, float y)
       { RTLIB::SUB_F32, "__aeabi_fsub", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Single-precision floating-point comparison helper functions
       // RTABI chapter 4.1.2, Table 5
-      // FIXME: void __aeabi_cfcmpeq(float, float)
-      // FIXME: void __aeabi_cfcmple(float, float)
-      // FIXME: void __aeabi_cfrcmple(float, float)
       { RTLIB::OEQ_F32, "__aeabi_fcmpeq", CallingConv::ARM_AAPCS, ISD::SETNE },
       { RTLIB::UNE_F32, "__aeabi_fcmpeq", CallingConv::ARM_AAPCS, ISD::SETEQ },
       { RTLIB::OLT_F32, "__aeabi_fcmplt", CallingConv::ARM_AAPCS, ISD::SETNE },
@@ -320,13 +312,8 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
       // Conversions between floating types.
       // RTABI chapter 4.1.2, Table 7
       { RTLIB::FPROUND_F64_F32, "__aeabi_d2f", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::FPEXT_F32_F64,   "__aeabi_f2d", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: float __aeabi_f2f(short)
-      // FIXME: float __aeabi_h2f_alt(short)
-      // FIXME: short __aeabi_f2h(float)
-      // FIXME: short __aeabi_f2h_alt(float)
       { RTLIB::FPROUND_F64_F16, "__aeabi_d2h", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: short __aeabi_d2h_alt(double)
+      { RTLIB::FPEXT_F32_F64,   "__aeabi_f2d", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Integer to floating-point conversions.
       // RTABI chapter 4.1.2, Table 8
@@ -341,48 +328,27 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
 
       // Long long helper functions
       // RTABI chapter 4.2, Table 9
-      { RTLIB::MUL_I64,     "__aeabi_lmul",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: __aeabi_ldivmod is SDIVREM not SDIV; we should custom lower this
-      { RTLIB::SDIV_I64,    "__aeabi_ldivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIVREM_I64, "__aeabi_ldivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: __aeabi_uldivmod is UDIVREM not UDIV; we should custom lower this
-      { RTLIB::UDIV_I64,    "__aeabi_uldivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIVREM_I64, "__aeabi_uldivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SHL_I64,     "__aeabi_llsl",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SRL_I64,     "__aeabi_llsr",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SRA_I64,     "__aeabi_lasr",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: int __aeabi_lcmp(long long, long long)
-      // FIXME: int __aeabi_ulcmp(unsigned long long, unsigned long long)
+      { RTLIB::MUL_I64, "__aeabi_lmul", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SHL_I64, "__aeabi_llsl", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SRL_I64, "__aeabi_llsr", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SRA_I64, "__aeabi_lasr", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Integer division functions
       // RTABI chapter 4.3.1
-      { RTLIB::SDIV_I8,     "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIV_I16,    "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIV_I32,    "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIV_I8,     "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIV_I16,    "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIV_I32,    "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIVREM_I8,  "__aeabi_idivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIVREM_I16, "__aeabi_idivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::SDIVREM_I32, "__aeabi_idivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIVREM_I8,  "__aeabi_uidivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIVREM_I16, "__aeabi_uidivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      { RTLIB::UDIVREM_I32, "__aeabi_uidivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SDIV_I8,  "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SDIV_I16, "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SDIV_I32, "__aeabi_idiv",     CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::SDIV_I64, "__aeabi_ldivmod",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::UDIV_I8,  "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::UDIV_I16, "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::UDIV_I32, "__aeabi_uidiv",    CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::UDIV_I64, "__aeabi_uldivmod", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Memory operations
       // RTABI chapter 4.3.4
-      // FIXME: void __aeabi_memcpy8(void *, const void *, size_t)
-      // FIXME: void __aeabi_memcpy4(void *, const void *, size_t)
       { RTLIB::MEMCPY,  "__aeabi_memcpy",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: void __aeabi_memmove8(void *, const void *, size_t)
-      // FIXME: void __aeabi_memmove4(void *, const void *, size_t)
       { RTLIB::MEMMOVE, "__aeabi_memmove", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: void __aeabi_memset8(void *, size_t, int)
-      // FIXME: void __aeabi_memset4(void *, size_t, int)
       { RTLIB::MEMSET,  "__aeabi_memset",  CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
-      // FIXME: void __aeabi_memclr8(void *, size_t)
-      // FIXME: void __aeabi_memclr4(void *, size_t)
-      // FIXME: void __aeabi_memclr(void *, size_t)
     };
 
     for (const auto &LC : LibraryCalls) {
@@ -391,9 +357,6 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
       if (LC.Cond != ISD::SETCC_INVALID)
         setCmpLibcallCC(LC.Op, LC.Cond);
     }
-
-    setOperationAction(ISD::SDIVREM, MVT::i32, Custom);
-    setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
   }
 
   if (Subtarget->isTargetWindows()) {
@@ -745,9 +708,31 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   }
 
   // FIXME: Also set divmod for SREM on EABI
-  setOperationAction(ISD::SREM, MVT::i32, Expand);
-  setOperationAction(ISD::UREM, MVT::i32, Expand);
-  if (!Subtarget->isTargetAEABI()) {
+  setOperationAction(ISD::SREM,  MVT::i32, Expand);
+  setOperationAction(ISD::UREM,  MVT::i32, Expand);
+  // Register based DivRem for AEABI (RTABI 4.2)
+  if (Subtarget->isTargetAEABI()) {
+    setLibcallName(RTLIB::SDIVREM_I8,  "__aeabi_idivmod");
+    setLibcallName(RTLIB::SDIVREM_I16, "__aeabi_idivmod");
+    setLibcallName(RTLIB::SDIVREM_I32, "__aeabi_idivmod");
+    setLibcallName(RTLIB::SDIVREM_I64, "__aeabi_ldivmod");
+    setLibcallName(RTLIB::UDIVREM_I8,  "__aeabi_uidivmod");
+    setLibcallName(RTLIB::UDIVREM_I16, "__aeabi_uidivmod");
+    setLibcallName(RTLIB::UDIVREM_I32, "__aeabi_uidivmod");
+    setLibcallName(RTLIB::UDIVREM_I64, "__aeabi_uldivmod");
+
+    setLibcallCallingConv(RTLIB::SDIVREM_I8, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::SDIVREM_I16, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::SDIVREM_I32, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::SDIVREM_I64, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::UDIVREM_I8, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::UDIVREM_I16, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::UDIVREM_I32, CallingConv::ARM_AAPCS);
+    setLibcallCallingConv(RTLIB::UDIVREM_I64, CallingConv::ARM_AAPCS);
+
+    setOperationAction(ISD::SDIVREM, MVT::i32, Custom);
+    setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
+  } else {
     setOperationAction(ISD::SDIVREM, MVT::i32, Expand);
     setOperationAction(ISD::UDIVREM, MVT::i32, Expand);
   }
@@ -6939,9 +6924,7 @@ EmitSjLjDispatchBlock(MachineInstr *MI, MachineBasicBlock *MBB) const {
   // N.B. the order the invoke BBs are processed in doesn't matter here.
   const MCPhysReg *SavedRegs = RI.getCalleeSavedRegs(MF);
   SmallVector<MachineBasicBlock*, 64> MBBLPads;
-  for (SmallPtrSet<MachineBasicBlock*, 64>::iterator
-         I = InvokeBBs.begin(), E = InvokeBBs.end(); I != E; ++I) {
-    MachineBasicBlock *BB = *I;
+  for (MachineBasicBlock *BB : InvokeBBs) {
 
     // Remove the landing pad successor from the invoke block and replace it
     // with the new dispatch block.
