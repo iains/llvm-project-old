@@ -268,13 +268,13 @@ public:
     std::string CacheName;
     if (!getCacheFilename(ModuleID, CacheName))
       return;
-    std::string errStr;
     if (!CacheDir.empty()) { // Create user-defined cache dir.
       SmallString<128> dir(CacheName);
       sys::path::remove_filename(dir);
       sys::fs::create_directories(Twine(dir));
     }
-    raw_fd_ostream outfile(CacheName.c_str(), errStr, sys::fs::F_None);
+    std::error_code EC;
+    raw_fd_ostream outfile(CacheName, EC, sys::fs::F_None);
     outfile.write(Obj.getBufferStart(), Obj.getBufferSize());
     outfile.close();
   }
@@ -399,7 +399,7 @@ int main(int argc, char **argv, char * const *envp) {
 
   // Load the bitcode...
   SMDiagnostic Err;
-  std::unique_ptr<Module> Owner(ParseIRFile(InputFile, Err, Context));
+  std::unique_ptr<Module> Owner = parseIRFile(InputFile, Err, Context);
   Module *Mod = Owner.get();
   if (!Mod) {
     Err.print(argv[0], errs());
@@ -513,7 +513,7 @@ int main(int argc, char **argv, char * const *envp) {
 
   // Load any additional modules specified on the command line.
   for (unsigned i = 0, e = ExtraModules.size(); i != e; ++i) {
-    std::unique_ptr<Module> XMod(ParseIRFile(ExtraModules[i], Err, Context));
+    std::unique_ptr<Module> XMod = parseIRFile(ExtraModules[i], Err, Context);
     if (!XMod) {
       Err.print(argv[0], errs());
       return 1;
@@ -529,7 +529,6 @@ int main(int argc, char **argv, char * const *envp) {
     EE->addModule(std::move(XMod));
   }
 
-  std::vector<std::unique_ptr<MemoryBuffer>> Buffers;
   for (unsigned i = 0, e = ExtraObjects.size(); i != e; ++i) {
     ErrorOr<object::OwningBinary<object::ObjectFile>> Obj =
         object::ObjectFile::createObjectFile(ExtraObjects[i]);
@@ -538,8 +537,7 @@ int main(int argc, char **argv, char * const *envp) {
       return 1;
     }
     object::OwningBinary<object::ObjectFile> &O = Obj.get();
-    EE->addObjectFile(std::move(O.getBinary()));
-    Buffers.push_back(std::move(O.getBuffer()));
+    EE->addObjectFile(std::move(O));
   }
 
   for (unsigned i = 0, e = ExtraArchives.size(); i != e; ++i) {

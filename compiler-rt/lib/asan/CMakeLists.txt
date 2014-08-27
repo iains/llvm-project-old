@@ -53,14 +53,12 @@ endif()
 
 set(ASAN_DYNAMIC_DEFINITIONS
   ${ASAN_COMMON_DEFINITIONS} ASAN_DYNAMIC=1)
-
-if(WIN32)
-  list(APPEND ASAN_DYNAMIC_DEFINITIONS INTERCEPTION_DYNAMIC_CRT)
-endif()
+append_if(WIN32 INTERCEPTION_DYNAMIC_CRT ASAN_DYNAMIC_DEFINITIONS)
 
 set(ASAN_DYNAMIC_CFLAGS ${ASAN_CFLAGS})
 append_if(COMPILER_RT_HAS_FTLS_MODEL_INITIAL_EXEC
   -ftls-model=initial-exec ASAN_DYNAMIC_CFLAGS)
+append_if(MSVC /DEBUG ASAN_DYNAMIC_CFLAGS)
 
 append_if(COMPILER_RT_HAS_LIBC c ASAN_DYNAMIC_LIBS)
 append_if(COMPILER_RT_HAS_LIBDL dl ASAN_DYNAMIC_LIBS)
@@ -184,11 +182,16 @@ else()
 
     if (WIN32)
       add_compiler_rt_runtime(clang_rt.asan_dll_thunk-${arch} ${arch} STATIC
-        SOURCES asan_dll_thunk.cc
+        SOURCES asan_win_dll_thunk.cc
                 $<TARGET_OBJECTS:RTInterception.${arch}>
         CFLAGS ${ASAN_CFLAGS} -DASAN_DLL_THUNK
         DEFS ${ASAN_COMMON_DEFINITIONS})
       add_dependencies(asan clang_rt.asan_dll_thunk-${arch})
+      add_compiler_rt_runtime(clang_rt.asan_uar_thunk-${arch} ${arch} STATIC
+        SOURCES asan_win_uar_thunk.cc
+        CFLAGS ${ASAN_CFLAGS} -DASAN_UAR_THUNK
+        DEFS ${ASAN_COMMON_DEFINITIONS})
+      add_dependencies(asan clang_rt.asan_uar_thunk-${arch})
     endif()
   endforeach()
 endif()

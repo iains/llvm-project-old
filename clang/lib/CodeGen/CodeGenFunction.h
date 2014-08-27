@@ -1653,8 +1653,7 @@ public:
 
   void EmitSynthesizedCXXCopyCtorCall(const CXXConstructorDecl *D,
                               llvm::Value *This, llvm::Value *Src,
-                              CallExpr::const_arg_iterator ArgBeg,
-                              CallExpr::const_arg_iterator ArgEnd);
+                              const CXXConstructExpr *E);
 
   void EmitCXXAggrConstructorCall(const CXXConstructorDecl *D,
                                   const ConstantArrayType *ArrayTy,
@@ -1894,12 +1893,12 @@ public:
   void EmitIfStmt(const IfStmt &S);
 
   void EmitCondBrHints(llvm::LLVMContext &Context, llvm::BranchInst *CondBr,
-                       const ArrayRef<const Attr *> &Attrs);
+                       ArrayRef<const Attr *> Attrs);
   void EmitWhileStmt(const WhileStmt &S,
-                     const ArrayRef<const Attr *> &Attrs = None);
-  void EmitDoStmt(const DoStmt &S, const ArrayRef<const Attr *> &Attrs = None);
+                     ArrayRef<const Attr *> Attrs = None);
+  void EmitDoStmt(const DoStmt &S, ArrayRef<const Attr *> Attrs = None);
   void EmitForStmt(const ForStmt &S,
-                   const ArrayRef<const Attr *> &Attrs = None);
+                   ArrayRef<const Attr *> Attrs = None);
   void EmitReturnStmt(const ReturnStmt &S);
   void EmitDeclStmt(const DeclStmt &S);
   void EmitBreakStmt(const BreakStmt &S);
@@ -1923,7 +1922,7 @@ public:
   void EmitSEHTryStmt(const SEHTryStmt &S);
   void EmitSEHLeaveStmt(const SEHLeaveStmt &S);
   void EmitCXXForRangeStmt(const CXXForRangeStmt &S,
-                           const ArrayRef<const Attr *> &Attrs = None);
+                           ArrayRef<const Attr *> Attrs = None);
 
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
   llvm::Function *GenerateCapturedStmtFunction(const CapturedStmt &S);
@@ -2216,15 +2215,11 @@ public:
                                                    CXXDtorType Type, 
                                                    const CXXRecordDecl *RD);
 
-  RValue EmitCXXMemberCall(const CXXMethodDecl *MD,
-                           SourceLocation CallLoc,
-                           llvm::Value *Callee,
-                           ReturnValueSlot ReturnValue,
-                           llvm::Value *This,
-                           llvm::Value *ImplicitParam,
-                           QualType ImplicitParamTy,
-                           CallExpr::const_arg_iterator ArgBeg,
-                           CallExpr::const_arg_iterator ArgEnd);
+  RValue
+  EmitCXXMemberOrOperatorCall(const CXXMethodDecl *MD, llvm::Value *Callee,
+                              ReturnValueSlot ReturnValue, llvm::Value *This,
+                              llvm::Value *ImplicitParam,
+                              QualType ImplicitParamTy, const CallExpr *E);
   RValue EmitCXXMemberCallExpr(const CXXMemberCallExpr *E,
                                ReturnValueSlot ReturnValue);
   RValue EmitCXXMemberPointerCallExpr(const CXXMemberCallExpr *E,

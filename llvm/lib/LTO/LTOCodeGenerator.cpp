@@ -163,9 +163,9 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
   applyScopeRestrictions();
 
   // create output file
-  std::string ErrInfo;
-  tool_output_file Out(path, ErrInfo, sys::fs::F_None);
-  if (!ErrInfo.empty()) {
+  std::error_code EC;
+  tool_output_file Out(path, EC, sys::fs::F_None);
+  if (EC) {
     errMsg = "could not open bitcode file for writing: ";
     errMsg += path;
     return false;
@@ -312,7 +312,7 @@ bool LTOCodeGenerator::determineTarget(std::string &errMsg) {
 
 void LTOCodeGenerator::
 applyRestriction(GlobalValue &GV,
-                 const ArrayRef<StringRef> &Libcalls,
+                 ArrayRef<StringRef> Libcalls,
                  std::vector<const char*> &MustPreserveList,
                  SmallPtrSetImpl<GlobalValue*> &AsmUsed,
                  Mangler &Mangler) {

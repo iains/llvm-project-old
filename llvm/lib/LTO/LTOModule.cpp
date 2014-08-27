@@ -65,7 +65,8 @@ bool LTOModule::isBitcodeFile(const char *path) {
 
 bool LTOModule::isBitcodeForTarget(MemoryBuffer *buffer,
                                    StringRef triplePrefix) {
-  std::string Triple = getBitcodeTargetTriple(buffer, getGlobalContext());
+  std::string Triple =
+      getBitcodeTargetTriple(buffer->getMemBufferRef(), getGlobalContext());
   return StringRef(Triple).startswith(triplePrefix);
 }
 
@@ -112,15 +113,7 @@ LTOModule *LTOModule::createFromBuffer(const void *mem, size_t length,
 LTOModule *LTOModule::makeLTOModule(MemoryBufferRef Buffer,
                                     TargetOptions options,
                                     std::string &errMsg) {
-  StringRef Data = Buffer.getBuffer();
-  StringRef FileName = Buffer.getBufferIdentifier();
-  std::unique_ptr<MemoryBuffer> MemBuf(
-      makeBuffer(Data.begin(), Data.size(), FileName));
-  if (!MemBuf)
-    return nullptr;
-
-  ErrorOr<Module *> MOrErr =
-      getLazyBitcodeModule(MemBuf.get(), getGlobalContext());
+  ErrorOr<Module *> MOrErr = parseBitcodeFile(Buffer, getGlobalContext());
   if (std::error_code EC = MOrErr.getError()) {
     errMsg = EC.message();
     return nullptr;
@@ -154,7 +147,6 @@ LTOModule *LTOModule::makeLTOModule(MemoryBufferRef Buffer,
 
   TargetMachine *target = march->createTargetMachine(TripleStr, CPU, FeatureStr,
                                                      options);
-  M->materializeAllPermanently(true);
   M->setDataLayout(target->getSubtargetImpl()->getDataLayout());
 
   std::unique_ptr<object::IRObjectFile> IRObj(

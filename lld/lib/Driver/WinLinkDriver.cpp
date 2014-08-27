@@ -496,12 +496,11 @@ static bool createManifestResourceFile(PECOFFLinkingContext &ctx,
   llvm::FileRemover rcFileRemover((Twine(rcFile)));
 
   // Open the temporary file for writing.
-  std::string errorInfo;
-  llvm::raw_fd_ostream out(rcFileSmallString.c_str(), errorInfo,
-                           llvm::sys::fs::F_Text);
-  if (!errorInfo.empty()) {
+  std::error_code ec;
+  llvm::raw_fd_ostream out(rcFileSmallString, ec, llvm::sys::fs::F_Text);
+  if (ec) {
     diag << "Failed to open " << ctx.getManifestOutputPath() << ": "
-         << errorInfo << "\n";
+         << ec.message() << "\n";
     return false;
   }
 
@@ -571,10 +570,10 @@ static bool createSideBySideManifestFile(PECOFFLinkingContext &ctx,
     path.append(".manifest");
   }
 
-  std::string errorInfo;
-  llvm::raw_fd_ostream out(path.c_str(), errorInfo, llvm::sys::fs::F_Text);
-  if (!errorInfo.empty()) {
-    diag << errorInfo << "\n";
+  std::error_code ec;
+  llvm::raw_fd_ostream out(path, ec, llvm::sys::fs::F_Text);
+  if (ec) {
+    diag << ec.message() << "\n";
     return false;
   }
   out << createManifestXml(ctx);
@@ -1228,6 +1227,7 @@ bool WinLinkDriver::parse(int argc, const char *argv[],
     DEFINE_BOOLEAN_FLAG(allowisolation, setAllowIsolation);
     DEFINE_BOOLEAN_FLAG(dynamicbase, setDynamicBaseEnabled);
     DEFINE_BOOLEAN_FLAG(tsaware, setTerminalServerAware);
+    DEFINE_BOOLEAN_FLAG(highentropyva, setHighEntropyVA);
     DEFINE_BOOLEAN_FLAG(safeseh, setSafeSEH);
 
 #undef DEFINE_BOOLEAN_FLAG

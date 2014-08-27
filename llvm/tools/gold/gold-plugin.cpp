@@ -552,12 +552,11 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
   if (release_input_file(F.handle) != LDPS_OK)
     message(LDPL_FATAL, "Failed to release file information");
 
-  ErrorOr<Module *> MOrErr = getLazyBitcodeModule(Buffer.get(), Context);
+  ErrorOr<Module *> MOrErr = getLazyBitcodeModule(Buffer, Context);
 
   if (std::error_code EC = MOrErr.getError())
     message(LDPL_FATAL, "Could not read bitcode from file : %s",
             EC.message().c_str());
-  Buffer.release();
 
   std::unique_ptr<Module> M(MOrErr.get());
 
@@ -775,9 +774,9 @@ static ld_plugin_status allSymbolsReadHook(raw_fd_ostream *ApiFile) {
     else
       path = output_name + ".bc";
     {
-      std::string Error;
-      raw_fd_ostream OS(path.c_str(), Error, sys::fs::OpenFlags::F_None);
-      if (!Error.empty())
+      std::error_code EC;
+      raw_fd_ostream OS(path, EC, sys::fs::OpenFlags::F_None);
+      if (EC)
         message(LDPL_FATAL, "Failed to write the output file.");
       WriteBitcodeToFile(L.getModule(), OS);
     }
@@ -799,11 +798,11 @@ static ld_plugin_status all_symbols_read_hook(void) {
   if (!options::generate_api_file) {
     Ret = allSymbolsReadHook(nullptr);
   } else {
-    std::string Error;
-    raw_fd_ostream ApiFile("apifile.txt", Error, sys::fs::F_None);
-    if (!Error.empty())
+    std::error_code EC;
+    raw_fd_ostream ApiFile("apifile.txt", EC, sys::fs::F_None);
+    if (EC)
       message(LDPL_FATAL, "Unable to open apifile.txt for writing: %s",
-              Error.c_str());
+              EC.message().c_str());
     Ret = allSymbolsReadHook(&ApiFile);
   }
 

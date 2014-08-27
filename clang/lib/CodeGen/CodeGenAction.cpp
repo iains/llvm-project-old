@@ -624,7 +624,7 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   if (!LinkModuleToUse && !LinkBCFile.empty()) {
     std::string ErrorStr;
 
-    llvm::MemoryBuffer *BCBuf =
+    std::unique_ptr<llvm::MemoryBuffer> BCBuf =
       CI.getFileManager().getBufferForFile(LinkBCFile, &ErrorStr);
     if (!BCBuf) {
       CI.getDiagnostics().Report(diag::err_cannot_open_file)
@@ -673,7 +673,7 @@ void CodeGenAction::ExecuteAction() {
       return;
 
     llvm::SMDiagnostic Err;
-    TheModule.reset(ParseIR(MainFile, Err, *VMContext));
+    TheModule = parseIR(MainFile->getMemBufferRef(), Err, *VMContext);
     if (!TheModule) {
       // Translate from the diagnostic info to the SourceManager location if
       // available.
