@@ -2133,6 +2133,9 @@ def warn_attribute_invalid_on_definition : Warning<
   InGroup<IgnoredAttributes>;
 def err_attribute_dll_redeclaration : Error<
   "redeclaration of %q0 cannot add %q1 attribute">;
+def warn_attribute_dll_redeclaration : Warning<
+  "redeclaration of %q0 should not add %q1 attribute">,
+  InGroup<DiagGroup<"dll-attribute-on-redeclaration">>;
 def err_attribute_dllimport_function_definition : Error<
   "dllimport cannot be applied to non-inline function definition">;
 def err_attribute_dll_deleted : Error<
@@ -5354,9 +5357,6 @@ let CategoryName = "Lambda Issue" in {
     "'this' cannot be %select{implicitly |}0captured in this context">;
   def err_lambda_capture_anonymous_var : Error<
     "unnamed variable cannot be implicitly captured in a lambda expression">;
-  def err_lambda_capture_vm_type : Error<
-    "variable %0 with variably modified type cannot be captured in "
-    "a lambda expression">;
   def err_lambda_capture_flexarray_type : Error<
     "variable %0 with flexible array member cannot be captured in "
     "a lambda expression">;

@@ -446,19 +446,23 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     bool OldParamHasDfl = OldParam->hasDefaultArg();
     bool NewParamHasDfl = NewParam->hasDefaultArg();
 
-    NamedDecl *ND = Old;
-
     // The declaration context corresponding to the scope is the semantic
     // parent, unless this is a local function declaration, in which case
     // it is that surrounding function.
-    DeclContext *ScopeDC = New->getLexicalDeclContext();
-    if (!ScopeDC->isFunctionOrMethod())
-      ScopeDC = New->getDeclContext();
-    if (S && !isDeclInScope(ND, ScopeDC, S) &&
+    DeclContext *ScopeDC = New->isLocalExternDecl()
+                               ? New->getLexicalDeclContext()
+                               : New->getDeclContext();
+    if (S && !isDeclInScope(Old, ScopeDC, S) &&
         !New->getDeclContext()->isRecord())
       // Ignore default parameters of old decl if they are not in
       // the same scope and this is not an out-of-line definition of
       // a member function.
+      OldParamHasDfl = false;
+    if (New->isLocalExternDecl() != Old->isLocalExternDecl())
+      // If only one of these is a local function declaration, then they are
+      // declared in different scopes, even though isDeclInScope may think
+      // they're in the same scope. (If both are local, the scope check is
+      // sufficent, and if neither is local, then they are in the same scope.)
       OldParamHasDfl = false;
 
     if (OldParamHasDfl && NewParamHasDfl) {
@@ -2206,15 +2210,16 @@ namespace {
     // List of Decls to generate a warning on.  Also remove Decls that become
     // initialized.
     llvm::SmallPtrSetImpl<ValueDecl*> &Decls;
+    // Vector of decls to be removed from the Decl set prior to visiting the
+    // nodes.  These Decls may have been initialized in the prior initializer.
+    llvm::SmallVector<ValueDecl*, 4> DeclsToRemove;
     // If non-null, add a note to the warning pointing back to the constructor.
     const CXXConstructorDecl *Constructor;
   public:
     typedef EvaluatedExprVisitor<UninitializedFieldVisitor> Inherited;
     UninitializedFieldVisitor(Sema &S,
-                              llvm::SmallPtrSetImpl<ValueDecl*> &Decls,
-                              const CXXConstructorDecl *Constructor)
-      : Inherited(S.Context), S(S), Decls(Decls),
-        Constructor(Constructor) { }
+                              llvm::SmallPtrSetImpl<ValueDecl*> &Decls)
+      : Inherited(S.Context), S(S), Decls(Decls) { }
 
     void HandleMemberExpr(MemberExpr *ME, bool CheckReferenceOnly) {
       if (isa<EnumConstantDecl>(ME->getMemberDecl()))
@@ -2279,8 +2284,12 @@ namespace {
 
       if (BinaryConditionalOperator *BCO =
               dyn_cast<BinaryConditionalOperator>(E)) {
-        HandleValue(BCO->getCommon());
         HandleValue(BCO->getFalseExpr());
+        return;
+      }
+
+      if (OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(E)) {
+        HandleValue(OVE->getSourceExpr());
         return;
       }
 
@@ -2297,6 +2306,20 @@ namespace {
           return;
         }
       }
+    }
+
+    void CheckInitializer(Expr *E, const CXXConstructorDecl *FieldConstructor,
+                          FieldDecl *Field) {
+      // Remove Decls that may have been initialized in the previous
+      // initializer.
+      for (ValueDecl* VD : DeclsToRemove)
+        Decls.erase(VD);
+
+      DeclsToRemove.clear();
+      Constructor = FieldConstructor;
+      Visit(E);
+      if (Field)
+        Decls.erase(Field);
     }
 
     void VisitMemberExpr(MemberExpr *ME) {
@@ -2342,9 +2365,7 @@ namespace {
       if (E->getNumArgs() == 1) {
         if (FunctionDecl *FD = E->getDirectCallee()) {
           if (FD->getIdentifier() && FD->getIdentifier()->isStr("move")) {
-            if (MemberExpr *ME = dyn_cast<MemberExpr>(E->getArg(0))) {
-              HandleMemberExpr(ME, false /*CheckReferenceOnly*/);
-            }
+            HandleValue(E->getArg(0));
           }
         }
       }
@@ -2359,30 +2380,11 @@ namespace {
         if (MemberExpr *ME = dyn_cast<MemberExpr>(E->getLHS()))
           if (FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl()))
             if (!FD->getType()->isReferenceType())
-              Decls.erase(FD);
+              DeclsToRemove.push_back(FD);
 
       Inherited::VisitBinaryOperator(E);
     }
   };
-  static void CheckInitExprContainsUninitializedFields(
-      Sema &S, Expr *E, llvm::SmallPtrSetImpl<ValueDecl*> &Decls,
-      const CXXConstructorDecl *Constructor) {
-    if (Decls.size() == 0)
-      return;
-
-    if (!E)
-      return;
-
-    if (CXXDefaultInitExpr *Default = dyn_cast<CXXDefaultInitExpr>(E)) {
-      E = Default->getExpr();
-      if (!E)
-        return;
-      // In class initializers will point to the constructor.
-      UninitializedFieldVisitor(S, Decls, Constructor).Visit(E);
-    } else {
-      UninitializedFieldVisitor(S, Decls, nullptr).Visit(E);
-    }
-  }
 
   // Diagnose value-uses of fields to initialize themselves, e.g.
   //   foo(foo)
@@ -2415,14 +2417,32 @@ namespace {
       }
     }
 
+    if (UninitializedFields.empty())
+      return;
+
+    UninitializedFieldVisitor UninitializedChecker(SemaRef,
+                                                   UninitializedFields);
+
     for (const auto *FieldInit : Constructor->inits()) {
+      if (UninitializedFields.empty())
+        break;
+
       Expr *InitExpr = FieldInit->getInit();
+      if (!InitExpr)
+        continue;
 
-      CheckInitExprContainsUninitializedFields(
-          SemaRef, InitExpr, UninitializedFields, Constructor);
-
-      if (FieldDecl *Field = FieldInit->getAnyMember())
-        UninitializedFields.erase(Field);
+      if (CXXDefaultInitExpr *Default =
+              dyn_cast<CXXDefaultInitExpr>(InitExpr)) {
+        InitExpr = Default->getExpr();
+        if (!InitExpr)
+          continue;
+        // In class initializers will point to the constructor.
+        UninitializedChecker.CheckInitializer(InitExpr, Constructor,
+                                              FieldInit->getAnyMember());
+      } else {
+        UninitializedChecker.CheckInitializer(InitExpr, nullptr,
+                                              FieldInit->getAnyMember());
+      }
     }
   }
 } // namespace

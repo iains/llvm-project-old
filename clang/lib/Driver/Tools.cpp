@@ -2198,8 +2198,7 @@ static void addAsanRT(const ToolChain &TC, const ArgList &Args,
                       ArgStringList &CmdArgs, bool Shared, bool IsCXX) {
   if (Shared) {
     // Link dynamic runtime if necessary.
-    SmallString<128> LibSanitizer =
-        getSanitizerRTLibName(TC, "asan_dynamic", Shared);
+    SmallString<128> LibSanitizer = getSanitizerRTLibName(TC, "asan", Shared);
     CmdArgs.insert(CmdArgs.begin(), Args.MakeArgString(LibSanitizer));
   }
 
@@ -3714,6 +3713,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     StringRef alignment = Args.getLastArgValue(options::OPT_mstack_alignment);
     CmdArgs.push_back(Args.MakeArgString("-mstack-alignment=" + alignment));
   }
+
+  if (getToolChain().getTriple().getArch() == llvm::Triple::aarch64 ||
+      getToolChain().getTriple().getArch() == llvm::Triple::aarch64_be)
+    CmdArgs.push_back("-fallow-half-arguments-and-returns");
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
                                options::OPT_mno_restrict_it)) {
