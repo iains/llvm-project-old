@@ -116,6 +116,12 @@ else
 ENABLE_ASSERTIONS=1
 endif
 
+ifeq ($(USE_INTEL_JITEVENTS),1)
+LLVM_USE_INTEL_JITEVENTS=ON
+else
+LLVM_USE_INTEL_JITEVENTS=OFF
+endif
+
 lit.site.cfg: FORCE
 	@echo "Making LLVM 'lit.site.cfg' file..."
 	@$(ECHOPATH) s=@LLVM_HOST_TRIPLE@=$(HOST_TRIPLE)=g > lit.tmp
@@ -127,6 +133,7 @@ lit.site.cfg: FORCE
 	@$(ECHOPATH) s=@SHLIBDIR@=$(SharedLibDir)=g >> lit.tmp
 	@$(ECHOPATH) s=@SHLIBEXT@=$(SHLIBEXT)=g >> lit.tmp
 	@$(ECHOPATH) s=@EXEEXT@=$(EXEEXT)=g >> lit.tmp
+	@$(ECHOPATH) s=@LLVM_LIT_TOOLS_DIR@=$(LLVM_LIT_TOOLS_DIR)=g >> lit.tmp
 	@$(ECHOPATH) s=@PYTHON_EXECUTABLE@=$(PYTHON)=g >> lit.tmp
 	@$(ECHOPATH) s=@GOLD_EXECUTABLE@=ld=g >> lit.tmp
 	@$(ECHOPATH) s=@LD64_EXECUTABLE@=ld=g >> lit.tmp
@@ -145,6 +152,7 @@ lit.site.cfg: FORCE
 	@$(ECHOPATH) s=@LLVM_BINDINGS@=$(BINDINGS_TO_BUILD)=g >> lit.tmp
 	@$(ECHOPATH) s=@HOST_OS@=$(HOST_OS)=g >> lit.tmp
 	@$(ECHOPATH) s=@HOST_ARCH@=$(HOST_ARCH)=g >> lit.tmp
+	@$(ECHOPATH) s=@LLVM_USE_INTEL_JITEVENTS@=$(LLVM_USE_INTEL_JITEVENTS)=g >> lit.tmp
 	@$(ECHOPATH) s=@HAVE_LIBZ@=$(HAVE_LIBZ)=g >> lit.tmp
 	@$(ECHOPATH) s=@HAVE_DIA_SDK@=0=g >> lit.tmp
 	@$(ECHOPATH) s=@ENABLE_EXAMPLES@=$(BUILD_EXAMPLES)=g >> lit.tmp

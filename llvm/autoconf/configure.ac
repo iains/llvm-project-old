@@ -1415,6 +1415,17 @@ AC_ARG_WITH(internal-prefix,
     withval="")
 AC_SUBST(INTERNAL_PREFIX,[$withval])
 
+AC_ARG_WITH(lit-tooldir,
+  AS_HELP_STRING([--with-lit-tooldir],
+    [Path for tools that lit will use]),,
+    withval="-")
+case "$withval" in
+  -) lit_tool_dir="" ;;
+  /* | [[A-Za-z]]:[[\\/]]*) lit_tool_dir="$withval" ;;
+  *) lit_tool_dir="$ac_pwd/$withval" ;;
+esac
+AC_SUBST(LLVM_LIT_TOOLS_DIR,[$lit_tool_dir])
+
 dnl===-----------------------------------------------------------------------===
 dnl===
 dnl=== SECTION 4: Check for programs we need and that they are the right version
@@ -1766,8 +1777,10 @@ AC_ARG_WITH(intel-jitevents,
     [
       AC_SUBST(USE_INTEL_JITEVENTS, [0])
     ])
+
 AC_DEFINE_UNQUOTED([LLVM_USE_INTEL_JITEVENTS],$USE_INTEL_JITEVENTS,
                    [Define if we have the Intel JIT API runtime support library])
+AC_SUBST(LLVM_USE_INTEL_JITEVENTS)
 
 dnl Check for libxml2
 dnl Right now we're just checking for the existence, we could also check for a
