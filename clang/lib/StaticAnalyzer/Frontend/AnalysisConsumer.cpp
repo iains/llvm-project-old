@@ -289,18 +289,12 @@ public:
 
   void Initialize(ASTContext &Context) override {
     Ctx = &Context;
-    checkerMgr.reset(createCheckerManager(*Opts, PP.getLangOpts(), Plugins,
-                                          PP.getDiagnostics()));
+    checkerMgr = createCheckerManager(*Opts, PP.getLangOpts(), Plugins,
+                                      PP.getDiagnostics());
 
-    Mgr.reset(new AnalysisManager(*Ctx,
-                                  PP.getDiagnostics(),
-                                  PP.getLangOpts(),
-                                  PathConsumers,
-                                  CreateStoreMgr,
-                                  CreateConstraintMgr,
-                                  checkerMgr.get(),
-                                  *Opts,
-                                  Injector));
+    Mgr = llvm::make_unique<AnalysisManager>(
+        *Ctx, PP.getDiagnostics(), PP.getLangOpts(), PathConsumers,
+        CreateStoreMgr, CreateConstraintMgr, checkerMgr.get(), *Opts, Injector);
   }
 
   /// \brief Store the top level decls in the set to be processed later on.
@@ -314,7 +308,7 @@ public:
   /// analyzed. This allows to redefine the default inlining policies when
   /// analyzing a given function.
   ExprEngine::InliningModes
-  getInliningModeForFunction(const Decl *D, const SetOfConstDecls &Visited);
+    getInliningModeForFunction(const Decl *D, const SetOfConstDecls &Visited);
 
   /// \brief Build the call graph for all the top level decls of this TU and
   /// use it to define the order in which the functions should be visited.
@@ -511,6 +505,11 @@ void AnalysisConsumer::HandleTranslationUnit(ASTContext &C) {
   // Don't run the actions if an error has occurred with parsing the file.
   DiagnosticsEngine &Diags = PP.getDiagnostics();
   if (Diags.hasErrorOccurred() || Diags.hasFatalErrorOccurred())
+    return;
+
+  // Don't analyze if the user explicitly asked for no checks to be performed
+  // on this file.
+  if (Opts->DisableAllChecks)
     return;
 
   {
