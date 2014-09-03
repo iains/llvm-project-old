@@ -46,20 +46,20 @@ extern "C" void LLVMLinkInMCJIT() {
 ExecutionEngine *MCJIT::createJIT(std::unique_ptr<Module> M,
                                   std::string *ErrorStr,
                                   RTDyldMemoryManager *MemMgr,
-                                  TargetMachine *TM) {
+                                  std::unique_ptr<TargetMachine> TM) {
   // Try to register the program as a source of symbols to resolve against.
   //
   // FIXME: Don't do this here.
   sys::DynamicLibrary::LoadLibraryPermanently(nullptr, nullptr);
 
-  return new MCJIT(std::move(M), TM,
+  return new MCJIT(std::move(M), std::move(TM),
                    MemMgr ? MemMgr : new SectionMemoryManager());
 }
 
-MCJIT::MCJIT(std::unique_ptr<Module> M, TargetMachine *tm,
+MCJIT::MCJIT(std::unique_ptr<Module> M, std::unique_ptr<TargetMachine> tm,
              RTDyldMemoryManager *MM)
-    : ExecutionEngine(std::move(M)), TM(tm), Ctx(nullptr), MemMgr(this, MM),
-      Dyld(&MemMgr), ObjCache(nullptr) {
+    : ExecutionEngine(std::move(M)), TM(std::move(tm)), Ctx(nullptr),
+      MemMgr(this, MM), Dyld(&MemMgr), ObjCache(nullptr) {
   // FIXME: We are managing our modules, so we do not want the base class
   // ExecutionEngine to manage them as well. To avoid double destruction
   // of the first (and only) module added in ExecutionEngine constructor
@@ -93,8 +93,6 @@ MCJIT::~MCJIT() {
   LoadedObjects.clear();
 
   Archives.clear();
-
-  delete TM;
 }
 
 void MCJIT::addModule(std::unique_ptr<Module> M) {
@@ -253,10 +251,6 @@ void MCJIT::finalizeModule(Module *M) {
   finalizeLoadedModules();
 }
 
-void *MCJIT::getPointerToBasicBlock(BasicBlock *BB) {
-  report_fatal_error("not yet implemented");
-}
-
 uint64_t MCJIT::getExistingSymbolAddress(const std::string &Name) {
   Mangler Mang(TM->getSubtargetImpl()->getDataLayout());
   SmallString<128> FullName;
@@ -383,14 +377,6 @@ void *MCJIT::getPointerToFunction(Function *F) {
   SmallString<128> Name;
   TM->getNameWithPrefix(Name, F, Mang);
   return (void*)Dyld.getSymbolLoadAddress(Name);
-}
-
-void *MCJIT::recompileAndRelinkFunction(Function *F) {
-  report_fatal_error("not yet implemented");
-}
-
-void MCJIT::freeMachineCodeForFunction(Function *F) {
-  report_fatal_error("not yet implemented");
 }
 
 void MCJIT::runStaticConstructorsDestructorsInModulePtrSet(
@@ -562,8 +548,7 @@ void MCJIT::UnregisterJITEventListener(JITEventListener *L) {
   if (!L)
     return;
   MutexGuard locked(lock);
-  SmallVector<JITEventListener*, 2>::reverse_iterator I=
-      std::find(EventListeners.rbegin(), EventListeners.rend(), L);
+  auto I = std::find(EventListeners.rbegin(), EventListeners.rend(), L);
   if (I != EventListeners.rend()) {
     std::swap(*I, EventListeners.back());
     EventListeners.pop_back();
@@ -579,7 +564,8 @@ void MCJIT::NotifyObjectEmitted(const ObjectImage& Obj) {
 void MCJIT::NotifyFreeingObject(const ObjectImage& Obj) {
   MutexGuard locked(lock);
   for (unsigned I = 0, S = EventListeners.size(); I < S; ++I) {
-    EventListeners[I]->NotifyFreeingObject(Obj);
+    JITEventListener *L = EventListeners[I];
+    L->NotifyFreeingObject(Obj);
   }
 }
 

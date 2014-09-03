@@ -711,11 +711,7 @@ static ConstantFPSDNode *isConstOrConstSplatFP(SDValue N) {
     BitVector UndefElements;
     ConstantFPSDNode *CN = BV->getConstantFPSplatNode(&UndefElements);
 
-    // BuildVectors can truncate their operands. Ignore that case here.
-    // FIXME: We blindly ignore splats which include undef which is overly
-    // pessimistic.
-    if (CN && UndefElements.none() &&
-        CN->getValueType(0) == N.getValueType().getScalarType())
+    if (CN && UndefElements.none())
       return CN;
   }
 
@@ -6874,6 +6870,27 @@ SDValue DAGCombiner::visitFMUL(SDNode *N) {
   if (N1CFP && N1CFP->isExactlyValue(1.0))
     return N0;
 
+  if (DAG.getTarget().Options.UnsafeFPMath) {
+    // If allowed, fold (fmul (fmul x, c1), c2) -> (fmul x, (fmul c1, c2))
+    if (N1CFP && N0.getOpcode() == ISD::FMUL &&
+        N0.getNode()->hasOneUse() && isConstOrConstSplatFP(N0.getOperand(1))) {
+      SDLoc SL(N);
+      SDValue MulConsts = DAG.getNode(ISD::FMUL, SL, VT, N0.getOperand(1), N1);
+      return DAG.getNode(ISD::FMUL, SL, VT, N0.getOperand(0), MulConsts);
+    }
+
+    // If allowed, fold (fmul (fadd x, x), c) -> (fmul x, (fmul 2.0, c))
+    // Undo the fmul 2.0, x -> fadd x, x transformation, since if it occurs
+    // during an early run of DAGCombiner can prevent folding with fmuls
+    // inserted during lowering.
+    if (N0.getOpcode() == ISD::FADD && N0.getOperand(0) == N0.getOperand(1)) {
+      SDLoc SL(N);
+      const SDValue Two = DAG.getConstantFP(2.0, VT);
+      SDValue MulConsts = DAG.getNode(ISD::FMUL, SL, VT, Two, N1);
+      return DAG.getNode(ISD::FMUL, SDLoc(N), VT, N0.getOperand(0), MulConsts);
+    }
+  }
+
   // fold (fmul X, 2.0) -> (fadd X, X)
   if (N1CFP && N1CFP->isExactlyValue(+2.0))
     return DAG.getNode(ISD::FADD, SDLoc(N), VT, N0, N0);
@@ -6892,14 +6909,6 @@ SDValue DAGCombiner::visitFMUL(SDNode *N) {
                            GetNegatedExpression(N0, DAG, LegalOperations),
                            GetNegatedExpression(N1, DAG, LegalOperations));
     }
-  }
-
-  // If allowed, fold (fmul (fmul x, c1), c2) -> (fmul x, (fmul c1, c2))
-  if (Options.UnsafeFPMath && N1CFP && N0.getOpcode() == ISD::FMUL &&
-      N0.getNode()->hasOneUse() && isConstOrConstSplatFP(N0.getOperand(1))) {
-    return DAG.getNode(ISD::FMUL, SDLoc(N), VT, N0.getOperand(0),
-                       DAG.getNode(ISD::FMUL, SDLoc(N), VT,
-                                   N0.getOperand(1), N1));
   }
 
   return SDValue();
@@ -8029,8 +8038,19 @@ SDValue DAGCombiner::SplitIndexingFromLoad(LoadSDNode *LD) {
   assert(AM != ISD::UNINDEXED);
   SDValue BP = LD->getOperand(1);
   SDValue Inc = LD->getOperand(2);
-  assert(Inc.getOpcode() != ISD::TargetConstant &&
-         "Cannot split out indexing using target constants");
+
+  // Some backends use TargetConstants for load offsets, but don't expect
+  // TargetConstants in general ADD nodes. We can convert these constants into
+  // regular Constants (if the constant is not opaque).
+  assert((Inc.getOpcode() != ISD::TargetConstant ||
+          !cast<ConstantSDNode>(Inc)->isOpaque()) &&
+         "Cannot split out indexing using opaque target constants");
+  if (Inc.getOpcode() == ISD::TargetConstant) {
+    ConstantSDNode *ConstInc = cast<ConstantSDNode>(Inc);
+    Inc = DAG.getConstant(*ConstInc->getConstantIntValue(),
+                          ConstInc->getValueType(0));
+  }
+
   unsigned Opc =
       (AM == ISD::PRE_INC || AM == ISD::POST_INC ? ISD::ADD : ISD::SUB);
   return DAG.getNode(Opc, SDLoc(LD), BP.getSimpleValueType(), BP, Inc);
@@ -8071,16 +8091,18 @@ SDValue DAGCombiner::visitLOAD(SDNode *N) {
       // Indexed loads.
       assert(N->getValueType(2) == MVT::Other && "Malformed indexed loads?");
 
-      // If this load has an TargetConstant offset, then we cannot split the
-      // indexing into an add/sub directly (that TargetConstant may not be
-      // valid for a different type of node).
-      bool HasTCInc = LD->getOperand(2).getOpcode() == ISD::TargetConstant;
+      // If this load has an opaque TargetConstant offset, then we cannot split
+      // the indexing into an add/sub directly (that TargetConstant may not be
+      // valid for a different type of node, and we cannot convert an opaque
+      // target constant into a regular constant).
+      bool HasOTCInc = LD->getOperand(2).getOpcode() == ISD::TargetConstant &&
+                       cast<ConstantSDNode>(LD->getOperand(2))->isOpaque();
 
       if (!N->hasAnyUseOfValue(0) &&
-          ((MaySplitLoadIndex && !HasTCInc) || !N->hasAnyUseOfValue(1))) {
+          ((MaySplitLoadIndex && !HasOTCInc) || !N->hasAnyUseOfValue(1))) {
         SDValue Undef = DAG.getUNDEF(N->getValueType(0));
         SDValue Index;
-        if (N->hasAnyUseOfValue(1) && MaySplitLoadIndex && !HasTCInc) {
+        if (N->hasAnyUseOfValue(1) && MaySplitLoadIndex && !HasOTCInc) {
           Index = SplitIndexingFromLoad(LD);
           // Try to fold the base pointer arithmetic into subsequent loads and
           // stores.

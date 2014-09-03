@@ -15,7 +15,6 @@
 #include "ARMFrameLowering.h"
 #include "ARMISelLowering.h"
 #include "ARMInstrInfo.h"
-#include "ARMJITInfo.h"
 #include "ARMSelectionDAGInfo.h"
 #include "ARMSubtarget.h"
 #include "ARMMachineFunctionInfo.h"
@@ -160,7 +159,7 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &CPU,
       ARMProcClass(None), stackAlignment(4), CPUString(CPU), IsLittle(IsLittle),
       TargetTriple(TT), Options(Options), TargetABI(ARM_ABI_UNKNOWN),
       DL(computeDataLayout(initializeSubtargetDependencies(CPU, FS))),
-      TSInfo(DL), JITInfo(),
+      TSInfo(DL),
       InstrInfo(isThumb1Only()
                     ? (ARMBaseInstrInfo *)new Thumb1InstrInfo(*this)
                     : !isThumb()
@@ -415,7 +414,7 @@ ARMSubtarget::GVIsIndirectSymbol(const GlobalValue *GV,
 }
 
 unsigned ARMSubtarget::getMispredictionPenalty() const {
-  return SchedModel->MispredictPenalty;
+  return SchedModel.MispredictPenalty;
 }
 
 bool ARMSubtarget::hasSinCos() const {
