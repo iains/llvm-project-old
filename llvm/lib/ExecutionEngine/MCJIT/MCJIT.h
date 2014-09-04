@@ -219,8 +219,7 @@ class MCJIT : public ExecutionEngine {
   SmallVector<object::OwningBinary<object::Archive>, 2> Archives;
   SmallVector<std::unique_ptr<MemoryBuffer>, 2> Buffers;
 
-  typedef SmallVector<ObjectImage *, 2> LoadedObjectList;
-  LoadedObjectList  LoadedObjects;
+  SmallVector<std::unique_ptr<ObjectImage>, 2> LoadedObjects;
 
   // An optional ObjectCache to be notified of compiled objects and used to
   // perform lookup of pre-compiled code to avoid re-compilation.
@@ -339,7 +338,7 @@ protected:
   /// this function call is expected to be the contained module.  The module
   /// is passed as a parameter here to prepare for multiple module support in
   /// the future.
-  ObjectBufferStream* emitObject(Module *M);
+  std::unique_ptr<ObjectBufferStream> emitObject(Module *M);
 
   void NotifyObjectEmitted(const ObjectImage& Obj);
   void NotifyFreeingObject(const ObjectImage& Obj);

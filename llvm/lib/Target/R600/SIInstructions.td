@@ -274,11 +274,15 @@ def S_ASHR_I64 : SOP2_SHIFT_64 <0x00000023, "S_ASHR_I64",
   [(set i64:$dst, (sra i64:$src0, i32:$src1))]
 >;
 
-} // End AddedComplexity = 1
 
 def S_BFM_B32 : SOP2_32 <0x00000024, "S_BFM_B32", []>;
 def S_BFM_B64 : SOP2_64 <0x00000025, "S_BFM_B64", []>;
-def S_MUL_I32 : SOP2_32 <0x00000026, "S_MUL_I32", []>;
+def S_MUL_I32 : SOP2_32 <0x00000026, "S_MUL_I32",
+  [(set i32:$dst, (mul i32:$src0, i32:$src1))]
+>;
+
+} // End AddedComplexity = 1
+
 def S_BFE_U32 : SOP2_32 <0x00000027, "S_BFE_U32", []>;
 def S_BFE_I32 : SOP2_32 <0x00000028, "S_BFE_I32", []>;
 def S_BFE_U64 : SOP2_64 <0x00000029, "S_BFE_U64", []>;
@@ -1897,6 +1901,7 @@ class BinOp64Pat <SDNode node, Instruction inst> : Pat <
                   (EXTRACT_SUBREG i64:$src1, sub1)), sub1)
 >;
 
+def : BinOp64Pat <and, V_AND_B32_e32>;
 def : BinOp64Pat <or, V_OR_B32_e32>;
 def : BinOp64Pat <xor, V_XOR_B32_e32>;
 

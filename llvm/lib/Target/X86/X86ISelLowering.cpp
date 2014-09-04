@@ -1673,7 +1673,7 @@ void X86TargetLowering::resetOperationActions() {
 
   setPrefFunctionAlignment(4); // 2^4 bytes.
 
-  InitIntrinsicTables();
+  verifyIntrinsicTables();
 }
 
 // This has so far only been implemented for 64-bit MachO.
@@ -7365,6 +7365,55 @@ static SDValue lowerV4F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     int V2Index =
         std::find_if(Mask.begin(), Mask.end(), [](int M) { return M >= 4; }) -
         Mask.begin();
+
+    // Check for whether we can use INSERTPS to perform the blend. We only use
+    // INSERTPS when the V1 elements are already in the correct locations
+    // because otherwise we can just always use two SHUFPS instructions which
+    // are much smaller to encode than a SHUFPS and an INSERTPS.
+    if (Subtarget->hasSSE41()) {
+      // When using INSERTPS we can zero any lane of the destination. Collect
+      // the zero inputs into a mask and drop them from the lanes of V1 which
+      // actually need to be present as inputs to the INSERTPS.
+      unsigned ZMask = 0;
+      if (ISD::isBuildVectorAllZeros(V1.getNode())) {
+        ZMask = 0xF ^ (1 << V2Index);
+      } else if (V1.getOpcode() == ISD::BUILD_VECTOR) {
+        for (int i = 0; i < 4; ++i) {
+          int M = Mask[i];
+          if (M >= 4)
+            continue;
+          if (M > -1) {
+            SDValue Input = V1.getOperand(M);
+            if (Input.getOpcode() != ISD::UNDEF &&
+                !X86::isZeroNode(Input)) {
+              // A non-zero input!
+              ZMask = 0;
+              break;
+            }
+          }
+          ZMask |= 1 << i;
+        }
+      }
+
+      // Synthesize a shuffle mask for the non-zero and non-v2 inputs.
+      int InsertShuffleMask[4] = {-1, -1, -1, -1};
+      for (int i = 0; i < 4; ++i)
+        if (i != V2Index && (ZMask & (1 << i)) == 0)
+          InsertShuffleMask[i] = Mask[i];
+
+      if (isNoopShuffleMask(InsertShuffleMask)) {
+        // Replace V1 with undef if nothing from V1 survives the INSERTPS.
+        if ((ZMask | 1 << V2Index) == 0xF)
+          V1 = DAG.getUNDEF(MVT::v4f32);
+
+        // Insert the V2 element into the desired position.
+        SDValue InsertPSMask =
+            DAG.getIntPtrConstant(Mask[V2Index] << 6 | V2Index << 4 | ZMask);
+        return DAG.getNode(X86ISD::INSERTPS, DL, MVT::v4f32, V1, V2,
+                           InsertPSMask);
+      }
+    }
+
     // Compute the index adjacent to V2Index and in the same half by toggling
     // the low bit.
     int V2AdjIndex = V2Index ^ 1;
@@ -14582,7 +14631,7 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   SDLoc dl(Op);
   unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
 
-  const IntrinsicData* IntrData = GetIntrinsicWithoutChain(IntNo);
+  const IntrinsicData* IntrData = getIntrinsicWithoutChain(IntNo);
   if (IntrData) {
     switch(IntrData->Type) {
     case INTR_TYPE_1OP:
@@ -15148,7 +15197,7 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget *Subtarget,
                                       SelectionDAG &DAG) {
   unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
 
-  const IntrinsicData* IntrData = GetIntrinsicWithChain(IntNo);
+  const IntrinsicData* IntrData = getIntrinsicWithChain(IntNo);
   if (!IntrData)
     return SDValue();
 
