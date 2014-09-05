@@ -266,9 +266,14 @@ ArgType PrintfSpecifier::getArgType(ASTContext &Ctx,
 
   if (CS.getKind() == ConversionSpecifier::cArg)
     switch (LM.getKind()) {
-      case LengthModifier::None: return Ctx.IntTy;
+      case LengthModifier::None:
+        return Ctx.IntTy;
       case LengthModifier::AsLong:
+      case LengthModifier::AsWide:
         return ArgType(ArgType::WIntTy, "wint_t");
+      case LengthModifier::AsShort:
+        if (Ctx.getTargetInfo().getTriple().isOSMSVCRT())
+          return Ctx.IntTy;
       default:
         return ArgType::Invalid();
     }
@@ -303,6 +308,7 @@ ArgType PrintfSpecifier::getArgType(ASTContext &Ctx,
         return ArgType(Ctx.getPointerDiffType(), "ptrdiff_t");
       case LengthModifier::AsAllocate:
       case LengthModifier::AsMAllocate:
+      case LengthModifier::AsWide:
         return ArgType::Invalid();
     }
 
@@ -337,6 +343,7 @@ ArgType PrintfSpecifier::getArgType(ASTContext &Ctx,
         return ArgType();
       case LengthModifier::AsAllocate:
       case LengthModifier::AsMAllocate:
+      case LengthModifier::AsWide:
         return ArgType::Invalid();
     }
 
@@ -372,6 +379,7 @@ ArgType PrintfSpecifier::getArgType(ASTContext &Ctx,
       case LengthModifier::AsInt32:
       case LengthModifier::AsInt3264:
       case LengthModifier::AsInt64:
+      case LengthModifier::AsWide:
         return ArgType::Invalid();
     }
   }
@@ -384,15 +392,23 @@ ArgType PrintfSpecifier::getArgType(ASTContext &Ctx,
                          "const unichar *");
         return ArgType(ArgType::WCStrTy, "wchar_t *");
       }
+      if (LM.getKind() == LengthModifier::AsWide)
+        return ArgType(ArgType::WCStrTy, "wchar_t *");
       return ArgType::CStrTy;
     case ConversionSpecifier::SArg:
       if (IsObjCLiteral)
         return ArgType(Ctx.getPointerType(Ctx.UnsignedShortTy.withConst()),
                        "const unichar *");
+      if (Ctx.getTargetInfo().getTriple().isOSMSVCRT() &&
+          LM.getKind() == LengthModifier::AsShort)
+        return ArgType::CStrTy;
       return ArgType(ArgType::WCStrTy, "wchar_t *");
     case ConversionSpecifier::CArg:
       if (IsObjCLiteral)
         return ArgType(Ctx.UnsignedShortTy, "unichar");
+      if (Ctx.getTargetInfo().getTriple().isOSMSVCRT() &&
+          LM.getKind() == LengthModifier::AsShort)
+        return Ctx.IntTy;
       return ArgType(Ctx.WideCharTy, "wchar_t");
     case ConversionSpecifier::pArg:
       return ArgType::CPointerTy;

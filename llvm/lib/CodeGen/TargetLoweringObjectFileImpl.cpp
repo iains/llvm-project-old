@@ -31,6 +31,7 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -40,6 +41,13 @@
 #include "llvm/Target/TargetSubtargetInfo.h"
 using namespace llvm;
 using namespace dwarf;
+
+// Disabled by default because it hits bug 17350 in GNU ld (gold is fine)
+static cl::opt<bool>
+    EnableStructorCOMDAT("enable-structor-comdat", cl::Hidden,
+                         cl::desc("Use comdats to keep only one copy of a "
+                                  "constructor/destructor invocation"),
+                         cl::init(false));
 
 //===----------------------------------------------------------------------===//
 //                                  ELF
@@ -358,44 +366,62 @@ TargetLoweringObjectFileELF::getSectionForConstant(SectionKind Kind,
   return DataRelROSection;
 }
 
-const MCSection *TargetLoweringObjectFileELF::getStaticCtorSection(
-    unsigned Priority, const MCSymbol *KeySym) const {
-  // The default scheme is .ctor / .dtor, so we have to invert the priority
-  // numbering.
-  if (Priority == 65535)
-    return StaticCtorSection;
+static const MCSectionELF *getStaticStructorSection(MCContext &Ctx,
+                                                    bool UseInitArray,
+                                                    bool IsCtor,
+                                                    unsigned Priority,
+                                                    const MCSymbol *KeySym) {
+  if (!EnableStructorCOMDAT)
+    KeySym = nullptr;
+
+  std::string Name;
+  unsigned Type;
+  unsigned Flags = ELF::SHF_ALLOC | ELF::SHF_WRITE;
+  SectionKind Kind = SectionKind::getDataRel();
+  StringRef COMDAT = KeySym ? KeySym->getName() : "";
+
+  if (KeySym)
+    Flags |= ELF::SHF_GROUP;
 
   if (UseInitArray) {
-    std::string Name = std::string(".init_array.") + utostr(Priority);
-    return getContext().getELFSection(Name, ELF::SHT_INIT_ARRAY,
-                                      ELF::SHF_ALLOC | ELF::SHF_WRITE,
-                                      SectionKind::getDataRel());
+    if (IsCtor) {
+      Type = ELF::SHT_INIT_ARRAY;
+      Name = ".init_array";
+    } else {
+      Type = ELF::SHT_FINI_ARRAY;
+      Name = ".fini_array";
+    }
+    if (Priority != 65535) {
+      Name += '.';
+      Name += utostr(Priority);
+    }
   } else {
-    std::string Name = std::string(".ctors.") + utostr(65535 - Priority);
-    return getContext().getELFSection(Name, ELF::SHT_PROGBITS,
-                                      ELF::SHF_ALLOC |ELF::SHF_WRITE,
-                                      SectionKind::getDataRel());
+    // The default scheme is .ctor / .dtor, so we have to invert the priority
+    // numbering.
+    if (IsCtor)
+      Name = ".ctors";
+    else
+      Name = ".dtors";
+    if (Priority != 65535) {
+      Name += '.';
+      Name += utostr(65535 - Priority);
+    }
+    Type = ELF::SHT_PROGBITS;
   }
+
+  return Ctx.getELFSection(Name, Type, Flags, Kind, 0, COMDAT);
+}
+
+const MCSection *TargetLoweringObjectFileELF::getStaticCtorSection(
+    unsigned Priority, const MCSymbol *KeySym) const {
+  return getStaticStructorSection(getContext(), UseInitArray, true, Priority,
+                                  KeySym);
 }
 
 const MCSection *TargetLoweringObjectFileELF::getStaticDtorSection(
     unsigned Priority, const MCSymbol *KeySym) const {
-  // The default scheme is .ctor / .dtor, so we have to invert the priority
-  // numbering.
-  if (Priority == 65535)
-    return StaticDtorSection;
-
-  if (UseInitArray) {
-    std::string Name = std::string(".fini_array.") + utostr(Priority);
-    return getContext().getELFSection(Name, ELF::SHT_FINI_ARRAY,
-                                      ELF::SHF_ALLOC | ELF::SHF_WRITE,
-                                      SectionKind::getDataRel());
-  } else {
-    std::string Name = std::string(".dtors.") + utostr(65535 - Priority);
-    return getContext().getELFSection(Name, ELF::SHT_PROGBITS,
-                                      ELF::SHF_ALLOC |ELF::SHF_WRITE,
-                                      SectionKind::getDataRel());
-  }
+  return getStaticStructorSection(getContext(), UseInitArray, false, Priority,
+                                  KeySym);
 }
 
 void
@@ -967,29 +993,14 @@ emitModuleFlags(MCStreamer &Streamer,
   }
 }
 
-static const MCSection *getAssociativeCOFFSection(MCContext &Ctx,
-                                                  const MCSection *Sec,
-                                                  const MCSymbol *KeySym) {
-  // Return the normal section if we don't have to be associative.
-  if (!KeySym)
-    return Sec;
-
-  // Make an associative section with the same name and kind as the normal
-  // section.
-  const MCSectionCOFF *SecCOFF = cast<MCSectionCOFF>(Sec);
-  unsigned Characteristics =
-      SecCOFF->getCharacteristics() | COFF::IMAGE_SCN_LNK_COMDAT;
-  return Ctx.getCOFFSection(SecCOFF->getSectionName(), Characteristics,
-                            SecCOFF->getKind(), KeySym->getName(),
-                            COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE);
-}
-
 const MCSection *TargetLoweringObjectFileCOFF::getStaticCtorSection(
     unsigned Priority, const MCSymbol *KeySym) const {
-  return getAssociativeCOFFSection(getContext(), StaticCtorSection, KeySym);
+  return getContext().getAssociativeCOFFSection(
+      cast<MCSectionCOFF>(StaticCtorSection), KeySym);
 }
 
 const MCSection *TargetLoweringObjectFileCOFF::getStaticDtorSection(
     unsigned Priority, const MCSymbol *KeySym) const {
-  return getAssociativeCOFFSection(getContext(), StaticDtorSection, KeySym);
+  return getContext().getAssociativeCOFFSection(
+      cast<MCSectionCOFF>(StaticDtorSection), KeySym);
 }

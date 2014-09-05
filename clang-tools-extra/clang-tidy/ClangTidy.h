@@ -118,10 +118,8 @@ private:
 std::vector<std::string> getCheckNames(const ClangTidyOptions &Options);
 
 /// \brief Run a set of clang-tidy checks on a set of files.
-///
-/// Takes ownership of the \c OptionsProvider.
 ClangTidyStats
-runClangTidy(ClangTidyOptionsProvider *OptionsProvider,
+runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
              const tooling::CompilationDatabase &Compilations,
              ArrayRef<std::string> InputFiles,
              std::vector<ClangTidyError> *Errors);
@@ -132,6 +130,11 @@ runClangTidy(ClangTidyOptionsProvider *OptionsProvider,
 /// \brief Displays the found \p Errors to the users. If \p Fix is true, \p
 /// Errors containing fixes are automatically applied.
 void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix);
+
+/// \brief Serializes replacements into YAML and writes them to the specified
+/// output stream.
+void exportReplacements(const std::vector<ClangTidyError> &Errors,
+                        raw_ostream &OS);
 
 } // end namespace tidy
 } // end namespace clang

@@ -83,6 +83,10 @@ TEST_F(FormatTestJS, UnderstandsJavaScriptOperators) {
   verifyFormat("var b = a.map((x) => x + 1);");
 }
 
+TEST_F(FormatTestJS, LiteralOperatorsCanBeKeywords) {
+  verifyFormat("not.and.or.not_eq = 1;");
+}
+
 TEST_F(FormatTestJS, ES6DestructuringAssignment) {
   verifyFormat("var [a, b, c] = [1, 2, 3];");
   verifyFormat("var {a, b} = {a: 1, b: 2};");
@@ -110,6 +114,14 @@ TEST_F(FormatTestJS, ContainerLiterals) {
                "      function() {\n"
                "        f();  //\n"
                "      }\n"
+               "};");
+  verifyFormat("var stuff = {\n"
+               "  // comment for update\n"
+               "  update: false,\n"
+               "  // comment for modules\n"
+               "  modules: false,\n"
+               "  // comment for tasks\n"
+               "  tasks: false\n"
                "};");
 }
 
@@ -246,6 +258,9 @@ TEST_F(FormatTestJS, TryCatch) {
                "} finally {\n"
                "  h();\n"
                "}");
+
+  // But, of course, "catch" is a perfectly fine function name in JavaScript.
+  verifyFormat("someObject.catch();");
 }
 
 TEST_F(FormatTestJS, StringLiteralConcatenation) {

@@ -244,6 +244,8 @@ clang::analyze_format_string::ParseLengthModifier(FormatSpecifier &FS,
       ++I;
       lmKind = LengthModifier::AsInt3264;
       break;
+    case 'w':
+      lmKind = LengthModifier::AsWide; ++I; break;
   }
   LengthModifier lm(lmPosition, lmKind);
   FS.setLengthModifier(lm);
@@ -504,6 +506,8 @@ analyze_format_string::LengthModifier::toString() const {
     return "a";
   case AsMAllocate:
     return "m";
+  case AsWide:
+    return "w";
   case None:
     return "";
   }
@@ -608,8 +612,20 @@ bool FormatSpecifier::hasValidLengthModifier(const TargetInfo &Target) const {
       return true;
       
     // Handle most integer flags
-    case LengthModifier::AsChar:
     case LengthModifier::AsShort:
+      if (Target.getTriple().isOSMSVCRT()) {
+        switch (CS.getKind()) {
+          case ConversionSpecifier::cArg:
+          case ConversionSpecifier::CArg:
+          case ConversionSpecifier::sArg:
+          case ConversionSpecifier::SArg:
+            return true;
+          default:
+            break;
+        }
+      }
+      // Fall through.
+    case LengthModifier::AsChar:
     case LengthModifier::AsLongLong:
     case LengthModifier::AsQuad:
     case LengthModifier::AsIntMax:
@@ -719,6 +735,16 @@ bool FormatSpecifier::hasValidLengthModifier(const TargetInfo &Target) const {
         default:
           return false;
       }
+    case LengthModifier::AsWide:
+      switch (CS.getKind()) {
+        case ConversionSpecifier::cArg:
+        case ConversionSpecifier::CArg:
+        case ConversionSpecifier::sArg:
+        case ConversionSpecifier::SArg: // FIXME: Or Z.
+          return Target.getTriple().isOSMSVCRT();
+        default:
+          return false;
+      }
   }
   llvm_unreachable("Invalid LengthModifier Kind!");
 }
@@ -741,6 +767,7 @@ bool FormatSpecifier::hasStandardLengthModifier() const {
     case LengthModifier::AsInt32:
     case LengthModifier::AsInt3264:
     case LengthModifier::AsInt64:
+    case LengthModifier::AsWide:
       return false;
   }
   llvm_unreachable("Invalid LengthModifier Kind!");
