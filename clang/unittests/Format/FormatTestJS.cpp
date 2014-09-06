@@ -83,6 +83,10 @@ TEST_F(FormatTestJS, UnderstandsJavaScriptOperators) {
   verifyFormat("var b = a.map((x) => x + 1);");
 }
 
+TEST_F(FormatTestJS, UnderstandsAmpAmp) {
+  verifyFormat("e && e.SomeFunction();");
+}
+
 TEST_F(FormatTestJS, LiteralOperatorsCanBeKeywords) {
   verifyFormat("not.and.or.not_eq = 1;");
 }
@@ -106,14 +110,12 @@ TEST_F(FormatTestJS, ContainerLiterals) {
                "};");
   verifyFormat("return {\n"
                "  a: a,\n"
-               "  link:\n"
-               "      function() {\n"
-               "        f();  //\n"
-               "      },\n"
-               "  link:\n"
-               "      function() {\n"
-               "        f();  //\n"
-               "      }\n"
+               "  link: function() {\n"
+               "    f();  //\n"
+               "  },\n"
+               "  link: function() {\n"
+               "    f();  //\n"
+               "  }\n"
                "};");
   verifyFormat("var stuff = {\n"
                "  // comment for update\n"
@@ -122,6 +124,11 @@ TEST_F(FormatTestJS, ContainerLiterals) {
                "  modules: false,\n"
                "  // comment for tasks\n"
                "  tasks: false\n"
+               "};");
+  verifyFormat("return {\n"
+               "  'finish':\n"
+               "      //\n"
+               "      a\n"
                "};");
 }
 
@@ -162,6 +169,7 @@ TEST_F(FormatTestJS, FormatsFreestandingFunctions) {
 }
 
 TEST_F(FormatTestJS, FunctionLiterals) {
+  verifyFormat("doFoo(function() {});");
   verifyFormat("doFoo(function() { return 1; });");
   verifyFormat("var func = function() { return 1; };");
   verifyFormat("return {\n"

@@ -518,10 +518,10 @@ namespace dr546 { // dr546: yes
 }
 
 namespace dr547 { // dr547: yes
-  // When targeting the MS ABI, the type of a member function includes a
+  // When targeting the MS x86 ABI, the type of a member function includes a
   // __thiscall qualifier. This is non-conforming, but we still implement
   // the intent of dr547
-#if defined(_M_IX86) || defined(__MINGW32__) || defined(__MINGW64__)
+#if defined(_M_IX86) || (defined(__MINGW32__) && !defined(__MINGW64__))
 #define THISCALL __thiscall
 #else
 #define THISCALL
@@ -692,7 +692,7 @@ namespace dr568 { // dr568: yes c++11
   void jump() {
     goto x;
 #if __cplusplus < 201103L
-    // expected-error@-2 {{protected scope}}
+    // expected-error@-2 {{cannot jump}}
     // expected-note@+2 {{non-POD}}
 #endif
     trivial t;

@@ -494,7 +494,7 @@ bool SIInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
     BuildMI(MBB, MI, DL, get(AMDGPU::S_GETPC_B64), Reg);
 
     // Add 32-bit offset from this instruction to the start of the constant data.
-    BuildMI(MBB, MI, DL, get(AMDGPU::S_ADD_I32), RegLo)
+    BuildMI(MBB, MI, DL, get(AMDGPU::S_ADD_U32), RegLo)
             .addReg(RegLo)
             .addTargetIndex(AMDGPU::TI_CONSTDATA_START)
             .addReg(AMDGPU::SCC, RegState::Define | RegState::Implicit);
@@ -904,9 +904,11 @@ unsigned SIInstrInfo::getVALUOp(const MachineInstr &MI) {
   case AMDGPU::S_MOV_B32:
     return MI.getOperand(1).isReg() ?
            AMDGPU::COPY : AMDGPU::V_MOV_B32_e32;
-  case AMDGPU::S_ADD_I32: return AMDGPU::V_ADD_I32_e32;
+  case AMDGPU::S_ADD_I32:
+  case AMDGPU::S_ADD_U32: return AMDGPU::V_ADD_I32_e32;
   case AMDGPU::S_ADDC_U32: return AMDGPU::V_ADDC_U32_e32;
-  case AMDGPU::S_SUB_I32: return AMDGPU::V_SUB_I32_e32;
+  case AMDGPU::S_SUB_I32:
+  case AMDGPU::S_SUB_U32: return AMDGPU::V_SUB_I32_e32;
   case AMDGPU::S_SUBB_U32: return AMDGPU::V_SUBB_U32_e32;
   case AMDGPU::S_MUL_I32: return AMDGPU::V_MUL_LO_I32;
   case AMDGPU::S_AND_B32: return AMDGPU::V_AND_B32_e32;
@@ -982,17 +984,18 @@ void SIInstrInfo::legalizeOpWithMove(MachineInstr *MI, unsigned OpIdx) const {
   unsigned RCID = get(MI->getOpcode()).OpInfo[OpIdx].RegClass;
   const TargetRegisterClass *RC = RI.getRegClass(RCID);
   unsigned Opcode = AMDGPU::V_MOV_B32_e32;
-
   if (MO.isReg()) {
     Opcode = AMDGPU::COPY;
   } else if (RI.isSGPRClass(RC)) {
     Opcode = AMDGPU::S_MOV_B32;
-  } else if (MO.isImm()) {
-    if (RC == &AMDGPU::VSrc_32RegClass)
-      Opcode = AMDGPU::S_MOV_B32;
   }
 
   const TargetRegisterClass *VRC = RI.getEquivalentVGPRClass(RC);
+  if (RI.getCommonSubClass(&AMDGPU::VReg_64RegClass, VRC)) {
+    VRC = &AMDGPU::VReg_64RegClass;
+  } else {
+    VRC = &AMDGPU::VReg_32RegClass;
+  }
   unsigned Reg = MRI.createVirtualRegister(VRC);
   BuildMI(*MI->getParent(), I, MI->getParent()->findDebugLoc(I), get(Opcode),
           Reg).addOperand(MO);

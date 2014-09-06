@@ -917,6 +917,9 @@ private:
   /// \brief Return the type of the given token assuming it is * or &.
   TokenType determineStarAmpUsage(const FormatToken &Tok, bool IsExpression,
                                   bool InTemplateArgument) {
+    if (Style.Language == FormatStyle::LK_JavaScript)
+      return TT_BinaryOperator;
+
     const FormatToken *PrevToken = Tok.getPreviousNonComment();
     if (!PrevToken)
       return TT_UnaryOperator;
@@ -1110,12 +1113,16 @@ private:
   /// and other tokens that we treat like binary operators.
   int getCurrentPrecedence() {
     if (Current) {
+      const FormatToken *NextNonComment = Current->getNextNonComment();
       if (Current->Type == TT_ConditionalExpr)
         return prec::Conditional;
+      else if (NextNonComment && NextNonComment->is(tok::colon) &&
+               NextNonComment->Type == TT_DictLiteral)
+        return prec::Comma;
       else if (Current->is(tok::semi) || Current->Type == TT_InlineASMColon ||
                Current->Type == TT_SelectorName ||
-               (Current->is(tok::comment) && Current->getNextNonComment() &&
-                Current->getNextNonComment()->Type == TT_SelectorName))
+               (Current->is(tok::comment) && NextNonComment &&
+                NextNonComment->Type == TT_SelectorName))
         return 0;
       else if (Current->Type == TT_RangeBasedForLoopColon)
         return prec::Comma;

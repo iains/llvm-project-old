@@ -1,3 +1,4 @@
+// REQUIRES: x86-registered-target
 // RUN: %clang_cc1 %s -triple i686-pc-windows-msvc -emit-llvm -o - -fasm-blocks | FileCheck %s
 
 // Check that we take EAX or EAX:EDX and return it from these functions for MSVC
