@@ -326,6 +326,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
       ctx->setOutputELFType(llvm::ELF::ET_DYN);
       ctx->setAllowShlibUndefines(true);
       ctx->setUseShlibUndefines(false);
+      ctx->setPrintRemainingUndefines(false);
+      ctx->setAllowRemainingUndefines(true);
       break;
     }
   }
@@ -486,6 +488,10 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
       // FIXME: Calling getFileMagic() is expensive.  It would be better to
       // wire up the LdScript parser into the registry.
       llvm::sys::fs::file_magic magic = llvm::sys::fs::file_magic::unknown;
+      if (!llvm::sys::fs::exists(resolvedInputPath)) {
+        diagnostics << "lld: cannot find file " << userPath << "\n";
+        return false;
+      }
       std::error_code ec = getFileMagic(*ctx, resolvedInputPath, magic);
       if (ec) {
         diagnostics << "lld: unknown input file format for file " << userPath
@@ -533,6 +539,10 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
 
     case OPT_soname:
       ctx->setSharedObjectName(inputArg->getValue());
+      break;
+
+    case OPT_rosegment:
+      ctx->setCreateSeparateROSegment();
       break;
 
     default:

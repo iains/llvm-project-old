@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -Wunused-local-typedef -verify -std=c++1y -fasm-blocks %s
+// RUN: %clang_cc1 -fsyntax-only -Wunused-local-typedef -verify -std=c++1y %s
 
 struct S {
   typedef int Foo;  // no diag
@@ -117,20 +117,6 @@ void typedef_in_nested_name() {
     typedef int Foo;
   };
   A2::Foo adsf2;
-}
-
-void use_in_asm() {
-  typedef struct {
-    int a;
-    int b;
-  } A;
-  __asm mov eax, [eax].A.b
-
-  using Alias = struct {
-    int a;
-    int b;
-  };
-  __asm mov eax, [eax].Alias.b
 }
 
 auto sneaky() {
