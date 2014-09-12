@@ -79,6 +79,7 @@ MachOLinkingContext::ArchInfo MachOLinkingContext::_s_archInfos[] = {
   { "armv6",  arch_armv6,  true,  CPU_TYPE_ARM,     CPU_SUBTYPE_ARM_V6 },
   { "armv7",  arch_armv7,  true,  CPU_TYPE_ARM,     CPU_SUBTYPE_ARM_V7 },
   { "armv7s", arch_armv7s, true,  CPU_TYPE_ARM,     CPU_SUBTYPE_ARM_V7S },
+  { "arm64",  arch_arm64,  true,  CPU_TYPE_ARM64,   CPU_SUBTYPE_ARM64_ALL },
   { "",       arch_unknown,false, 0,                0 }
 };
 
@@ -132,10 +133,10 @@ bool MachOLinkingContext::isThinObjectFile(StringRef path, Arch &arch) {
 
 MachOLinkingContext::MachOLinkingContext()
     : _outputMachOType(MH_EXECUTE), _outputMachOTypeStatic(false),
-      _doNothing(false), _arch(arch_unknown), _os(OS::macOSX), _osMinVersion(0),
-      _pageZeroSize(0), _pageSize(4096), _compatibilityVersion(0),
-      _currentVersion(0), _deadStrippableDylib(false), _printAtoms(false),
-      _testingFileUsage(false), _keepPrivateExterns(false),
+      _doNothing(false), _pie(false), _arch(arch_unknown), _os(OS::macOSX),
+      _osMinVersion(0), _pageZeroSize(0), _pageSize(4096), _baseAddress(0),
+      _compatibilityVersion(0), _currentVersion(0), _deadStrippableDylib(false),
+      _printAtoms(false), _testingFileUsage(false), _keepPrivateExterns(false),
       _archHandler(nullptr), _exportMode(ExportMode::globals) {}
 
 MachOLinkingContext::~MachOLinkingContext() {}
@@ -165,6 +166,22 @@ void MachOLinkingContext::configure(HeaderFileType type, Arch arch, OS os,
       _pageZeroSize = 0x1000;
     }
 
+    // Make PIE by default when targetting newer OSs.
+    switch (os) {
+      case OS::macOSX:
+        if (minOSVersion >= 0x000A0700) // MacOSX 10.7
+          _pie = true;
+        break;
+      case OS::iOS:
+        if (minOSVersion >= 0x00040300) // iOS 4.3
+          _pie = true;
+       break;
+       case OS::iOS_simulator:
+        _pie = true;
+       break;
+       case OS::unknown:
+       break;
+    }
     break;
   case llvm::MachO::MH_DYLIB:
     _globalsAreDeadStripRoots = true;
@@ -177,6 +194,10 @@ void MachOLinkingContext::configure(HeaderFileType type, Arch arch, OS os,
   default:
     break;
   }
+
+  // Set default segment page sizes based on arch.
+  if (arch == arch_arm64)
+    _pageSize = 4*4096;
 }
 
 uint32_t MachOLinkingContext::getCPUType() const {
@@ -247,10 +268,17 @@ bool MachOLinkingContext::needsStubsPass() const {
 }
 
 bool MachOLinkingContext::needsGOTPass() const {
-  // Only x86_64 uses GOT pass but not in -r mode.
-  if (_arch != arch_x86_64)
+  // GOT pass not used in -r mode.
+  if (_outputMachOType == MH_OBJECT)
     return false;
-  return (_outputMachOType != MH_OBJECT);
+  // Only some arches use GOT pass.
+  switch (_arch) {
+    case arch_x86_64:
+    case arch_arm64:
+      return true;
+    default:
+      return false;
+  }
 }
 
 

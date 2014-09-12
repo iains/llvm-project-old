@@ -43,6 +43,7 @@ public:
     arch_armv6,
     arch_armv7,
     arch_armv7s,
+    arch_arm64,
   };
 
   enum class OS {
@@ -104,6 +105,11 @@ public:
   const StringRefVector &frameworkDirs() const { return _frameworkDirs; }
   void setSysLibRoots(const StringRefVector &paths);
   const StringRefVector &sysLibRoots() const { return _syslibRoots; }
+  bool PIE() const { return _pie; }
+  void setPIE(bool pie) { _pie = pie; }
+
+  uint64_t baseAddress() const { return _baseAddress; }
+  void setBaseAddress(uint64_t baseAddress) { _baseAddress = baseAddress; }
 
   /// \brief Checks whether a given path on the filesystem exists.
   ///
@@ -266,11 +272,13 @@ private:
   HeaderFileType _outputMachOType;   // e.g MH_EXECUTE
   bool _outputMachOTypeStatic; // Disambiguate static vs dynamic prog
   bool _doNothing;            // for -help and -v which just print info
+  bool _pie;
   Arch _arch;
   OS _os;
   uint32_t _osMinVersion;
   uint64_t _pageZeroSize;
   uint64_t _pageSize;
+  uint64_t _baseAddress;
   uint32_t _compatibilityVersion;
   uint32_t _currentVersion;
   StringRef _installName;

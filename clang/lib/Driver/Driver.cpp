@@ -518,7 +518,7 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
       << "\n********************\n\n"
       "PLEASE ATTACH THE FOLLOWING FILES TO THE BUG REPORT:\n"
       "Preprocessed source(s) and associated run script(s) are located at:";
-    ArgStringList Files = C.getTempFiles();
+    const ArgStringList &Files = C.getTempFiles();
     for (ArgStringList::const_iterator it = Files.begin(), ie = Files.end();
          it != ie; ++it) {
       Diag(clang::diag::note_drv_command_failed_diag_msg) << *it;
@@ -1076,8 +1076,17 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
         }
       } else {
         assert(InputTypeArg && "InputType set w/o InputTypeArg");
-        InputTypeArg->claim();
-        Ty = InputType;
+        if (!InputTypeArg->getOption().matches(options::OPT_x)) {
+          // If emulating cl.exe, make sure that /TC and /TP don't affect input
+          // object files.
+          const char *Ext = strrchr(Value, '.');
+          if (Ext && TC.LookupTypeForExtension(Ext + 1) == types::TY_Object)
+            Ty = types::TY_Object;
+        }
+        if (Ty == types::TY_INVALID) {
+          Ty = InputType;
+          InputTypeArg->claim();
+        }
       }
 
       if (DiagnoseInputExistence(*this, Args, Value))
@@ -1177,6 +1186,15 @@ void Driver::BuildActions(const ToolChain &TC, DerivedArgList &Args,
       // It has to have a value.
       Diag(clang::diag::err_drv_missing_argument) << A->getSpelling() << 1;
       Args.eraseArg(options::OPT__SLASH_Fe);
+    }
+  }
+
+  // Diagnose misuse of /o.
+  if (Arg *A = Args.getLastArg(options::OPT__SLASH_o)) {
+    if (A->getValue()[0] == '\0') {
+      // It has to have a value.
+      Diag(clang::diag::err_drv_missing_argument) << A->getSpelling() << 1;
+      Args.eraseArg(options::OPT__SLASH_o);
     }
   }
 
@@ -1651,7 +1669,8 @@ const char *Driver::GetNamedOutputPath(Compilation &C,
     assert(AtTopLevel && isa<PreprocessJobAction>(JA));
     StringRef BaseName = llvm::sys::path::filename(BaseInput);
     StringRef NameArg;
-    if (Arg *A = C.getArgs().getLastArg(options::OPT__SLASH_Fi))
+    if (Arg *A = C.getArgs().getLastArg(options::OPT__SLASH_Fi,
+                                        options::OPT__SLASH_o))
       NameArg = A->getValue();
     return C.addResultFile(MakeCLOutputFilename(C.getArgs(), NameArg, BaseName,
                                                 types::TY_PP_C), &JA);
@@ -1698,15 +1717,17 @@ const char *Driver::GetNamedOutputPath(Compilation &C,
   const char *NamedOutput;
 
   if (JA.getType() == types::TY_Object &&
-      C.getArgs().hasArg(options::OPT__SLASH_Fo)) {
-    // The /Fo flag decides the object filename.
-    StringRef Val = C.getArgs().getLastArg(options::OPT__SLASH_Fo)->getValue();
+      C.getArgs().hasArg(options::OPT__SLASH_Fo, options::OPT__SLASH_o)) {
+    // The /Fo or /o flag decides the object filename.
+    StringRef Val = C.getArgs().getLastArg(options::OPT__SLASH_Fo,
+                                           options::OPT__SLASH_o)->getValue();
     NamedOutput = MakeCLOutputFilename(C.getArgs(), Val, BaseName,
                                        types::TY_Object);
   } else if (JA.getType() == types::TY_Image &&
-             C.getArgs().hasArg(options::OPT__SLASH_Fe)) {
-    // The /Fe flag names the linked file.
-    StringRef Val = C.getArgs().getLastArg(options::OPT__SLASH_Fe)->getValue();
+             C.getArgs().hasArg(options::OPT__SLASH_Fe, options::OPT__SLASH_o)) {
+    // The /Fe or /o flag names the linked file.
+    StringRef Val = C.getArgs().getLastArg(options::OPT__SLASH_Fe,
+                                           options::OPT__SLASH_o)->getValue();
     NamedOutput = MakeCLOutputFilename(C.getArgs(), Val, BaseName,
                                        types::TY_Image);
   } else if (JA.getType() == types::TY_Image) {
@@ -1947,7 +1968,7 @@ static llvm::Triple computeTargetTriple(StringRef DefaultTargetTriple,
       Target.setEnvironment(llvm::Triple::CODE16);
     }
 
-    if (AT != llvm::Triple::UnknownArch)
+    if (AT != llvm::Triple::UnknownArch && AT != Target.getArch())
       Target.setArch(AT);
   }
 

@@ -429,6 +429,10 @@ GDBRemoteCommunicationServer::GetPacketAndSendResponse (uint32_t timeout_usec,
         case StringExtractorGDBRemote::eServerPacketType_vAttach:
             packet_result = Handle_vAttach (packet);
             break;
+
+        case StringExtractorGDBRemote::eServerPacketType_qThreadStopInfo:
+            packet_result = Handle_qThreadStopInfo (packet);
+            break;
         }
     }
     else
@@ -699,12 +703,18 @@ GDBRemoteCommunicationServer::SendWResponse (lldb_private::NativeProcessProtocol
         char return_type_code;
         switch (exit_type)
         {
-            case ExitType::eExitTypeExit:   return_type_code = 'W'; break;
-            case ExitType::eExitTypeSignal: return_type_code = 'X'; break;
-            case ExitType::eExitTypeStop:   return_type_code = 'S'; break;
-
+            case ExitType::eExitTypeExit:
+                return_type_code = 'W';
+                break;
+            case ExitType::eExitTypeSignal:
+                return_type_code = 'X';
+                break;
+            case ExitType::eExitTypeStop:
+                return_type_code = 'S';
+                break;
             case ExitType::eExitTypeInvalid:
-            default:                        return_type_code = 'E'; break;
+                return_type_code = 'E';
+                break;
         }
         response.PutChar (return_type_code);
 
@@ -2372,8 +2382,6 @@ GDBRemoteCommunicationServer::Handle_vCont_actions (StringExtractorGDBRemote &pa
         return SendUnimplementedResponse (packet.GetStringRef().c_str());
     }
 
-    // We handle $vCont messages for c.
-    // TODO add C, s and S.
     StreamString response;
     response.Printf("vCont;c;C;s;S");
 
@@ -3388,10 +3396,8 @@ GDBRemoteCommunicationServer::Handle_interrupt (StringExtractorGDBRemote &packet
         return SendErrorResponse (0x15);
     }
 
-    // Build the ResumeActionList - stop everything.
-    lldb_private::ResumeActionList actions (StateType::eStateStopped, 0);
-
-    Error error = m_debugged_process_sp->Resume (actions);
+    // Interrupt the process.
+    Error error = m_debugged_process_sp->Interrupt ();
     if (error.Fail ())
     {
         if (log)
@@ -4173,6 +4179,26 @@ GDBRemoteCommunicationServer::Handle_vAttach (StringExtractorGDBRemote &packet)
     return SendStopReasonForState (m_debugged_process_sp->GetState (), true);
 
     return PacketResult::Success;
+}
+
+GDBRemoteCommunicationServer::PacketResult
+GDBRemoteCommunicationServer::Handle_qThreadStopInfo (StringExtractorGDBRemote &packet)
+{
+    Log *log (GetLogIfAnyCategoriesSet(LIBLLDB_LOG_THREAD));
+
+    // We don't support if we're not llgs.
+    if (!IsGdbServer())
+        return SendUnimplementedResponse ("only supported for lldb-gdbserver");
+
+    packet.SetFilePos (strlen("qThreadStopInfo"));
+    const lldb::tid_t tid = packet.GetHexMaxU32 (false, LLDB_INVALID_THREAD_ID);
+    if (tid == LLDB_INVALID_THREAD_ID)
+    {
+        if (log)
+            log->Printf ("GDBRemoteCommunicationServer::%s failed, could not parse thread id from request \"%s\"", __FUNCTION__, packet.GetStringRef ().c_str ());
+        return SendErrorResponse (0x15);
+    }
+    return SendStopReplyPacketForThread (tid);
 }
 
 void

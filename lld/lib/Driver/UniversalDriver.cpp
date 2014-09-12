@@ -89,13 +89,7 @@ static Flavor strToFlavor(StringRef str) {
       .Case("lld-link", Flavor::win_link)
       .Case("darwin", Flavor::darwin_ld)
       .Case("core", Flavor::core)
-#if __APPLE__
-      // On a Darwin systems, if linker binary is named "ld", use Darwin driver.
-      .Case("ld", Flavor::darwin_ld)
-#else
-      // On other *nix systems, if linker binary is named "ld", use gnu driver.
       .Case("ld", Flavor::gnu_ld)
-#endif
       .Default(Flavor::invalid);
 }
 
@@ -129,6 +123,32 @@ static ProgramNameParts parseProgramName(StringRef programName) {
   return ret;
 }
 
+static Flavor getFlavor(int &argc, const char **&argv,
+                        std::unique_ptr<llvm::opt::InputArgList> &parsedArgs) {
+#if LLVM_ON_UNIX
+  if (llvm::sys::path::filename(argv[0]).equals("ld")) {
+#if __APPLE__
+    // On a Darwin systems, if linker binary is named "ld", use Darwin driver.
+    return Flavor::darwin_ld;
+#endif
+    // On a ELF based systems, if linker binary is named "ld", use gnu driver.
+    return Flavor::gnu_ld;
+  }
+#endif
+  if (parsedArgs->getLastArg(OPT_core)) {
+    argc--;
+    argv++;
+    return Flavor::core;
+  }
+  if (llvm::opt::Arg *argFlavor = parsedArgs->getLastArg(OPT_flavor)) {
+    argc -= 2;
+    argv += 2;
+    return strToFlavor(argFlavor->getValue());
+  }
+  StringRef name = llvm::sys::path::stem(argv[0]);
+  return strToFlavor(parseProgramName(name)._flavor);
+}
+
 namespace lld {
 
 bool UniversalDriver::link(int argc, const char *argv[],
@@ -158,20 +178,9 @@ bool UniversalDriver::link(int argc, const char *argv[],
     return true;
   }
 
-  Flavor flavor;
-
-  if (parsedArgs->getLastArg(OPT_core)) {
-    flavor = Flavor::core;
-    argv++;
-    argc--;
-  } else if (llvm::opt::Arg *argFlavor = parsedArgs->getLastArg(OPT_flavor)) {
-    flavor = strToFlavor(argFlavor->getValue());
-    argv += 2;
-    argc -= 2;
-  } else
-    flavor = strToFlavor(parseProgramName(programName)._flavor);
-
+  Flavor flavor = getFlavor(argc, argv, parsedArgs);
   std::vector<const char *> args(argv, argv + argc);
+
   // Switch to appropriate driver.
   switch (flavor) {
   case Flavor::gnu_ld:

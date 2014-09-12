@@ -317,6 +317,8 @@ void X86TargetLowering::resetOperationActions() {
   setTruncStoreAction(MVT::i32, MVT::i8 , Expand);
   setTruncStoreAction(MVT::i16, MVT::i8,  Expand);
 
+  setTruncStoreAction(MVT::f64, MVT::f32, Expand);
+
   // SETOEQ and SETUNE require checking two conditions.
   setCondCodeAction(ISD::SETOEQ, MVT::f32, Expand);
   setCondCodeAction(ISD::SETOEQ, MVT::f64, Expand);
@@ -1056,8 +1058,6 @@ void X86TargetLowering::resetOperationActions() {
       setOperationAction(ISD::SELECT, VT, Promote);
       AddPromotedToType (ISD::SELECT, VT, MVT::v2i64);
     }
-
-    setTruncStoreAction(MVT::f64, MVT::f32, Expand);
 
     // Custom lower v2i64 and v2f64 selects.
     setOperationAction(ISD::LOAD,               MVT::v2f64, Legal);
@@ -4259,43 +4259,34 @@ static bool isUNPCKLMask(ArrayRef<int> Mask, MVT VT,
   assert(VT.getSizeInBits() >= 128 &&
          "Unsupported vector type for unpckl");
 
-  // AVX defines UNPCK* to operate independently on 128-bit lanes.
-  unsigned NumLanes;
-  unsigned NumOf256BitLanes;
   unsigned NumElts = VT.getVectorNumElements();
-  if (VT.is256BitVector()) {
-    if (NumElts != 4 && NumElts != 8 &&
-        (!HasInt256 || (NumElts != 16 && NumElts != 32)))
+  if (VT.is256BitVector() && NumElts != 4 && NumElts != 8 &&
+      (!HasInt256 || (NumElts != 16 && NumElts != 32)))
     return false;
-    NumLanes = 2;
-    NumOf256BitLanes = 1;
-  } else if (VT.is512BitVector()) {
-    assert(VT.getScalarType().getSizeInBits() >= 32 &&
-           "Unsupported vector type for unpckh");
-    NumLanes = 2;
-    NumOf256BitLanes = 2;
-  } else {
-    NumLanes = 1;
-    NumOf256BitLanes = 1;
-  }
 
-  unsigned NumEltsInStride = NumElts/NumOf256BitLanes;
-  unsigned NumLaneElts = NumEltsInStride/NumLanes;
+  assert((!VT.is512BitVector() || VT.getScalarType().getSizeInBits() >= 32) &&
+         "Unsupported vector type for unpckh");
 
-  for (unsigned l256 = 0; l256 < NumOf256BitLanes; l256 += 1) {
-    for (unsigned l = 0; l != NumEltsInStride; l += NumLaneElts) {
-      for (unsigned i = 0, j = l; i != NumLaneElts; i += 2, ++j) {
-        int BitI  = Mask[l256*NumEltsInStride+l+i];
-        int BitI1 = Mask[l256*NumEltsInStride+l+i+1];
-        if (!isUndefOrEqual(BitI, j+l256*NumElts))
+  // AVX defines UNPCK* to operate independently on 128-bit lanes.
+  unsigned NumLanes = VT.getSizeInBits()/128;
+  unsigned NumLaneElts = NumElts/NumLanes;
+
+  for (unsigned l = 0; l != NumElts; l += NumLaneElts) {
+    for (unsigned i = 0, j = l; i != NumLaneElts; i += 2, ++j) {
+      int BitI  = Mask[l+i];
+      int BitI1 = Mask[l+i+1];
+      if (!isUndefOrEqual(BitI, j))
+        return false;
+      if (V2IsSplat) {
+        if (!isUndefOrEqual(BitI1, NumElts))
           return false;
-        if (V2IsSplat && !isUndefOrEqual(BitI1, NumElts))
-          return false;
-        if (!isUndefOrEqual(BitI1, j+l256*NumElts+NumEltsInStride))
+      } else {
+        if (!isUndefOrEqual(BitI1, j + NumElts))
           return false;
       }
     }
   }
+
   return true;
 }
 
@@ -4306,39 +4297,29 @@ static bool isUNPCKHMask(ArrayRef<int> Mask, MVT VT,
   assert(VT.getSizeInBits() >= 128 &&
          "Unsupported vector type for unpckh");
 
-  // AVX defines UNPCK* to operate independently on 128-bit lanes.
-  unsigned NumLanes;
-  unsigned NumOf256BitLanes;
   unsigned NumElts = VT.getVectorNumElements();
-  if (VT.is256BitVector()) {
-    if (NumElts != 4 && NumElts != 8 &&
-        (!HasInt256 || (NumElts != 16 && NumElts != 32)))
+  if (VT.is256BitVector() && NumElts != 4 && NumElts != 8 &&
+      (!HasInt256 || (NumElts != 16 && NumElts != 32)))
     return false;
-    NumLanes = 2;
-    NumOf256BitLanes = 1;
-  } else if (VT.is512BitVector()) {
-    assert(VT.getScalarType().getSizeInBits() >= 32 &&
-           "Unsupported vector type for unpckh");
-    NumLanes = 2;
-    NumOf256BitLanes = 2;
-  } else {
-    NumLanes = 1;
-    NumOf256BitLanes = 1;
-  }
 
-  unsigned NumEltsInStride = NumElts/NumOf256BitLanes;
-  unsigned NumLaneElts = NumEltsInStride/NumLanes;
+  assert((!VT.is512BitVector() || VT.getScalarType().getSizeInBits() >= 32) &&
+         "Unsupported vector type for unpckh");
 
-  for (unsigned l256 = 0; l256 < NumOf256BitLanes; l256 += 1) {
-    for (unsigned l = 0; l != NumEltsInStride; l += NumLaneElts) {
-      for (unsigned i = 0, j = l+NumLaneElts/2; i != NumLaneElts; i += 2, ++j) {
-        int BitI  = Mask[l256*NumEltsInStride+l+i];
-        int BitI1 = Mask[l256*NumEltsInStride+l+i+1];
-        if (!isUndefOrEqual(BitI, j+l256*NumElts))
+  // AVX defines UNPCK* to operate independently on 128-bit lanes.
+  unsigned NumLanes = VT.getSizeInBits()/128;
+  unsigned NumLaneElts = NumElts/NumLanes;
+
+  for (unsigned l = 0; l != NumElts; l += NumLaneElts) {
+    for (unsigned i = 0, j = l+NumLaneElts/2; i != NumLaneElts; i += 2, ++j) {
+      int BitI  = Mask[l+i];
+      int BitI1 = Mask[l+i+1];
+      if (!isUndefOrEqual(BitI, j))
+        return false;
+      if (V2IsSplat) {
+        if (isUndefOrEqual(BitI1, NumElts))
           return false;
-        if (V2IsSplat && !isUndefOrEqual(BitI1, NumElts))
-          return false;
-        if (!isUndefOrEqual(BitI1, j+l256*NumElts+NumEltsInStride))
+      } else {
+        if (!isUndefOrEqual(BitI1, j+NumElts))
           return false;
       }
     }

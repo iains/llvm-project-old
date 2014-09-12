@@ -6599,7 +6599,7 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
-  const ToolChain::path_list Paths = ToolChain.getFilePaths();
+  const ToolChain::path_list &Paths = ToolChain.getFilePaths();
   for (const auto &Path : Paths)
     CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
@@ -7425,7 +7425,7 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_u);
 
-  const ToolChain::path_list Paths = ToolChain.getFilePaths();
+  const ToolChain::path_list &Paths = ToolChain.getFilePaths();
 
   for (const auto &Path : Paths)
     CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
@@ -7626,12 +7626,9 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                    const InputInfoList &Inputs,
                                    const ArgList &Args,
                                    const char *LinkingOutput) const {
-  bool UseGCC47 = false;
   const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
-
-  if (llvm::sys::fs::exists("/usr/lib/gcc47", UseGCC47))
-    UseGCC47 = false;
+  bool UseGCC47 = llvm::sys::fs::exists("/usr/lib/gcc47");
 
   if (!D.SysRoot.empty())
     CmdArgs.push_back(Args.MakeArgString("--sysroot=" + D.SysRoot));
@@ -7823,7 +7820,11 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // FIXME: Handle 64-bit.
     if (Args.hasArg(options::OPT__SLASH_MD, options::OPT__SLASH_MDd)) {
       addSanitizerRTWindows(getToolChain(), Args, CmdArgs, "asan_dynamic-i386");
-      addSanitizerRTWindows(getToolChain(), Args, CmdArgs, "asan_uar_thunk-i386");
+      addSanitizerRTWindows(getToolChain(), Args, CmdArgs,
+                            "asan_dynamic_runtime_thunk-i386");
+      // Make sure the dynamic runtime thunk is not optimized out at link time
+      // to ensure proper SEH handling.
+      CmdArgs.push_back(Args.MakeArgString("-include:___asan_seh_interceptor"));
     } else if (DLL) {
       addSanitizerRTWindows(getToolChain(), Args, CmdArgs,
                             "asan_dll_thunk-i386");

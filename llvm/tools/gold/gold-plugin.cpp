@@ -18,6 +18,7 @@
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/CommandFlags.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -456,6 +457,7 @@ static void drop(GlobalValue &GV) {
                          /*Initializer*/ nullptr);
   Var->takeName(&Alias);
   Alias.replaceAllUsesWith(Var);
+  Alias.eraseFromParent();
 }
 
 static const char *getResolutionName(ld_plugin_symbol_resolution R) {
@@ -576,6 +578,13 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
     if (!GV)
       continue; // Asm symbol.
 
+    if (GV->hasCommonLinkage()) {
+      // Common linkage is special. There is no single symbol that wins the
+      // resolution. Instead we have to collect the maximum alignment and size.
+      // The IR linker does that for us if we just pass it every common GV.
+      continue;
+    }
+
     switch (Resolution) {
     case LDPR_UNKNOWN:
       llvm_unreachable("Unexpected resolution");
@@ -684,7 +693,7 @@ static void codegen(Module &M) {
   runLTOPasses(M, *TM);
 
   PassManager CodeGenPasses;
-  CodeGenPasses.add(new DataLayoutPass(&M));
+  CodeGenPasses.add(new DataLayoutPass());
 
   SmallString<128> Filename;
   int FD;

@@ -69,9 +69,11 @@ public:
   DarwinLdOptTable() : OptTable(infoTable, llvm::array_lengthof(infoTable)){}
 };
 
+} // anonymous namespace
+
 // Test may be running on Windows. Canonicalize the path
 // separator to '/' to get consistent outputs for tests.
-std::string canonicalizePath(StringRef path) {
+static std::string canonicalizePath(StringRef path) {
   char sep = llvm::sys::path::get_separator().front();
   if (sep != '/') {
     std::string fixedPath = path;
@@ -82,17 +84,17 @@ std::string canonicalizePath(StringRef path) {
   }
 }
 
-void addFile(StringRef path, std::unique_ptr<InputGraph> &inputGraph,
-             bool forceLoad) {
+static void addFile(StringRef path, std::unique_ptr<InputGraph> &inputGraph,
+                    bool forceLoad) {
    inputGraph->addInputElement(std::unique_ptr<InputElement>(
                                           new MachOFileNode(path, forceLoad)));
 }
 
 // Export lists are one symbol per line.  Blank lines are ignored.
 // Trailing comments start with #.
-std::error_code parseExportsList(StringRef exportFilePath,
-                                 MachOLinkingContext &ctx,
-                                 raw_ostream &diagnostics) {
+static std::error_code parseExportsList(StringRef exportFilePath,
+                                        MachOLinkingContext &ctx,
+                                        raw_ostream &diagnostics) {
   // Map in export list file.
   ErrorOr<std::unique_ptr<MemoryBuffer>> mb =
                                    MemoryBuffer::getFileOrSTDIN(exportFilePath);
@@ -124,10 +126,10 @@ std::error_code parseExportsList(StringRef exportFilePath,
 // In this variant, the path is to a text file which contains a partial path
 // per line. The <dir> prefix is prepended to each partial path.
 //
-std::error_code parseFileList(StringRef fileListPath,
-                              std::unique_ptr<InputGraph> &inputGraph,
-                              MachOLinkingContext &ctx, bool forceLoad,
-                              raw_ostream &diagnostics) {
+static std::error_code parseFileList(StringRef fileListPath,
+                                     std::unique_ptr<InputGraph> &inputGraph,
+                                     MachOLinkingContext &ctx, bool forceLoad,
+                                     raw_ostream &diagnostics) {
   // If there is a comma, split off <dir>.
   std::pair<StringRef, StringRef> opt = fileListPath.split(',');
   StringRef filePath = opt.first;
@@ -167,7 +169,12 @@ std::error_code parseFileList(StringRef fileListPath,
   return std::error_code();
 }
 
-} // namespace anonymous
+/// Parse number assuming it is base 16, but allow 0x prefix.
+static bool parseNumberBase16(StringRef numStr, uint64_t &baseAddress) {
+  if (numStr.startswith_lower("0x"))
+    numStr = numStr.drop_front(2);
+  return numStr.getAsInteger(16, baseAddress);
+}
 
 namespace lld {
 
@@ -253,7 +260,11 @@ bool DarwinLdDriver::parse(int argc, const char *argv[],
         break;
     }
     if (arch == MachOLinkingContext::arch_unknown) {
-      diagnostics << "error: -arch not specified and could not be inferred\n";
+      // If no -arch and no options at all, print usage message.
+      if (parsedArgs->size() == 0)
+        table.PrintHelp(llvm::outs(), argv[0], "LLVM Linker", false);
+      else
+        diagnostics << "error: -arch not specified and could not be inferred\n";
       return false;
     }
   }
@@ -307,6 +318,24 @@ bool DarwinLdDriver::parse(int argc, const char *argv[],
     ctx.setOutputPath(outpath->getValue());
   else
     ctx.setOutputPath("a.out");
+
+  // Handle -image_base XXX and -seg1addr XXXX
+  if (llvm::opt::Arg *imageBase = parsedArgs->getLastArg(OPT_image_base)) {
+    uint64_t baseAddress;
+    if (parseNumberBase16(imageBase->getValue(), baseAddress)) {
+      diagnostics << "error: image_base expects a hex number\n";
+      return false;
+    } else if (baseAddress < ctx.pageZeroSize()) {
+      diagnostics << "error: image_base overlaps with __PAGEZERO\n";
+      return false;
+    } else if (baseAddress % ctx.pageSize()) {
+      diagnostics << "error: image_base must be a multiple of page size ("
+                  << llvm::format("0x%" PRIx64, ctx.pageSize()) << ")\n";
+      return false;
+    }
+
+    ctx.setBaseAddress(baseAddress);
+  }
 
   // Handle -dead_strip
   if (parsedArgs->getLastArg(OPT_dead_strip))
@@ -538,9 +567,56 @@ bool DarwinLdDriver::parse(int argc, const char *argv[],
       diagnostics << "warning: -multi_module is obsolete and being ignored\n";
     }
     else {
-      if (ctx.outputMachOType() != llvm::MachO::MH_DYLIB)
+      if (ctx.outputMachOType() != llvm::MachO::MH_DYLIB) {
         diagnostics << "-single_module only used when creating a dylib\n";
         return false;
+      }
+    }
+  }
+
+  // Handle -pie or -no_pie
+  if (llvm::opt::Arg *pie = parsedArgs->getLastArg(OPT_pie, OPT_no_pie)) {
+    switch (ctx.outputMachOType()) {
+    case llvm::MachO::MH_EXECUTE:
+      switch (ctx.os()) {
+      case MachOLinkingContext::OS::macOSX:
+        if ((minOSVersion < 0x000A0500) &&
+            (pie->getOption().getID() == OPT_pie)) {
+          diagnostics << "-pie can only be used when targeting "
+                         "Mac OS X 10.5 or later\n";
+          return false;
+        }
+        break;
+      case MachOLinkingContext::OS::iOS:
+        if ((minOSVersion < 0x00040200) &&
+            (pie->getOption().getID() == OPT_pie)) {
+          diagnostics << "-pie can only be used when targeting "
+                         "iOS 4.2 or later\n";
+          return false;
+        }
+        break;
+      case MachOLinkingContext::OS::iOS_simulator:
+        if (pie->getOption().getID() == OPT_no_pie)
+          diagnostics << "iOS simulator programs must be built PIE\n";
+          return false;
+        break;
+      case MachOLinkingContext::OS::unknown:
+        break;
+      }
+      ctx.setPIE(pie->getOption().getID() == OPT_pie);
+      break;
+    case llvm::MachO::MH_PRELOAD:
+      break;
+    case llvm::MachO::MH_DYLIB:
+    case llvm::MachO::MH_BUNDLE:
+      diagnostics << "warning: " << pie->getSpelling() << " being ignored. "
+                  << "It is only used when linking main executables\n";
+      break;
+    default:
+      diagnostics << pie->getSpelling()
+                  << " can only used when linking main executables\n";
+      return false;
+      break;
     }
   }
 
@@ -589,10 +665,6 @@ bool DarwinLdDriver::parse(int argc, const char *argv[],
   }
 
   if (!inputGraph->size()) {
-    if (parsedArgs->size() == 0) {
-      table.PrintHelp(llvm::outs(), "lld", "LLVM Linker", false);
-      return false;
-    }
     diagnostics << "No input files\n";
     return false;
   }
