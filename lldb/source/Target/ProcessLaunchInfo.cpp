@@ -31,7 +31,7 @@ ProcessLaunchInfo::ProcessLaunchInfo () :
     m_shell (),
     m_flags (0),
     m_file_actions (),
-    m_pty (),
+    m_pty (new lldb_utility::PseudoTerminal),
     m_resume_count (0),
     m_monitor_callback (NULL),
     m_monitor_callback_baton (NULL),
@@ -48,7 +48,7 @@ ProcessLaunchInfo::ProcessLaunchInfo(const char *stdin_path, const char *stdout_
     m_shell(),
     m_flags(launch_flags),
     m_file_actions(),
-    m_pty(),
+    m_pty(new lldb_utility::PseudoTerminal),
     m_resume_count(0),
     m_monitor_callback(NULL),
     m_monitor_callback_baton(NULL),
@@ -304,8 +304,8 @@ ProcessLaunchInfo::FinalizeFileActions (Target *target, bool default_to_use_pty)
                 AppendOpenFileAction(STDERR_FILENO, path, false, true);
 
             if (default_to_use_pty && (!in_path || !out_path || !err_path)) {
-                if (m_pty.OpenFirstAvailableMaster(O_RDWR| O_NOCTTY, NULL, 0)) {
-                    const char *slave_path = m_pty.GetSlaveName(NULL, 0);
+                if (m_pty->OpenFirstAvailableMaster(O_RDWR| O_NOCTTY, NULL, 0)) {
+                    const char *slave_path = m_pty->GetSlaveName(NULL, 0);
 
                     if (!in_path) {
                         AppendOpenFileAction(STDIN_FILENO, slave_path, true, false);
