@@ -193,6 +193,9 @@ namespace llvm {
       /// BLENDI - Blend where the selector is an immediate.
       BLENDI,
 
+      /// ADDSUB - Combined add and sub on an FP vector.
+      ADDSUB,
+
       // SUBUS - Integer sub with unsigned saturation.
       SUBUS,
 
@@ -959,6 +962,12 @@ namespace llvm {
                         LLVMContext &Context) const override;
 
     const MCPhysReg *getScratchRegisters(CallingConv::ID CC) const override;
+
+    bool shouldExpandAtomicLoadInIR(LoadInst *SI) const override;
+    bool shouldExpandAtomicStoreInIR(StoreInst *SI) const override;
+    bool shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const override;
+
+    bool needsCmpXchgNb(const Type *MemType) const;
 
     /// Utility function to emit atomic-load-arith operations (and, or, xor,
     /// nand, max, min, umax, umin). It takes the corresponding instruction to

@@ -3119,6 +3119,9 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
     Callee = DAG.getTargetExternalSymbol(S->getSymbol(), getPointerTy(),
                                          OpFlags);
+  } else if (Subtarget->isTarget64BitILP32() && Callee->getValueType(0) == MVT::i32) {
+    // Zero-extend the 32-bit Callee address into a 64-bit according to x32 ABI
+    Callee = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Callee);
   }
 
   // Returns a chain & a flag for retval copy to use.
@@ -6485,11 +6488,6 @@ static SDValue matchAddSub(const BuildVectorSDNode *BV, SelectionDAG &DAG,
   assert((VT == MVT::v8f32 || VT == MVT::v4f64 || VT == MVT::v4f32 ||
           VT == MVT::v2f64) && "build_vector with an invalid type found!");
 
-  // Don't try to emit a VSELECT that cannot be lowered into a blend.
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  if (!TLI.isOperationLegalOrCustom(ISD::VSELECT, VT))
-    return SDValue();
-
   // Odd-numbered elements in the input build vector are obtained from
   // adding two integer/float elements.
   // Even-numbered elements in the input build vector are obtained from
@@ -6501,14 +6499,14 @@ static SDValue matchAddSub(const BuildVectorSDNode *BV, SelectionDAG &DAG,
 
   for (unsigned i = 0, e = NumElts; i != e; i++) {
     SDValue Op = BV->getOperand(i);
-      
+
     // Skip 'undef' values.
     unsigned Opcode = Op.getOpcode();
     if (Opcode == ISD::UNDEF) {
       std::swap(ExpectedOpcode, NextExpectedOpcode);
       continue;
     }
-      
+
     // Early exit if we found an unexpected opcode.
     if (Opcode != ExpectedOpcode)
       return SDValue();
@@ -6562,34 +6560,11 @@ static SDValue matchAddSub(const BuildVectorSDNode *BV, SelectionDAG &DAG,
     std::swap(ExpectedOpcode, NextExpectedOpcode);
   }
 
-  // Don't try to fold this build_vector into a VSELECT if it has
-  // too many UNDEF operands.
+  // Don't try to fold this build_vector into an ADDSUB if the inputs are undef.
   if (AddFound && SubFound && InVec0.getOpcode() != ISD::UNDEF &&
-      InVec1.getOpcode() != ISD::UNDEF) {
-    // Emit a sequence of vector add and sub followed by a VSELECT.
-    // The new VSELECT will be lowered into a BLENDI.
-    // At ISel stage, we pattern-match the sequence 'add + sub + BLENDI'
-    // and emit a single ADDSUB instruction.
-    SDValue Sub = DAG.getNode(ExpectedOpcode, DL, VT, InVec0, InVec1);
-    SDValue Add = DAG.getNode(NextExpectedOpcode, DL, VT, InVec0, InVec1);
+      InVec1.getOpcode() != ISD::UNDEF)
+    return DAG.getNode(X86ISD::ADDSUB, DL, VT, InVec0, InVec1);
 
-    // Construct the VSELECT mask.
-    EVT MaskVT = VT.changeVectorElementTypeToInteger();
-    EVT SVT = MaskVT.getVectorElementType();
-    unsigned SVTBits = SVT.getSizeInBits();
-    SmallVector<SDValue, 8> Ops;
-
-    for (unsigned i = 0, e = NumElts; i != e; ++i) {
-      APInt Value = i & 1 ? APInt::getNullValue(SVTBits) :
-                            APInt::getAllOnesValue(SVTBits);
-      SDValue Constant = DAG.getConstant(Value, SVT);
-      Ops.push_back(Constant);
-    }
-
-    SDValue Mask = DAG.getNode(ISD::BUILD_VECTOR, DL, MaskVT, Ops);
-    return DAG.getSelect(DL, VT, Mask, Sub, Add);
-  }
-  
   return SDValue();
 }
 
@@ -16847,6 +16822,68 @@ SDValue X86TargetLowering::LowerSIGN_EXTEND_INREG(SDValue Op,
   }
 }
 
+/// Returns true if the operand type is exactly twice the native width, and
+/// the corresponding cmpxchg8b or cmpxchg16b instruction is available.
+/// Used to know whether to use cmpxchg8/16b when expanding atomic operations
+/// (otherwise we leave them alone to become __sync_fetch_and_... calls).
+bool X86TargetLowering::needsCmpXchgNb(const Type *MemType) const {
+  const X86Subtarget &Subtarget =
+      getTargetMachine().getSubtarget<X86Subtarget>();
+  unsigned OpWidth = MemType->getPrimitiveSizeInBits();
+
+  if (OpWidth == 64)
+    return !Subtarget.is64Bit(); // FIXME this should be Subtarget.hasCmpxchg8b
+  else if (OpWidth == 128)
+    return Subtarget.hasCmpxchg16b();
+  else
+    return false;
+}
+
+bool X86TargetLowering::shouldExpandAtomicStoreInIR(StoreInst *SI) const {
+  return needsCmpXchgNb(SI->getValueOperand()->getType());
+}
+
+bool X86TargetLowering::shouldExpandAtomicLoadInIR(LoadInst *SI) const {
+  return false; // FIXME, currently these are expanded separately in this file.
+}
+
+bool X86TargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const {
+  const X86Subtarget &Subtarget =
+      getTargetMachine().getSubtarget<X86Subtarget>();
+  unsigned NativeWidth = Subtarget.is64Bit() ? 64 : 32;
+  const Type *MemType = AI->getType();
+
+  // If the operand is too big, we must see if cmpxchg8/16b is available
+  // and default to library calls otherwise.
+  if (MemType->getPrimitiveSizeInBits() > NativeWidth)
+    return needsCmpXchgNb(MemType);
+
+  AtomicRMWInst::BinOp Op = AI->getOperation();
+  switch (Op) {
+  default:
+    llvm_unreachable("Unknown atomic operation");
+  case AtomicRMWInst::Xchg:
+  case AtomicRMWInst::Add:
+  case AtomicRMWInst::Sub:
+    // It's better to use xadd, xsub or xchg for these in all cases.
+    return false;
+  case AtomicRMWInst::Or:
+  case AtomicRMWInst::And:
+  case AtomicRMWInst::Xor:
+    // If the atomicrmw's result isn't actually used, we can just add a "lock"
+    // prefix to a normal instruction for these operations.
+    return !AI->use_empty();
+  case AtomicRMWInst::Nand:
+  case AtomicRMWInst::Max:
+  case AtomicRMWInst::Min:
+  case AtomicRMWInst::UMax:
+  case AtomicRMWInst::UMin:
+    // These always require a non-trivial set of data operations on x86. We must
+    // use a cmpxchg loop.
+    return true;
+  }
+}
+
 static SDValue LowerATOMIC_FENCE(SDValue Op, const X86Subtarget *Subtarget,
                                  SelectionDAG &DAG) {
   SDLoc dl(Op);
@@ -17366,7 +17403,7 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
   case ISD::ATOMIC_LOAD_UMIN:
   case ISD::ATOMIC_LOAD_UMAX:
     // Delegate to generic TypeLegalization. Situations we can really handle
-    // should have already been dealt with by X86AtomicExpandPass.cpp.
+    // should have already been dealt with by AtomicExpandPass.cpp.
     break;
   case ISD::ATOMIC_LOAD: {
     ReplaceATOMIC_LOAD(N, Results, DAG);
@@ -20009,6 +20046,61 @@ static SDValue PerformTargetShuffleCombine(SDValue N, SelectionDAG &DAG,
   return SDValue();
 }
 
+/// \brief Try to combine a shuffle into a target-specific add-sub node.
+///
+/// We combine this directly on the abstract vector shuffle nodes so it is
+/// easier to generically match. We also insert dummy vector shuffle nodes for
+/// the operands which explicitly discard the lanes which are unused by this
+/// operation to try to flow through the rest of the combiner the fact that
+/// they're unused.
+static SDValue combineShuffleToAddSub(SDNode *N, SelectionDAG &DAG) {
+  SDLoc DL(N);
+  EVT VT = N->getValueType(0);
+
+  // We only handle target-independent shuffles.
+  // FIXME: It would be easy and harmless to use the target shuffle mask
+  // extraction tool to support more.
+  if (N->getOpcode() != ISD::VECTOR_SHUFFLE)
+    return SDValue();
+
+  auto *SVN = cast<ShuffleVectorSDNode>(N);
+  ArrayRef<int> Mask = SVN->getMask();
+  SDValue V1 = N->getOperand(0);
+  SDValue V2 = N->getOperand(1);
+
+  // We require the first shuffle operand to be the SUB node, and the second to
+  // be the ADD node.
+  // FIXME: We should support the commuted patterns.
+  if (V1->getOpcode() != ISD::FSUB || V2->getOpcode() != ISD::FADD)
+    return SDValue();
+
+  // If there are other uses of these operations we can't fold them.
+  if (!V1->hasOneUse() || !V2->hasOneUse())
+    return SDValue();
+
+  // Ensure that both operations have the same operands. Note that we can
+  // commute the FADD operands.
+  SDValue LHS = V1->getOperand(0), RHS = V1->getOperand(1);
+  if ((V2->getOperand(0) != LHS || V2->getOperand(1) != RHS) &&
+      (V2->getOperand(0) != RHS || V2->getOperand(1) != LHS))
+    return SDValue();
+
+  // We're looking for blends between FADD and FSUB nodes. We insist on these
+  // nodes being lined up in a specific expected pattern.
+  if (!(isShuffleEquivalent(Mask, 0, 3) ||
+        isShuffleEquivalent(Mask, 0, 5, 2, 7) ||
+        isShuffleEquivalent(Mask, 0, 9, 2, 11, 4, 13, 6, 15)))
+    return SDValue();
+
+  // Only specific types are legal at this point, assert so we notice if and
+  // when these change.
+  assert((VT == MVT::v4f32 || VT == MVT::v2f64 || VT == MVT::v8f32 ||
+          VT == MVT::v4f64) &&
+         "Unknown vector type encountered!");
+
+  return DAG.getNode(X86ISD::ADDSUB, DL, VT, LHS, RHS);
+}
+
 /// PerformShuffleCombine - Performs several different shuffle combines.
 static SDValue PerformShuffleCombine(SDNode *N, SelectionDAG &DAG,
                                      TargetLowering::DAGCombinerInfo &DCI,
@@ -20022,6 +20114,12 @@ static SDValue PerformShuffleCombine(SDNode *N, SelectionDAG &DAG,
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (!DCI.isBeforeLegalize() && !TLI.isTypeLegal(VT.getVectorElementType()))
     return SDValue();
+
+  // If we have legalized the vector types, look for blends of FADD and FSUB
+  // nodes that we can fuse into an ADDSUB node.
+  if (TLI.isTypeLegal(VT) && Subtarget->hasSSE3())
+    if (SDValue AddSub = combineShuffleToAddSub(N, DAG))
+      return AddSub;
 
   // Combine 256-bit vector shuffles. This is only profitable when in AVX mode
   if (Subtarget->hasFp256() && VT.is256BitVector() &&

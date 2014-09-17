@@ -1770,7 +1770,9 @@ ClangASTType::GetNumMemberFunctions () const
 }
 
 ClangASTType
-ClangASTType::GetMemberFunctionAtIndex (size_t idx)
+ClangASTType::GetMemberFunctionAtIndex (size_t idx,
+                                        std::string& name,
+                                        lldb::MemberFunctionKind& kind)
 {
     if (IsValid())
     {
@@ -1787,12 +1789,26 @@ ClangASTType::GetMemberFunctionAtIndex (size_t idx)
                     {
                         auto method_iter = cxx_record_decl->method_begin();
                         auto method_end = cxx_record_decl->method_end();
-                        if (idx < std::distance(method_iter, method_end))
+                        if (idx < static_cast<size_t>(std::distance(method_iter, method_end)))
                         {
                             std::advance(method_iter, idx);
                             auto method_decl = method_iter->getCanonicalDecl();
                             if (method_decl)
+                            {
+                                if (!method_decl->getName().empty())
+                                    name.assign(method_decl->getName().data());
+                                else
+                                    name.clear();
+                                if (method_decl->isStatic())
+                                    kind = lldb::eMemberFunctionKindStaticMethod;
+                                else if (llvm::isa<clang::CXXConstructorDecl>(method_decl))
+                                    kind = lldb::eMemberFunctionKindConstructor;
+                                else if (llvm::isa<clang::CXXDestructorDecl>(method_decl))
+                                    kind = lldb::eMemberFunctionKindDestructor;
+                                else
+                                    kind = lldb::eMemberFunctionKindInstanceMethod;
                                 return ClangASTType(m_ast,method_decl->getType().getAsOpaquePtr());
+                            }
                         }
                     }
                 }

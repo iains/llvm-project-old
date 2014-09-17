@@ -273,7 +273,7 @@ void CodeCoverageTool::createExpansionSubView(
   auto ExpandedLines = findExpandedFileInterestingLineRange(
       ExpandedRegion.ExpandedFileID, Function);
   if (ViewOpts.Debug)
-    llvm::outs() << "Expansion of " << ExpandedRegion.ExpandedFileID << ":"
+    llvm::errs() << "Expansion of " << ExpandedRegion.ExpandedFileID << ":"
                  << ExpandedLines.first << " -> " << ExpandedLines.second
                  << " @ " << ExpandedRegion.FileID << ", "
                  << ExpandedRegion.LineStart << ":"
@@ -282,8 +282,8 @@ void CodeCoverageTool::createExpansionSubView(
       getSourceFile(Function.Filenames[ExpandedRegion.ExpandedFileID]);
   if (!SourceBuffer)
     return;
-  auto SubView = llvm::make_unique<SourceCoverageView>(
-      SourceBuffer.get(), Parent.getOptions(), ExpandedRegion);
+  auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
+                                                       Parent.getOptions());
   SourceCoverageDataManager RegionManager;
   for (const auto &CR : Function.CountedRegions) {
     if (CR.FileID == ExpandedRegion.ExpandedFileID)
@@ -291,7 +291,7 @@ void CodeCoverageTool::createExpansionSubView(
   }
   SubView->load(RegionManager);
   createExpansionSubViews(*SubView, ExpandedRegion.ExpandedFileID, Function);
-  Parent.addChild(std::move(SubView));
+  Parent.addExpansion(ExpandedRegion, std::move(SubView));
 }
 
 void CodeCoverageTool::createExpansionSubViews(
@@ -362,10 +362,18 @@ bool CodeCoverageTool::createSourceFileView(
     if (InstantiationSet.second.size() < 2)
       continue;
     for (auto Function : InstantiationSet.second) {
-      auto SubView =
-          llvm::make_unique<SourceCoverageView>(View, Function->Name);
+      unsigned FileID = Function->CountedRegions.front().FileID;
+      unsigned Line = 0;
+      for (const auto &CR : Function->CountedRegions)
+        if (CR.FileID == FileID)
+          Line = std::max(CR.LineEnd, Line);
+      auto SourceBuffer = getSourceFile(Function->Filenames[FileID]);
+      if (!SourceBuffer)
+        continue;
+      auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
+                                                           View.getOptions());
       createInstantiationSubView(SourceFile, *Function, *SubView);
-      View.addChild(std::move(SubView));
+      View.addInstantiation(Function->Name, Line, std::move(SubView));
     }
   }
   return false;
@@ -397,14 +405,14 @@ bool CodeCoverageTool::load() {
     for (const auto &R : I.MappingRegions) {
       // Compute the values of mapped regions
       if (ViewOpts.Debug) {
-        outs() << "File " << R.FileID << "| " << R.LineStart << ":"
+        errs() << "File " << R.FileID << "| " << R.LineStart << ":"
                << R.ColumnStart << " -> " << R.LineEnd << ":" << R.ColumnEnd
                << " = ";
         Ctx.dump(R.Count);
         if (R.Kind == CounterMappingRegion::ExpansionRegion) {
-          outs() << " (Expanded file id = " << R.ExpandedFileID << ") ";
+          errs() << " (Expanded file id = " << R.ExpandedFileID << ") ";
         }
-        outs() << "\n";
+        errs() << "\n";
       }
       ErrorOr<int64_t> ExecutionCount = Ctx.evaluate(R.Count);
       if (ExecutionCount) {
