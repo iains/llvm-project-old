@@ -14,9 +14,11 @@
 #include "MSP430MCTargetDesc.h"
 #include "InstPrinter/MSP430InstPrinter.h"
 #include "MSP430MCAsmInfo.h"
+#include "MSP430TargetStreamer.h"
 #include "llvm/MC/MCCodeGenInfo.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/TargetRegistry.h"
 
@@ -67,6 +69,11 @@ static MCInstPrinter *createMSP430MCInstPrinter(const Triple &T,
   return nullptr;
 }
 
+static MCTargetStreamer *
+createObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
+  return new MSP430TargetELFStreamer(S);
+}
+
 extern "C" void LLVMInitializeMSP430TargetMC() {
   // Register the MC asm info.
   RegisterMCAsmInfo<MSP430MCAsmInfo> X(TheMSP430Target);
@@ -75,6 +82,9 @@ extern "C" void LLVMInitializeMSP430TargetMC() {
   TargetRegistry::RegisterMCCodeGenInfo(TheMSP430Target,
                                         createMSP430MCCodeGenInfo);
 
+  // Register the MCCodeEmitter.
+  TargetRegistry::RegisterMCCodeEmitter(TheMSP430Target,
+					createMSP430MCCodeEmitter);
   // Register the MC instruction info.
   TargetRegistry::RegisterMCInstrInfo(TheMSP430Target, createMSP430MCInstrInfo);
 
@@ -85,8 +95,15 @@ extern "C" void LLVMInitializeMSP430TargetMC() {
   // Register the MC subtarget info.
   TargetRegistry::RegisterMCSubtargetInfo(TheMSP430Target,
                                           createMSP430MCSubtargetInfo);
+  // Register the MCAsmBackend.
+  TargetRegistry::RegisterMCAsmBackend(TheMSP430Target,
+                                       createMSP430MCAsmBackend);
 
   // Register the MCInstPrinter.
   TargetRegistry::RegisterMCInstPrinter(TheMSP430Target,
                                         createMSP430MCInstPrinter);
+
+  // Register the object target streamer.
+  TargetRegistry::RegisterObjectTargetStreamer(TheMSP430Target,
+                                               createObjectTargetStreamer);
 }

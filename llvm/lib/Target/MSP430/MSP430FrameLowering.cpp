@@ -48,16 +48,22 @@ void MSP430FrameLowering::emitPrologue(MachineFunction &MF,
       *static_cast<const MSP430InstrInfo *>(MF.getSubtarget().getInstrInfo());
 
   MachineBasicBlock::iterator MBBI = MBB.begin();
-  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  //DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
+  DebugLoc DL = DebugLoc();
 
   // Get the number of bytes to allocate from the FrameInfo.
   uint64_t StackSize = MFI->getStackSize();
 
   uint64_t NumBytes = 0;
+  MachineModuleInfo &MMI = MF.getMMI();
+  bool NeedsCFI = MMI.hasDebugInfo() ||
+                  MF.getFunction()->needsUnwindTableEntry();
   if (hasFP(MF)) {
     // Calculate required stack adjustment
     uint64_t FrameSize = StackSize - 2;
     NumBytes = FrameSize - MSP430FI->getCalleeSavedFrameSize();
+    const MSP430RegisterInfo *RII =
+        static_cast<const MSP430RegisterInfo *>(MF.getSubtarget().getRegisterInfo());
 
     // Get the offset of the stack slot for the EBP register... which is
     // guaranteed to be the last slot by processFunctionBeforeFrameFinalized.
@@ -67,10 +73,31 @@ void MSP430FrameLowering::emitPrologue(MachineFunction &MF,
     // Save FP into the appropriate stack slot...
     BuildMI(MBB, MBBI, DL, TII.get(MSP430::PUSH16r))
       .addReg(MSP430::FP, RegState::Kill);
+    if (NeedsCFI) {
+      unsigned CFIIndex = MMI.addFrameInst(
+          MCCFIInstruction::createDefCfaOffset(nullptr, /*CFAOffset*/ -2));
+      BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+               .addCFIIndex(CFIIndex);
+      unsigned Reg = RII->getDwarfRegNum(MSP430::FP, true);
+      CFIIndex = MMI.addFrameInst(
+          MCCFIInstruction::createOffset(nullptr, Reg, -2));
+      BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(CFIIndex);
+    }
 
     // Update FP with the new base value...
     BuildMI(MBB, MBBI, DL, TII.get(MSP430::MOV16rr), MSP430::FP)
       .addReg(MSP430::SP);
+    BuildMI(MBB, MBBI, DL, TII.get(MSP430::ADD16rsimm), MSP430::FP)
+      .addReg(MSP430::FP).addImm(2);
+    if (NeedsCFI) {
+      unsigned Reg = RII->getDwarfRegNum(MSP430::FP, true);
+      unsigned CFIIndex = MMI.addFrameInst(
+          MCCFIInstruction::createDefCfaRegister(nullptr, Reg));
+
+      BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(CFIIndex);
+    }
 
     // Mark the FramePtr as live-in in every block except the entry.
     for (MachineFunction::iterator I = std::next(MF.begin()), E = MF.end();
@@ -101,6 +128,13 @@ void MSP430FrameLowering::emitPrologue(MachineFunction &MF,
         .addReg(MSP430::SP).addImm(NumBytes);
       // The SRW implicit def is dead.
       MI->getOperand(3).setIsDead();
+      if (NeedsCFI && ! hasFP(MF)) {
+        // We need to record the frame pointer offset change.
+        unsigned CFIIndex = MMI.addFrameInst(
+              MCCFIInstruction::createDefCfaOffset(nullptr, /*CFAOffset*/ NumBytes));
+        BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+               .addCFIIndex(CFIIndex);
+      }
     }
   }
 }
@@ -186,13 +220,17 @@ MSP430FrameLowering::spillCalleeSavedRegisters(MachineBasicBlock &MBB,
   if (CSI.empty())
     return false;
 
-  DebugLoc DL;
-  if (MI != MBB.end()) DL = MI->getDebugLoc();
+  DebugLoc DL = DebugLoc();
+  //DebugLoc DL = MI != MBB.end() ? MI->getDebugLoc() : DebugLoc();
 
   MachineFunction &MF = *MBB.getParent();
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   MSP430MachineFunctionInfo *MFI = MF.getInfo<MSP430MachineFunctionInfo>();
   MFI->setCalleeSavedFrameSize(CSI.size() * 2);
+  MachineModuleInfo &MMI = MF.getMMI();
+  bool NeedsCFI = MMI.hasDebugInfo() ||
+                  MF.getFunction()->needsUnwindTableEntry();
+  int FrameOff = hasFP(MF) ? -2 : 0;
 
   for (unsigned i = CSI.size(); i != 0; --i) {
     unsigned Reg = CSI[i-1].getReg();
@@ -200,6 +238,16 @@ MSP430FrameLowering::spillCalleeSavedRegisters(MachineBasicBlock &MBB,
     MBB.addLiveIn(Reg);
     BuildMI(MBB, MI, DL, TII.get(MSP430::PUSH16r))
       .addReg(Reg, RegState::Kill);
+    if (NeedsCFI) {
+      FrameOff -= 2;
+      const MSP430RegisterInfo *RI =
+            static_cast<const MSP430RegisterInfo *>(TRI);
+      unsigned DReg = RI->getDwarfRegNum(Reg, true);
+      unsigned CFIIndex = MMI.addFrameInst(
+               MCCFIInstruction::createOffset(nullptr, DReg, FrameOff));
+      BuildMI(MBB, MI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
+              .addCFIIndex(CFIIndex);
+     }
   }
   return true;
 }

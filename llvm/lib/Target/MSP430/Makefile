@@ -10,12 +10,14 @@
 LEVEL = ../../..
 LIBRARYNAME = LLVMMSP430CodeGen
 TARGET = MSP430
-
+# MSP430GenDisassemblerTables.inc MSP430GenAsmMatcher.inc
 # Make sure that tblgen is run, first thing.
 BUILT_SOURCES = MSP430GenRegisterInfo.inc MSP430GenInstrInfo.inc \
 		MSP430GenAsmWriter.inc \
 		MSP430GenDAGISel.inc MSP430GenCallingConv.inc \
-		MSP430GenSubtargetInfo.inc
+		MSP430GenSubtargetInfo.inc \
+		MSP430GenMCCodeEmitter.inc
+
 
 DIRS = InstPrinter TargetInfo MCTargetDesc
 

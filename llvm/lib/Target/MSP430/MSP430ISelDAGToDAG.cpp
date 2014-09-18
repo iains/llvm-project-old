@@ -117,6 +117,7 @@ namespace {
                                unsigned Opc8, unsigned Opc16);
 
     bool SelectAddr(SDValue Addr, SDValue &Base, SDValue &Disp);
+    bool SelectRegInd(SDNode *Parent, SDValue Addr, SDValue &Base, SDValue &AdMode);
   };
 }  // end anonymous namespace
 
@@ -280,6 +281,43 @@ bool MSP430DAGToDAGISel::SelectAddr(SDValue N,
   return true;
 }
 
+bool MSP430DAGToDAGISel::SelectRegInd(SDNode *Parent, SDValue Addr,
+                                      SDValue &Base, SDValue &AdMode)
+{
+  MSP430ISelAddressMode AM;
+
+  if (MatchAddress(Addr, AM))
+    return false;
+
+  if (AM.BaseType != MSP430ISelAddressMode::RegBase)
+    return false;
+
+  // Only matches for 0 offset.
+  if (AM.Disp != 0)
+    return false;
+
+  // Can only be a non-symbolic pointer.
+  if (AM.hasSymbolicDisplacement())
+    return false;
+
+  // So get the base reg.
+  if (!AM.Base.Reg.getNode())
+    AM.Base.Reg = CurDAG->getRegister(0, Addr.getValueType());
+
+  Base  = (AM.BaseType == MSP430ISelAddressMode::FrameIndexBase)
+        ? CurDAG->getTargetFrameIndex(AM.Base.FrameIndex,
+                                      getTargetLowering()->getPointerTy(CurDAG->getDataLayout()))
+        : AM.Base.Reg;
+
+  // Now figure out if we're autoincr AdMode = 3 or not AdMode = 2.
+  AdMode = CurDAG->getTargetConstant(2, SDLoc(Parent), MVT::i16);
+//Parent->dumpr();
+//Addr.dumpr();
+//AM.dump();
+  return true;
+}
+
+
 bool MSP430DAGToDAGISel::
 SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
                              std::vector<SDValue> &OutOps) {
@@ -324,7 +362,7 @@ static bool isValidIndexedLoad(const LoadSDNode *LD) {
   return true;
 }
 
-SDNode *MSP430DAGToDAGISel::SelectIndexedLoad(SDNode *N) {
+SDNode * MSP430DAGToDAGISel::SelectIndexedLoad(SDNode *N) {
   LoadSDNode *LD = cast<LoadSDNode>(N);
   if (!isValidIndexedLoad(LD))
     return nullptr;
@@ -351,6 +389,7 @@ SDNode *MSP430DAGToDAGISel::SelectIndexedLoad(SDNode *N) {
 SDNode *MSP430DAGToDAGISel::SelectIndexedBinOp(SDNode *Op,
                                                SDValue N1, SDValue N2,
                                                unsigned Opc8, unsigned Opc16) {
+//Op->dumpr();
   if (N1.getOpcode() == ISD::LOAD &&
       N1.hasOneUse() &&
       IsLegalToFold(N1, Op, Op, OptLevel)) {

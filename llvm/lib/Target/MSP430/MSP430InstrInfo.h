@@ -35,8 +35,8 @@ namespace MSP430II {
     SizeUnknown = 0 << SizeShift,
     SizeSpecial = 1 << SizeShift,
     Size2Bytes  = 2 << SizeShift,
-    Size4Bytes  = 3 << SizeShift,
-    Size6Bytes  = 4 << SizeShift
+    Size4Bytes  = 4 << SizeShift,
+    Size6Bytes  = 6 << SizeShift
   };
 }
 

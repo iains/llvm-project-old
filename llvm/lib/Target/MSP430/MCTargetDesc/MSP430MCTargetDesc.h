@@ -17,9 +17,31 @@
 #include "llvm/Support/DataTypes.h"
 
 namespace llvm {
+
+class MCAsmBackend;
+class MCCodeEmitter;
+class MCContext;
+class MCInstrInfo;
+class MCObjectWriter;
+class MCRegisterInfo;
+class MCSubtargetInfo;
+class StringRef;
 class Target;
+class Triple;
+class raw_pwrite_stream;
+class raw_ostream;
 
 extern Target TheMSP430Target;
+
+MCCodeEmitter *createMSP430MCCodeEmitter(const MCInstrInfo &MCII,
+                                          const MCRegisterInfo &MRI,
+                                          MCContext &Ctx);
+
+MCAsmBackend *createMSP430MCAsmBackend(const Target &T,
+                                       const MCRegisterInfo &MRI,
+                                       const Triple &TT, StringRef CPU);
+
+MCObjectWriter *createMSP430ObjectWriter(raw_pwrite_stream &OS, uint8_t OSABI);
 
 } // End llvm namespace
 

@@ -32,6 +32,40 @@ void MSP430InstPrinter::printInst(const MCInst *MI, raw_ostream &O,
   printAnnotation(O, Annot);
 }
 
+void MSP430InstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
+//    const char *RegName = getRegisterName(Op.getReg());
+  OS << getRegisterName(RegNo);
+}
+
+void MSP430InstPrinter::printRegIndirect(const MCInst *MI, unsigned OpNo,
+                                         raw_ostream &O)
+{
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isReg()) {
+    O << "@" << getRegisterName(Op.getReg()) << "+";
+  } else {
+Op.dump();
+    llvm_unreachable("printRegIndirect: unknown op");
+  }
+}
+
+void MSP430InstPrinter::printRegInd(const MCInst *MI, unsigned OpNo,
+                                         raw_ostream &O)
+{
+  const MCOperand &Mr = MI->getOperand(OpNo);
+  const MCOperand &Mi = MI->getOperand(OpNo+1);
+  if (Mr.isReg() && Mi.isImm()) {
+    unsigned v = Mi.getImm();
+    if (v == 2 || v == 3) {
+      O << "@" << getRegisterName(Mr.getReg()) << (v==3?"+":"");
+    }
+  } else {
+Mi.dump();
+Mr.dump();
+    llvm_unreachable("printRegInd: unknown op");
+  }
+}
+
 void MSP430InstPrinter::printPCRelImmOperand(const MCInst *MI, unsigned OpNo,
                                              raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
@@ -94,7 +128,7 @@ void MSP430InstPrinter::printCCOperand(const MCInst *MI, unsigned OpNo,
   switch (CC) {
   default:
    llvm_unreachable("Unsupported CC code");
-  case MSP430CC::COND_E:
+  case MSP430CC::COND_EQ:
    O << "eq";
    break;
   case MSP430CC::COND_NE:
@@ -109,8 +143,14 @@ void MSP430InstPrinter::printCCOperand(const MCInst *MI, unsigned OpNo,
   case MSP430CC::COND_GE:
    O << "ge";
    break;
-  case MSP430CC::COND_L:
+  case MSP430CC::COND_LT:
    O << 'l';
+   break;
+  case MSP430CC::COND_LZ:
+   O << 'n';
+   break;
+  case MSP430CC::COND_A: // Unconditional.
+   O << "mp";
    break;
   }
 }

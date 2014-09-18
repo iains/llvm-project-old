@@ -88,6 +88,9 @@ MSP430TargetLowering::MSP430TargetLowering(const TargetMachine &TM,
   // We don't have any truncstores
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
+  setOperationAction(ISD::SIGN_EXTEND,      MVT::i16,   Custom);
+  setOperationAction(ISD::BSWAP,            MVT::i16,    Legal);
+
   setOperationAction(ISD::SRA,              MVT::i8,    Custom);
   setOperationAction(ISD::SHL,              MVT::i8,    Custom);
   setOperationAction(ISD::SRL,              MVT::i8,    Custom);
@@ -111,7 +114,6 @@ MSP430TargetLowering::MSP430TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SELECT,           MVT::i16,   Expand);
   setOperationAction(ISD::SELECT_CC,        MVT::i8,    Custom);
   setOperationAction(ISD::SELECT_CC,        MVT::i16,   Custom);
-  setOperationAction(ISD::SIGN_EXTEND,      MVT::i16,   Custom);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i8, Expand);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
 
@@ -132,8 +134,6 @@ MSP430TargetLowering::MSP430TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SRL_PARTS,        MVT::i16,   Expand);
   setOperationAction(ISD::SRA_PARTS,        MVT::i8,    Expand);
   setOperationAction(ISD::SRA_PARTS,        MVT::i16,   Expand);
-
-  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1,   Expand);
 
   // FIXME: Implement efficiently multiplication by a constant
   setOperationAction(ISD::MUL,              MVT::i8,    Expand);
@@ -609,6 +609,7 @@ MSP430TargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
       case CCValAssign::Full: break;
       case CCValAssign::SExt:
         Arg = DAG.getNode(ISD::SIGN_EXTEND, dl, VA.getLocVT(), Arg);
+Arg.getNode()->dumpr();
         break;
       case CCValAssign::ZExt:
         Arg = DAG.getNode(ISD::ZERO_EXTEND, dl, VA.getLocVT(), Arg);
@@ -818,7 +819,7 @@ static SDValue EmitCMP(SDValue &LHS, SDValue &RHS, SDValue &TargetCC,
   switch (CC) {
   default: llvm_unreachable("Invalid integer condition!");
   case ISD::SETEQ:
-    TCC = MSP430CC::COND_E;     // aka COND_Z
+    TCC = MSP430CC::COND_EQ;     // aka COND_Z
     // Minor optimization: if LHS is a constant, swap operands, then the
     // constant can be folded into comparison.
     if (LHS.getOpcode() == ISD::Constant)
@@ -865,7 +866,7 @@ static SDValue EmitCMP(SDValue &LHS, SDValue &RHS, SDValue &TargetCC,
     if (const ConstantSDNode * C = dyn_cast<ConstantSDNode>(LHS)) {
       LHS = RHS;
       RHS = DAG.getConstant(C->getSExtValue() + 1, dl, C->getValueType(0));
-      TCC = MSP430CC::COND_L;
+      TCC = MSP430CC::COND_LT;
       break;
     }
     TCC = MSP430CC::COND_GE;
@@ -881,7 +882,7 @@ static SDValue EmitCMP(SDValue &LHS, SDValue &RHS, SDValue &TargetCC,
       TCC = MSP430CC::COND_GE;
       break;
     }
-    TCC = MSP430CC::COND_L;
+    TCC = MSP430CC::COND_LT;
     break;
   }
 
@@ -955,7 +956,7 @@ SDValue MSP430TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
        Invert = true;
      }
      break;
-   case MSP430CC::COND_E:
+   case MSP430CC::COND_EQ:
      Shift = true;
      // C = ~Z for AND instruction, thus we can put Res = ~(SR & 1), however,
      // Res = (SR >> 1) & 1 is 1 word shorter.
@@ -1264,7 +1265,7 @@ MSP430TargetLowering::EmitShiftInstr(MachineInstr *MI,
     .addReg(ShiftAmtSrcReg).addImm(0);
   BuildMI(BB, dl, TII.get(MSP430::JCC))
     .addMBB(RemBB)
-    .addImm(MSP430CC::COND_E);
+    .addImm(MSP430CC::COND_EQ);
 
   // LoopBB:
   // ShiftReg = phi [%SrcReg, BB], [%ShiftReg2, LoopBB]
@@ -1299,7 +1300,6 @@ MachineBasicBlock*
 MSP430TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                   MachineBasicBlock *BB) const {
   unsigned Opc = MI->getOpcode();
-
   if (Opc == MSP430::Shl8 || Opc == MSP430::Shl16 ||
       Opc == MSP430::Sra8 || Opc == MSP430::Sra16 ||
       Opc == MSP430::Srl8 || Opc == MSP430::Srl16)
@@ -1307,6 +1307,18 @@ MSP430TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
 
   const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
   DebugLoc dl = MI->getDebugLoc();
+
+  if (Opc == MSP430::SAR8r1c || Opc == MSP430::SAR16r1c) {
+    // Emulate logical shift right by:
+    // clear carry => rotate right through carry.
+    unsigned DstReg = MI->getOperand(0).getReg();
+    MachineInstrBuilder MIB;
+    MIB = BuildMI(*BB, MI, dl, TII.get(MSP430::CLRC));
+    unsigned RRCop = (Opc == MSP430::SAR8r1c) ? MSP430::RRC8r1c : MSP430::RRC16r1c;
+    MIB = BuildMI(*BB, MI, dl, TII.get(RRCop), DstReg);
+    MI->eraseFromParent();   // The pseudo instruction is gone now.
+    return BB;
+  }
 
   assert((Opc == MSP430::Select16 || Opc == MSP430::Select8) &&
          "Unexpected instr type to insert");

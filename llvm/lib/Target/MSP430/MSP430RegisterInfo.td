@@ -11,14 +11,19 @@
 //  Declarations that describe the MSP430 register file
 //===----------------------------------------------------------------------===//
 
-class MSP430Reg<bits<4> num, string n> : Register<n> {
-  field bits<4> Num = num;
+class MSP430Reg<int num, string n, list<string> altNames = []>
+  : Register<n, altNames> {
+  //field bits<4> Num = num;
+  let HWEncoding = num;
   let Namespace = "MSP430";
 }
 
-class MSP430RegWithSubregs<bits<4> num, string n, list<Register> subregs> 
-  : RegisterWithSubRegs<n, subregs> {
-  field bits<4> Num = num;
+class MSP430RegWithSubregs<int num, string n, list<Register> subregs,
+                           list<string> altNames = []> 
+  : Register<n, altNames> {
+  let SubRegs = subregs;
+  //field bits<4> Num = num;
+  let HWEncoding = num;
   let Namespace = "MSP430";
 }
 
@@ -46,10 +51,10 @@ def R15B : MSP430Reg<15, "r15">, DwarfRegNum<[31]>;
 def subreg_8bit : SubRegIndex<8> { let Namespace = "MSP430"; }
 
 let SubRegIndices = [subreg_8bit] in {
-def PC  : MSP430RegWithSubregs< 0,  "r0",  [PCB]>, DwarfRegNum<[ 0]>;
-def SP  : MSP430RegWithSubregs< 1,  "r1",  [SPB]>, DwarfRegNum<[ 1]>;
-def SR  : MSP430RegWithSubregs< 2,  "r2",  [SRB]>, DwarfRegNum<[ 2]>;
-def CG  : MSP430RegWithSubregs< 3,  "r3",  [CGB]>, DwarfRegNum<[ 3]>;
+def PC  : MSP430RegWithSubregs< 0,  "r0",  [PCB], ["pc"]>, DwarfRegNum<[ 0]>;
+def SP  : MSP430RegWithSubregs< 1,  "r1",  [SPB], ["sp"]>, DwarfRegNum<[ 1]>;
+def SR  : MSP430RegWithSubregs< 2,  "r2",  [SRB], ["sr"]>, DwarfRegNum<[ 2]>;
+def CG  : MSP430RegWithSubregs< 3,  "r3",  [CGB], ["cg"]>, DwarfRegNum<[ 3]>;
 def FP  : MSP430RegWithSubregs< 4,  "r4",  [FPB]>, DwarfRegNum<[ 4]>;
 def R5  : MSP430RegWithSubregs< 5,  "r5",  [R5B]>, DwarfRegNum<[ 5]>;
 def R6  : MSP430RegWithSubregs< 6,  "r6",  [R6B]>, DwarfRegNum<[ 6]>;

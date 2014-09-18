@@ -132,17 +132,17 @@ ReverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const {
 
   switch (CC) {
   default: llvm_unreachable("Invalid branch condition!");
-  case MSP430CC::COND_E:
+  case MSP430CC::COND_EQ:
     CC = MSP430CC::COND_NE;
     break;
   case MSP430CC::COND_NE:
-    CC = MSP430CC::COND_E;
+    CC = MSP430CC::COND_EQ;
     break;
-  case MSP430CC::COND_L:
+  case MSP430CC::COND_LT:
     CC = MSP430CC::COND_GE;
     break;
   case MSP430CC::COND_GE:
-    CC = MSP430CC::COND_L;
+    CC = MSP430CC::COND_LT;
     break;
   case MSP430CC::COND_HS:
     CC = MSP430CC::COND_LO;
