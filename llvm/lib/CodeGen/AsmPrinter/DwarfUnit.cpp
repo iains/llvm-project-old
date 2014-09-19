@@ -1482,6 +1482,10 @@ void DwarfUnit::applySubprogramAttributes(DISubprogram SP, DIE &SPDie) {
   if (!SP.getName().empty())
     addString(SPDie, dwarf::DW_AT_name, SP.getName());
 
+  // Skip the rest of the attributes under -gmlt to save space.
+  if(getCUNode().getEmissionKind() == DIBuilder::LineTablesOnly)
+    return;
+
   addSourceLine(SPDie, SP);
 
   // Add the prototype if we have a prototype and we have a C like
@@ -1670,6 +1674,9 @@ void DwarfCompileUnit::createGlobalVariableDIE(DIGlobalVariable GV) {
       DD->addArangeLabel(SymbolCU(this, Sym));
       addOpAddress(*Loc, Sym);
     }
+    // A static member's declaration is already flagged as such.
+    if (!SDMDecl.Verify() && !GV.isDefinition())
+      addFlag(*VariableDIE, dwarf::DW_AT_declaration);
     // Do not create specification DIE if context is either compile unit
     // or a subprogram.
     if (GVContext && GV.isDefinition() && !GVContext.isCompileUnit() &&

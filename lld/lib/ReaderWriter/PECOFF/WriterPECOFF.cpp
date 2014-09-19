@@ -249,7 +249,7 @@ private:
       StringRef name, const std::vector<const DefinedAtom *> &atoms) const;
 
   mutable llvm::BumpPtrAllocator _alloc;
-  bool is64;
+  llvm::COFF::MachineTypes _machineType;
 };
 
 /// A DataDirectoryChunk represents data directory entries that follows the PE
@@ -447,7 +447,7 @@ AtomChunk::AtomChunk(const PECOFFLinkingContext &ctx, StringRef sectionName,
                      const std::vector<const DefinedAtom *> &atoms)
     : SectionChunk(kindAtomChunk, sectionName,
                    computeCharacteristics(ctx, sectionName, atoms)),
-      _virtualAddress(0), is64(ctx.is64Bit()) {
+      _virtualAddress(0), _machineType(ctx.getMachineType()) {
   for (auto *a : atoms)
     appendAtom(a);
 }
@@ -635,8 +635,18 @@ void AtomChunk::addBaseRelocations(std::vector<uint64_t> &relocSites) const {
   // should output debug messages with atom names and addresses so that we
   // can inspect relocations, and fix the tests (base-reloc.test, maybe
   // others) to use those messages.
-  int relType = is64 ? llvm::COFF::IMAGE_REL_AMD64_ADDR64
-                     : llvm::COFF::IMAGE_REL_I386_DIR32;
+
+  int16_t relType = 0; /* IMAGE_REL_*_ABSOLUTE */
+  switch (_machineType) {
+  default: llvm_unreachable("unsupported machine type");
+  case llvm::COFF::IMAGE_FILE_MACHINE_I386:
+    relType = llvm::COFF::IMAGE_REL_I386_DIR32;
+    break;
+  case llvm::COFF::IMAGE_FILE_MACHINE_AMD64:
+    relType = llvm::COFF::IMAGE_REL_AMD64_ADDR64;
+    break;
+  }
+
   for (const auto *layout : _atomLayouts) {
     const DefinedAtom *atom = cast<DefinedAtom>(layout->_atom);
     for (const Reference *ref : *atom)
@@ -936,9 +946,11 @@ void groupAtoms(const PECOFFLinkingContext &ctx, const File &file,
   }
 }
 
-static const DefinedAtom *findTLSUsedSymbol(const File &file) {
+static const DefinedAtom *findTLSUsedSymbol(const PECOFFLinkingContext &ctx,
+                                            const File &file) {
+  StringRef sym = ctx.decorateSymbol("_tls_used");
   for (const DefinedAtom *atom : file.defined())
-    if (atom->name() == "__tls_used")
+    if (atom->name() == sym)
       return atom;
   return nullptr;
 }
@@ -1030,9 +1042,9 @@ void PECOFFWriter::build(const File &linkedFile) {
                               section->getVirtualAddress(), section->size());
   }
 
-  if (const DefinedAtom *atom = findTLSUsedSymbol(linkedFile)) {
-    dataDirectory->setField(DataDirectoryIndex::TLS_TABLE,
-                            _atomRva[atom], 0x18);
+  if (const DefinedAtom *atom = findTLSUsedSymbol(_ctx, linkedFile)) {
+    dataDirectory->setField(DataDirectoryIndex::TLS_TABLE, _atomRva[atom],
+                            0x18);
   }
 
   // Now that we know the size and file offset of sections. Set the file
