@@ -87,9 +87,6 @@ public:
   /// \brief Return a memory buffer for the given source file.
   ErrorOr<const MemoryBuffer &> getSourceFile(StringRef SourceFile);
 
-  /// \brief Return true if two filepaths refer to the same file.
-  bool equivalentFiles(StringRef A, StringRef B);
-
   /// \brief Collect a set of function's file ids which correspond to the
   /// given source file. Return false if the set is empty.
   bool gatherInterestingFileIDs(StringRef SourceFile,
@@ -106,23 +103,22 @@ public:
 
   /// \brief Create a source view which shows coverage for an expansion
   /// of a file.
-  void createExpansionSubView(const CountedRegion &ExpandedRegion,
-                              const FunctionCoverageMapping &Function,
-                              SourceCoverageView &Parent);
+  std::unique_ptr<SourceCoverageView>
+  createExpansionSubView(const CountedRegion &ExpandedRegion,
+                         const FunctionCoverageMapping &Function);
 
-  void createExpansionSubViews(SourceCoverageView &View, unsigned ViewFileID,
+  void attachExpansionSubViews(SourceCoverageView &View, unsigned ViewFileID,
                                const FunctionCoverageMapping &Function);
 
   /// \brief Create a source view which shows coverage for an instantiation
   /// of a funciton.
-  void createInstantiationSubView(StringRef SourceFile,
-                                  const FunctionCoverageMapping &Function,
-                                  SourceCoverageView &View);
+  std::unique_ptr<SourceCoverageView>
+  createInstantiationSubView(StringRef SourceFile,
+                             const FunctionCoverageMapping &Function);
 
   /// \brief Create the main source view of a particular source file.
-  /// Return true if this particular source file is not covered.
-  bool
-  createSourceFileView(StringRef SourceFile, SourceCoverageView &View,
+  std::unique_ptr<SourceCoverageView>
+  createSourceFileView(StringRef SourceFile,
                        ArrayRef<FunctionCoverageMapping> FunctionMappingRecords,
                        bool UseOnlyRegionsInMainFile = false);
 
@@ -148,7 +144,20 @@ public:
       LoadedSourceFiles;
   std::vector<FunctionCoverageMapping> FunctionMappingRecords;
   bool CompareFilenamesOnly;
+  StringMap<std::string> RemappedFilenames;
 };
+}
+
+static std::vector<StringRef>
+getUniqueFilenames(ArrayRef<FunctionCoverageMapping> FunctionMappingRecords) {
+  std::vector<StringRef> Filenames;
+  for (const auto &Function : FunctionMappingRecords)
+    for (const auto &Filename : Function.Filenames)
+      Filenames.push_back(Filename);
+  std::sort(Filenames.begin(), Filenames.end());
+  auto Last = std::unique(Filenames.begin(), Filenames.end());
+  Filenames.erase(Last, Filenames.end());
+  return Filenames;
 }
 
 void CodeCoverageTool::error(const Twine &Message, StringRef Whence) {
@@ -160,27 +169,23 @@ void CodeCoverageTool::error(const Twine &Message, StringRef Whence) {
 
 ErrorOr<const MemoryBuffer &>
 CodeCoverageTool::getSourceFile(StringRef SourceFile) {
-  SmallString<256> Path(SourceFile);
-  sys::fs::make_absolute(Path);
-  for (const auto &Files : LoadedSourceFiles) {
-    if (equivalentFiles(Path.str(), Files.first)) {
-      return *Files.second;
-    }
+  // If we've remapped filenames, look up the real location for this file.
+  if (!RemappedFilenames.empty()) {
+    auto Loc = RemappedFilenames.find(SourceFile);
+    if (Loc != RemappedFilenames.end())
+      SourceFile = Loc->second;
   }
+  for (const auto &Files : LoadedSourceFiles)
+    if (sys::fs::equivalent(SourceFile, Files.first))
+      return *Files.second;
   auto Buffer = MemoryBuffer::getFile(SourceFile);
   if (auto EC = Buffer.getError()) {
     error(EC.message(), SourceFile);
     return EC;
   }
-  LoadedSourceFiles.push_back(std::make_pair(
-      std::string(Path.begin(), Path.end()), std::move(Buffer.get())));
+  LoadedSourceFiles.push_back(
+      std::make_pair(SourceFile, std::move(Buffer.get())));
   return *LoadedSourceFiles.back().second;
-}
-
-bool CodeCoverageTool::equivalentFiles(StringRef A, StringRef B) {
-  if (CompareFilenamesOnly)
-    return sys::path::filename(A).equals_lower(sys::path::filename(B));
-  return sys::fs::equivalent(A, B);
 }
 
 bool CodeCoverageTool::gatherInterestingFileIDs(
@@ -188,7 +193,7 @@ bool CodeCoverageTool::gatherInterestingFileIDs(
     SmallSet<unsigned, 8> &InterestingFileIDs) {
   bool Interesting = false;
   for (unsigned I = 0, E = Function.Filenames.size(); I < E; ++I) {
-    if (equivalentFiles(SourceFile, Function.Filenames[I])) {
+    if (SourceFile == Function.Filenames[I]) {
       InterestingFileIDs.insert(I);
       Interesting = true;
     }
@@ -204,7 +209,7 @@ CodeCoverageTool::findMainViewFileID(StringRef SourceFile,
   llvm::SmallVector<bool, 8> FilenameEquivalence(Function.Filenames.size(),
                                                  false);
   for (unsigned I = 0, E = Function.Filenames.size(); I < E; ++I) {
-    if (equivalentFiles(SourceFile, Function.Filenames[I]))
+    if (SourceFile == Function.Filenames[I])
       FilenameEquivalence[I] = true;
   }
   for (const auto &CR : Function.CountedRegions) {
@@ -238,26 +243,26 @@ CodeCoverageTool::findMainViewFileID(const FunctionCoverageMapping &Function,
   return true;
 }
 
-void CodeCoverageTool::createExpansionSubView(
+std::unique_ptr<SourceCoverageView> CodeCoverageTool::createExpansionSubView(
     const CountedRegion &ExpandedRegion,
-    const FunctionCoverageMapping &Function, SourceCoverageView &Parent) {
+    const FunctionCoverageMapping &Function) {
   auto SourceBuffer =
       getSourceFile(Function.Filenames[ExpandedRegion.ExpandedFileID]);
   if (!SourceBuffer)
-    return;
-  auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
-                                                       Parent.getOptions());
+    return nullptr;
   auto RegionManager = llvm::make_unique<SourceCoverageDataManager>();
   for (const auto &CR : Function.CountedRegions) {
     if (CR.FileID == ExpandedRegion.ExpandedFileID)
       RegionManager->insert(CR);
   }
+  auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
+                                                       ViewOpts);
   SubView->load(std::move(RegionManager));
-  createExpansionSubViews(*SubView, ExpandedRegion.ExpandedFileID, Function);
-  Parent.addExpansion(ExpandedRegion, std::move(SubView));
+  attachExpansionSubViews(*SubView, ExpandedRegion.ExpandedFileID, Function);
+  return SubView;
 }
 
-void CodeCoverageTool::createExpansionSubViews(
+void CodeCoverageTool::attachExpansionSubViews(
     SourceCoverageView &View, unsigned ViewFileID,
     const FunctionCoverageMapping &Function) {
   if (!ViewOpts.ShowExpandedRegions)
@@ -267,35 +272,49 @@ void CodeCoverageTool::createExpansionSubViews(
       continue;
     if (CR.FileID != ViewFileID)
       continue;
-    createExpansionSubView(CR, Function, View);
+    auto SubView = createExpansionSubView(CR, Function);
+    if (SubView)
+      View.addExpansion(CR, std::move(SubView));
   }
 }
 
-void CodeCoverageTool::createInstantiationSubView(
-    StringRef SourceFile, const FunctionCoverageMapping &Function,
-    SourceCoverageView &View) {
+std::unique_ptr<SourceCoverageView>
+CodeCoverageTool::createInstantiationSubView(
+    StringRef SourceFile, const FunctionCoverageMapping &Function) {
   auto RegionManager = llvm::make_unique<SourceCoverageDataManager>();
   SmallSet<unsigned, 8> InterestingFileIDs;
   if (!gatherInterestingFileIDs(SourceFile, Function, InterestingFileIDs))
-    return;
+    return nullptr;
   // Get the interesting regions
   for (const auto &CR : Function.CountedRegions) {
     if (InterestingFileIDs.count(CR.FileID))
       RegionManager->insert(CR);
   }
-  View.load(std::move(RegionManager));
+
+  auto SourceBuffer = getSourceFile(SourceFile);
+  if (!SourceBuffer)
+    return nullptr;
+  auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
+                                                       ViewOpts);
+  SubView->load(std::move(RegionManager));
   unsigned MainFileID;
-  if (findMainViewFileID(SourceFile, Function, MainFileID))
-    return;
-  createExpansionSubViews(View, MainFileID, Function);
+  if (!findMainViewFileID(SourceFile, Function, MainFileID))
+    attachExpansionSubViews(*SubView, MainFileID, Function);
+  return SubView;
 }
 
-bool CodeCoverageTool::createSourceFileView(
-    StringRef SourceFile, SourceCoverageView &View,
+std::unique_ptr<SourceCoverageView> CodeCoverageTool::createSourceFileView(
+    StringRef SourceFile,
     ArrayRef<FunctionCoverageMapping> FunctionMappingRecords,
     bool UseOnlyRegionsInMainFile) {
   auto RegionManager = llvm::make_unique<SourceCoverageDataManager>();
   FunctionInstantiationSetCollector InstantiationSetCollector;
+
+  auto SourceBuffer = getSourceFile(SourceFile);
+  if (!SourceBuffer)
+    return nullptr;
+  auto View =
+      llvm::make_unique<SourceCoverageView>(SourceBuffer.get(), ViewOpts);
 
   for (const auto &Function : FunctionMappingRecords) {
     unsigned MainFileID;
@@ -313,14 +332,14 @@ bool CodeCoverageTool::createSourceFileView(
         RegionManager->insert(CR);
     }
     InstantiationSetCollector.insert(Function, MainFileID);
-    createExpansionSubViews(View, MainFileID, Function);
+    attachExpansionSubViews(*View, MainFileID, Function);
   }
   if (RegionManager->getCoverageSegments().empty())
-    return true;
-  View.load(std::move(RegionManager));
+    return nullptr;
+  View->load(std::move(RegionManager));
   // Show instantiations
   if (!ViewOpts.ShowFunctionInstantiations)
-    return false;
+    return View;
   for (const auto &InstantiationSet : InstantiationSetCollector) {
     if (InstantiationSet.second.size() < 2)
       continue;
@@ -330,16 +349,12 @@ bool CodeCoverageTool::createSourceFileView(
       for (const auto &CR : Function->CountedRegions)
         if (CR.FileID == FileID)
           Line = std::max(CR.LineEnd, Line);
-      auto SourceBuffer = getSourceFile(Function->Filenames[FileID]);
-      if (!SourceBuffer)
-        continue;
-      auto SubView = llvm::make_unique<SourceCoverageView>(SourceBuffer.get(),
-                                                           View.getOptions());
-      createInstantiationSubView(SourceFile, *Function, *SubView);
-      View.addInstantiation(Function->Name, Line, std::move(SubView));
+      auto SubView = createInstantiationSubView(SourceFile, *Function);
+      if (SubView)
+        View->addInstantiation(Function->Name, Line, std::move(SubView));
     }
   }
-  return false;
+  return View;
 }
 
 bool CodeCoverageTool::load() {
@@ -394,6 +409,20 @@ bool CodeCoverageTool::load() {
 
     FunctionMappingRecords.push_back(Function);
   }
+
+  if (CompareFilenamesOnly) {
+    auto CoveredFiles = getUniqueFilenames(FunctionMappingRecords);
+    for (auto &SF : SourceFiles) {
+      StringRef SFBase = sys::path::filename(SF);
+      for (const auto &CF : CoveredFiles)
+        if (SFBase == sys::path::filename(CF)) {
+          RemappedFilenames[CF] = SF;
+          SF = CF;
+          break;
+        }
+    }
+  }
+
   return false;
 }
 
@@ -416,7 +445,8 @@ int CodeCoverageTool::run(Command Cmd, int argc, const char **argv) {
 
   cl::opt<bool> FilenameEquivalence(
       "filename-equivalence", cl::Optional,
-      cl::desc("Compare the filenames instead of full filepaths"));
+      cl::desc("Treat source files as equivalent to paths in the coverage data "
+               "when the file names match, even if the full paths do not"));
 
   cl::OptionCategory FilteringCategory("Function filtering options");
 
@@ -495,7 +525,14 @@ int CodeCoverageTool::run(Command Cmd, int argc, const char **argv) {
       Filters.push_back(std::unique_ptr<CoverageFilter>(StatFilterer));
     }
 
-    SourceFiles = InputSourceFiles;
+    for (const auto &File : InputSourceFiles) {
+      SmallString<128> Path(File);
+      if (std::error_code EC = sys::fs::make_absolute(Path)) {
+        errs() << "error: " << File << ": " << EC.message();
+        return 1;
+      }
+      SourceFiles.push_back(Path.str());
+    }
     return 0;
   };
 
@@ -581,15 +618,18 @@ int CodeCoverageTool::show(int argc, const char **argv,
       if (findMainViewFileID(Function, MainFileID))
         continue;
       StringRef SourceFile = Function.Filenames[MainFileID];
-      auto SourceBuffer = getSourceFile(SourceFile);
-      if (!SourceBuffer)
-        return 1;
-      SourceCoverageView mainView(SourceBuffer.get(), ViewOpts);
-      createSourceFileView(SourceFile, mainView, Function, true);
+      auto mainView = createSourceFileView(SourceFile, Function, true);
+      if (!mainView) {
+        ViewOpts.colored_ostream(outs(), raw_ostream::RED)
+            << "warning: Could not read coverage for '" << Function.Name
+            << " from " << SourceFile;
+        outs() << "\n";
+        continue;
+      }
       ViewOpts.colored_ostream(outs(), raw_ostream::CYAN)
           << Function.Name << " from " << SourceFile << ":";
       outs() << "\n";
-      mainView.render(outs(), /*WholeFile=*/false);
+      mainView->render(outs(), /*WholeFile=*/false);
       if (FunctionMappingRecords.size() > 1)
         outs() << "\n";
     }
@@ -599,23 +639,14 @@ int CodeCoverageTool::show(int argc, const char **argv,
   // Show files
   bool ShowFilenames = SourceFiles.size() != 1;
 
-  if (SourceFiles.empty()) {
+  if (SourceFiles.empty())
     // Get the source files from the function coverage mapping
-    std::set<StringRef> UniqueFilenames;
-    for (const auto &Function : FunctionMappingRecords) {
-      for (const auto &Filename : Function.Filenames)
-        UniqueFilenames.insert(Filename);
-    }
-    for (const auto &Filename : UniqueFilenames)
+    for (StringRef Filename : getUniqueFilenames(FunctionMappingRecords))
       SourceFiles.push_back(Filename);
-  }
 
   for (const auto &SourceFile : SourceFiles) {
-    auto SourceBuffer = getSourceFile(SourceFile);
-    if (!SourceBuffer)
-      return 1;
-    SourceCoverageView mainView(SourceBuffer.get(), ViewOpts);
-    if (createSourceFileView(SourceFile, mainView, FunctionMappingRecords)) {
+    auto mainView = createSourceFileView(SourceFile, FunctionMappingRecords);
+    if (!mainView) {
       ViewOpts.colored_ostream(outs(), raw_ostream::RED)
           << "warning: The file '" << SourceFile << "' isn't covered.";
       outs() << "\n";
@@ -626,7 +657,7 @@ int CodeCoverageTool::show(int argc, const char **argv,
       ViewOpts.colored_ostream(outs(), raw_ostream::CYAN) << SourceFile << ":";
       outs() << "\n";
     }
-    mainView.render(outs(), /*Wholefile=*/true);
+    mainView->render(outs(), /*Wholefile=*/true);
     if (SourceFiles.size() > 1)
       outs() << "\n";
   }
