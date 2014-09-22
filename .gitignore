@@ -1,5 +1,9 @@
 .svn
 
+PATCHES
+lnt
+test-suite
+
 llvm/projects/libcxx
 llvm/projects/libcxxabi
 llvm/projects/compiler-rt
