@@ -594,6 +594,10 @@ enum {
 #include "ELFRelocs/Sparc.def"
 };
 
+enum {
+#include "ELFRelocs/MSP430.def"
+};
+
 #undef ELF_RELOC
 
 // Section header.
