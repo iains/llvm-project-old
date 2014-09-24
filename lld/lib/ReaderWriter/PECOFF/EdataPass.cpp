@@ -29,42 +29,30 @@ namespace lld {
 namespace pecoff {
 
 static void assignOrdinals(PECOFFLinkingContext &ctx) {
-  std::set<PECOFFLinkingContext::ExportDesc> exports;
+  std::vector<PECOFFLinkingContext::ExportDesc> &exports = ctx.getDllExports();
   int maxOrdinal = -1;
-  for (const PECOFFLinkingContext::ExportDesc &desc : ctx.getDllExports())
+  for (PECOFFLinkingContext::ExportDesc &desc : exports)
     maxOrdinal = std::max(maxOrdinal, desc.ordinal);
+
+  std::sort(exports.begin(), exports.end(),
+            [](const PECOFFLinkingContext::ExportDesc &a,
+               const PECOFFLinkingContext::ExportDesc &b) {
+    return a.name.compare(b.name) < 0;
+  });
+
   int nextOrdinal = (maxOrdinal == -1) ? 1 : (maxOrdinal + 1);
-  for (PECOFFLinkingContext::ExportDesc desc : ctx.getDllExports()) {
+  for (PECOFFLinkingContext::ExportDesc &desc : exports)
     if (desc.ordinal == -1)
       desc.ordinal = nextOrdinal++;
-    exports.insert(desc);
-  }
-  ctx.getDllExports().swap(exports);
-}
-
-static StringRef removeStdcallSuffix(StringRef sym) {
-  if (!sym.startswith("_"))
-    return sym;
-  StringRef trimmed = sym.rtrim("0123456789");
-  if (sym.size() != trimmed.size() && trimmed.endswith("@"))
-    return trimmed.drop_back();
-  return sym;
-}
-
-static StringRef removeLeadingUnderscore(StringRef sym) {
-  if (sym.startswith("_"))
-    return sym.substr(1);
-  return sym;
 }
 
 static bool getExportedAtoms(PECOFFLinkingContext &ctx, MutableFile *file,
                              std::vector<TableEntry> &ret) {
   std::map<StringRef, const DefinedAtom *> definedAtoms;
   for (const DefinedAtom *atom : file->defined())
-    definedAtoms[removeStdcallSuffix(atom->name())] = atom;
+    definedAtoms[atom->name()] = atom;
 
-  std::set<PECOFFLinkingContext::ExportDesc> exports;
-  for (PECOFFLinkingContext::ExportDesc desc : ctx.getDllExports()) {
+  for (PECOFFLinkingContext::ExportDesc &desc : ctx.getDllExports()) {
     auto it = definedAtoms.find(desc.name);
     if (it == definedAtoms.end()) {
       llvm::errs() << "Symbol <" << desc.name
@@ -76,15 +64,8 @@ static bool getExportedAtoms(PECOFFLinkingContext &ctx, MutableFile *file,
     // One can export a symbol with a different name than the symbol
     // name used in DLL. If such name is specified, use it in the
     // .edata section.
-    StringRef exportName =
-        desc.externalName.empty() ? desc.name : desc.externalName;
-    ret.push_back(TableEntry(exportName, desc.ordinal, atom, desc.noname));
-
-    if (desc.externalName.empty())
-      desc.externalName = removeLeadingUnderscore(atom->name());
-    exports.insert(desc);
+    ret.push_back(TableEntry(desc.externalName, desc.ordinal, atom, desc.noname));
   }
-  ctx.getDllExports().swap(exports);
   std::sort(ret.begin(), ret.end(),
             [](const TableEntry &a, const TableEntry &b) {
     return a.exportName.compare(b.exportName) < 0;
