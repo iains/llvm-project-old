@@ -305,7 +305,7 @@ void Resolver::markLive(const Atom *atom) {
   if (const DefinedAtom *defAtom = dyn_cast<DefinedAtom>(atom)) {
     for (const Reference *ref : *defAtom)
       markLive(ref->target());
-    for (const Atom *target : _reverseRef[defAtom])
+    for (const Atom *target : _reverseRef.lookup(defAtom))
       markLive(target);
   }
 }
