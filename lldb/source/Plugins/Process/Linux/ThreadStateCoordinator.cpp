@@ -73,7 +73,23 @@ public:
     m_original_wait_for_stop_tids (wait_for_stop_tids),
     m_request_thread_stop_function (request_thread_stop_function),
     m_call_after_function (call_after_function),
-    m_error_function (error_function)
+    m_error_function (error_function),
+    m_request_stop_on_all_unstopped_threads (false)
+    {
+    }
+
+    EventCallAfterThreadsStop (lldb::tid_t triggering_tid,
+                               const ThreadIDFunction &request_thread_stop_function,
+                               const ThreadIDFunction &call_after_function,
+                               const ErrorFunction &error_function) :
+    EventBase (),
+    m_triggering_tid (triggering_tid),
+    m_wait_for_stop_tids (),
+    m_original_wait_for_stop_tids (),
+    m_request_thread_stop_function (request_thread_stop_function),
+    m_call_after_function (call_after_function),
+    m_error_function (error_function),
+    m_request_stop_on_all_unstopped_threads (true)
     {
     }
 
@@ -116,41 +132,15 @@ public:
             return eventLoopResultContinue;
         }
 
-        // Request a stop for all the thread stops that need to be stopped
-        // and are not already known to be stopped.  Keep a list of all the
-        // threads from which we still need to hear a stop reply.
-
-        ThreadIDSet sent_tids;
-        for (auto tid : m_wait_for_stop_tids)
+        if (m_request_stop_on_all_unstopped_threads)
         {
-            // Validate we know about all tids for which we must first receive a stop before
-            // triggering the deferred stop notification.
-            auto find_it = coordinator.m_tid_stop_map.find (tid);
-            if (find_it == coordinator.m_tid_stop_map.end ())
-            {
-                // This is an error.  We shouldn't be asking for waiting pids that aren't known.
-                // NOTE: we may be stripping out the specification of wait tids and handle this
-                // automatically, in which case this state can never occur.
-                std::ostringstream error_message;
-                error_message << "error: deferred notification for tid " << m_triggering_tid << " specified an unknown/untracked pending stop tid " << m_triggering_tid;
-                m_error_function (error_message.str ());
-
-                // Bail out here.
-                return eventLoopResultContinue;
-            }
-
-            // If the pending stop thread is currently running, we need to send it a stop request.
-            if (!find_it->second)
-            {
-                m_request_thread_stop_function (tid);
-                sent_tids.insert (tid);
-            }
+            RequestStopOnAllRunningThreads (coordinator);
         }
-
-        // We only need to wait for the sent_tids - so swap our wait set
-        // to the sent tids.  The rest are already stopped and we won't
-        // be receiving stop notifications for them.
-        m_wait_for_stop_tids.swap (sent_tids);
+        else
+        {
+            if (!RequestStopOnAllSpecifiedThreads (coordinator))
+                return eventLoopResultContinue;
+        }
 
         if (m_wait_for_stop_tids.empty ())
         {
@@ -208,12 +198,81 @@ private:
         m_call_after_function (m_triggering_tid);
     }
 
+    bool
+    RequestStopOnAllSpecifiedThreads (const ThreadStateCoordinator &coordinator)
+    {
+        // Request a stop for all the thread stops that need to be stopped
+        // and are not already known to be stopped.  Keep a list of all the
+        // threads from which we still need to hear a stop reply.
+
+        ThreadIDSet sent_tids;
+        for (auto tid : m_wait_for_stop_tids)
+        {
+            // Validate we know about all tids for which we must first receive a stop before
+            // triggering the deferred stop notification.
+            auto find_it = coordinator.m_tid_stop_map.find (tid);
+            if (find_it == coordinator.m_tid_stop_map.end ())
+            {
+                // This is an error.  We shouldn't be asking for waiting pids that aren't known.
+                // NOTE: we may be stripping out the specification of wait tids and handle this
+                // automatically, in which case this state can never occur.
+                std::ostringstream error_message;
+                error_message << "error: deferred notification for tid " << m_triggering_tid << " specified an unknown/untracked pending stop tid " << m_triggering_tid;
+                m_error_function (error_message.str ());
+
+                // Bail out here.
+                return false;
+            }
+
+            // If the pending stop thread is currently running, we need to send it a stop request.
+            if (!find_it->second)
+            {
+                m_request_thread_stop_function (tid);
+                sent_tids.insert (tid);
+            }
+        }
+
+        // We only need to wait for the sent_tids - so swap our wait set
+        // to the sent tids.  The rest are already stopped and we won't
+        // be receiving stop notifications for them.
+        m_wait_for_stop_tids.swap (sent_tids);
+
+        // Succeeded, keep running.
+        return true;
+    }
+
+    void
+    RequestStopOnAllRunningThreads (const ThreadStateCoordinator &coordinator)
+    {
+        // Request a stop for all the thread stops that need to be stopped
+        // and are not already known to be stopped.  Keep a list of all the
+        // threads from which we still need to hear a stop reply.
+
+        ThreadIDSet sent_tids;
+        for (auto it = coordinator.m_tid_stop_map.begin(); it != coordinator.m_tid_stop_map.end(); ++it)
+        {
+            // We only care about threads not stopped.
+            const bool running = !it->second;
+            if (running)
+            {
+                // Request this thread stop.
+                const lldb::tid_t tid = it->first;
+                m_request_thread_stop_function (tid);
+                sent_tids.insert (tid);
+            }
+        }
+
+        // Set the wait list to the set of tids for which we requested stops.
+        m_wait_for_stop_tids.swap (sent_tids);
+    }
+
     const lldb::tid_t m_triggering_tid;
     ThreadIDSet m_wait_for_stop_tids;
     const ThreadIDSet m_original_wait_for_stop_tids;
     ThreadIDFunction m_request_thread_stop_function;
     ThreadIDFunction m_call_after_function;
     ErrorFunction m_error_function;
+    const bool m_request_stop_on_all_unstopped_threads;
 };
 
 //===----------------------------------------------------------------------===//
@@ -278,7 +337,7 @@ public:
     EventLoopResult
     ProcessEvent(ThreadStateCoordinator &coordinator) override
     {
-        coordinator.ThreadWasCreated (m_tid, m_is_stopped);
+        coordinator.ThreadWasCreated (m_tid, m_is_stopped, m_error_function);
         return eventLoopResultContinue;
     }
 
@@ -305,7 +364,7 @@ public:
     EventLoopResult
     ProcessEvent(ThreadStateCoordinator &coordinator) override
     {
-        coordinator.ThreadDidDie (m_tid);
+        coordinator.ThreadDidDie (m_tid, m_error_function);
         return eventLoopResultContinue;
     }
 
@@ -333,18 +392,25 @@ public:
     EventLoopResult
     ProcessEvent(ThreadStateCoordinator &coordinator) override
     {
-        // Tell the thread to resume if we don't already think it is running.
+        // Ensure we know about the thread.
         auto find_it = coordinator.m_tid_stop_map.find (m_tid);
         if (find_it == coordinator.m_tid_stop_map.end ())
         {
-            // Skip the resume call - we think it is already running because we don't know anything about the thread.
-            coordinator.Log ("EventRequestResume::%s skipping resume request because we don't know about tid %" PRIu64 " and we therefore assume it is running.", __FUNCTION__, m_tid);
+            // We don't know about this thread.  This is an error condition.
+            std::ostringstream error_message;
+            error_message << "error: tid " << m_tid << " asked to resume but tid is unknown";
+            m_error_function (error_message.str ());
             return eventLoopResultContinue;
         }
-        else if (!find_it->second)
+        
+        // Tell the thread to resume if we don't already think it is running.
+        const bool is_stopped = find_it->second;
+        if (!is_stopped)
         {
             // Skip the resume call - we have tracked it to be running.
-            coordinator.Log ("EventRequestResume::%s skipping resume request because tid %" PRIu64 " is already running according to our state tracking.", __FUNCTION__, m_tid);
+            std::ostringstream error_message;
+            error_message << "error: tid " << m_tid << " asked to resume but we think it is already running";
+            m_error_function (error_message.str ());
             return eventLoopResultContinue;
         }
 
@@ -460,6 +526,18 @@ ThreadStateCoordinator::CallAfterThreadsStop (const lldb::tid_t triggering_tid,
 }
 
 void
+ThreadStateCoordinator::CallAfterRunningThreadsStop (const lldb::tid_t triggering_tid,
+                                                     const ThreadIDFunction &request_thread_stop_function,
+                                                     const ThreadIDFunction &call_after_function,
+                                                     const ErrorFunction &error_function)
+{
+    EnqueueEvent (EventBaseSP (new EventCallAfterThreadsStop (triggering_tid,
+                                                              request_thread_stop_function,
+                                                              call_after_function,
+                                                              error_function)));
+}
+
+void
 ThreadStateCoordinator::ThreadDidStop (lldb::tid_t tid, ErrorFunction &error_function)
 {
     // Ensure we know about the thread.
@@ -490,8 +568,19 @@ ThreadStateCoordinator::ThreadDidStop (lldb::tid_t tid, ErrorFunction &error_fun
 }
 
 void
-ThreadStateCoordinator::ThreadWasCreated (lldb::tid_t tid, bool is_stopped)
+ThreadStateCoordinator::ThreadWasCreated (lldb::tid_t tid, bool is_stopped, ErrorFunction &error_function)
 {
+    // Ensure we don't already know about the thread.
+    auto find_it = m_tid_stop_map.find (tid);
+    if (find_it != m_tid_stop_map.end ())
+    {
+        // We already know about this thread.  This is an error condition.
+        std::ostringstream error_message;
+        error_message << "error: notified tid " << tid << " created but we already know about this thread";
+        error_function (error_message.str ());
+        return;
+    }
+
     // Add the new thread to the stop map.
     m_tid_stop_map[tid] = is_stopped;
 
@@ -505,12 +594,23 @@ ThreadStateCoordinator::ThreadWasCreated (lldb::tid_t tid, bool is_stopped)
 }
 
 void
-ThreadStateCoordinator::ThreadDidDie (lldb::tid_t tid)
+ThreadStateCoordinator::ThreadDidDie (lldb::tid_t tid, ErrorFunction &error_function)
 {
+    // Ensure we know about the thread.
+    auto find_it = m_tid_stop_map.find (tid);
+    if (find_it == m_tid_stop_map.end ())
+    {
+        // We don't know about this thread.  This is an error condition.
+        std::ostringstream error_message;
+        error_message << "error: notified tid " << tid << " died but tid is unknown";
+        error_function (error_message.str ());
+        return;
+    }
+
     // Update the global list of known thread states.  While this one is stopped, it is also dead.
     // So stop tracking it.  We assume the user of this coordinator will not keep trying to add
     // dependencies on a thread after it is known to be dead.
-    m_tid_stop_map.erase (tid);
+    m_tid_stop_map.erase (find_it);
 
     // If we have a pending notification, remove this from the set.
     EventCallAfterThreadsStop *const call_after_event = GetPendingThreadStopNotification ();
