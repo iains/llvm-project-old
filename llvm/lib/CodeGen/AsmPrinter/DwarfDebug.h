@@ -215,10 +215,6 @@ class DwarfDebug : public AsmPrinterHandler {
   // can refer to them in spite of insertions into this list.
   SmallVector<DebugLocList, 4> DotDebugLocEntries;
 
-  // Collection of subprogram DIEs that are marked (at the end of the module)
-  // as DW_AT_inline.
-  SmallPtrSet<DIE *, 4> InlinedSubprogramDIEs;
-
   // This is a collection of subprogram MDNodes that are processed to
   // create DIEs.
   SmallPtrSet<const MDNode *, 16> ProcessedSPNodes;
@@ -352,12 +348,6 @@ class DwarfDebug : public AsmPrinterHandler {
                                        const MDNode *Scope);
   void ensureAbstractVariableIsCreatedIfScoped(const DIVariable &Var,
                                                const MDNode *Scope);
-
-  /// \brief Find DIE for the given subprogram and attach appropriate
-  /// DW_AT_low_pc and DW_AT_high_pc attributes. If there are global
-  /// variables in this scope then create and insert DIEs for these
-  /// variables.
-  DIE &updateSubprogramScopeDIE(DwarfCompileUnit &SPCU, DISubprogram SP);
 
   /// \brief A helper function to check whether the DIE for a given Scope is
   /// going to be null.
@@ -518,11 +508,6 @@ class DwarfDebug : public AsmPrinterHandler {
   void constructAndAddImportedEntityDIE(DwarfCompileUnit &TheCU,
                                         const MDNode *N);
 
-  /// \brief Construct import_module DIE.
-  std::unique_ptr<DIE>
-  constructImportedEntityDIE(DwarfCompileUnit &TheCU,
-                             const DIImportedEntity &Module);
-
   /// \brief Register a source line with debug info. Returns the unique
   /// label that was emitted and which provides correspondence to the
   /// source line list.
@@ -567,8 +552,6 @@ class DwarfDebug : public AsmPrinterHandler {
 
   void attachRangesOrLowHighPC(DwarfCompileUnit &Unit, DIE &D,
                                const SmallVectorImpl<InsnRange> &Ranges);
-  void attachLowHighPC(DwarfCompileUnit &Unit, DIE &D, const MCSymbol *Begin,
-                       const MCSymbol *End);
 
 public:
   //===--------------------------------------------------------------------===//
@@ -693,6 +676,10 @@ public:
   void addAccelNamespace(StringRef Name, const DIE &Die);
 
   void addAccelType(StringRef Name, const DIE &Die, char Flags);
+
+  const MachineFunction *getCurrentFunction() const { return CurFn; }
+  const MCSymbol *getFunctionBeginSym() const { return FunctionBeginSym; }
+  const MCSymbol *getFunctionEndSym() const { return FunctionEndSym; }
 };
 } // End of namespace llvm
 

@@ -11,8 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ByteStreamer.h"
 #include "DwarfDebug.h"
+
+#include "ByteStreamer.h"
+#include "DwarfCompileUnit.h"
 #include "DIE.h"
 #include "DIEHash.h"
 #include "DwarfUnit.h"
@@ -309,32 +311,6 @@ bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
   return false;
 }
 
-// Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
-// and DW_AT_high_pc attributes. If there are global variables in this
-// scope then create and insert DIEs for these variables.
-DIE &DwarfDebug::updateSubprogramScopeDIE(DwarfCompileUnit &SPCU,
-                                          DISubprogram SP) {
-  DIE *SPDie = SPCU.getOrCreateSubprogramDIE(SP);
-
-  attachLowHighPC(SPCU, *SPDie, FunctionBeginSym, FunctionEndSym);
-  if (!CurFn->getTarget().Options.DisableFramePointerElim(*CurFn))
-    SPCU.addFlag(*SPDie, dwarf::DW_AT_APPLE_omit_frame_ptr);
-
-  // Only include DW_AT_frame_base in full debug info
-  if (SPCU.getCUNode().getEmissionKind() != DIBuilder::LineTablesOnly) {
-    const TargetRegisterInfo *RI =
-        Asm->TM.getSubtargetImpl()->getRegisterInfo();
-    MachineLocation Location(RI->getFrameRegister(*Asm->MF));
-    SPCU.addAddress(*SPDie, dwarf::DW_AT_frame_base, Location);
-  }
-
-  // Add name to the name table, we do this here because we're guaranteed
-  // to have concrete versions of our DW_TAG_subprogram nodes.
-  addSubprogramNames(SP, *SPDie);
-
-  return *SPDie;
-}
-
 /// Check whether we should create a DIE for the given Scope, return true
 /// if we don't create a DIE (the corresponding DIE is null).
 bool DwarfDebug::isLexicalScopeDIENull(LexicalScope *Scope) {
@@ -392,8 +368,8 @@ void DwarfDebug::attachRangesOrLowHighPC(DwarfCompileUnit &TheCU, DIE &Die,
                                     const SmallVectorImpl<InsnRange> &Ranges) {
   assert(!Ranges.empty());
   if (Ranges.size() == 1)
-    attachLowHighPC(TheCU, Die, getLabelBeforeInsn(Ranges.front().first),
-                    getLabelAfterInsn(Ranges.front().second));
+    TheCU.attachLowHighPC(Die, getLabelBeforeInsn(Ranges.front().first),
+                          getLabelAfterInsn(Ranges.front().second));
   else
     addScopeRangeList(TheCU, Die, Ranges);
 }
@@ -432,8 +408,6 @@ DwarfDebug::constructInlinedScopeDIE(DwarfCompileUnit &TheCU,
   TheCU.addDIEEntry(*ScopeDIE, dwarf::DW_AT_abstract_origin, *OriginDIE);
 
   attachRangesOrLowHighPC(TheCU, *ScopeDIE, Scope->getRanges());
-
-  InlinedSubprogramDIEs.insert(OriginDIE);
 
   // Add the call site information to the DIE.
   DILocation DL(Scope->getInlinedAt());
@@ -543,7 +517,7 @@ void DwarfDebug::constructSubprogramScopeDIE(DwarfCompileUnit &TheCU,
 
   ProcessedSPNodes.insert(Sub);
 
-  DIE &ScopeDIE = updateSubprogramScopeDIE(TheCU, Sub);
+  DIE &ScopeDIE = TheCU.updateSubprogramScopeDIE(Sub);
 
   // Collect arguments for current function.
   assert(LScopes.isCurrentFunctionScope(Scope));
@@ -621,7 +595,7 @@ void DwarfDebug::constructScopeDIE(
     for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second;
          ++i)
       Children.push_back(
-          constructImportedEntityDIE(TheCU, DIImportedEntity(i->second)));
+          TheCU.constructImportedEntityDIE(DIImportedEntity(i->second)));
     // If there are only other scopes as children, put them directly in the
     // parent instead, as this scope would serve no purpose.
     if (Children.size() == ChildScopeCount) {
@@ -716,36 +690,7 @@ void DwarfDebug::constructAndAddImportedEntityDIE(DwarfCompileUnit &TheCU,
   DIImportedEntity Module(N);
   assert(Module.Verify());
   if (DIE *D = TheCU.getOrCreateContextDIE(Module.getContext()))
-    D->addChild(constructImportedEntityDIE(TheCU, Module));
-}
-
-std::unique_ptr<DIE>
-DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit &TheCU,
-                                       const DIImportedEntity &Module) {
-  assert(Module.Verify() &&
-         "Use one of the MDNode * overloads to handle invalid metadata");
-  std::unique_ptr<DIE> IMDie = make_unique<DIE>((dwarf::Tag)Module.getTag());
-  TheCU.insertDIE(Module, IMDie.get());
-  DIE *EntityDie;
-  DIDescriptor Entity = resolve(Module.getEntity());
-  if (Entity.isNameSpace())
-    EntityDie = TheCU.getOrCreateNameSpace(DINameSpace(Entity));
-  else if (Entity.isSubprogram())
-    EntityDie = TheCU.getOrCreateSubprogramDIE(DISubprogram(Entity));
-  else if (Entity.isType())
-    EntityDie = TheCU.getOrCreateTypeDIE(DIType(Entity));
-  else
-    EntityDie = TheCU.getDIE(Entity);
-  assert(EntityDie);
-  TheCU.addSourceLine(*IMDie, Module.getLineNumber(),
-                      Module.getContext().getFilename(),
-                      Module.getContext().getDirectory());
-  TheCU.addDIEEntry(*IMDie, dwarf::DW_AT_import, *EntityDie);
-  StringRef Name = Module.getName();
-  if (!Name.empty())
-    TheCU.addString(*IMDie, dwarf::DW_AT_name, Name);
-
-  return IMDie;
+    D->addChild(TheCU.constructImportedEntityDIE(Module));
 }
 
 // Emit all Dwarf sections that should come prior to the content. Create
@@ -975,7 +920,7 @@ void DwarfDebug::finalizeModuleInfo() {
                     0);
         } else {
           RangeSpan &Range = TheU->getRanges().back();
-          attachLowHighPC(U, U.getUnitDie(), Range.getStart(), Range.getEnd());
+          U.attachLowHighPC(U.getUnitDie(), Range.getStart(), Range.getEnd());
         }
       }
     }
@@ -2632,20 +2577,6 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
       InfoHolder.addUnit(std::move(TU.first));
   }
   CU.addDIETypeSignature(RefDie, NewTU);
-}
-
-void DwarfDebug::attachLowHighPC(DwarfCompileUnit &Unit, DIE &D,
-                                 const MCSymbol *Begin, const MCSymbol *End) {
-  assert(Begin && "Begin label should not be null!");
-  assert(End && "End label should not be null!");
-  assert(Begin->isDefined() && "Invalid starting label");
-  assert(End->isDefined() && "Invalid end label");
-
-  Unit.addLabelAddress(D, dwarf::DW_AT_low_pc, Begin);
-  if (DwarfVersion < 4)
-    Unit.addLabelAddress(D, dwarf::DW_AT_high_pc, End);
-  else
-    Unit.addLabelDelta(D, dwarf::DW_AT_high_pc, End, Begin);
 }
 
 // Accelerator table mutators - add each name along with its companion
