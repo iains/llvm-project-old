@@ -33,9 +33,14 @@ add_host_subdirectory(common
   common/TimeValue.cpp
   )
 
+add_host_subdirectory(posix
+  posix/ConnectionFileDescriptorPosix.cpp
+  )
+
 if (CMAKE_SYSTEM_NAME MATCHES "Windows")
   add_host_subdirectory(windows
     windows/Condition.cpp
+    windows/ConnectionGenericFileWindows.cpp
     windows/EditLineWin.cpp
     windows/FileSystem.cpp
     windows/Host.cpp

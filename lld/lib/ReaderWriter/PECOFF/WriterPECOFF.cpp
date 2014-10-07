@@ -220,14 +220,14 @@ public:
                            std::map<const Atom *, uint64_t> &atomRva,
                            std::vector<uint64_t> &sectionRva,
                            uint64_t imageBaseAddress);
-  void applyRelocationsX86_32(uint8_t *buffer,
-                              std::map<const Atom *, uint64_t> &atomRva,
-                              std::vector<uint64_t> &sectionRva,
-                              uint64_t imageBaseAddress);
-  void applyRelocationsX86_64(uint8_t *buffer,
-                              std::map<const Atom *, uint64_t> &atomRva,
-                              std::vector<uint64_t> &sectionRva,
-                              uint64_t imageBaseAddress);
+  void applyRelocationsX86(uint8_t *buffer,
+                           std::map<const Atom *, uint64_t> &atomRva,
+                           std::vector<uint64_t> &sectionRva,
+                           uint64_t imageBaseAddress);
+  void applyRelocationsX64(uint8_t *buffer,
+                           std::map<const Atom *, uint64_t> &atomRva,
+                           std::vector<uint64_t> &sectionRva,
+                           uint64_t imageBaseAddress);
 
   void printAtomAddresses(uint64_t baseAddr) const;
   void addBaseRelocations(std::vector<uint64_t> &relocSites) const;
@@ -511,10 +511,10 @@ void AtomChunk::applyRelocationsARM(uint8_t *buffer,
                                     uint64_t imageBaseAddress) {
 }
 
-void AtomChunk::applyRelocationsX86_32(uint8_t *buffer,
-                                       std::map<const Atom *, uint64_t> &atomRva,
-                                       std::vector<uint64_t> &sectionRva,
-                                       uint64_t imageBaseAddress) {
+void AtomChunk::applyRelocationsX86(uint8_t *buffer,
+                                    std::map<const Atom *, uint64_t> &atomRva,
+                                    std::vector<uint64_t> &sectionRva,
+                                    uint64_t imageBaseAddress) {
   buffer += _fileOffset;
   for (const auto *layout : _atomLayouts) {
     const DefinedAtom *atom = cast<DefinedAtom>(layout->_atom);
@@ -558,16 +558,16 @@ void AtomChunk::applyRelocationsX86_32(uint8_t *buffer,
             targetAddr - getSectionStartAddr(targetAddr, sectionRva);
         break;
       default:
-        llvm_unreachable("Unsupported relocation kind");
+        llvm::report_fatal_error("Unsupported relocation kind");
       }
     }
   }
 }
 
-void AtomChunk::applyRelocationsX86_64(uint8_t *buffer,
-                                       std::map<const Atom *, uint64_t> &atomRva,
-                                       std::vector<uint64_t> &sectionRva,
-                                       uint64_t imageBase) {
+void AtomChunk::applyRelocationsX64(uint8_t *buffer,
+                                    std::map<const Atom *, uint64_t> &atomRva,
+                                    std::vector<uint64_t> &sectionRva,
+                                    uint64_t imageBase) {
   buffer += _fileOffset;
   for (const auto *layout : _atomLayouts) {
     const DefinedAtom *atom = cast<DefinedAtom>(layout->_atom);
@@ -618,7 +618,7 @@ void AtomChunk::applyRelocationsX86_64(uint8_t *buffer,
         break;
       default:
         llvm::errs() << "Kind: " << (int)ref->kindValue() << "\n";
-        llvm_unreachable("Unsupported relocation kind");
+        llvm::report_fatal_error("Unsupported relocation kind");
       }
     }
   }
@@ -934,7 +934,7 @@ StringRef chooseSectionByContent(const DefinedAtom *atom) {
   }
   llvm::errs() << "Atom: contentType=" << atom->contentType()
                << " permission=" << atom->permissions() << "\n";
-  llvm_unreachable("Failed to choose section based on content");
+  llvm::report_fatal_error("Failed to choose section based on content");
 }
 
 typedef std::map<StringRef, std::vector<const DefinedAtom *> > AtomVectorMap;
@@ -1116,10 +1116,10 @@ void PECOFFWriter::applyAllRelocations(uint8_t *bufferStart) {
         chunk->applyRelocationsARM(bufferStart, _atomRva, sectionRva, base);
         break;
       case llvm::COFF::IMAGE_FILE_MACHINE_I386:
-        chunk->applyRelocationsX86_32(bufferStart, _atomRva, sectionRva, base);
+        chunk->applyRelocationsX86(bufferStart, _atomRva, sectionRva, base);
         break;
       case llvm::COFF::IMAGE_FILE_MACHINE_AMD64:
-        chunk->applyRelocationsX86_64(bufferStart, _atomRva, sectionRva, base);
+        chunk->applyRelocationsX64(bufferStart, _atomRva, sectionRva, base);
         break;
       }
     }
