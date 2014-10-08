@@ -285,7 +285,7 @@ namespace llvm {
   ScheduleDAGSDNodes* createDefaultScheduler(SelectionDAGISel *IS,
                                              CodeGenOpt::Level OptLevel) {
     const TargetLowering *TLI = IS->getTargetLowering();
-    const TargetSubtargetInfo &ST = IS->TM.getSubtarget<TargetSubtargetInfo>();
+    const TargetSubtargetInfo &ST = IS->MF->getSubtarget();
 
     if (OptLevel == CodeGenOpt::None || ST.useMachineScheduler() ||
         TLI->getSchedulingPreference() == Sched::Source)
@@ -411,29 +411,31 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
          "-fast-isel-abort requires -fast-isel");
 
   const Function &Fn = *mf.getFunction();
-  const TargetInstrInfo &TII = *TM.getSubtargetImpl()->getInstrInfo();
-  const TargetRegisterInfo &TRI = *TM.getSubtargetImpl()->getRegisterInfo();
-  const TargetLowering *TLI = TM.getSubtargetImpl()->getTargetLowering();
-
   MF = &mf;
-  RegInfo = &MF->getRegInfo();
-  AA = &getAnalysis<AliasAnalysis>();
-  LibInfo = &getAnalysis<TargetLibraryInfo>();
-  GFI = Fn.hasGC() ? &getAnalysis<GCModuleInfo>().getFunctionInfo(Fn) : nullptr;
 
+  // Reset the target options before resetting the optimization
+  // level below.
+  // FIXME: This is a horrible hack and should be processed via
+  // codegen looking at the optimization level explicitly when
+  // it wants to look at it.
   TM.resetTargetOptions(Fn);
-
   // Reset OptLevel to None for optnone functions.
   CodeGenOpt::Level NewOptLevel = OptLevel;
   if (Fn.hasFnAttribute(Attribute::OptimizeNone))
     NewOptLevel = CodeGenOpt::None;
   OptLevelChanger OLC(*this, NewOptLevel);
 
+  TII = TM.getSubtargetImpl()->getInstrInfo();
+  RegInfo = &MF->getRegInfo();
+  AA = &getAnalysis<AliasAnalysis>();
+  LibInfo = &getAnalysis<TargetLibraryInfo>();
+  GFI = Fn.hasGC() ? &getAnalysis<GCModuleInfo>().getFunctionInfo(Fn) : nullptr;
+
   DEBUG(dbgs() << "\n\n\n=== " << Fn.getName() << "\n");
 
   SplitCriticalSideEffectEdges(const_cast<Function&>(Fn), this);
 
-  CurDAG->init(*MF, TLI);
+  CurDAG->init(*MF);
   FuncInfo->set(Fn, *MF, CurDAG);
 
   if (UseMBPI && OptLevel != CodeGenOpt::None)
@@ -451,7 +453,8 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   // copied into vregs, emit the copies into the top of the block before
   // emitting the code for the block.
   MachineBasicBlock *EntryMBB = MF->begin();
-  RegInfo->EmitLiveInCopies(EntryMBB, TRI, TII);
+  const TargetRegisterInfo &TRI = *TM.getSubtargetImpl()->getRegisterInfo();
+  RegInfo->EmitLiveInCopies(EntryMBB, TRI, *TII);
 
   DenseMap<unsigned, unsigned> LiveInMap;
   if (!FuncInfo->ArgDbgValues.empty())
@@ -492,7 +495,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
       unsigned Offset = IsIndirect ? MI->getOperand(1).getImm() : 0;
       // Def is never a terminator here, so it is ok to increment InsertPos.
       BuildMI(*EntryMBB, ++InsertPos, MI->getDebugLoc(),
-              TII.get(TargetOpcode::DBG_VALUE), IsIndirect, LDI->second, Offset,
+              TII->get(TargetOpcode::DBG_VALUE), IsIndirect, LDI->second, Offset,
               Variable, Expr);
 
       // If this vreg is directly copied into an exported register then
@@ -513,7 +516,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
       if (CopyUseMI) {
         MachineInstr *NewMI =
             BuildMI(*MF, CopyUseMI->getDebugLoc(),
-                    TII.get(TargetOpcode::DBG_VALUE), IsIndirect,
+                    TII->get(TargetOpcode::DBG_VALUE), IsIndirect,
                     CopyUseMI->getOperand(0).getReg(), Offset, Variable, Expr);
         MachineBasicBlock::iterator Pos = CopyUseMI;
         EntryMBB->insertAfter(Pos, NewMI);
@@ -528,8 +531,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
       break;
 
     for (const auto &MI : MBB) {
-      const MCInstrDesc &MCID =
-          TM.getSubtargetImpl()->getInstrInfo()->get(MI.getOpcode());
+      const MCInstrDesc &MCID = TII->get(MI.getOpcode());
       if ((MCID.isCall() && !MCID.isReturn()) ||
           MI.isStackAligningInlineAsm()) {
         MFI->setHasCalls(true);
@@ -896,8 +898,7 @@ void SelectionDAGISel::PrepareEHLandingPad() {
   // Assign the call site to the landing pad's begin label.
   MF->getMMI().setCallSiteLandingPad(Label, SDB->LPadToCallSiteMap[MBB]);
 
-  const MCInstrDesc &II =
-      TM.getSubtargetImpl()->getInstrInfo()->get(TargetOpcode::EH_LABEL);
+  const MCInstrDesc &II = TII->get(TargetOpcode::EH_LABEL);
   BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(), II)
     .addSym(Label);
 
@@ -3114,8 +3115,7 @@ SelectCodeCommon(SDNode *NodeToMatch, const unsigned char *MatcherTable,
       if (EmitNodeInfo & OPFL_MemRefs) {
         // Only attach load or store memory operands if the generated
         // instruction may load or store.
-        const MCInstrDesc &MCID =
-            TM.getSubtargetImpl()->getInstrInfo()->get(TargetOpc);
+        const MCInstrDesc &MCID = TII->get(TargetOpc);
         bool mayLoad = MCID.mayLoad();
         bool mayStore = MCID.mayStore();
 

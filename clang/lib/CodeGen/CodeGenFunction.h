@@ -2014,11 +2014,13 @@ public:
   void EmitOMPOrderedDirective(const OMPOrderedDirective &S);
   void EmitOMPAtomicDirective(const OMPAtomicDirective &S);
   void EmitOMPTargetDirective(const OMPTargetDirective &S);
+  void EmitOMPTeamsDirective(const OMPTeamsDirective &S);
 
   /// Helpers for 'omp simd' directive.
-  void EmitOMPSimdBody(const OMPLoopDirective &Directive, bool SeparateIter);
-  void EmitOMPSimdLoop(const OMPLoopDirective &S, OMPPrivateScope &LoopScope,
-                       bool SeparateIter);
+  void EmitOMPLoopBody(const OMPLoopDirective &Directive,
+                       bool SeparateIter = false);
+  void EmitOMPInnerLoop(const OMPLoopDirective &S, OMPPrivateScope &LoopScope,
+                        bool SeparateIter = false);
   void EmitOMPSimdFinal(const OMPLoopDirective &S);
 
   //===--------------------------------------------------------------------===//
@@ -2492,11 +2494,6 @@ public:
 
   /// EmitLoadOfComplex - Load a complex number from the specified l-value.
   ComplexPairTy EmitLoadOfComplex(LValue src, SourceLocation loc);
-
-  /// CreateStaticVarDecl - Create a zero-initialized LLVM global for
-  /// a static local variable.
-  llvm::Constant *CreateStaticVarDecl(const VarDecl &D,
-                                      llvm::GlobalValue::LinkageTypes Linkage);
 
   /// AddInitializerToStaticVarDecl - Add the initializer for 'D' to the
   /// global variable that has already been created for it.  If the initializer
