@@ -255,16 +255,6 @@ void DwarfUnit::addLabel(DIELoc &Die, dwarf::Form Form, const MCSymbol *Label) {
   addLabel(Die, (dwarf::Attribute)0, Form, Label);
 }
 
-/// addSectionLabel - Add a Dwarf section label attribute data and value.
-///
-void DwarfUnit::addSectionLabel(DIE &Die, dwarf::Attribute Attribute,
-                                const MCSymbol *Label) {
-  if (DD->getDwarfVersion() >= 4)
-    addLabel(Die, Attribute, dwarf::DW_FORM_sec_offset, Label);
-  else
-    addLabel(Die, Attribute, dwarf::DW_FORM_data4, Label);
-}
-
 /// addSectionOffset - Add an offset into a section attribute data and value.
 ///
 void DwarfUnit::addSectionOffset(DIE &Die, dwarf::Attribute Attribute,
@@ -292,16 +282,6 @@ void DwarfUnit::addOpAddress(DIELoc &Die, const MCSymbol *Sym) {
     addUInt(Die, dwarf::DW_FORM_GNU_addr_index,
             DD->getAddressPool().getIndex(Sym));
   }
-}
-
-/// addSectionDelta - Add a section label delta attribute data and value.
-///
-void DwarfUnit::addSectionDelta(DIE &Die, dwarf::Attribute Attribute,
-                                const MCSymbol *Hi, const MCSymbol *Lo) {
-  DIEValue *Value = new (DIEValueAllocator) DIEDelta(Hi, Lo);
-  Die.addValue(Attribute, DD->getDwarfVersion() >= 4 ? dwarf::DW_FORM_sec_offset
-                                                     : dwarf::DW_FORM_data4,
-               Value);
 }
 
 void DwarfUnit::addLabelDelta(DIE &Die, dwarf::Attribute Attribute,

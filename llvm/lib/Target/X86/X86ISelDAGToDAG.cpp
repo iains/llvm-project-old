@@ -238,10 +238,10 @@ namespace {
     inline void getAddressOperands(X86ISelAddressMode &AM, SDValue &Base,
                                    SDValue &Scale, SDValue &Index,
                                    SDValue &Disp, SDValue &Segment) {
-      Base  = (AM.BaseType == X86ISelAddressMode::FrameIndexBase) ?
-        CurDAG->getTargetFrameIndex(AM.Base_FrameIndex,
-                                    getTargetLowering()->getPointerTy()) :
-        AM.Base_Reg;
+      Base = (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
+                 ? CurDAG->getTargetFrameIndex(AM.Base_FrameIndex,
+                                               TLI->getPointerTy())
+                 : AM.Base_Reg;
       Scale = getI8Imm(AM.Scale);
       Index = AM.IndexReg;
       // These are 32-bit even in 64-bit mode since RIP relative offset
@@ -518,7 +518,7 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
     // If the source and destination are SSE registers, then this is a legal
     // conversion that should not be lowered.
     const X86TargetLowering *X86Lowering =
-        static_cast<const X86TargetLowering *>(getTargetLowering());
+        static_cast<const X86TargetLowering *>(TLI);
     bool SrcIsSSE = X86Lowering->isScalarFPTypeInSSEReg(SrcVT);
     bool DstIsSSE = X86Lowering->isScalarFPTypeInSSEReg(DstVT);
     if (SrcIsSSE && DstIsSSE)
@@ -1572,8 +1572,7 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 ///
 SDNode *X86DAGToDAGISel::getGlobalBaseReg() {
   unsigned GlobalBaseReg = getInstrInfo()->getGlobalBaseReg(MF);
-  return CurDAG->getRegister(GlobalBaseReg,
-                             getTargetLowering()->getPointerTy()).getNode();
+  return CurDAG->getRegister(GlobalBaseReg, TLI->getPointerTy()).getNode();
 }
 
 /// Atomic opcode table
@@ -1707,7 +1706,8 @@ static const uint16_t AtomicOpcTbl[AtomicOpcEnd][AtomicSzEnd] = {
 static SDValue getAtomicLoadArithTargetConstant(SelectionDAG *CurDAG,
                                                 SDLoc dl,
                                                 enum AtomicOpc &Op, MVT NVT,
-                                                SDValue Val) {
+                                                SDValue Val,
+                                                const X86Subtarget *Subtarget) {
   if (ConstantSDNode *CN = dyn_cast<ConstantSDNode>(Val)) {
     int64_t CNVal = CN->getSExtValue();
     // Quit if not 32-bit imm.
@@ -1722,7 +1722,7 @@ static SDValue getAtomicLoadArithTargetConstant(SelectionDAG *CurDAG,
     // For atomic-load-add, we could do some optimizations.
     if (Op == ADD) {
       // Translate to INC/DEC if ADD by 1 or -1.
-      if ((CNVal == 1) || (CNVal == -1)) {
+      if (((CNVal == 1) || (CNVal == -1)) && !Subtarget->slowIncDec()) {
         Op = (CNVal == 1) ? INC : DEC;
         // No more constant operand after being translated into INC/DEC.
         return SDValue();
@@ -1794,7 +1794,7 @@ SDNode *X86DAGToDAGISel::SelectAtomicLoadArith(SDNode *Node, MVT NVT) {
       break;
   }
 
-  Val = getAtomicLoadArithTargetConstant(CurDAG, dl, Op, NVT, Val);
+  Val = getAtomicLoadArithTargetConstant(CurDAG, dl, Op, NVT, Val, Subtarget);
   bool isUnOp = !Val.getNode();
   bool isCN = Val.getNode() && (Val.getOpcode() == ISD::TargetConstant);
 

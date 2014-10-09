@@ -333,6 +333,7 @@ void ASTStmtWriter::VisitPredefinedExpr(PredefinedExpr *E) {
   VisitExpr(E);
   Writer.AddSourceLocation(E->getLocation(), Record);
   Record.push_back(E->getIdentType()); // FIXME: stable encoding
+  Writer.AddStmt(E->getFunctionName());
   Code = serialization::EXPR_PREDEFINED;
 }
 
@@ -1761,8 +1762,15 @@ void OMPClauseWriter::VisitOMPPrivateClause(OMPPrivateClause *C) {
 void OMPClauseWriter::VisitOMPFirstprivateClause(OMPFirstprivateClause *C) {
   Record.push_back(C->varlist_size());
   Writer->Writer.AddSourceLocation(C->getLParenLoc(), Record);
-  for (auto *VE : C->varlists())
+  for (auto *VE : C->varlists()) {
     Writer->Writer.AddStmt(VE);
+  }
+  for (auto *VE : C->private_copies()) {
+    Writer->Writer.AddStmt(VE);
+  }
+  for (auto *VE : C->inits()) {
+    Writer->Writer.AddStmt(VE);
+  }
 }
 
 void OMPClauseWriter::VisitOMPLastprivateClause(OMPLastprivateClause *C) {

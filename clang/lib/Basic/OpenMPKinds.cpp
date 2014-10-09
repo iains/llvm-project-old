@@ -316,7 +316,7 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
     break;
   case OMPD_teams:
     switch (CKind) {
-#define OPENMP_TEAMS_CLAUSE(Name)                                           \
+#define OPENMP_TEAMS_CLAUSE(Name)                                              \
   case OMPC_##Name:                                                            \
     return true;
 #include "clang/Basic/OpenMPKinds.def"

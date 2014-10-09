@@ -330,50 +330,6 @@ bool DwarfDebug::isLexicalScopeDIENull(LexicalScope *Scope) {
   return !getLabelAfterInsn(Ranges.front().second);
 }
 
-static void addSectionLabel(AsmPrinter &Asm, DwarfUnit &U, DIE &D,
-                            dwarf::Attribute A, const MCSymbol *L,
-                            const MCSymbol *Sec) {
-  if (Asm.MAI->doesDwarfUseRelocationsAcrossSections())
-    U.addSectionLabel(D, A, L);
-  else
-    U.addSectionDelta(D, A, L, Sec);
-}
-
-void DwarfDebug::addScopeRangeList(DwarfCompileUnit &TheCU, DIE &ScopeDIE,
-                                   const SmallVectorImpl<InsnRange> &Range) {
-  // Emit offset in .debug_range as a relocatable label. emitDIE will handle
-  // emitting it appropriately.
-  MCSymbol *RangeSym = Asm->GetTempSymbol("debug_ranges", GlobalRangeCount++);
-
-  // Under fission, ranges are specified by constant offsets relative to the
-  // CU's DW_AT_GNU_ranges_base.
-  if (useSplitDwarf())
-    TheCU.addSectionDelta(ScopeDIE, dwarf::DW_AT_ranges, RangeSym,
-                          DwarfDebugRangeSectionSym);
-  else
-    addSectionLabel(*Asm, TheCU, ScopeDIE, dwarf::DW_AT_ranges, RangeSym,
-                    DwarfDebugRangeSectionSym);
-
-  RangeSpanList List(RangeSym);
-  for (const InsnRange &R : Range) {
-    RangeSpan Span(getLabelBeforeInsn(R.first), getLabelAfterInsn(R.second));
-    List.addRange(std::move(Span));
-  }
-
-  // Add the range list to the set of ranges to be emitted.
-  TheCU.addRangeList(std::move(List));
-}
-
-void DwarfDebug::attachRangesOrLowHighPC(DwarfCompileUnit &TheCU, DIE &Die,
-                                    const SmallVectorImpl<InsnRange> &Ranges) {
-  assert(!Ranges.empty());
-  if (Ranges.size() == 1)
-    TheCU.attachLowHighPC(Die, getLabelBeforeInsn(Ranges.front().first),
-                          getLabelAfterInsn(Ranges.front().second));
-  else
-    addScopeRangeList(TheCU, Die, Ranges);
-}
-
 // Construct new DW_TAG_lexical_block for this scope and attach
 // DW_AT_low_pc/DW_AT_high_pc labels.
 std::unique_ptr<DIE>
@@ -386,7 +342,7 @@ DwarfDebug::constructLexicalScopeDIE(DwarfCompileUnit &TheCU,
   if (Scope->isAbstractScope())
     return ScopeDIE;
 
-  attachRangesOrLowHighPC(TheCU, *ScopeDIE, Scope->getRanges());
+  TheCU.attachRangesOrLowHighPC(*ScopeDIE, Scope->getRanges());
 
   return ScopeDIE;
 }
@@ -407,7 +363,7 @@ DwarfDebug::constructInlinedScopeDIE(DwarfCompileUnit &TheCU,
   auto ScopeDIE = make_unique<DIE>(dwarf::DW_TAG_inlined_subroutine);
   TheCU.addDIEEntry(*ScopeDIE, dwarf::DW_AT_abstract_origin, *OriginDIE);
 
-  attachRangesOrLowHighPC(TheCU, *ScopeDIE, Scope->getRanges());
+  TheCU.attachRangesOrLowHighPC(*ScopeDIE, Scope->getRanges());
 
   // Add the call site information to the DIE.
   DILocation DL(Scope->getInlinedAt());
@@ -444,7 +400,7 @@ DIE *DwarfDebug::createScopeChildrenDIE(
   unsigned ChildCountWithoutScopes = Children.size();
 
   for (LexicalScope *LS : Scope->getChildren())
-    constructScopeDIE(TheCU, LS, Children);
+    TheCU.constructScopeDIE(LS, Children);
 
   if (ChildScopeCount)
     *ChildScopeCount = Children.size() - ChildCountWithoutScopes;
@@ -546,73 +502,6 @@ void DwarfDebug::constructSubprogramScopeDIE(DwarfCompileUnit &TheCU,
 
   if (ObjectPointer)
     TheCU.addDIEEntry(ScopeDIE, dwarf::DW_AT_object_pointer, *ObjectPointer);
-}
-
-// Construct a DIE for this scope.
-void DwarfDebug::constructScopeDIE(
-    DwarfCompileUnit &TheCU, LexicalScope *Scope,
-    SmallVectorImpl<std::unique_ptr<DIE>> &FinalChildren) {
-  if (!Scope || !Scope->getScopeNode())
-    return;
-
-  DIScope DS(Scope->getScopeNode());
-
-  assert((Scope->getInlinedAt() || !DS.isSubprogram()) &&
-         "Only handle inlined subprograms here, use "
-         "constructSubprogramScopeDIE for non-inlined "
-         "subprograms");
-
-  SmallVector<std::unique_ptr<DIE>, 8> Children;
-
-  // We try to create the scope DIE first, then the children DIEs. This will
-  // avoid creating un-used children then removing them later when we find out
-  // the scope DIE is null.
-  std::unique_ptr<DIE> ScopeDIE;
-  if (Scope->getParent() && DS.isSubprogram()) {
-    ScopeDIE = constructInlinedScopeDIE(TheCU, Scope);
-    if (!ScopeDIE)
-      return;
-    // We create children when the scope DIE is not null.
-    createScopeChildrenDIE(TheCU, Scope, Children);
-  } else {
-    // Early exit when we know the scope DIE is going to be null.
-    if (isLexicalScopeDIENull(Scope))
-      return;
-
-    unsigned ChildScopeCount;
-
-    // We create children here when we know the scope DIE is not going to be
-    // null and the children will be added to the scope DIE.
-    createScopeChildrenDIE(TheCU, Scope, Children, &ChildScopeCount);
-
-    // There is no need to emit empty lexical block DIE.
-    std::pair<ImportedEntityMap::const_iterator,
-              ImportedEntityMap::const_iterator> Range =
-        std::equal_range(ScopesWithImportedEntities.begin(),
-                         ScopesWithImportedEntities.end(),
-                         std::pair<const MDNode *, const MDNode *>(DS, nullptr),
-                         less_first());
-    for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second;
-         ++i)
-      Children.push_back(
-          TheCU.constructImportedEntityDIE(DIImportedEntity(i->second)));
-    // If there are only other scopes as children, put them directly in the
-    // parent instead, as this scope would serve no purpose.
-    if (Children.size() == ChildScopeCount) {
-      FinalChildren.insert(FinalChildren.end(),
-                           std::make_move_iterator(Children.begin()),
-                           std::make_move_iterator(Children.end()));
-      return;
-    }
-    ScopeDIE = constructLexicalScopeDIE(TheCU, Scope);
-    assert(ScopeDIE && "Scope DIE should not be null.");
-  }
-
-  // Add children
-  for (auto &I : Children)
-    ScopeDIE->addChild(std::move(I));
-
-  FinalChildren.push_back(std::move(ScopeDIE));
 }
 
 void DwarfDebug::addGnuPubAttributes(DwarfUnit &U, DIE &D) const {
@@ -888,13 +777,12 @@ void DwarfDebug::finalizeModuleInfo() {
         // We don't keep track of which addresses are used in which CU so this
         // is a bit pessimistic under LTO.
         if (!AddrPool.isEmpty())
-          addSectionLabel(*Asm, *SkCU, SkCU->getUnitDie(),
-                          dwarf::DW_AT_GNU_addr_base, DwarfAddrSectionSym,
-                          DwarfAddrSectionSym);
+          SkCU->addSectionLabel(SkCU->getUnitDie(), dwarf::DW_AT_GNU_addr_base,
+                                DwarfAddrSectionSym, DwarfAddrSectionSym);
         if (!TheU->getRangeLists().empty())
-          addSectionLabel(*Asm, *SkCU, SkCU->getUnitDie(),
-                          dwarf::DW_AT_GNU_ranges_base,
-                          DwarfDebugRangeSectionSym, DwarfDebugRangeSectionSym);
+          SkCU->addSectionLabel(
+              SkCU->getUnitDie(), dwarf::DW_AT_GNU_ranges_base,
+              DwarfDebugRangeSectionSym, DwarfDebugRangeSectionSym);
       }
 
       // If we have code split among multiple sections or non-contiguous
@@ -908,9 +796,9 @@ void DwarfDebug::finalizeModuleInfo() {
       unsigned NumRanges = TheU->getRanges().size();
       if (NumRanges) {
         if (NumRanges > 1) {
-          addSectionLabel(*Asm, U, U.getUnitDie(), dwarf::DW_AT_ranges,
-                          Asm->GetTempSymbol("cu_ranges", U.getUniqueID()),
-                          DwarfDebugRangeSectionSym);
+          U.addSectionLabel(U.getUnitDie(), dwarf::DW_AT_ranges,
+                            Asm->GetTempSymbol("cu_ranges", U.getUniqueID()),
+                            DwarfDebugRangeSectionSym);
 
           // A DW_AT_low_pc attribute may also be specified in combination with
           // DW_AT_ranges to specify the default base address for use in

@@ -26,6 +26,7 @@ class DIE;
 class DwarfDebug;
 class DwarfFile;
 class MCSymbol;
+class LexicalScope;
 
 class DwarfCompileUnit : public DwarfUnit {
   /// The attribute index of DW_AT_stmt_list in the compile unit DIE, avoiding
@@ -54,6 +55,10 @@ public:
   void addLocalLabelAddress(DIE &Die, dwarf::Attribute Attribute,
                             const MCSymbol *Label);
 
+  /// addSectionDelta - Add a label delta attribute data and value.
+  void addSectionDelta(DIE &Die, dwarf::Attribute Attribute, const MCSymbol *Hi,
+                       const MCSymbol *Lo);
+
   DwarfCompileUnit &getCU() override { return *this; }
 
   unsigned getOrCreateSourceID(StringRef FileName, StringRef DirName) override;
@@ -63,11 +68,27 @@ public:
 
   void attachLowHighPC(DIE &D, const MCSymbol *Begin, const MCSymbol *End);
 
+  /// addSectionLabel - Add a Dwarf section label attribute data and value.
+  ///
+  void addSectionLabel(DIE &Die, dwarf::Attribute Attribute,
+                       const MCSymbol *Label, const MCSymbol *Sec);
+
   /// \brief Find DIE for the given subprogram and attach appropriate
   /// DW_AT_low_pc and DW_AT_high_pc attributes. If there are global
   /// variables in this scope then create and insert DIEs for these
   /// variables.
   DIE &updateSubprogramScopeDIE(DISubprogram SP);
+
+  void constructScopeDIE(LexicalScope *Scope,
+                         SmallVectorImpl<std::unique_ptr<DIE>> &FinalChildren);
+
+  /// \brief A helper function to construct a RangeSpanList for a given
+  /// lexical scope.
+  void addScopeRangeList(DIE &ScopeDIE,
+                         const SmallVectorImpl<InsnRange> &Range);
+
+  void attachRangesOrLowHighPC(DIE &D,
+                               const SmallVectorImpl<InsnRange> &Ranges);
 };
 
 } // end llvm namespace
