@@ -1920,6 +1920,28 @@ void SITargetLowering::adjustWritemask(MachineSDNode *&Node,
   }
 }
 
+/// \brief Legalize target independent instructions (e.g. INSERT_SUBREG)
+/// with frame index operands.
+/// LLVM assumes that inputs are to these instructions are registers.
+void SITargetLowering::legalizeTargetIndependentNode(SDNode *Node,
+                                                     SelectionDAG &DAG) const {
+
+  SmallVector<SDValue, 8> Ops;
+  for (unsigned i = 0; i < Node->getNumOperands(); ++i) {
+    if (!isa<FrameIndexSDNode>(Node->getOperand(i))) {
+      Ops.push_back(Node->getOperand(i));
+      continue;
+    }
+
+    SDLoc DL(Node);
+    Ops.push_back(SDValue(DAG.getMachineNode(AMDGPU::S_MOV_B32, DL,
+                                     Node->getOperand(i).getValueType(),
+                                     Node->getOperand(i)), 0));
+  }
+
+  DAG.UpdateNodeOperands(Node, Ops);
+}
+
 /// \brief Fold the instructions after selecting them.
 SDNode *SITargetLowering::PostISelFolding(MachineSDNode *Node,
                                           SelectionDAG &DAG) const {
@@ -1929,6 +1951,11 @@ SDNode *SITargetLowering::PostISelFolding(MachineSDNode *Node,
 
   if (TII->isMIMG(Node->getMachineOpcode()))
     adjustWritemask(Node, DAG);
+
+  if (Node->getMachineOpcode() == AMDGPU::INSERT_SUBREG) {
+    legalizeTargetIndependentNode(Node, DAG);
+    return Node;
+  }
 
   return legalizeOperands(Node, DAG);
 }
