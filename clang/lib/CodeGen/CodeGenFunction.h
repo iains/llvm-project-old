@@ -113,7 +113,6 @@ class CodeGenFunction : public CodeGenTypeCache {
   void operator=(const CodeGenFunction &) LLVM_DELETED_FUNCTION;
 
   friend class CGCXXABI;
-  friend class CGOpenMPRegionInfo;
 public:
   /// A jump destination is an abstract label, branching to which may
   /// require a jump out through normal cleanups.
@@ -214,6 +213,10 @@ public:
 
     bool isCXXThisExprCaptured() const { return CXXThisFieldDecl != nullptr; }
     FieldDecl *getThisFieldDecl() const { return CXXThisFieldDecl; }
+
+    static bool classof(const CGCapturedStmtInfo *) {
+      return true;
+    }
 
     /// \brief Emit the captured statement body.
     virtual void EmitBody(CodeGenFunction &CGF, Stmt *S) {

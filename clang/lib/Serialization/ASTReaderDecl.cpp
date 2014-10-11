@@ -535,7 +535,7 @@ ASTDeclReader::RedeclarableResult ASTDeclReader::VisitTagDecl(TagDecl *TD) {
     TypedefNameForLinkage = Reader.GetIdentifierInfo(F, Record, Idx);
     break;
   case 3: // DeclaratorForAnonDecl
-    TD->NamedDeclOrQualifier = ReadDeclAs<NamedDecl>(Record, Idx);
+    NamedDeclForTagDecl = ReadDeclID(Record, Idx);
     break;
   default:
     llvm_unreachable("unexpected tag info kind");
@@ -1000,13 +1000,14 @@ void ASTDeclReader::VisitFieldDecl(FieldDecl *FD) {
   VisitDeclaratorDecl(FD);
   FD->Mutable = Record[Idx++];
   if (int BitWidthOrInitializer = Record[Idx++]) {
-    FD->InitializerOrBitWidth.setInt(BitWidthOrInitializer - 1);
-    if (FD->getDeclContext()->isRecord() && FD->getParent()->isLambda()) {
+    FD->InitStorage.setInt(
+          static_cast<FieldDecl::InitStorageKind>(BitWidthOrInitializer - 1));
+    if (FD->InitStorage.getInt() == FieldDecl::ISK_CapturedVLAType) {
       // Read captured variable length array.
-      FD->InitializerOrBitWidth.setPointer(
+      FD->InitStorage.setPointer(
           Reader.readType(F, Record, Idx).getAsOpaquePtr());
     } else {
-      FD->InitializerOrBitWidth.setPointer(Reader.ReadExpr(F));
+      FD->InitStorage.setPointer(Reader.ReadExpr(F));
     }
   }
   if (!FD->getDeclName()) {
