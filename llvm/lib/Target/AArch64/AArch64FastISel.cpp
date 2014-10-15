@@ -134,6 +134,7 @@ private:
   bool selectBitCast(const Instruction *I);
   bool selectFRem(const Instruction *I);
   bool selectSDiv(const Instruction *I);
+  bool selectGetElementPtr(const Instruction *I);
 
   // Utility helper routines.
   bool isTypeLegal(Type *Ty, MVT &VT);
@@ -188,6 +189,7 @@ private:
   unsigned emitAdd(MVT RetVT, const Value *LHS, const Value *RHS,
                    bool SetFlags = false, bool WantResult = true,
                    bool IsZExt = false);
+  unsigned emitAdd_ri_(MVT VT, unsigned Op0, bool Op0IsKill, int64_t Imm);
   unsigned emitSub(MVT RetVT, const Value *LHS, const Value *RHS,
                    bool SetFlags = false, bool WantResult = true,
                    bool IsZExt = false);
@@ -1002,20 +1004,10 @@ bool AArch64FastISel::simplifyAddress(Address &Addr, MVT VT) {
   // reg+offset into a register.
   if (ImmediateOffsetNeedsLowering) {
     unsigned ResultReg;
-    if (Addr.getReg()) {
+    if (Addr.getReg())
       // Try to fold the immediate into the add instruction.
-      if (Offset < 0)
-        ResultReg = emitAddSub_ri(/*UseAdd=*/false, MVT::i64, Addr.getReg(),
-                                  /*IsKill=*/false, -Offset);
-      else
-        ResultReg = emitAddSub_ri(/*UseAdd=*/true, MVT::i64, Addr.getReg(),
-                                  /*IsKill=*/false, Offset);
-      if (!ResultReg) {
-        unsigned ImmReg = fastEmit_i(MVT::i64, MVT::i64, ISD::Constant, Offset);
-        ResultReg = emitAddSub_rr(/*UseAdd=*/true, MVT::i64, Addr.getReg(),
-                                  /*IsKill=*/false, ImmReg, /*IsKill=*/true);
-      }
-    } else
+      ResultReg = emitAdd_ri_(MVT::i64, Addr.getReg(), /*IsKill=*/false, Offset);
+    else
       ResultReg = fastEmit_i(MVT::i64, MVT::i64, ISD::Constant, Offset);
 
     if (!ResultReg)
@@ -1440,6 +1432,30 @@ unsigned AArch64FastISel::emitAdd(MVT RetVT, const Value *LHS, const Value *RHS,
                                   bool SetFlags, bool WantResult, bool IsZExt) {
   return emitAddSub(/*UseAdd=*/true, RetVT, LHS, RHS, SetFlags, WantResult,
                     IsZExt);
+}
+
+/// \brief This method is a wrapper to simplify add emission.
+///
+/// First try to emit an add with an immediate operand using emitAddSub_ri. If
+/// that fails, then try to materialize the immediate into a register and use
+/// emitAddSub_rr instead.
+unsigned AArch64FastISel::emitAdd_ri_(MVT VT, unsigned Op0, bool Op0IsKill,
+                                      int64_t Imm) {
+  unsigned ResultReg;
+  if (Imm < 0)
+    ResultReg = emitAddSub_ri(false, VT, Op0, Op0IsKill, -Imm);
+  else
+    ResultReg = emitAddSub_ri(true, VT, Op0, Op0IsKill, Imm);
+
+  if (ResultReg)
+    return ResultReg;
+
+  unsigned CReg = fastEmit_i(VT, VT, ISD::Constant, Imm);
+  if (!CReg)
+    return 0;
+
+  ResultReg = emitAddSub_rr(true, VT, Op0, Op0IsKill, CReg, true);
+  return ResultReg;
 }
 
 unsigned AArch64FastISel::emitSub(MVT RetVT, const Value *LHS, const Value *RHS,
@@ -4541,6 +4557,79 @@ bool AArch64FastISel::selectSDiv(const Instruction *I) {
   return true;
 }
 
+/// This is mostly a copy of the existing FastISel GEP code, but we have to
+/// duplicate it for AArch64, because otherwise we would bail out even for
+/// simple cases. This is because the standard fastEmit functions don't cover
+/// MUL at all and ADD is lowered very inefficientily.
+bool AArch64FastISel::selectGetElementPtr(const Instruction *I) {
+  unsigned N = getRegForValue(I->getOperand(0));
+  if (!N)
+    return false;
+  bool NIsKill = hasTrivialKill(I->getOperand(0));
+
+  // Keep a running tab of the total offset to coalesce multiple N = N + Offset
+  // into a single N = N + TotalOffset.
+  uint64_t TotalOffs = 0;
+  Type *Ty = I->getOperand(0)->getType();
+  MVT VT = TLI.getPointerTy();
+  for (auto OI = std::next(I->op_begin()), E = I->op_end(); OI != E; ++OI) {
+    const Value *Idx = *OI;
+    if (auto *StTy = dyn_cast<StructType>(Ty)) {
+      unsigned Field = cast<ConstantInt>(Idx)->getZExtValue();
+      // N = N + Offset
+      if (Field)
+        TotalOffs += DL.getStructLayout(StTy)->getElementOffset(Field);
+      Ty = StTy->getElementType(Field);
+    } else {
+      Ty = cast<SequentialType>(Ty)->getElementType();
+      // If this is a constant subscript, handle it quickly.
+      if (const auto *CI = dyn_cast<ConstantInt>(Idx)) {
+        if (CI->isZero())
+          continue;
+        // N = N + Offset
+        TotalOffs +=
+            DL.getTypeAllocSize(Ty) * cast<ConstantInt>(CI)->getSExtValue();
+        continue;
+      }
+      if (TotalOffs) {
+        N = emitAdd_ri_(VT, N, NIsKill, TotalOffs);
+        if (!N)
+          return false;
+        NIsKill = true;
+        TotalOffs = 0;
+      }
+
+      // N = N + Idx * ElementSize;
+      uint64_t ElementSize = DL.getTypeAllocSize(Ty);
+      std::pair<unsigned, bool> Pair = getRegForGEPIndex(Idx);
+      unsigned IdxN = Pair.first;
+      bool IdxNIsKill = Pair.second;
+      if (!IdxN)
+        return false;
+
+      if (ElementSize != 1) {
+        unsigned C = fastEmit_i(VT, VT, ISD::Constant, ElementSize);
+        if (!C)
+          return false;
+        IdxN = emitMul_rr(VT, IdxN, IdxNIsKill, C, true);
+        if (!IdxN)
+          return false;
+        IdxNIsKill = true;
+      }
+      N = fastEmit_rr(VT, VT, ISD::ADD, N, NIsKill, IdxN, IdxNIsKill);
+      if (!N)
+        return false;
+    }
+  }
+  if (TotalOffs) {
+    N = emitAdd_ri_(VT, N, NIsKill, TotalOffs);
+    if (!N)
+      return false;
+  }
+  updateValueMap(I, N);
+  return true;
+}
+
 bool AArch64FastISel::fastSelectInstruction(const Instruction *I) {
   switch (I->getOpcode()) {
   default:
@@ -4612,6 +4701,8 @@ bool AArch64FastISel::fastSelectInstruction(const Instruction *I) {
     return selectRet(I);
   case Instruction::FRem:
     return selectFRem(I);
+  case Instruction::GetElementPtr:
+    return selectGetElementPtr(I);
   }
 
   // fall-back to target-independent instruction selection.
