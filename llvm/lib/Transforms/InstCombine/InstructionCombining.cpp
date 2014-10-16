@@ -2102,8 +2102,8 @@ Instruction *InstCombiner::visitSwitchInst(SwitchInst &SI) {
     SI.setCondition(NewCond);
 
     for (auto &C : SI.cases())
-      static_cast<SwitchInst::CaseIt *>(&C)->setValue(
-          ConstantInt::get(Ty, C.getCaseValue()->getValue().getZExtValue()));
+      static_cast<SwitchInst::CaseIt *>(&C)->setValue(ConstantInt::get(
+          SI.getContext(), C.getCaseValue()->getValue().trunc(NewWidth)));
   }
 
   if (Instruction *I = dyn_cast<Instruction>(Cond)) {
