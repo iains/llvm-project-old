@@ -738,7 +738,7 @@ ASTContext::ASTContext(LangOptions &LOpts, SourceManager &SM,
       BlockDescriptorExtendedType(nullptr), cudaConfigureCallDecl(nullptr),
       NullTypeSourceInfo(QualType()), FirstLocalImport(), LastLocalImport(),
       SourceMgr(SM), LangOpts(LOpts),
-      SanitizerBL(new SanitizerBlacklist(LangOpts.Sanitize.BlacklistFile)),
+      SanitizerBL(new SanitizerBlacklist(LangOpts.Sanitize.BlacklistFile, SM)),
       AddrSpaceMap(nullptr), Target(nullptr), PrintingPolicy(LOpts),
       Idents(idents), Selectors(sels), BuiltinInfo(builtins),
       DeclarationNames(*this), ExternalSource(nullptr), Listener(nullptr),
@@ -4099,7 +4099,7 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
 
     case TemplateArgument::Declaration: {
       ValueDecl *D = cast<ValueDecl>(Arg.getAsDecl()->getCanonicalDecl());
-      return TemplateArgument(D, Arg.getTypeForDecl());
+      return TemplateArgument(D, Arg.getParamTypeForDecl());
     }
 
     case TemplateArgument::NullPtr:

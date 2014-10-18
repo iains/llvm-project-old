@@ -740,7 +740,7 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     B.addAttribute(llvm::Attribute::StackProtectReq);
 
   // Add sanitizer attributes if function is not blacklisted.
-  if (!getSanitizerBlacklist().isIn(*F)) {
+  if (!isInSanitizerBlacklist(F, D->getLocation())) {
     // When AddressSanitizer is enabled, set SanitizeAddress attribute
     // unless __attribute__((no_sanitize_address)) is used.
     if (LangOpts.Sanitize.Address && !D->hasAttr<NoSanitizeAddressAttr>())
@@ -1166,6 +1166,52 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
   // Get the struct elements for these annotations.
   for (const auto *I : D->specific_attrs<AnnotateAttr>())
     Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
+}
+
+bool CodeGenModule::isInSanitizerBlacklist(llvm::Function *Fn,
+                                           SourceLocation Loc) const {
+  const auto &SanitizerBL = getContext().getSanitizerBlacklist();
+  // Blacklist by function name.
+  if (SanitizerBL.isBlacklistedFunction(Fn->getName()))
+    return true;
+  // Blacklist by location.
+  if (!Loc.isInvalid())
+    return SanitizerBL.isBlacklistedLocation(Loc);
+  // If location is unknown, this may be a compiler-generated function. Assume
+  // it's located in the main file.
+  auto &SM = Context.getSourceManager();
+  if (const auto *MainFile = SM.getFileEntryForID(SM.getMainFileID())) {
+    return SanitizerBL.isBlacklistedFile(MainFile->getName());
+  }
+  return false;
+}
+
+bool CodeGenModule::isInSanitizerBlacklist(llvm::GlobalVariable *GV,
+                                           SourceLocation Loc, QualType Ty,
+                                           StringRef Category) const {
+  // For now globals can be blacklisted only in ASan.
+  if (!LangOpts.Sanitize.Address)
+    return false;
+  const auto &SanitizerBL = getContext().getSanitizerBlacklist();
+  if (SanitizerBL.isBlacklistedGlobal(GV->getName(), Category))
+    return true;
+  if (SanitizerBL.isBlacklistedLocation(Loc, Category))
+    return true;
+  // Check global type.
+  if (!Ty.isNull()) {
+    // Drill down the array types: if global variable of a fixed type is
+    // blacklisted, we also don't instrument arrays of them.
+    while (auto AT = dyn_cast<ArrayType>(Ty.getTypePtr()))
+      Ty = AT->getElementType();
+    Ty = Ty.getCanonicalType().getUnqualifiedType();
+    // We allow to blacklist only record types (classes, structs etc.)
+    if (Ty->isRecordType()) {
+      std::string TypeStr = Ty.getAsString(getContext().getPrintingPolicy());
+      if (SanitizerBL.isBlacklistedType(TypeStr, Category))
+        return true;
+    }
+  }
+  return false;
 }
 
 bool CodeGenModule::MayDeferGeneration(const ValueDecl *Global) {
@@ -1930,6 +1976,13 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D) {
   // If it is safe to mark the global 'constant', do so now.
   GV->setConstant(!NeedsGlobalCtor && !NeedsGlobalDtor &&
                   isTypeConstant(D->getType(), true));
+
+  // If it is in a read-only section, mark it 'constant'.
+  if (const SectionAttr *SA = D->getAttr<SectionAttr>()) {
+    const ASTContext::SectionInfo &SI = Context.SectionInfos[SA->getName()];
+    if ((SI.SectionFlags & ASTContext::PSF_Write) == 0)
+      GV->setConstant(true);
+  }
 
   GV->setAlignment(getContext().getDeclAlign(D).getQuantity());
 
@@ -2775,7 +2828,8 @@ CodeGenModule::GetAddrOfConstantStringFromLiteral(const StringLiteral *S,
   if (Entry)
     *Entry = GV;
 
-  SanitizerMD->reportGlobalToASan(GV, S->getStrTokenLoc(0), "<string literal>");
+  SanitizerMD->reportGlobalToASan(GV, S->getStrTokenLoc(0), "<string literal>",
+                                  QualType());
   return GV;
 }
 

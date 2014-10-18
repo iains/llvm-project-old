@@ -13,13 +13,11 @@
 #include "lld/Core/LinkingContext.h"
 #include "lld/ReaderWriter/Reader.h"
 #include "lld/ReaderWriter/Writer.h"
-
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileUtilities.h"
-
 #include <map>
 #include <mutex>
 #include <set>
@@ -261,6 +259,10 @@ public:
   void addDllExport(ExportDesc &desc);
   std::vector<ExportDesc> &getDllExports() { return _dllExports; }
   const std::vector<ExportDesc> &getDllExports() const { return _dllExports; }
+
+  StringRef getDelayLoadHelperName() const {
+    return is64Bit() ? "__delayLoadHelper2" : "___delayLoadHelper2@8";
+  }
 
   StringRef allocate(StringRef ref) const {
     _allocMutex.lock();

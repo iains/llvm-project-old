@@ -13,12 +13,10 @@
 #include "lld/Core/LinkingContext.h"
 #include "lld/ReaderWriter/Reader.h"
 #include "lld/ReaderWriter/Writer.h"
-
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MachO.h"
-
 #include <set>
 
 using llvm::MachO::HeaderFileType;
@@ -237,7 +235,7 @@ public:
   StringRef binderSymbolName() const;
 
   /// Used to keep track of direct and indirect dylibs.
-  void registerDylib(mach_o::MachODylibFile *dylib) const;
+  void registerDylib(mach_o::MachODylibFile *dylib, bool upward) const;
 
   /// Used to find indirect dylibs. Instantiates a MachODylibFile if one
   /// has not already been made for the requested dylib.  Uses -L and -F
@@ -251,6 +249,9 @@ public:
   /// this method will return the offset and size of that slice.
   bool sliceFromFatFile(const MemoryBuffer &mb, uint32_t &offset,
                         uint32_t &size);
+
+  /// Returns if a command line option specified dylib is an upward link.
+  bool isUpwardDylib(StringRef installName) const;
 
   static bool isThinObjectFile(StringRef path, Arch &arch);
   static Arch archFromCpuType(uint32_t cputype, uint32_t cpusubtype);
@@ -317,6 +318,7 @@ private:
   std::vector<SectionAlign> _sectAligns;
   mutable llvm::StringMap<mach_o::MachODylibFile*> _pathToDylibMap;
   mutable std::set<mach_o::MachODylibFile*> _allDylibs;
+  mutable std::set<mach_o::MachODylibFile*> _upwardDylibs;
   mutable std::vector<std::unique_ptr<class MachOFileNode>> _indirectDylibs;
   ExportMode _exportMode;
   llvm::StringSet<> _exportedSymbols;

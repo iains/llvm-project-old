@@ -29,8 +29,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/Errc.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/Format.h"
@@ -808,7 +808,7 @@ std::error_code MachOFileLayout::writeLoadCommands() {
     for (const DependentDylib &dep : _file.dependentDylibs) {
       dylib_command* dc = reinterpret_cast<dylib_command*>(lc);
       uint32_t size = sizeof(dylib_command) + pointerAlign(dep.path.size()+1);
-      dc->cmd                         = LC_LOAD_DYLIB;
+      dc->cmd                         = dep.kind;
       dc->cmdsize                     = size;
       dc->dylib.name                  = sizeof(dylib_command); // offset
       dc->dylib.timestamp             = 0; // FIXME

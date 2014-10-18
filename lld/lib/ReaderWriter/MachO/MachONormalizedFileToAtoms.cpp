@@ -21,17 +21,14 @@
 ///                    +-------+
 
 #include "MachONormalizedFile.h"
-
 #include "ArchHandler.h"
 #include "Atoms.h"
 #include "File.h"
 #include "MachONormalizedFileBinaryUtils.h"
-
 #include "lld/Core/Error.h"
 #include "lld/Core/LLVM.h"
-
-#include "llvm/Support/MachO.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/MachO.h"
 
 using namespace llvm::MachO;
 using namespace lld::mach_o::normalized;
@@ -677,7 +674,9 @@ std::error_code addEHFrameReferences(const NormalizedFile &normalizedFile,
                        addend, handler.kindArch());
 
     // Linker needs to fixup reference from the FDE to the function it's
-    // describing.
+    // describing. FIXME: there are actually different ways to do this, and the
+    // particular method used is specified in the CIE's augmentation fields
+    // (hopefully)
     uint64_t rangeFieldInFDE = cieFieldInFDE + sizeof(uint32_t);
 
     int64_t functionFromFDE = readSPtr(is64, swap, frameData + rangeFieldInFDE);

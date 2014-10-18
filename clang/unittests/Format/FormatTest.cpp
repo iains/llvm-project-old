@@ -3514,6 +3514,8 @@ TEST_F(FormatTest, TrailingReturnType) {
   verifyFormat("template <size_t Order, typename T>\n"
                "auto load_img(const std::string &filename)\n"
                "    -> alias::tensor<Order, T, mem::tag::cpu> {}");
+  verifyFormat("auto SomeFunction(A aaaaaaaaaaaaaaaaaaaaa) const\n"
+               "    -> decltype(f(aaaaaaaaaaaaaaaaaaaaa)) {}");
 
   // Not trailing return types.
   verifyFormat("void f() { auto a = b->c(); }");
@@ -4060,6 +4062,12 @@ TEST_F(FormatTest, BreaksConditionalExpressions) {
       "        ?: aaaaaaaaaaaaaaa);\n"
       "}",
       NoBinPacking);
+
+  verifyFormat("SomeFunction(aaaaaaaaaaaaaaaaa,\n"
+               "             // comment.\n"
+               "             ccccccccccccccccccccccccccccccccccccccc\n"
+               "                 ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "                 : bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);");
 }
 
 TEST_F(FormatTest, BreaksConditionalExpressionsAfterOperator) {
@@ -6461,6 +6469,7 @@ TEST_F(FormatTest, FormatObjCMethodDeclarations) {
 TEST_F(FormatTest, FormatObjCMethodExpr) {
   verifyFormat("[foo bar:baz];");
   verifyFormat("return [foo bar:baz];");
+  verifyFormat("return (a)[foo bar:baz];");
   verifyFormat("f([foo bar:baz]);");
   verifyFormat("f(2, [foo bar:baz]);");
   verifyFormat("f(2, a ? b : c);");
@@ -9137,10 +9146,8 @@ TEST_F(FormatTest, FormatsBlocks) {
   verifyFormat("foo(^{ bar(); });");
   verifyFormat("foo(a, ^{ bar(); });");
 
-  // FIXME: Make whitespace formatting consistent. Ask a ObjC dev how
-  // it would ideally look.
   verifyFormat("[operation setCompletionBlock:^{ [self onOperationDone]; }];");
-  verifyFormat("int i = {[operation setCompletionBlock : ^{ [self "
+  verifyFormat("int i = {[operation setCompletionBlock:^{ [self "
                "onOperationDone]; }]};");
   verifyFormat("[operation setCompletionBlock:^(int *i) { f(); }];");
   verifyFormat("int a = [operation block:^int(int *i) { return 1; }];");

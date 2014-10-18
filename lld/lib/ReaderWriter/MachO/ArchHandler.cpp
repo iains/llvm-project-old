@@ -11,11 +11,9 @@
 #include "ArchHandler.h"
 #include "Atoms.h"
 #include "MachONormalizedFileBinaryUtils.h"
-
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
-
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm::MachO;
@@ -151,6 +149,18 @@ bool ArchHandler::isDwarfCIE(bool swap, const DefinedAtom *atom) {
     idOffset += sizeof(uint64_t);
 
   return read32(swap, *(uint32_t *)(atom->rawContent().data() + idOffset)) == 0;
+}
+
+const Atom *ArchHandler::fdeTargetFunction(const DefinedAtom *fde) {
+  for (auto ref : *fde) {
+    if (ref->kindNamespace() == Reference::KindNamespace::mach_o &&
+        ref->kindValue() == unwindRefToFunctionKind()) {
+      assert(ref->kindArch() == kindArch() && "unexpected Reference arch");
+      return ref->target();
+    }
+  }
+
+  return nullptr;
 }
 
 } // namespace mach_o

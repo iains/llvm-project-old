@@ -13,7 +13,6 @@
 #include "CreateELF.h"
 #include "DynamicFile.h"
 #include "ELFFile.h"
-
 #include "lld/ReaderWriter/Reader.h"
 
 namespace lld {
