@@ -35,10 +35,14 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetOptions.h"
+
+#define DEBUG_TYPE "ppc-lowering"
 
 using namespace llvm;
 
@@ -3247,6 +3251,8 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
     switch (ObjectVT.getSimpleVT().SimpleTy) {
     default: llvm_unreachable("Unhandled argument type!");
     case MVT::i1:
+    case MVT::i8:
+    case MVT::i16:
     case MVT::i32:
     case MVT::i64:
       if (Flags.isNest()) {
@@ -3468,6 +3474,7 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
+DEBUG(dbgs() << "LowerFormalArguments_Darwin (" << MF.getName() << ") N in : " << Ins.size() << "\n");
 
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(MF.getDataLayout());
   bool isPPC64 = PtrVT == MVT::i64;
@@ -3508,14 +3515,19 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
   // that out...for the pathological case, compute VecArgOffset as the
   // start of the vector parameter area.  Computing VecArgOffset is the
   // entire point of the following loop.
-  unsigned VecArgOffset = ArgOffset;
+  unsigned VecArgOffset = LinkageSize;
   if (!isVarArg && !isPPC64) {
     for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e;
          ++ArgNo) {
-      EVT ObjectVT = Ins[ArgNo].VT;
+      MVT ObjectVT = Ins[ArgNo].VT;
       ISD::ArgFlagsTy Flags = Ins[ArgNo].Flags;
 
       if (Flags.isByVal()) {
+        // Special case of a 16byte byval.
+        if (Flags.getByValSize() == 16)
+          // We pass v2i64 and v2f64 as byvals.
+          continue;
+
         // ObjSize is the true size, ArgSize rounded up to multiple of regs.
         unsigned ObjSize = Flags.getByValSize();
         unsigned ArgSize =
@@ -3524,9 +3536,11 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
         continue;
       }
 
-      switch(ObjectVT.getSimpleVT().SimpleTy) {
+      switch(ObjectVT.SimpleTy) {
       default: llvm_unreachable("Unhandled argument type!");
       case MVT::i1:
+      case MVT::i8:
+      case MVT::i16:
       case MVT::i32:
       case MVT::f32:
         VecArgOffset += 4;
@@ -3535,6 +3549,7 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
       case MVT::f64:
         // FIXME: We are guaranteed to be !isPPC64 at this point.
         // Does MVT::i64 apply?
+        // FIXME: count alignment?
         VecArgOffset += 8;
         break;
       case MVT::v4f32:
@@ -3546,9 +3561,9 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
       }
     }
   }
-  // We've found where the vector parameter area in memory is.  Skip the
-  // first 12 parameters; these don't use that memory.
+  // Vectors are 16byte aligned.
   VecArgOffset = ((VecArgOffset+15)/16)*16;
+  // Skip the first 12 parameters; these don't use that memory.
   VecArgOffset += 12*16;
 
   // Add DAG nodes to load the arguments or copy them out of registers.  On
@@ -3558,11 +3573,13 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
   SmallVector<SDValue, 8> MemOps;
   unsigned nAltivecParamsAtEnd = 0;
   Function::const_arg_iterator FuncArg = MF.getFunction()->arg_begin();
+  unsigned LastDumpedInd = 0xffffff;
   unsigned CurArgIdx = 0;
   for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e; ++ArgNo) {
     SDValue ArgVal;
     bool needsLoad = false;
-    EVT ObjectVT = Ins[ArgNo].VT;
+    MVT ObjectVT = Ins[ArgNo].VT;
+    EVT ArgVT = Ins[ArgNo].ArgVT;
     unsigned ObjSize = (ObjectVT.getSizeInBits() + 7)/8;
     unsigned ArgSize = ObjSize;
     ISD::ArgFlagsTy Flags = Ins[ArgNo].Flags;
@@ -3570,7 +3587,23 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
       std::advance(FuncArg, Ins[ArgNo].getOrigArgIndex() - CurArgIdx);
       CurArgIdx = Ins[ArgNo].getOrigArgIndex();
     }
+//    std::advance(FuncArg, Ins[ArgNo].OrigArgIndex - CurArgIdx);
+//    CurArgIdx = Ins[ArgNo].OrigArgIndex;
     unsigned CurArgOffset = ArgOffset;
+
+if (Ins[ArgNo].OrigArgIndex != LastDumpedInd) {
+DEBUG(FuncArg->dump());
+LastDumpedInd = Ins[ArgNo].OrigArgIndex;
+}
+
+DEBUG(dbgs() << ArgNo << format("(GPR: %2d) (FPR: %2d) partoff: %2x flags : 0x%08x type: ", GPR_idx, FPR_idx, Ins[ArgNo].PartOffset, Ins[ArgNo].Flags) << Ins[ArgNo].ArgVT.getEVTString());
+DEBUG(dbgs() << format(" CurArgOffset %u CurArgIdx %u\n", CurArgOffset, CurArgIdx));
+    bool IsVectPtr = false;
+    if (FuncArg->getType()->isPointerTy()) {
+      Type *T = FuncArg->getType()->getPointerElementType();
+      IsVectPtr = T->isVectorTy();
+DEBUG(dbgs() << (IsVectPtr ? " points to A Vector\n" : " doesn't point to a Vector\n"));
+    }
 
     // Varargs or 64 bit Altivec parameters are padded to a 16 byte boundary.
     if (ObjectVT==MVT::v4f32 || ObjectVT==MVT::v4i32 ||
@@ -3594,11 +3627,28 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
 
       // ObjSize is the true size, ArgSize rounded up to multiple of registers.
       ObjSize = Flags.getByValSize();
+DEBUG(dbgs() << format(" Arg %d, is %d byte byval : ", ArgNo, ObjSize) << (unsigned) ObjectVT.SimpleTy << " : " << (unsigned) ArgVT.getSimpleVT().SimpleTy << "\n");
       ArgSize = ((ObjSize + PtrByteSize - 1)/PtrByteSize) * PtrByteSize;
       // Objects of size 1 and 2 are right justified, everything else is
       // left justified.  This means the memory address is adjusted forwards.
       if (ObjSize==1 || ObjSize==2) {
         CurArgOffset = CurArgOffset + (4 - ObjSize);
+      }
+      // Special byval case
+      if (ObjSize==16 && IsVectPtr) {
+        // OK. so this behaviour is somewhat peculiar.
+        // These two vector types are treated (in some respect) as vectors.
+        // but they *do* occupy stack space (regardless of how many vec regs
+        // have been used).  Furthermore, they are not passed in regs - so
+        // we just add the byval ref.
+        // FIXME: I have no clue what happens if the total number of vector
+        // regs is exceeded and "normal" altivec stuff starts to spill to the
+        // stack.
+        int FI = MFI->CreateFixedObject(ObjSize, VecArgOffset, false, true);
+        SDValue FIN = DAG.getFrameIndex(FI, PtrVT);
+        InVals.push_back(FIN);
+        VecArgOffset += 16;
+        continue;
       }
       // The value of the object is its address.
       int FI = MFI->CreateFixedObject(ObjSize, CurArgOffset, false, true);
@@ -3651,9 +3701,11 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
       continue;
     }
 
-    switch (ObjectVT.getSimpleVT().SimpleTy) {
+    switch (ObjectVT.SimpleTy) {
     default: llvm_unreachable("Unhandled argument type!");
     case MVT::i1:
+    case MVT::i8:
+    case MVT::i16:
     case MVT::i32:
       if (!isPPC64) {
         if (GPR_idx != Num_GPR_Regs) {
@@ -5383,13 +5435,19 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
                                     ImmutableCallSite *CS) const {
 
   unsigned NumOps = Outs.size();
+  unsigned NumIns = Ins.size();
 
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout());
   bool isPPC64 = PtrVT == MVT::i64;
   unsigned PtrByteSize = isPPC64 ? 8 : 4;
 
   MachineFunction &MF = DAG.getMachineFunction();
-
+DEBUG(dbgs() << "LowerCall_Darwin (" << MF.getName() << ") N out : " << NumOps << " N in " << NumIns << "\n");
+DEBUG(Callee.dumpr());
+  unsigned i=0;
+  for (const auto &I : Ins) {
+DEBUG(dbgs() << i++ << format(" flags : 0x%08x : part off: 0x%02x type : ", I.Flags, I.PartOffset) << I.ArgVT.getEVTString() << "\n");
+  }
   // Mark this function as potentially containing a function that contains a
   // tail call. As a consequence the frame pointer will be used for dynamicalloc
   // and restoring the callers stack pointer in this functions epilog. This is
@@ -5413,6 +5471,7 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
   // 16-byte aligned.
   unsigned nAltivecParamsAtEnd = 0;
   for (unsigned i = 0; i != NumOps; ++i) {
+
     ISD::ArgFlagsTy Flags = Outs[i].Flags;
     EVT ArgVT = Outs[i].VT;
     // Varargs Altivec parameters are padded to a 16 byte boundary.
@@ -5511,6 +5570,7 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
   for (unsigned i = 0; i != NumOps; ++i) {
     SDValue Arg = OutVals[i];
     ISD::ArgFlagsTy Flags = Outs[i].Flags;
+DEBUG(dbgs() << i << format("[%2u] (GPR %2d) (FPR %2d) part off: %3u flags : 0x%08x type: ", Outs[i].OrigArgIndex, GPR_idx, FPR_idx, Outs[i].PartOffset, Outs[i].Flags) << Outs[i].ArgVT.getEVTString() << "\n");
 
     // PtrOff will be used to store the current argument to the stack if a
     // register cannot be found for it.
@@ -5581,11 +5641,13 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
         }
       }
       continue;
-    }
+    } // byVal.
 
     switch (Arg.getSimpleValueType().SimpleTy) {
     default: llvm_unreachable("Unexpected ValueType for argument!");
     case MVT::i1:
+    case MVT::i8:
+    case MVT::i16:
     case MVT::i32:
     case MVT::i64:
       if (GPR_idx != NumGPRs) {
