@@ -717,6 +717,31 @@ let Uses = [RM] in {
                        (outs vsrc:$XT), (ins vsrc:$XB, u2imm:$UIM),
                        "xxspltw $XT, $XB, $UIM", IIC_VecPerm, []>;
 } // neverHasSideEffects
+
+// SELECT_CC_* - Used to implement the SELECT_CC DAG operation.  Expanded after
+// instruction selection into a branch sequence.
+let usesCustomInserter = 1,    // Expanded after instruction selection.
+    PPC970_Single = 1 in {
+
+  def SELECT_CC_VSRC: Pseudo<(outs vsrc:$dst),
+                             (ins crrc:$cond, vsrc:$T, vsrc:$F, i32imm:$BROPC),
+                             "#SELECT_CC_VSRC",
+                             []>;
+  def SELECT_VSRC: Pseudo<(outs vsrc:$dst),
+                          (ins crbitrc:$cond, vsrc:$T, vsrc:$F),
+                          "#SELECT_VSRC",
+                          [(set v2f64:$dst,
+                                (select i1:$cond, v2f64:$T, v2f64:$F))]>;
+  def SELECT_CC_VSFRC: Pseudo<(outs f8rc:$dst),
+                              (ins crrc:$cond, f8rc:$T, f8rc:$F,
+                               i32imm:$BROPC), "#SELECT_CC_VSFRC",
+                              []>;
+  def SELECT_VSFRC: Pseudo<(outs f8rc:$dst),
+                           (ins crbitrc:$cond, f8rc:$T, f8rc:$F),
+                           "#SELECT_VSFRC",
+                           [(set f64:$dst,
+                                 (select i1:$cond, f64:$T, f64:$F))]>;
+} // usesCustomInserter
 } // AddedComplexity
 
 def : InstAlias<"xvmovdp $XT, $XB",
@@ -819,6 +844,33 @@ def : Pat<(v4i32 (load xoaddr:$src)), (LXVW4X xoaddr:$src)>;
 // Stores.
 def : Pat<(store v4i32:$rS, xoaddr:$dst),
           (STXVW4X $rS, xoaddr:$dst)>;
+
+// Selects.
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETLT)),
+          (SELECT_VSRC (CRANDC $rhs, $lhs), $tval, $fval)>;
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETLE)),
+          (SELECT_VSRC (CRORC  $rhs, $lhs), $tval, $fval)>;
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETEQ)),
+          (SELECT_VSRC (CREQV $lhs, $rhs), $tval, $fval)>;
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETGE)),
+          (SELECT_VSRC (CRORC  $lhs, $rhs), $tval, $fval)>;
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETGT)),
+          (SELECT_VSRC (CRANDC $lhs, $rhs), $tval, $fval)>;
+def : Pat<(v2f64 (selectcc i1:$lhs, i1:$rhs, v2f64:$tval, v2f64:$fval, SETNE)),
+          (SELECT_VSRC (CRXOR $lhs, $rhs), $tval, $fval)>;
+
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETLT)),
+          (SELECT_VSFRC (CRANDC $rhs, $lhs), $tval, $fval)>;
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETLE)),
+          (SELECT_VSFRC (CRORC  $rhs, $lhs), $tval, $fval)>;
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETEQ)),
+          (SELECT_VSFRC (CREQV $lhs, $rhs), $tval, $fval)>;
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETGE)),
+          (SELECT_VSFRC (CRORC  $lhs, $rhs), $tval, $fval)>;
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETGT)),
+          (SELECT_VSFRC (CRANDC $lhs, $rhs), $tval, $fval)>;
+def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETNE)),
+          (SELECT_VSFRC (CRXOR $lhs, $rhs), $tval, $fval)>;
 
 } // AddedComplexity
 } // HasVSX
