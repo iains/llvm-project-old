@@ -164,12 +164,6 @@ class DwarfDebug : public AsmPrinterHandler {
   // All DIEValues are allocated through this allocator.
   BumpPtrAllocator DIEValueAllocator;
 
-  // Handle to the compile unit used for the inline extension handling,
-  // this is just so that the DIEValue allocator has a place to store
-  // the particular elements.
-  // FIXME: Store these off of DwarfDebug instead?
-  DwarfCompileUnit *FirstCU;
-
   // Maps MDNode with its corresponding DwarfCompileUnit.
   MapVector<const MDNode *, DwarfCompileUnit *> CUMap;
 
@@ -194,18 +188,10 @@ class DwarfDebug : public AsmPrinterHandler {
   typedef DenseMap<const MCSection *, SmallVector<SymbolCU, 8> > SectionMapType;
   SectionMapType SectionMap;
 
-  // List of arguments for current function.
-  SmallVector<DbgVariable *, 8> CurrentFnArguments;
-
   LexicalScopes LScopes;
 
   // Collection of abstract subprogram DIEs.
   DenseMap<const MDNode *, DIE *> AbstractSPDies;
-
-  // Collection of dbg variables of a scope.
-  typedef DenseMap<LexicalScope *, SmallVector<DbgVariable *, 8> >
-  ScopeVariablesMap;
-  ScopeVariablesMap ScopeVariables;
 
   // Collection of abstract variables.
   DenseMap<const MDNode *, std::unique_ptr<DbgVariable>> AbstractVariables;
@@ -332,8 +318,6 @@ class DwarfDebug : public AsmPrinterHandler {
   DenseMap<const Function *, DISubprogram> FunctionDIs;
 
   MCDwarfDwoLineTable *getDwoLineTable(const DwarfCompileUnit &);
-
-  void addScopeVariable(LexicalScope *LS, DbgVariable *Var);
 
   const SmallVectorImpl<std::unique_ptr<DwarfUnit>> &getUnits() {
     return InfoHolder.getUnits();
@@ -486,12 +470,9 @@ class DwarfDebug : public AsmPrinterHandler {
   /// ending of a scope.
   void identifyScopeMarkers();
 
-  /// \brief If Var is an current function argument that add it in
-  /// CurrentFnArguments list.
-  bool addCurrentFnArgument(DbgVariable *Var, LexicalScope *Scope);
-
   /// \brief Populate LexicalScope entries with variables' info.
-  void collectVariableInfo(SmallPtrSetImpl<const MDNode *> &ProcessedVars);
+  void collectVariableInfo(DwarfCompileUnit &TheCU, DISubprogram SP,
+                           SmallPtrSetImpl<const MDNode *> &ProcessedVars);
 
   /// \brief Build the location list for all DBG_VALUEs in the
   /// function that describe the same variable.
@@ -673,14 +654,8 @@ public:
     return AbstractSPDies;
   }
 
-  ScopeVariablesMap &getScopeVariables() { return ScopeVariables; }
-
   SmallPtrSet<const MDNode *, 16> &getProcessedSPNodes() {
     return ProcessedSPNodes;
-  }
-
-  SmallVector<DbgVariable *, 8> &getCurrentFnArguments() {
-    return CurrentFnArguments;
   }
 };
 } // End of namespace llvm
