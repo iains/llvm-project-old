@@ -482,8 +482,11 @@ static GlobalObject *makeInternalReplacement(GlobalObject *GO) {
   Module *M = GO->getParent();
   GlobalObject *Ret;
   if (auto *F = dyn_cast<Function>(GO)) {
-    if (F->isMaterializable())
-      F->Materialize();
+    if (F->isMaterializable()) {
+      if (F->materialize())
+        message(LDPL_FATAL, "LLVM gold plugin has failed to read a function");
+
+    }
 
     auto *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
                                   F->getName(), M);
@@ -774,9 +777,8 @@ static ld_plugin_status allSymbolsReadHook(raw_fd_ostream *ApiFile) {
       M->setTargetTriple(DefaultTriple);
     }
 
-    std::string ErrMsg;
-    if (L.linkInModule(M.get(), &ErrMsg))
-      message(LDPL_FATAL, "Failed to link module: %s", ErrMsg.c_str());
+    if (L.linkInModule(M.get()))
+      message(LDPL_FATAL, "Failed to link module");
   }
 
   for (const auto &Name : Internalize) {
