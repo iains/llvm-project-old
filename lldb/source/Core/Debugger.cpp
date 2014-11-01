@@ -125,8 +125,7 @@ g_language_enumerators[] =
     FILE_AND_LINE\
     "\\n"
 
-#define DEFAULT_DISASSEMBLY_FORMAT "${addr-file-or-load} <${function.name-without-args}${function.concrete-only-addr-offset-no-padding}>: "
-
+#define DEFAULT_DISASSEMBLY_FORMAT "${addr-file-or-load}{ <${function.name-without-args}${function.concrete-only-addr-offset-no-padding}>}: "
 
 static PropertyDefinition
 g_properties[] =
@@ -1734,6 +1733,15 @@ FormatPromptRecurse
                                     was_plain_var = true;
                                     target = valobj;
                                     val_obj_display = ValueObject::eValueObjectRepresentationStyleValue;
+                                }
+                                else if (IsToken (var_name_begin, "var.script:"))
+                                {
+                                    var_name_begin += ::strlen("var.script:");
+                                    std::string script_name(var_name_begin,var_name_end);
+                                    ScriptInterpreter* script_interpreter = valobj->GetTargetSP()->GetDebugger().GetCommandInterpreter().GetScriptInterpreter();
+                                    if (RunScriptFormatKeyword (s, script_interpreter, valobj, script_name))
+                                        var_success = true;
+                                    break;
                                 }
                                 else if (IsToken (var_name_begin,"var%"))
                                 {

@@ -1136,7 +1136,9 @@ void PPCTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
 }
 
 bool PPCTargetInfo::hasFeature(StringRef Feature) const {
-  return Feature == "powerpc";
+  return (Feature == "powerpc" ||
+	  (Feature == "vsx" && HasVSX) ||
+	  (Feature == "power8-vector" && HasP8Vector));
 }
 
   
@@ -3501,6 +3503,7 @@ public:
 
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
     return (CC == CC_C ||
+            CC == CC_X86VectorCall ||
             CC == CC_IntelOclBicc ||
             CC == CC_X86_64Win64) ? CCCR_OK : CCCR_Warning;
   }
@@ -3540,6 +3543,7 @@ public:
   }
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
     return (CC == CC_C ||
+            CC == CC_X86VectorCall ||
             CC == CC_IntelOclBicc ||
             CC == CC_X86_64SysV) ? CCCR_OK : CCCR_Warning;
   }

@@ -42,6 +42,10 @@ public:
   DwarfCompileUnit(unsigned UID, DICompileUnit Node, AsmPrinter *A,
                    DwarfDebug *DW, DwarfFile *DWU);
 
+  DwarfCompileUnit *getSkeleton() const {
+    return static_cast<DwarfCompileUnit *>(Skeleton);
+  }
+
   void initStmtList(MCSymbol *DwarfLineSectionSym);
 
   /// Apply the DW_AT_stmt_list from this compile unit to the specified DIE.
@@ -121,13 +125,15 @@ public:
 
   DIE *createAndAddScopeChildren(LexicalScope *Scope, DIE &ScopeDIE);
 
-  DIE &constructAbstractSubprogramScopeDIE(LexicalScope *Scope);
+  void constructAbstractSubprogramScopeDIE(LexicalScope *Scope);
 
   /// \brief Construct import_module DIE.
   std::unique_ptr<DIE>
   constructImportedEntityDIE(const DIImportedEntity &Module);
 
   void finishSubprogramDefinition(DISubprogram SP);
+
+  void collectDeadVariables(DISubprogram SP);
 };
 
 } // end llvm namespace

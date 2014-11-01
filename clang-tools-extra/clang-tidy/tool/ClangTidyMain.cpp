@@ -35,11 +35,10 @@ static cl::extrahelp ClangTidyHelp(
     "  option, command-line option takes precedence. The effective\n"
     "  configuration can be inspected using -dump-config.\n\n");
 
-const char DefaultChecks[] =
-    "*,"                       // Enable all checks, except these:
-    "-clang-analyzer-alpha*,"  // Too many false positives.
-    "-llvm-include-order,"     // Not implemented yet.
-    "-google-*,";              // Doesn't apply to LLVM.
+const char DefaultChecks[] =  // Enable these checks:
+    "clang-diagnostic-*,"     //   * compiler diagnostics
+    "clang-analyzer-*,"       //   * Static Analyzer checks
+    "-clang-analyzer-alpha*"; //   * but not alpha checks: many false positives
 
 static cl::opt<std::string>
 Checks("checks", cl::desc("Comma-separated list of globs with optional '-'\n"
@@ -63,6 +62,10 @@ HeaderFilter("header-filter",
                       ".clang-tidy file."),
              cl::init(""), cl::cat(ClangTidyCategory));
 
+static cl::opt<bool>
+    SystemHeaders("system-headers",
+                  cl::desc("Display the errors from system headers"),
+                  cl::init(false), cl::cat(ClangTidyCategory));
 static cl::opt<std::string>
 LineFilter("line-filter",
            cl::desc("List of files with line ranges to filter the\n"
@@ -198,6 +201,7 @@ std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
   ClangTidyOptions DefaultOptions;
   DefaultOptions.Checks = DefaultChecks;
   DefaultOptions.HeaderFilterRegex = HeaderFilter;
+  DefaultOptions.SystemHeaders = SystemHeaders;
   DefaultOptions.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
   DefaultOptions.User = llvm::sys::Process::GetEnv("USER");
   // USERNAME is used on Windows.
@@ -209,6 +213,8 @@ std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
     OverrideOptions.Checks = Checks;
   if (HeaderFilter.getNumOccurrences() > 0)
     OverrideOptions.HeaderFilterRegex = HeaderFilter;
+  if (SystemHeaders.getNumOccurrences() > 0)
+    OverrideOptions.SystemHeaders = SystemHeaders;
   if (AnalyzeTemporaryDtors.getNumOccurrences() > 0)
     OverrideOptions.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
 

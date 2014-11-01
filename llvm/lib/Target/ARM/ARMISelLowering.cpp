@@ -3632,12 +3632,18 @@ SDValue ARMTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
     //   select c, a, b
     // We only do this in unsafe-fp-math, because signed zeros and NaNs are
     // handled differently than the original code sequence.
-    if (getTargetMachine().Options.UnsafeFPMath && LHS == TrueVal &&
-        RHS == FalseVal) {
-      if (CC == ISD::SETOGT || CC == ISD::SETUGT)
-        return DAG.getNode(ARMISD::VMAXNM, dl, VT, TrueVal, FalseVal);
-      if (CC == ISD::SETOLT || CC == ISD::SETULT)
-        return DAG.getNode(ARMISD::VMINNM, dl, VT, TrueVal, FalseVal);
+    if (getTargetMachine().Options.UnsafeFPMath) {
+      if (LHS == TrueVal && RHS == FalseVal) {
+        if (CC == ISD::SETOGT || CC == ISD::SETUGT)
+          return DAG.getNode(ARMISD::VMAXNM, dl, VT, TrueVal, FalseVal);
+        if (CC == ISD::SETOLT || CC == ISD::SETULT)
+          return DAG.getNode(ARMISD::VMINNM, dl, VT, TrueVal, FalseVal);
+      } else if (LHS == FalseVal && RHS == TrueVal) {
+        if (CC == ISD::SETOLT || CC == ISD::SETULT)
+          return DAG.getNode(ARMISD::VMAXNM, dl, VT, TrueVal, FalseVal);
+        if (CC == ISD::SETOGT || CC == ISD::SETUGT)
+          return DAG.getNode(ARMISD::VMINNM, dl, VT, TrueVal, FalseVal);
+      }
     }
 
     bool swpCmpOps = false;
@@ -11115,6 +11121,35 @@ bool ARMTargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const {
 // This has so far only been implemented for MachO.
 bool ARMTargetLowering::useLoadStackGuardNode() const {
   return Subtarget->getTargetTriple().getObjectFormat() == Triple::MachO;
+}
+
+bool ARMTargetLowering::canCombineStoreAndExtract(Type *VectorTy, Value *Idx,
+                                                  unsigned &Cost) const {
+  // If we do not have NEON, vector types are not natively supported.
+  if (!Subtarget->hasNEON())
+    return false;
+
+  // Floating point values and vector values map to the same register file.
+  // Therefore, althought we could do a store extract of a vector type, this is
+  // better to leave at float as we have more freedom in the addressing mode for
+  // those.
+  if (VectorTy->isFPOrFPVectorTy())
+    return false;
+
+  // If the index is unknown at compile time, this is very expensive to lower
+  // and it is not possible to combine the store with the extract.
+  if (!isa<ConstantInt>(Idx))
+    return false;
+
+  assert(VectorTy->isVectorTy() && "VectorTy is not a vector type");
+  unsigned BitWidth = cast<VectorType>(VectorTy)->getBitWidth();
+  // We can do a store + vector extract on any vector that fits perfectly in a D
+  // or Q register.
+  if (BitWidth == 64 || BitWidth == 128) {
+    Cost = 0;
+    return true;
+  }
+  return false;
 }
 
 Value *ARMTargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,

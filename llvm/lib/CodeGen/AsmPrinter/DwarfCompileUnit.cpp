@@ -586,8 +586,12 @@ DIE *DwarfCompileUnit::createAndAddScopeChildren(LexicalScope *Scope,
   return ObjectPointer;
 }
 
-DIE &
+void
 DwarfCompileUnit::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
+  DIE *&AbsDef = DD->getAbstractSPDies()[Scope->getScopeNode()];
+  if (AbsDef)
+    return;
+
   DISubprogram SP(Scope->getScopeNode());
 
   DIE *ContextDIE;
@@ -604,15 +608,14 @@ DwarfCompileUnit::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
 
   // Passing null as the associated DIDescriptor because the abstract definition
   // shouldn't be found by lookup.
-  DIE &AbsDef =
-      createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE, DIDescriptor());
-  applySubprogramAttributesToDefinition(SP, AbsDef);
+  AbsDef =
+      &createAndAddDIE(dwarf::DW_TAG_subprogram, *ContextDIE, DIDescriptor());
+  applySubprogramAttributesToDefinition(SP, *AbsDef);
 
   if (getCUNode().getEmissionKind() != DIBuilder::LineTablesOnly)
-    addUInt(AbsDef, dwarf::DW_AT_inline, None, dwarf::DW_INL_inlined);
-  if (DIE *ObjectPointer = createAndAddScopeChildren(Scope, AbsDef))
-    addDIEEntry(AbsDef, dwarf::DW_AT_object_pointer, *ObjectPointer);
-  return AbsDef;
+    addUInt(*AbsDef, dwarf::DW_AT_inline, None, dwarf::DW_INL_inlined);
+  if (DIE *ObjectPointer = createAndAddScopeChildren(Scope, *AbsDef))
+    addDIEEntry(*AbsDef, dwarf::DW_AT_object_pointer, *ObjectPointer);
 }
 
 std::unique_ptr<DIE>
@@ -658,6 +661,27 @@ void DwarfCompileUnit::finishSubprogramDefinition(DISubprogram SP) {
     if (D)
       // And attach the attributes
       applySubprogramAttributesToDefinition(SP, *D);
+  }
+}
+void DwarfCompileUnit::collectDeadVariables(DISubprogram SP) {
+  assert(SP.isSubprogram() && "CU's subprogram list contains a non-subprogram");
+  assert(SP.isDefinition() &&
+         "CU's subprogram list contains a subprogram declaration");
+  DIArray Variables = SP.getVariables();
+  if (Variables.getNumElements() == 0)
+    return;
+
+  DIE *SPDIE = DD->getAbstractSPDies().lookup(SP);
+  if (!SPDIE)
+    SPDIE = getDIE(SP);
+  assert(SPDIE);
+  for (unsigned vi = 0, ve = Variables.getNumElements(); vi != ve; ++vi) {
+    DIVariable DV(Variables.getElement(vi));
+    assert(DV.isVariable());
+    DbgVariable NewVar(DV, DIExpression(nullptr), DD);
+    auto VariableDie = constructVariableDIE(NewVar);
+    applyVariableAttributes(NewVar, *VariableDie);
+    SPDIE->addChild(std::move(VariableDie));
   }
 }
 
