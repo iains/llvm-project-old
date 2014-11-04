@@ -428,7 +428,9 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
        !State.Stack.back().AvoidBinPacking) ||
       Previous.Type == TT_BinaryOperator)
     State.Stack.back().BreakBeforeParameter = false;
-  if (Previous.Type == TT_TemplateCloser && Current.NestingLevel == 0)
+  if ((Previous.Type == TT_TemplateCloser ||
+       Previous.Type == TT_JavaAnnotation) &&
+      Current.NestingLevel == 0)
     State.Stack.back().BreakBeforeParameter = false;
   if (NextNonComment->is(tok::question) ||
       (PreviousNonComment && PreviousNonComment->is(tok::question)))
@@ -503,6 +505,13 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
   const FormatToken *NextNonComment = Previous.getNextNonComment();
   if (!NextNonComment)
     NextNonComment = &Current;
+
+  // Java specific bits.
+  if (Style.Language == FormatStyle::LK_Java && Current.is(tok::identifier) &&
+      (Current.TokenText == "implements" || Current.TokenText == "extends"))
+    return std::max(State.Stack.back().LastSpace,
+                    State.Stack.back().Indent + Style.ContinuationIndentWidth);
+
   if (NextNonComment->is(tok::l_brace) && NextNonComment->BlockKind == BK_Block)
     return Current.NestingLevel == 0 ? State.FirstIndent
                                      : State.Stack.back().Indent;

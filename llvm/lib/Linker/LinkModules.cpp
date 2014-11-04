@@ -987,6 +987,12 @@ bool ModuleLinker::linkAppendingVarProto(GlobalVariable *DstGV,
 
 bool ModuleLinker::linkGlobalValueProto(GlobalValue *SGV) {
   GlobalValue *DGV = getLinkedToGlobal(SGV);
+
+  // Handle the ultra special appending linkage case first.
+  if (DGV && DGV->hasAppendingLinkage())
+    return linkAppendingVarProto(cast<GlobalVariable>(DGV),
+                                 cast<GlobalVariable>(SGV));
+
   bool LinkFromSrc = true;
   Comdat *C = nullptr;
   GlobalValue::VisibilityTypes Visibility = SGV->getVisibility();
@@ -1069,13 +1075,6 @@ GlobalValue *ModuleLinker::linkGlobalVariableProto(const GlobalVariable *SGVar,
   bool ClearConstant = false;
 
   if (DGV) {
-    // Concatenation of appending linkage variables is magic and handled later.
-    if (DGV->hasAppendingLinkage()) {
-      if (linkAppendingVarProto(cast<GlobalVariable>(DGV), SGVar))
-        return nullptr;
-      return DGV;
-    }
-
     if (DGV->hasCommonLinkage() && SGVar->hasCommonLinkage())
       Alignment = std::max(SGVar->getAlignment(), DGV->getAlignment());
 
@@ -1517,10 +1516,8 @@ bool ModuleLinker::run() {
     }
 
     // Materialize if needed.
-    if (SF->isMaterializable()) {
-      if (std::error_code EC = SF->materialize())
-        return emitError(EC.message());
-    }
+    if (std::error_code EC = SF->materialize())
+      return emitError(EC.message());
 
     // Skip if no body (function is external).
     if (SF->isDeclaration())
@@ -1568,10 +1565,8 @@ bool ModuleLinker::run() {
       }
 
       // Materialize if needed.
-      if (SF->isMaterializable()) {
-        if (std::error_code EC = SF->materialize())
-          return emitError(EC.message());
-      }
+      if (std::error_code EC = SF->materialize())
+        return emitError(EC.message());
 
       // Skip if no body (function is external).
       if (SF->isDeclaration())

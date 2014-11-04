@@ -5185,6 +5185,14 @@ static void checkDLLAttributeRedeclaration(Sema &S, NamedDecl *OldDecl,
     S.Diag(OldImportAttr->getLocation(), diag::note_previous_attribute);
     OldDecl->dropAttr<DLLImportAttr>();
     NewDecl->dropAttr<DLLImportAttr>();
+  } else if (IsInline && OldImportAttr &&
+             !S.Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+    // In MinGW, seeing a function declared inline drops the dllimport attribute.
+    OldDecl->dropAttr<DLLImportAttr>();
+    NewDecl->dropAttr<DLLImportAttr>();
+    S.Diag(NewDecl->getLocation(),
+           diag::warn_dllimport_dropped_from_inline_function)
+        << NewDecl << OldImportAttr;
   }
 }
 
@@ -7384,6 +7392,22 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     assert((NewFD->isInvalidDecl() || !D.isRedeclaration() ||
             Previous.getResultKind() != LookupResult::FoundOverloaded) &&
            "previous declaration set still overloaded");
+
+    // Diagnose no-prototype function declarations with calling conventions that
+    // don't support variadic calls. Only do this in C and do it after merging
+    // possibly prototyped redeclarations.
+    const FunctionType *FT = NewFD->getType()->castAs<FunctionType>();
+    if (isa<FunctionNoProtoType>(FT) && !D.isFunctionDefinition()) {
+      CallingConv CC = FT->getExtInfo().getCC();
+      if (!supportsVariadicCall(CC)) {
+        // Windows system headers sometimes accidentally use stdcall without
+        // (void) parameters, so we relax this to a warning.
+        int DiagID =
+            CC == CC_X86StdCall ? diag::warn_cconv_knr : diag::err_cconv_knr;
+        Diag(NewFD->getLocation(), DiagID)
+            << FunctionType::getNameForCallConv(CC);
+      }
+    }
   } else {
     // C++11 [replacement.functions]p3:
     //  The program's definitions shall not be specified as inline.
@@ -7939,21 +7963,6 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   }
 
   // Semantic checking for this function declaration (in isolation).
-
-  // Diagnose calling conventions that don't support variadic calls.
-  QualType NewQType = Context.getCanonicalType(NewFD->getType());
-  const FunctionType *NewType = cast<FunctionType>(NewQType);
-  if (isa<FunctionNoProtoType>(NewType)) {
-    FunctionType::ExtInfo NewTypeInfo = NewType->getExtInfo();
-    if (!supportsVariadicCall(NewTypeInfo.getCC())) {
-      // Windows system headers sometimes accidentally use stdcall without
-      // (void) parameters, so use a default-error warning in this case :-/
-      int DiagID = NewTypeInfo.getCC() == CC_X86StdCall
-          ? diag::warn_cconv_knr : diag::err_cconv_knr;
-      Diag(NewFD->getLocation(), DiagID)
-          << FunctionType::getNameForCallConv(NewTypeInfo.getCC());
-    }
-  }
 
   if (getLangOpts().CPlusPlus) {
     // C++-specific checks.
