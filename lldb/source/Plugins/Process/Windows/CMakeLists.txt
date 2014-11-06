@@ -4,11 +4,12 @@ include_directories(.)
 include_directories(../Utility)
 
 add_lldb_library(lldbPluginProcessWindows
-  DebugMonitorMessages.cpp
-  DebugMonitorMessageResults.cpp
+  DriverMessages.cpp
+  DriverMessageResults.cpp
   DebugOneProcessThread.cpp
   DebugProcessLauncher.cpp
   DebugDriverThread.cpp
+  LocalDebugDelegate.cpp
   ProcessWindows.cpp
   )
 

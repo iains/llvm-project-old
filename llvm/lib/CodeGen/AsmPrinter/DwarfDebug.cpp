@@ -330,6 +330,12 @@ bool DwarfDebug::isLexicalScopeDIENull(LexicalScope *Scope) {
   return !getLabelAfterInsn(Ranges.front().second);
 }
 
+template <typename Func> void forBothCUs(DwarfCompileUnit &CU, Func F) {
+  F(CU);
+  if (auto *SkelCU = CU.getSkeleton())
+    F(*SkelCU);
+}
+
 void DwarfDebug::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
   assert(Scope && Scope->getScopeNode());
   assert(Scope->isAbstractScope());
@@ -341,7 +347,10 @@ void DwarfDebug::constructAbstractSubprogramScopeDIE(LexicalScope *Scope) {
 
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
-  SPMap[SP]->constructAbstractSubprogramScopeDIE(Scope);
+  auto &CU = SPMap[SP];
+  forBothCUs(*CU, [&](DwarfCompileUnit &CU) {
+    CU.constructAbstractSubprogramScopeDIE(Scope);
+  });
 }
 
 void DwarfDebug::addGnuPubAttributes(DwarfUnit &U, DIE &D) const {
@@ -441,8 +450,8 @@ void DwarfDebug::beginModule() {
 
   SingleCU = CU_Nodes->getNumOperands() == 1;
 
-  for (MDNode *N : CU_Nodes->operands()) {
-    DICompileUnit CUNode(N);
+  for (Value *N : CU_Nodes->operands()) {
+    DICompileUnit CUNode(cast<MDNode>(N));
     DwarfCompileUnit &CU = constructDwarfCompileUnit(CUNode);
     DIArray ImportedEntities = CUNode.getImportedEntities();
     for (unsigned i = 0, e = ImportedEntities.getNumElements(); i != e; ++i)
@@ -506,7 +515,9 @@ void DwarfDebug::finishVariableDefinitions() {
 
 void DwarfDebug::finishSubprogramDefinitions() {
   for (const auto &P : SPMap)
-    P.second->finishSubprogramDefinition(DISubprogram(P.first));
+    forBothCUs(*P.second, [&](DwarfCompileUnit &CU) {
+      CU.finishSubprogramDefinition(DISubprogram(P.first));
+    });
 }
 
 
@@ -515,8 +526,8 @@ void DwarfDebug::collectDeadVariables() {
   const Module *M = MMI->getModule();
 
   if (NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu")) {
-    for (MDNode *N : CU_Nodes->operands()) {
-      DICompileUnit TheCU(N);
+    for (Value *N : CU_Nodes->operands()) {
+      DICompileUnit TheCU(cast<MDNode>(N));
       // Construct subprogram DIE and add variables DIEs.
       DwarfCompileUnit *SPCU =
           static_cast<DwarfCompileUnit *>(CUMap.lookup(TheCU));
@@ -1286,6 +1297,9 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
   }
 
   TheCU.constructSubprogramScopeDIE(FnScope);
+  if (auto *SkelCU = TheCU.getSkeleton())
+    if (!LScopes.getAbstractScopesList().empty())
+      SkelCU->constructSubprogramScopeDIE(FnScope);
 
   // Clear debug info
   // Ownership of DbgVariables is a bit subtle - ScopeVariables owns all the
@@ -1983,6 +1997,9 @@ void DwarfDebug::emitDebugRanges() {
   // Grab the specific ranges for the compile units in the module.
   for (const auto &I : CUMap) {
     DwarfCompileUnit *TheCU = I.second;
+
+    if (auto *Skel = TheCU->getSkeleton())
+      TheCU = Skel;
 
     // Iterate over the misc ranges for the compile units in the module.
     for (const RangeSpanList &List : TheCU->getRangeLists()) {

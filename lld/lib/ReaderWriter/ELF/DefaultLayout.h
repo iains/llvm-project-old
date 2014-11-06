@@ -30,8 +30,6 @@
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Format.h"
 #include <map>
-#include <memory>
-#include <tuple>
 #include <unordered_map>
 
 namespace lld {
@@ -630,8 +628,6 @@ DefaultLayout<ELFT>::mergeSimilarSections() {
 template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
   ScopedTask task(getDefaultDomain(), "assignSectionsToSegments");
   ELFLinkingContext::OutputMagic outputMagic = _context.getOutputMagic();
-    // TODO: Do we want to give a chance for the targetHandlers
-    // to sort segments in an arbitrary order?
   // sort the sections by their order as defined by the layout
   std::stable_sort(_sections.begin(), _sections.end(),
                    [](Chunk<ELFT> *A, Chunk<ELFT> *B) {

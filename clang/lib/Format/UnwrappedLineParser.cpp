@@ -202,12 +202,13 @@ private:
 } // end anonymous namespace
 
 UnwrappedLineParser::UnwrappedLineParser(const FormatStyle &Style,
+                                         const AdditionalKeywords &Keywords,
                                          ArrayRef<FormatToken *> Tokens,
                                          UnwrappedLineConsumer &Callback)
     : Line(new UnwrappedLine), MustBreakBeforeNextToken(false),
       CurrentLines(&Lines), StructuralError(false), Style(Style),
-      Tokens(nullptr), Callback(Callback), AllTokens(Tokens),
-      PPBranchLevel(-1) {}
+      Keywords(Keywords), Tokens(nullptr), Callback(Callback),
+      AllTokens(Tokens), PPBranchLevel(-1) {}
 
 void UnwrappedLineParser::reset() {
   PPBranchLevel = -1;
@@ -746,8 +747,7 @@ void UnwrappedLineParser::parseStructuralElement() {
       break;
     case tok::kw_typedef:
       nextToken();
-      // FIXME: Use the IdentifierTable instead.
-      if (FormatTok->TokenText == "NS_ENUM")
+      if (FormatTok->is(Keywords.kw_NS_ENUM))
         parseEnum();
       break;
     case tok::kw_struct:
@@ -812,17 +812,14 @@ void UnwrappedLineParser::parseStructuralElement() {
           parseLabel();
           return;
         }
-        // Recognize function-like macro usages without trailing semicolon.
-        if (FormatTok->Tok.is(tok::l_paren)) {
+        // Recognize function-like macro usages without trailing semicolon as
+        // well as free-standing macrose like Q_OBJECT.
+        bool FunctionLike = FormatTok->is(tok::l_paren);
+        if (FunctionLike)
           parseParens();
-          if (FormatTok->NewlinesBefore > 0 &&
-              tokenCanStartNewLine(FormatTok->Tok) && Text == Text.upper()) {
-            addUnwrappedLine();
-            return;
-          }
-        } else if (FormatTok->HasUnescapedNewline && Text.size() >= 5 &&
-                   Text == Text.upper()) {
-          // Recognize free-standing macros like Q_OBJECT.
+        if (FormatTok->NewlinesBefore > 0 &&
+            (Text.size() >= 5 || FunctionLike) &&
+            tokenCanStartNewLine(FormatTok->Tok) && Text == Text.upper()) {
           addUnwrappedLine();
           return;
         }
@@ -977,7 +974,7 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons) {
   // replace this by using parseAssigmentExpression() inside.
   do {
     if (Style.Language == FormatStyle::LK_JavaScript &&
-        FormatTok->TokenText == "function") {
+        FormatTok->is(Keywords.kw_function)) {
       tryToParseJSFunction();
       continue;
     }
@@ -1047,7 +1044,7 @@ void UnwrappedLineParser::parseParens() {
       break;
     case tok::identifier:
       if (Style.Language == FormatStyle::LK_JavaScript &&
-          FormatTok->TokenText == "function")
+          FormatTok->is(Keywords.kw_function))
         tryToParseJSFunction();
       else
         nextToken();
@@ -1177,7 +1174,7 @@ void UnwrappedLineParser::parseTryCatch() {
   while (FormatTok->is(tok::kw_catch) ||
          ((Style.Language == FormatStyle::LK_Java ||
            Style.Language == FormatStyle::LK_JavaScript) &&
-          FormatTok->TokenText == "finally")) {
+          FormatTok->is(Keywords.kw_finally))) {
     nextToken();
     while (FormatTok->isNot(tok::l_brace)) {
       if (FormatTok->is(tok::l_paren)) {

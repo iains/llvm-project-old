@@ -250,20 +250,52 @@ std::error_code COFFObjectFile::getSymbolSize(DataRefImpl Ref,
       return object_error::success;
     }
   }
-  // FIXME: Return the correct size. This requires looking at all the symbols
-  //        in the same section as this symbol, and looking for either the next
-  //        symbol, or the end of the section.
+
+  // Let's attempt to get the size of the symbol by looking at the address of
+  // the symbol after the symbol in question.
+  uint64_t SymbAddr;
+  if (std::error_code EC = getSymbolAddress(Ref, SymbAddr))
+    return EC;
   int32_t SectionNumber = Symb.getSectionNumber();
-  if (!COFF::isReservedSectionNumber(SectionNumber)) {
+  if (COFF::isReservedSectionNumber(SectionNumber)) {
+    // Absolute and debug symbols aren't sorted in any interesting way.
+    Result = 0;
+    return object_error::success;
+  }
+  const section_iterator SecEnd = section_end();
+  uint64_t AfterAddr = UnknownAddressOrSize;
+  for (const symbol_iterator &SymbI : symbols()) {
+    section_iterator SecI = SecEnd;
+    if (std::error_code EC = SymbI->getSection(SecI))
+      return EC;
+    // Check the symbol's section, skip it if it's in the wrong section.
+    // First, make sure it is in any section.
+    if (SecI == SecEnd)
+      continue;
+    // Second, make sure it is in the same section as the symbol in question.
+    if (!sectionContainsSymbol(SecI->getRawDataRefImpl(), Ref))
+      continue;
+    uint64_t Addr;
+    if (std::error_code EC = SymbI->getAddress(Addr))
+      return EC;
+    // We want to compare our symbol in question with the closest possible
+    // symbol that comes after.
+    if (AfterAddr > Addr && Addr > SymbAddr)
+      AfterAddr = Addr;
+  }
+  if (AfterAddr == UnknownAddressOrSize) {
+    // No symbol comes after this one, assume that everything after our symbol
+    // is part of it.
     const coff_section *Section = nullptr;
     if (std::error_code EC = getSection(SectionNumber, Section))
       return EC;
-
     Result = Section->SizeOfRawData - Symb.getValue();
-    return object_error::success;
+  } else {
+    // Take the difference between our symbol and the symbol that comes after
+    // our symbol.
+    Result = AfterAddr - SymbAddr;
   }
 
-  Result = 0;
   return object_error::success;
 }
 
@@ -572,20 +604,20 @@ COFFObjectFile::COFFObjectFile(MemoryBufferRef Object, std::error_code &EC)
   bool HasPEHeader = false;
 
   // Check if this is a PE/COFF file.
-  if (base()[0] == 0x4d && base()[1] == 0x5a) {
+  if (checkSize(Data, EC, sizeof(dos_header) + sizeof(COFF::PEMagic))) {
     // PE/COFF, seek through MS-DOS compatibility stub and 4-byte
     // PE signature to find 'normal' COFF header.
-    if (!checkSize(Data, EC, 0x3c + 8))
-      return;
-    CurPtr = *reinterpret_cast<const ulittle16_t *>(base() + 0x3c);
-    // Check the PE magic bytes. ("PE\0\0")
-    if (std::memcmp(base() + CurPtr, COFF::PEMagic, sizeof(COFF::PEMagic)) !=
-        0) {
-      EC = object_error::parse_failed;
-      return;
+    const auto *DH = reinterpret_cast<const dos_header *>(base());
+    if (DH->Magic[0] == 'M' && DH->Magic[1] == 'Z') {
+      CurPtr = DH->AddressOfNewExeHeader;
+      // Check the PE magic bytes. ("PE\0\0")
+      if (memcmp(base() + CurPtr, COFF::PEMagic, sizeof(COFF::PEMagic)) != 0) {
+        EC = object_error::parse_failed;
+        return;
+      }
+      CurPtr += sizeof(COFF::PEMagic); // Skip the PE magic bytes.
+      HasPEHeader = true;
     }
-    CurPtr += sizeof(COFF::PEMagic); // Skip the PE magic bytes.
-    HasPEHeader = true;
   }
 
   if ((EC = getObject(COFFHeader, Data, base() + CurPtr)))
@@ -627,11 +659,11 @@ COFFObjectFile::COFFObjectFile(MemoryBufferRef Object, std::error_code &EC)
 
     const uint8_t *DataDirAddr;
     uint64_t DataDirSize;
-    if (Header->Magic == 0x10b) {
+    if (Header->Magic == COFF::PE32Header::PE32) {
       PE32Header = Header;
       DataDirAddr = base() + CurPtr + sizeof(pe32_header);
       DataDirSize = sizeof(data_directory) * PE32Header->NumberOfRvaAndSize;
-    } else if (Header->Magic == 0x20b) {
+    } else if (Header->Magic == COFF::PE32Header::PE32_PLUS) {
       PE32PlusHeader = reinterpret_cast<const pe32plus_header *>(Header);
       DataDirAddr = base() + CurPtr + sizeof(pe32plus_header);
       DataDirSize = sizeof(data_directory) * PE32PlusHeader->NumberOfRvaAndSize;

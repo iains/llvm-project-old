@@ -10,15 +10,16 @@
 #ifndef liblldb_Plugins_Process_Windows_DebugOneProcessThread_H_
 #define liblldb_Plugins_Process_Windows_DebugOneProcessThread_H_
 
+#include "ForwardDecl.h"
 #include "lldb/Host/HostProcess.h"
 #include "lldb/Host/HostThread.h"
 #include "lldb/Host/Predicate.h"
 #include "lldb/Host/windows/windows.h"
 
+#include <memory>
+
 namespace lldb_private
 {
-class LaunchProcessMessage;
-class LaunchProcessMessageResult;
 
 //----------------------------------------------------------------------
 // DebugOneProcessThread
@@ -32,7 +33,7 @@ class DebugOneProcessThread : public std::enable_shared_from_this<DebugOneProces
     DebugOneProcessThread(HostThread driver_thread);
     virtual ~DebugOneProcessThread();
 
-    const LaunchProcessMessageResult *DebugLaunch(const LaunchProcessMessage *message);
+    const DriverLaunchProcessMessageResult *DebugLaunch(const DriverLaunchProcessMessage *message);
 
   private:
     void DebugLoop();
@@ -50,13 +51,20 @@ class DebugOneProcessThread : public std::enable_shared_from_this<DebugOneProces
     static void __stdcall NotifySlaveRipEvent(ULONG_PTR message);
 
     // The main debug driver thread which is controlling this slave.
-    lldb_private::HostThread m_driver_thread;
-    Predicate<const LaunchProcessMessageResult *> m_launch_predicate;
-    lldb::ProcessSP m_process_plugin;
-    HostProcess m_process;
+    HostThread m_driver_thread;
+
+    HostProcess m_process;    // The process being debugged.
+    HostThread m_main_thread; // The main thread of the inferior.
+    HANDLE m_image_file;      // The image file of the process being debugged.
+
+    // After we've called CreateProcess, this signals that we're still waiting for the system
+    // debug event telling us the process has been created.
+    const DriverLaunchProcessMessage *m_pending_create;
+
+    Predicate<const DriverLaunchProcessMessageResult *> m_launch_predicate;
 
     static lldb::thread_result_t DebugLaunchThread(void *data);
-    lldb::thread_result_t DebugLaunchThread(const LaunchProcessMessage *message);
+    lldb::thread_result_t DebugLaunchThread(const DriverLaunchProcessMessage *message);
 };
 }
 

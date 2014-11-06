@@ -9,15 +9,16 @@
 
 #include "DebugDriverThread.h"
 #include "DebugOneProcessThread.h"
-#include "DebugMonitorMessages.h"
-#include "DebugMonitorMessageResults.h"
-#include "SlaveMessages.h"
+#include "DriverMessages.h"
+#include "DriverMessageResults.h"
+#include "ProcessMessages.h"
 
 #include "lldb/Core/Error.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Host/Predicate.h"
 #include "lldb/Host/ThisThread.h"
 #include "lldb/Host/ThreadLauncher.h"
+#include "lldb/Host/windows/HostProcessWindows.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
 #include "lldb/Host/windows/ProcessLauncherWindows.h"
 
@@ -31,12 +32,14 @@ namespace
 struct DebugLaunchContext
 {
     DebugOneProcessThread *instance;
-    const LaunchProcessMessage *launch;
+    const DriverLaunchProcessMessage *launch;
 };
 }
 
 DebugOneProcessThread::DebugOneProcessThread(HostThread driver_thread)
     : m_driver_thread(driver_thread)
+    , m_pending_create(nullptr)
+    , m_image_file(nullptr)
 {
     m_launch_predicate.SetValue(nullptr, eBroadcastNever);
 }
@@ -45,15 +48,14 @@ DebugOneProcessThread::~DebugOneProcessThread()
 {
 }
 
-const LaunchProcessMessageResult *
-DebugOneProcessThread::DebugLaunch(const LaunchProcessMessage *message)
+const DriverLaunchProcessMessageResult *
+DebugOneProcessThread::DebugLaunch(const DriverLaunchProcessMessage *message)
 {
     Error error;
-    const LaunchProcessMessageResult *result = nullptr;
+    const DriverLaunchProcessMessageResult *result = nullptr;
     DebugLaunchContext context;
     context.instance = this;
     context.launch = message;
-
     HostThread slave_thread(ThreadLauncher::LaunchThread("lldb.plugin.process-windows.slave[?]", DebugLaunchThread, &context, &error));
     if (error.Success())
         m_launch_predicate.WaitForValueNotEqualTo(nullptr, result);
@@ -70,7 +72,7 @@ DebugOneProcessThread::DebugLaunchThread(void *data)
 }
 
 lldb::thread_result_t
-DebugOneProcessThread::DebugLaunchThread(const LaunchProcessMessage *message)
+DebugOneProcessThread::DebugLaunchThread(const DriverLaunchProcessMessage *message)
 {
     // Grab a shared_ptr reference to this so that we know it won't get deleted until after the
     // thread routine has exited.
@@ -79,24 +81,25 @@ DebugOneProcessThread::DebugLaunchThread(const LaunchProcessMessage *message)
 
     Error error;
     ProcessLauncherWindows launcher;
-
-    m_process_plugin = message->GetProcessPlugin();
-    m_process = launcher.LaunchProcess(message->GetLaunchInfo(), error);
-
-    std::string thread_name;
-    llvm::raw_string_ostream name_stream(thread_name);
-    name_stream << "lldb.plugin.process-windows.slave[" << m_process.GetProcessId() << "]";
-    name_stream.flush();
-    ThisThread::SetName(thread_name.c_str());
-
-    LaunchProcessMessageResult *result = LaunchProcessMessageResult::Create(message);
-    result->SetError(error);
-    result->SetProcess(m_process);
-    m_launch_predicate.SetValue(result, eBroadcastAlways);
-
-    DebugLoop();
-    if (log)
-        log->Printf("Debug monitor thread '%s' exiting.", thread_name.c_str());
+    HostProcess process(launcher.LaunchProcess(message->GetLaunchInfo(), error));
+    // If we couldn't create the process, return the result immediately.  Otherwise enter the debug
+    // loop and wait until we get the create process debug notification.  Note that if the process
+    // was created successfully, we can throw away the process handle we got from CreateProcess
+    // because Windows will give us another (potentially more useful?) handle when it sends us the
+    // CREATE_PROCESS_DEBUG_EVENT.
+    if (error.Success())
+    {
+        m_pending_create = message;
+        m_pending_create->Retain();
+        DebugLoop();
+    }
+    else
+    {
+        DriverLaunchProcessMessageResult *result = DriverLaunchProcessMessageResult::Create(m_pending_create);
+        result->SetError(error);
+        result->SetProcess(process);
+        m_launch_predicate.SetValue(result, eBroadcastAlways);
+    }
 
     return 0;
 }
@@ -162,6 +165,28 @@ DebugOneProcessThread::HandleCreateThreadEvent(const CREATE_THREAD_DEBUG_INFO &i
 DWORD
 DebugOneProcessThread::HandleCreateProcessEvent(const CREATE_PROCESS_DEBUG_INFO &info, DWORD thread_id)
 {
+    std::string thread_name;
+    llvm::raw_string_ostream name_stream(thread_name);
+    name_stream << "lldb.plugin.process-windows.slave[" << m_process.GetProcessId() << "]";
+    name_stream.flush();
+    ThisThread::SetName(thread_name.c_str());
+
+    // info.hProcess and info.hThread are closed automatically by Windows when
+    // EXIT_PROCESS_DEBUG_EVENT is received.
+    m_process = HostProcess(info.hProcess);
+    ((HostProcessWindows &)m_process.GetNativeProcess()).SetOwnsHandle(false);
+    m_main_thread = HostThread(info.hThread);
+    ((HostThreadWindows &)m_main_thread.GetNativeThread()).SetOwnsHandle(false);
+    m_image_file = info.hFile;
+
+    DriverLaunchProcessMessageResult *result = DriverLaunchProcessMessageResult::Create(m_pending_create);
+    result->SetError(Error());
+    result->SetProcess(m_process);
+    m_launch_predicate.SetValue(result, eBroadcastAlways);
+
+    m_pending_create->Release();
+    m_pending_create = nullptr;
+
     return DBG_CONTINUE;
 }
 
@@ -175,15 +200,22 @@ DWORD
 DebugOneProcessThread::HandleExitProcessEvent(const EXIT_PROCESS_DEBUG_INFO &info, DWORD thread_id)
 {
     HANDLE driver = m_driver_thread.GetNativeThread().GetSystemHandle();
-    SlaveMessageProcessExited *message = new SlaveMessageProcessExited(m_process, info.dwExitCode);
+    ProcessMessageExitProcess *message = new ProcessMessageExitProcess(m_process, info.dwExitCode);
 
     QueueUserAPC(NotifySlaveProcessExited, driver, reinterpret_cast<ULONG_PTR>(message));
+
+    m_process = HostProcess();
+    m_main_thread = HostThread();
+    ::CloseHandle(m_image_file);
+    m_image_file = nullptr;
     return DBG_CONTINUE;
 }
 
 DWORD
 DebugOneProcessThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info, DWORD thread_id)
 {
+    // Windows does not automatically close info.hFile when the DLL is unloaded.
+    ::CloseHandle(info.hFile);
     return DBG_CONTINUE;
 }
 
@@ -204,24 +236,25 @@ DebugOneProcessThread::HandleRipEvent(const RIP_INFO &info, DWORD thread_id)
 {
     HANDLE driver = m_driver_thread.GetNativeThread().GetSystemHandle();
     Error error(info.dwError, eErrorTypeWin32);
-    SlaveMessageRipEvent *message = new SlaveMessageRipEvent(m_process, error, info.dwType);
+    ProcessMessageDebuggerError *message = new ProcessMessageDebuggerError(m_process, error, info.dwType);
 
     QueueUserAPC(NotifySlaveRipEvent, driver, reinterpret_cast<ULONG_PTR>(message));
+
     return DBG_CONTINUE;
 }
 
 void
 DebugOneProcessThread::NotifySlaveProcessExited(ULONG_PTR message)
 {
-    SlaveMessageProcessExited *slave_message = reinterpret_cast<SlaveMessageProcessExited *>(message);
-    DebugDriverThread::GetInstance().HandleSlaveEvent(*slave_message);
+    ProcessMessageExitProcess *slave_message = reinterpret_cast<ProcessMessageExitProcess *>(message);
+    DebugDriverThread::GetInstance().OnExitProcess(*slave_message);
     delete slave_message;
 }
 
 void
 DebugOneProcessThread::NotifySlaveRipEvent(ULONG_PTR message)
 {
-    SlaveMessageRipEvent *slave_message = reinterpret_cast<SlaveMessageRipEvent *>(message);
-    DebugDriverThread::GetInstance().HandleSlaveEvent(*slave_message);
+    ProcessMessageDebuggerError *slave_message = reinterpret_cast<ProcessMessageDebuggerError *>(message);
+    DebugDriverThread::GetInstance().OnDebuggerError(*slave_message);
     delete slave_message;
 }

@@ -113,6 +113,7 @@ public:
     ArrayRef<uint8_t> array = _context.getDosStub();
     std::memcpy(buffer, array.data(), array.size());
     auto *header = reinterpret_cast<llvm::object::dos_header *>(buffer);
+    header->AddressOfRelocationTable = sizeof(llvm::object::dos_header);
     header->AddressOfNewExeHeader = _size;
   }
 
@@ -537,8 +538,10 @@ static int getSectionIndex(uint64_t targetAddr,
 
 static uint32_t getSectionStartAddr(uint64_t targetAddr,
                                     const std::vector<uint64_t> &sectionRva) {
+  // Scan the list of section start addresses to find the section start address
+  // for the given RVA.
   for (int i = 0, e = sectionRva.size(); i < e; ++i)
-    if (i == e - 1 || (sectionRva[i] <= targetAddr && targetAddr <= sectionRva[i + 1]))
+    if (i == e - 1 || (sectionRva[i] <= targetAddr && targetAddr < sectionRva[i + 1]))
       return sectionRva[i];
   llvm_unreachable("Section missing");
 }
