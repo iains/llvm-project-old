@@ -5249,8 +5249,8 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const std::string MarchSuffix = "/" + MarchString;
   const std::string G0Suffix = "/G0";
   const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
-  const std::string RootDir = toolchains::Hexagon_TC::GetGnuDir(D.InstalledDir)
-                              + "/";
+  const std::string RootDir =
+      toolchains::Hexagon_TC::GetGnuDir(D.InstalledDir, Args) + "/";
   const std::string StartFilesDir = RootDir
                                     + "hexagon/lib"
                                     + (buildingLib
@@ -5404,7 +5404,7 @@ const char *arm::getLLVMArchSuffixForARM(StringRef CPU) {
     .Cases("arm1136j-s",  "arm1136jf-s",  "arm1176jz-s", "v6")
     .Cases("arm1176jzf-s",  "mpcorenovfp",  "mpcore", "v6")
     .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
-    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "cortex-a9-mp", "v7")
+    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "v7")
     .Cases("cortex-a9", "cortex-a12", "cortex-a15", "cortex-a17", "krait", "v7")
     .Cases("cortex-r4", "cortex-r5", "v7r")
     .Case("cortex-m0", "v6m")

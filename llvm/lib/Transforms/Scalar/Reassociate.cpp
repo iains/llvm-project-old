@@ -237,7 +237,9 @@ FunctionPass *llvm::createReassociatePass() { return new Reassociate(); }
 /// opcode and if it only has one use.
 static BinaryOperator *isReassociableOp(Value *V, unsigned Opcode) {
   if (V->hasOneUse() && isa<Instruction>(V) &&
-      cast<Instruction>(V)->getOpcode() == Opcode)
+      cast<Instruction>(V)->getOpcode() == Opcode &&
+      (!isa<FPMathOperator>(V) ||
+       cast<Instruction>(V)->hasUnsafeAlgebra()))
     return cast<BinaryOperator>(V);
   return nullptr;
 }
@@ -246,7 +248,9 @@ static BinaryOperator *isReassociableOp(Value *V, unsigned Opcode1,
                                         unsigned Opcode2) {
   if (V->hasOneUse() && isa<Instruction>(V) &&
       (cast<Instruction>(V)->getOpcode() == Opcode1 ||
-       cast<Instruction>(V)->getOpcode() == Opcode2))
+       cast<Instruction>(V)->getOpcode() == Opcode2) &&
+      (!isa<FPMathOperator>(V) ||
+       cast<Instruction>(V)->hasUnsafeAlgebra()))
     return cast<BinaryOperator>(V);
   return nullptr;
 }
@@ -662,7 +666,9 @@ static bool LinearizeExprTree(BinaryOperator *I,
       // expression.  This means that it can safely be modified.  See if we
       // can usefully morph it into an expression of the right kind.
       assert((!isa<Instruction>(Op) ||
-              cast<Instruction>(Op)->getOpcode() != Opcode) &&
+              cast<Instruction>(Op)->getOpcode() != Opcode
+              || (isa<FPMathOperator>(Op) &&
+                  !cast<Instruction>(Op)->hasUnsafeAlgebra())) &&
              "Should have been handled above!");
       assert(Op->hasOneUse() && "Has uses outside the expression tree!");
 
@@ -1025,8 +1031,19 @@ static BinaryOperator *ConvertShiftToMul(Instruction *Shl) {
     BinaryOperator::CreateMul(Shl->getOperand(0), MulCst, "", Shl);
   Shl->setOperand(0, UndefValue::get(Shl->getType())); // Drop use of op.
   Mul->takeName(Shl);
+
+  // Everyone now refers to the mul instruction.
   Shl->replaceAllUsesWith(Mul);
   Mul->setDebugLoc(Shl->getDebugLoc());
+
+  // We can safely preserve the nuw flag in all cases.  It's also safe to turn a
+  // nuw nsw shl into a nuw nsw mul.  However, nsw in isolation requires special
+  // handling.
+  bool NSW = cast<BinaryOperator>(Shl)->hasNoSignedWrap();
+  bool NUW = cast<BinaryOperator>(Shl)->hasNoUnsignedWrap();
+  if (NSW && NUW)
+    Mul->setHasNoSignedWrap(true);
+  Mul->setHasNoUnsignedWrap(NUW);
   return Mul;
 }
 

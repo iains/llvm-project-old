@@ -565,7 +565,10 @@ def skipIfNoSBHeaders(func):
     def wrapper(*args, **kwargs):
         from unittest2 import case
         self = args[0]
-        header = os.path.join(self.lib_dir, 'LLDB.framework', 'Versions','Current','Headers','LLDB.h')
+        if sys.platform.startswith("darwin"):
+            header = os.path.join(self.lib_dir, 'LLDB.framework', 'Versions','Current','Headers','LLDB.h')
+        else:
+            header = os.path.join(os.environ["LLDB_SRC"], "include", "lldb", "API", "LLDB.h")
         platform = sys.platform
         if not os.path.exists(header):
             self.skipTest("skip because LLDB.h header not found")
@@ -1019,10 +1022,9 @@ class Base(unittest2.TestCase):
             except (ValueError, pexpect.ExceptionPexpect):
                 # child is already terminated
                 pass
-	    finally:
-		# Give it one final blow to make sure the child is terminated.
-		self.child.close()
-
+            finally:
+                # Give it one final blow to make sure the child is terminated.
+                self.child.close()
 
     def tearDown(self):
         """Fixture for unittest test case teardown."""
