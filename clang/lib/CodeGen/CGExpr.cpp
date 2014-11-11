@@ -16,6 +16,7 @@
 #include "CGCall.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
+#include "CGOpenMPRuntime.h"
 #include "CGRecordLayout.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
@@ -475,6 +476,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   if (Address->getType()->getPointerAddressSpace())
     return;
 
+  SmallVector<SanitizerKind, 3> Kinds;
   SanitizerScope SanScope(this);
 
   llvm::Value *Cond = nullptr;
@@ -496,6 +498,8 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
       Builder.CreateCondBr(Cond, Rest, Done);
       EmitBlock(Rest);
       Cond = nullptr;
+    } else {
+      Kinds.push_back(SanitizerKind::Null);
     }
   }
 
@@ -514,6 +518,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
         Builder.CreateICmpUGE(Builder.CreateCall2(F, CastAddr, Min),
                               llvm::ConstantInt::get(IntPtrTy, Size));
     Cond = Cond ? Builder.CreateAnd(Cond, LargeEnough) : LargeEnough;
+    Kinds.push_back(SanitizerKind::ObjectSize);
   }
 
   uint64_t AlignVal = 0;
@@ -531,6 +536,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
       llvm::Value *Aligned =
         Builder.CreateICmpEQ(Align, llvm::ConstantInt::get(IntPtrTy, 0));
       Cond = Cond ? Builder.CreateAnd(Cond, Aligned) : Aligned;
+      Kinds.push_back(SanitizerKind::Alignment);
     }
   }
 
@@ -541,7 +547,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
       llvm::ConstantInt::get(SizeTy, AlignVal),
       llvm::ConstantInt::get(Int8Ty, TCK)
     };
-    EmitCheck(Cond, "type_mismatch", StaticData, Address, CRK_Recoverable);
+    EmitCheck(Cond, "type_mismatch", StaticData, Address, Kinds);
   }
 
   // If possible, check that the vptr indicates that there is a subobject of
@@ -606,9 +612,8 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
         llvm::ConstantInt::get(Int8Ty, TCK)
       };
       llvm::Value *DynamicData[] = { Address, Hash };
-      EmitCheck(Builder.CreateICmpEQ(CacheVal, Hash),
-                "dynamic_type_cache_miss", StaticData, DynamicData,
-                CRK_AlwaysRecoverable);
+      EmitCheck(Builder.CreateICmpEQ(CacheVal, Hash), "dynamic_type_cache_miss",
+                StaticData, DynamicData, SanitizerKind::Vptr);
     }
   }
 
@@ -696,7 +701,8 @@ void CodeGenFunction::EmitBoundsCheck(const Expr *E, const Expr *Base,
   };
   llvm::Value *Check = Accessed ? Builder.CreateICmpULT(IndexVal, BoundVal)
                                 : Builder.CreateICmpULE(IndexVal, BoundVal);
-  EmitCheck(Check, "out_of_bounds", StaticData, Index, CRK_Recoverable);
+  EmitCheck(Check, "out_of_bounds", StaticData, Index,
+            SanitizerKind::ArrayBounds);
 }
 
 
@@ -1151,8 +1157,11 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
       CGM.DecorateInstruction(Load, TBAAPath, false/*ConvertTypeToTag*/);
   }
 
-  if ((SanOpts.has(SanitizerKind::Bool) && hasBooleanRepresentation(Ty)) ||
-      (SanOpts.has(SanitizerKind::Enum) && Ty->getAs<EnumType>())) {
+  bool NeedsBoolCheck =
+      SanOpts.has(SanitizerKind::Bool) && hasBooleanRepresentation(Ty);
+  bool NeedsEnumCheck =
+      SanOpts.has(SanitizerKind::Enum) && Ty->getAs<EnumType>();
+  if (NeedsBoolCheck || NeedsEnumCheck) {
     SanitizerScope SanScope(this);
     llvm::APInt Min, End;
     if (getRangeForType(*this, Ty, Min, End, true)) {
@@ -1173,7 +1182,7 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
         EmitCheckTypeDescriptor(Ty)
       };
       EmitCheck(Check, "load_invalid_value", StaticArgs, EmitCheckValue(Load),
-                CRK_Recoverable);
+                NeedsEnumCheck ? SanitizerKind::Enum : SanitizerKind::Bool);
     }
   } else if (CGM.getCodeGenOpts().OptimizationLevel > 0)
     if (llvm::MDNode *RangeInfo = getRangeForLoadFromType(Ty))
@@ -1794,6 +1803,14 @@ EmitBitCastOfLValueToProperType(CodeGenFunction &CGF,
   return CGF.Builder.CreateBitCast(V, IRType->getPointerTo(AS), Name);
 }
 
+static LValue EmitThreadPrivateVarDeclLValue(
+    CodeGenFunction &CGF, const VarDecl *VD, QualType T, llvm::Value *V,
+    llvm::Type *RealVarTy, CharUnits Alignment, SourceLocation Loc) {
+  V = CGF.CGM.getOpenMPRuntime().getOMPAddrOfThreadPrivate(CGF, VD, V, Loc);
+  V = EmitBitCastOfLValueToProperType(CGF, V, RealVarTy);
+  return CGF.MakeAddrLValue(V, T, Alignment);
+}
+
 static LValue EmitGlobalVarDeclLValue(CodeGenFunction &CGF,
                                       const Expr *E, const VarDecl *VD) {
   QualType T = E->getType();
@@ -1808,6 +1825,11 @@ static LValue EmitGlobalVarDeclLValue(CodeGenFunction &CGF,
   V = EmitBitCastOfLValueToProperType(CGF, V, RealVarTy);
   CharUnits Alignment = CGF.getContext().getDeclAlign(VD);
   LValue LV;
+  // Emit reference to the private copy of the variable if it is an OpenMP
+  // threadprivate variable.
+  if (CGF.getLangOpts().OpenMP && VD->hasAttr<OMPThreadPrivateDeclAttr>())
+    return EmitThreadPrivateVarDeclLValue(CGF, VD, T, V, RealVarTy, Alignment,
+                                          E->getExprLoc());
   if (VD->getType()->isReferenceType()) {
     llvm::LoadInst *LI = CGF.Builder.CreateLoad(V);
     LI->setAlignment(Alignment.getQuantity());
@@ -1920,6 +1942,12 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
     if (!V && VD->isStaticLocal())
       V = CGM.getOrCreateStaticVarDecl(
           *VD, CGM.getLLVMLinkageVarDefinition(VD, /*isConstant=*/false));
+
+    // Check if variable is threadprivate.
+    if (V && getLangOpts().OpenMP && VD->hasAttr<OMPThreadPrivateDeclAttr>())
+      return EmitThreadPrivateVarDeclLValue(
+          *this, VD, T, V, getTypes().ConvertTypeForMem(VD->getType()),
+          Alignment, E->getExprLoc());
 
     // Use special handling for lambdas.
     if (!V) {
@@ -2169,14 +2197,47 @@ llvm::Constant *CodeGenFunction::EmitCheckSourceLocation(SourceLocation Loc) {
   return llvm::ConstantStruct::getAnon(Data);
 }
 
+namespace {
+/// \brief Specify under what conditions this check can be recovered
+enum class CheckRecoverableKind {
+  /// Always terminate program execution if this check fails
+  Unrecoverable,
+  /// Check supports recovering, allows user to specify which
+  Recoverable,
+  /// Runtime conditionally aborts, always need to support recovery.
+  AlwaysRecoverable
+};
+}
+
+static CheckRecoverableKind getRecoverableKind(SanitizerKind Kind) {
+  switch (Kind) {
+  case SanitizerKind::Vptr:
+    return CheckRecoverableKind::AlwaysRecoverable;
+  case SanitizerKind::Return:
+  case SanitizerKind::Unreachable:
+    return CheckRecoverableKind::Unrecoverable;
+  default:
+    return CheckRecoverableKind::Recoverable;
+  }
+}
+
 void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
                                 ArrayRef<llvm::Constant *> StaticArgs,
                                 ArrayRef<llvm::Value *> DynamicArgs,
-                                CheckRecoverableKind RecoverKind) {
+                                ArrayRef<SanitizerKind> Kinds) {
   assert(IsSanitizerScope);
+  assert(Kinds.size() > 0);
+  CheckRecoverableKind RecoverKind = getRecoverableKind(Kinds[0]);
+  for (int i = 1, n = Kinds.size(); i < n; ++i)
+    assert(RecoverKind == getRecoverableKind(Kinds[i]) &&
+           "All recoverable kinds in a single check must be same!");
+#ifndef NDEBUG
+  for (auto Kind : Kinds)
+    assert(SanOpts.has(Kind));
+#endif
 
   if (CGM.getCodeGenOpts().SanitizeUndefinedTrapOnError) {
-    assert (RecoverKind != CRK_AlwaysRecoverable &&
+    assert (RecoverKind != CheckRecoverableKind::AlwaysRecoverable &&
             "Runtime call required for AlwaysRecoverable kind!");
     return EmitTrapCheck(Checked);
   }
@@ -2217,8 +2278,8 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
     ArgTypes.push_back(IntPtrTy);
   }
 
-  bool Recover = RecoverKind == CRK_AlwaysRecoverable ||
-                 (RecoverKind == CRK_Recoverable &&
+  bool Recover = RecoverKind == CheckRecoverableKind::AlwaysRecoverable ||
+                 (RecoverKind == CheckRecoverableKind::Recoverable &&
                   CGM.getCodeGenOpts().SanitizeRecover);
 
   llvm::FunctionType *FnType =
@@ -2231,7 +2292,7 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
   B.addAttribute(llvm::Attribute::UWTable);
 
   // Checks that have two variants use a suffix to differentiate them
-  bool NeedsAbortSuffix = RecoverKind != CRK_Unrecoverable &&
+  bool NeedsAbortSuffix = RecoverKind != CheckRecoverableKind::Unrecoverable &&
                           !CGM.getCodeGenOpts().SanitizeRecover;
   std::string FunctionName = ("__ubsan_handle_" + CheckName +
                               (NeedsAbortSuffix? "_abort" : "")).str();
@@ -3260,11 +3321,8 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
         EmitCheckSourceLocation(E->getLocStart()),
         EmitCheckTypeDescriptor(CalleeType)
       };
-      EmitCheck(CalleeRTTIMatch,
-                "function_type_mismatch",
-                StaticData,
-                Callee,
-                CRK_Recoverable);
+      EmitCheck(CalleeRTTIMatch, "function_type_mismatch", StaticData, Callee,
+                SanitizerKind::Function);
 
       Builder.CreateBr(Cont);
       EmitBlock(Cont);

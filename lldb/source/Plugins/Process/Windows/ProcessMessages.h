@@ -10,8 +10,12 @@
 #ifndef liblldb_Plugins_Process_Windows_ProcessMessages_H_
 #define liblldb_Plugins_Process_Windows_ProcessMessages_H_
 
+#include "ExceptionRecord.h"
+
 #include "lldb/Core/Error.h"
 #include "lldb/Host/HostProcess.h"
+
+#include <memory>
 
 namespace lldb_private
 {
@@ -40,6 +44,41 @@ class ProcessMessageBase
 
   protected:
     HostProcess m_process;
+};
+
+class ProcessMessageDebuggerConnected : public ProcessMessageBase
+{
+  public:
+    ProcessMessageDebuggerConnected(const HostProcess &process)
+        : ProcessMessageBase(process)
+    {
+    }
+};
+
+class ProcessMessageException : public ProcessMessageBase
+{
+  public:
+    ProcessMessageException(const HostProcess &process, const ExceptionRecord &exception, bool first_chance)
+        : ProcessMessageBase(process)
+        , m_exception(exception)
+        , m_first_chance(first_chance)
+    {
+    }
+
+    bool
+    IsFirstChance() const
+    {
+        return m_first_chance;
+    }
+    const ExceptionRecord &
+    GetExceptionRecord() const
+    {
+        return m_exception;
+    }
+
+  private:
+    bool m_first_chance;
+    ExceptionRecord m_exception;
 };
 
 class ProcessMessageExitProcess : public ProcessMessageBase

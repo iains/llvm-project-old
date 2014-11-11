@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DebuggerThread.h"
+#include "ExceptionRecord.h"
 #include "IDebugDelegate.h"
 #include "ProcessMessages.h"
 
@@ -43,28 +44,22 @@ struct DebugLaunchContext
 DebuggerThread::DebuggerThread(DebugDelegateSP debug_delegate)
     : m_debug_delegate(debug_delegate)
     , m_image_file(nullptr)
-    , m_launched_event(nullptr)
 {
-    m_launched_event = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
 }
 
 DebuggerThread::~DebuggerThread()
 {
-    if (m_launched_event != nullptr)
-        ::CloseHandle(m_launched_event);
 }
 
-HostProcess
+Error
 DebuggerThread::DebugLaunch(const ProcessLaunchInfo &launch_info)
 {
     Error error;
 
     DebugLaunchContext *context = new DebugLaunchContext(this, launch_info);
     HostThread slave_thread(ThreadLauncher::LaunchThread("lldb.plugin.process-windows.slave[?]", DebuggerThreadRoutine, context, &error));
-    if (error.Success())
-        ::WaitForSingleObject(m_launched_event, INFINITE);
 
-    return m_process;
+    return error;
 }
 
 lldb::thread_result_t
@@ -95,9 +90,18 @@ DebuggerThread::DebuggerThreadRoutine(const ProcessLaunchInfo &launch_info)
     if (error.Success())
         DebugLoop();
     else
-        SetEvent(m_launched_event);
+    {
+        ProcessMessageDebuggerError message(m_process, error, 0);
+        m_debug_delegate->OnDebuggerError(message);
+    }
 
     return 0;
+}
+
+void
+DebuggerThread::ContinueAsyncException(ExceptionResult result)
+{
+    m_exception.SetValue(result, eBroadcastAlways);
 }
 
 void
@@ -111,8 +115,17 @@ DebuggerThread::DebugLoop()
         switch (dbe.dwDebugEventCode)
         {
             case EXCEPTION_DEBUG_EVENT:
-                continue_status = HandleExceptionEvent(dbe.u.Exception, dbe.dwThreadId);
+            {
+                ExceptionResult status = HandleExceptionEvent(dbe.u.Exception, dbe.dwThreadId);
+                m_exception.SetValue(status, eBroadcastNever);
+                m_exception.WaitForValueNotEqualTo(ExceptionResult::WillHandle, status);
+
+                if (status == ExceptionResult::Handled)
+                    continue_status = DBG_CONTINUE;
+                else if (status == ExceptionResult::NotHandled)
+                    continue_status = DBG_EXCEPTION_NOT_HANDLED;
                 break;
+            }
             case CREATE_THREAD_DEBUG_EVENT:
                 continue_status = HandleCreateThreadEvent(dbe.u.CreateThread, dbe.dwThreadId);
                 break;
@@ -146,10 +159,12 @@ DebuggerThread::DebugLoop()
     }
 }
 
-DWORD
+ExceptionResult
 DebuggerThread::HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info, DWORD thread_id)
 {
-    return DBG_CONTINUE;
+    bool first_chance = (info.dwFirstChance != 0);
+    ProcessMessageException message(m_process, ExceptionRecord(info.ExceptionRecord), first_chance);
+    return m_debug_delegate->OnDebugException(message);
 }
 
 DWORD
@@ -175,7 +190,8 @@ DebuggerThread::HandleCreateProcessEvent(const CREATE_PROCESS_DEBUG_INFO &info, 
     ((HostThreadWindows &)m_main_thread.GetNativeThread()).SetOwnsHandle(false);
     m_image_file = info.hFile;
 
-    SetEvent(m_launched_event);
+    ProcessMessageDebuggerConnected message(m_process);
+    m_debug_delegate->OnDebuggerConnected(message);
 
     return DBG_CONTINUE;
 }

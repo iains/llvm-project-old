@@ -13,6 +13,7 @@
 #include "ForwardDecl.h"
 #include "lldb/Host/HostProcess.h"
 #include "lldb/Host/HostThread.h"
+#include "lldb/Host/Predicate.h"
 #include "lldb/Host/windows/windows.h"
 
 #include <memory>
@@ -32,11 +33,24 @@ class DebuggerThread : public std::enable_shared_from_this<DebuggerThread>
     DebuggerThread(DebugDelegateSP debug_delegate);
     virtual ~DebuggerThread();
 
-    HostProcess DebugLaunch(const ProcessLaunchInfo &launch_info);
+    Error DebugLaunch(const ProcessLaunchInfo &launch_info);
+
+    HostProcess
+    GetProcess() const
+    {
+        return m_process;
+    }
+    HostThread
+    GetMainThread() const
+    {
+        return m_main_thread;
+    }
+
+    void ContinueAsyncException(ExceptionResult result);
 
   private:
     void DebugLoop();
-    DWORD HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info, DWORD thread_id);
+    ExceptionResult HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info, DWORD thread_id);
     DWORD HandleCreateThreadEvent(const CREATE_THREAD_DEBUG_INFO &info, DWORD thread_id);
     DWORD HandleCreateProcessEvent(const CREATE_PROCESS_DEBUG_INFO &info, DWORD thread_id);
     DWORD HandleExitThreadEvent(const EXIT_THREAD_DEBUG_INFO &info, DWORD thread_id);
@@ -48,12 +62,13 @@ class DebuggerThread : public std::enable_shared_from_this<DebuggerThread>
 
     DebugDelegateSP m_debug_delegate;
 
-    HANDLE m_launched_event; // Signalled when the process is finished launching, either
-                             // successfully or with an error.
-
     HostProcess m_process;    // The process being debugged.
     HostThread m_main_thread; // The main thread of the inferior.
     HANDLE m_image_file;      // The image file of the process being debugged.
+
+    Predicate<ExceptionResult> m_exception; // A predicate which gets signalled when an exception
+                                            // is finished processing and the debug loop can be
+                                            // continued.
 
     static lldb::thread_result_t DebuggerThreadRoutine(void *data);
     lldb::thread_result_t DebuggerThreadRoutine(const ProcessLaunchInfo &launch_info);
