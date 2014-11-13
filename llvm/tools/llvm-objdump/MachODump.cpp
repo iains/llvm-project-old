@@ -346,10 +346,10 @@ int SymbolizerGetOpInfo(void *DisInfo, uint64_t Pc, uint64_t Offset,
       if (RelocOffset == sect_offset) {
         Rel = Reloc.getRawDataRefImpl();
         RE = info->O->getRelocation(Rel);
+        r_type = info->O->getAnyRelocationType(RE);
         r_scattered = info->O->isRelocationScattered(RE);
         if (r_scattered) {
           r_value = info->O->getScatteredRelocationValue(RE);
-          r_type = info->O->getScatteredRelocationType(RE);
           if (r_type == MachO::GENERIC_RELOC_SECTDIFF ||
               r_type == MachO::GENERIC_RELOC_LOCAL_SECTDIFF) {
             DataRefImpl RelNext = Rel;
@@ -1611,11 +1611,12 @@ static void DisassembleInputMachO2(StringRef Filename,
     if (SegmentName != "__TEXT")
       continue;
 
-    StringRef Bytes;
-    Sections[SectIdx].getContents(Bytes);
+    StringRef BytesStr;
+    Sections[SectIdx].getContents(BytesStr);
+    ArrayRef<uint8_t> Bytes(reinterpret_cast<const uint8_t *>(BytesStr.data()),
+                            BytesStr.size());
     uint64_t SectAddress = Sections[SectIdx].getAddress();
 
-    StringRefMemoryObject MemoryObject(Bytes, SectAddress);
     bool symbolTableWorked = false;
 
     // Parse relocations.
@@ -1715,9 +1716,6 @@ static void DisassembleInputMachO2(StringRef Filename,
 
       symbolTableWorked = true;
 
-      StringRef Data(Bytes.data() + Start, End - Start);
-      StringRefMemoryObject SectionMemoryObject(Data, SectAddress + Start);
-
       DataRefImpl Symb = Symbols[SymIdx].getRawDataRefImpl();
       bool isThumb =
           (MachOOF->getSymbolFlags(Symb) & SymbolRef::SF_Thumb) && ThumbTarget;
@@ -1751,7 +1749,9 @@ static void DisassembleInputMachO2(StringRef Filename,
           DTI->second.getLength(Length);
           uint16_t Kind;
           DTI->second.getKind(Kind);
-          Size = DumpDataInCode(Bytes.data() + Index, Length, Kind);
+          Size = DumpDataInCode(reinterpret_cast<const char *>(Bytes.data()) +
+                                    Index,
+                                Length, Kind);
           if ((Kind == MachO::DICE_KIND_JUMP_TABLE8) &&
               (PC == (DTI->first + Length - 1)) && (Length & 1))
             Size++;
@@ -1763,14 +1763,15 @@ static void DisassembleInputMachO2(StringRef Filename,
 
         bool gotInst;
         if (isThumb)
-          gotInst = ThumbDisAsm->getInstruction(Inst, Size, SectionMemoryObject,
+          gotInst = ThumbDisAsm->getInstruction(Inst, Size, Bytes.slice(Index),
                                                 PC, DebugOut, Annotations);
         else
-          gotInst = DisAsm->getInstruction(Inst, Size, SectionMemoryObject, PC,
+          gotInst = DisAsm->getInstruction(Inst, Size, Bytes.slice(Index), PC,
                                            DebugOut, Annotations);
         if (gotInst) {
           if (!NoShowRawInsn) {
-            DumpBytes(StringRef(Bytes.data() + Index, Size));
+            DumpBytes(StringRef(
+                reinterpret_cast<const char *>(Bytes.data()) + Index, Size));
           }
           formatted_raw_ostream FormattedOS(outs());
           Annotations.flush();
@@ -1814,8 +1815,8 @@ static void DisassembleInputMachO2(StringRef Filename,
         MCInst Inst;
 
         uint64_t PC = SectAddress + Index;
-        if (DisAsm->getInstruction(Inst, InstSize, MemoryObject, PC, DebugOut,
-                                   nulls())) {
+        if (DisAsm->getInstruction(Inst, InstSize, Bytes.slice(Index), PC,
+                                   DebugOut, nulls())) {
           if (FullLeadingAddr) {
             if (MachOOF->is64Bit())
               outs() << format("%016" PRIx64, PC);
@@ -1826,7 +1827,9 @@ static void DisassembleInputMachO2(StringRef Filename,
           }
           if (!NoShowRawInsn) {
             outs() << "\t";
-            DumpBytes(StringRef(Bytes.data() + Index, InstSize));
+            DumpBytes(
+                StringRef(reinterpret_cast<const char *>(Bytes.data()) + Index,
+                          InstSize));
           }
           IP->printInst(&Inst, outs(), "");
           outs() << "\n";
@@ -2823,7 +2826,7 @@ static void PrintSection(const char *sectname, const char *segname,
     outs() << "\n";
 }
 
-static void PrintSymtabLoadCommand(MachO::symtab_command st, uint32_t cputype,
+static void PrintSymtabLoadCommand(MachO::symtab_command st, bool Is64Bit,
                                    uint32_t object_size) {
   outs() << "     cmd LC_SYMTAB\n";
   outs() << " cmdsize " << st.cmdsize;
@@ -2838,7 +2841,7 @@ static void PrintSymtabLoadCommand(MachO::symtab_command st, uint32_t cputype,
     outs() << "\n";
   outs() << "   nsyms " << st.nsyms;
   uint64_t big_size;
-  if (cputype & MachO::CPU_ARCH_ABI64) {
+  if (Is64Bit) {
     big_size = st.nsyms;
     big_size *= sizeof(struct MachO::nlist_64);
     big_size += st.symoff;
@@ -2871,7 +2874,7 @@ static void PrintSymtabLoadCommand(MachO::symtab_command st, uint32_t cputype,
 
 static void PrintDysymtabLoadCommand(MachO::dysymtab_command dyst,
                                      uint32_t nsyms, uint32_t object_size,
-                                     uint32_t cputype) {
+                                     bool Is64Bit) {
   outs() << "            cmd LC_DYSYMTAB\n";
   outs() << "        cmdsize " << dyst.cmdsize;
   if (dyst.cmdsize != sizeof(struct MachO::dysymtab_command))
@@ -2935,7 +2938,7 @@ static void PrintDysymtabLoadCommand(MachO::dysymtab_command dyst,
     outs() << "\n";
   outs() << "        nmodtab " << dyst.nmodtab;
   uint64_t modtabend;
-  if (cputype & MachO::CPU_ARCH_ABI64) {
+  if (Is64Bit) {
     modtabend = dyst.nmodtab;
     modtabend *= sizeof(struct MachO::dylib_module_64);
     modtabend += dyst.modtaboff;
@@ -3307,11 +3310,12 @@ static void PrintLoadCommands(const MachOObjectFile *Obj, uint32_t ncmds,
       }
     } else if (Command.C.cmd == MachO::LC_SYMTAB) {
       MachO::symtab_command Symtab = Obj->getSymtabLoadCommand();
-      PrintSymtabLoadCommand(Symtab, cputype, Buf.size());
+      PrintSymtabLoadCommand(Symtab, Obj->is64Bit(), Buf.size());
     } else if (Command.C.cmd == MachO::LC_DYSYMTAB) {
       MachO::dysymtab_command Dysymtab = Obj->getDysymtabLoadCommand();
       MachO::symtab_command Symtab = Obj->getSymtabLoadCommand();
-      PrintDysymtabLoadCommand(Dysymtab, Symtab.nsyms, Buf.size(), cputype);
+      PrintDysymtabLoadCommand(Dysymtab, Symtab.nsyms, Buf.size(),
+                               Obj->is64Bit());
     } else if (Command.C.cmd == MachO::LC_DYLD_INFO ||
                Command.C.cmd == MachO::LC_DYLD_INFO_ONLY) {
       MachO::dyld_info_command DyldInfo = Obj->getDyldInfoLoadCommand(Command);

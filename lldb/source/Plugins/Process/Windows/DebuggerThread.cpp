@@ -10,10 +10,11 @@
 #include "DebuggerThread.h"
 #include "ExceptionRecord.h"
 #include "IDebugDelegate.h"
-#include "ProcessMessages.h"
 
 #include "lldb/Core/Error.h"
 #include "lldb/Core/Log.h"
+#include "lldb/Core/ModuleSpec.h"
+#include "lldb/Host/FileSpec.h"
 #include "lldb/Host/Predicate.h"
 #include "lldb/Host/ThisThread.h"
 #include "lldb/Host/ThreadLauncher.h"
@@ -22,6 +23,7 @@
 #include "lldb/Host/windows/ProcessLauncherWindows.h"
 #include "lldb/Target/ProcessLaunchInfo.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace lldb;
@@ -90,10 +92,7 @@ DebuggerThread::DebuggerThreadRoutine(const ProcessLaunchInfo &launch_info)
     if (error.Success())
         DebugLoop();
     else
-    {
-        ProcessMessageDebuggerError message(m_process, error, 0);
-        m_debug_delegate->OnDebuggerError(message);
-    }
+        m_debug_delegate->OnDebuggerError(error, 0);
 
     return 0;
 }
@@ -163,8 +162,7 @@ ExceptionResult
 DebuggerThread::HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info, DWORD thread_id)
 {
     bool first_chance = (info.dwFirstChance != 0);
-    ProcessMessageException message(m_process, ExceptionRecord(info.ExceptionRecord), first_chance);
-    return m_debug_delegate->OnDebugException(message);
+    return m_debug_delegate->OnDebugException(first_chance, ExceptionRecord(info.ExceptionRecord));
 }
 
 DWORD
@@ -190,8 +188,8 @@ DebuggerThread::HandleCreateProcessEvent(const CREATE_PROCESS_DEBUG_INFO &info, 
     ((HostThreadWindows &)m_main_thread.GetNativeThread()).SetOwnsHandle(false);
     m_image_file = info.hFile;
 
-    ProcessMessageDebuggerConnected message(m_process);
-    m_debug_delegate->OnDebuggerConnected(message);
+    lldb::addr_t load_addr = reinterpret_cast<lldb::addr_t>(info.lpBaseOfImage);
+    m_debug_delegate->OnDebuggerConnected(load_addr);
 
     return DBG_CONTINUE;
 }
@@ -205,8 +203,7 @@ DebuggerThread::HandleExitThreadEvent(const EXIT_THREAD_DEBUG_INFO &info, DWORD 
 DWORD
 DebuggerThread::HandleExitProcessEvent(const EXIT_PROCESS_DEBUG_INFO &info, DWORD thread_id)
 {
-    ProcessMessageExitProcess message(m_process, info.dwExitCode);
-    m_debug_delegate->OnExitProcess(message);
+    m_debug_delegate->OnExitProcess(info.dwExitCode);
 
     m_process = HostProcess();
     m_main_thread = HostThread();
@@ -218,7 +215,33 @@ DebuggerThread::HandleExitProcessEvent(const EXIT_PROCESS_DEBUG_INFO &info, DWOR
 DWORD
 DebuggerThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info, DWORD thread_id)
 {
-    // Windows does not automatically close info.hFile when the DLL is unloaded.
+    if (info.hFile == nullptr)
+    {
+        // Not sure what this is, so just ignore it.
+        return DBG_CONTINUE;
+    }
+
+    std::vector<char> buffer(1);
+    DWORD required_size = GetFinalPathNameByHandle(info.hFile, &buffer[0], 0, VOLUME_NAME_DOS);
+    if (required_size > 0)
+    {
+        buffer.resize(required_size + 1);
+        required_size = GetFinalPathNameByHandle(info.hFile, &buffer[0], required_size + 1, VOLUME_NAME_DOS);
+        llvm::StringRef path_str(&buffer[0]);
+        const char *path = path_str.data();
+        if (path_str.startswith("\\\\?\\"))
+            path += 4;
+
+        FileSpec file_spec(path, false);
+        ModuleSpec module_spec(file_spec);
+        lldb::addr_t load_addr = reinterpret_cast<lldb::addr_t>(info.lpBaseOfDll);
+        m_debug_delegate->OnLoadDll(module_spec, load_addr);
+    }
+    else
+    {
+        // An unknown error occurred getting the path name.
+    }
+    // Windows does not automatically close info.hFile, so we need to do it.
     ::CloseHandle(info.hFile);
     return DBG_CONTINUE;
 }
@@ -226,6 +249,7 @@ DebuggerThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info, DWORD thread
 DWORD
 DebuggerThread::HandleUnloadDllEvent(const UNLOAD_DLL_DEBUG_INFO &info, DWORD thread_id)
 {
+    m_debug_delegate->OnUnloadDll(reinterpret_cast<lldb::addr_t>(info.lpBaseOfDll));
     return DBG_CONTINUE;
 }
 
@@ -239,8 +263,7 @@ DWORD
 DebuggerThread::HandleRipEvent(const RIP_INFO &info, DWORD thread_id)
 {
     Error error(info.dwError, eErrorTypeWin32);
-    ProcessMessageDebuggerError message(m_process, error, info.dwType);
-    m_debug_delegate->OnDebuggerError(message);
+    m_debug_delegate->OnDebuggerError(error, info.dwType);
 
     return DBG_CONTINUE;
 }

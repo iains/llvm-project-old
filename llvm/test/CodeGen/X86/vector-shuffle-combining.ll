@@ -2538,11 +2538,10 @@ define <8 x i32> @combine_unneeded_subvector2(<8 x i32> %a, <8 x i32> %b) {
 ; AVX1:       # BB#0:
 ; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm0
 ; AVX1-NEXT:    vpaddd {{.*}}(%rip), %xmm0, %xmm0
-; AVX1-NEXT:    vinsertf128 $1, %xmm0, %ymm0, %ymm0
 ; AVX1-NEXT:    vextractf128 $1, %ymm1, %xmm1
 ; AVX1-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[3,2,1,0]
-; AVX1-NEXT:    vpermilps {{.*#+}} ymm0 = ymm0[3,2,1,0,7,6,5,4]
-; AVX1-NEXT:    vblendpd {{.*#+}} ymm0 = ymm1[0,1],ymm0[2,3]
+; AVX1-NEXT:    vpermilps {{.*#+}} xmm0 = xmm0[3,2,1,0]
+; AVX1-NEXT:    vinsertf128 $1, %xmm0, %ymm1, %ymm0
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: combine_unneeded_subvector2:
@@ -2563,11 +2562,12 @@ define <4 x float> @combine_insertps1(<4 x float> %a, <4 x float> %b) {
 ; SSE41:       # BB#0:
 ; SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm1[2],xmm0[1,2,3]
 ; SSE41-NEXT:    retq
-
+;
 ; AVX-LABEL: combine_insertps1:
 ; AVX:       # BB#0:
 ; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm1[2],xmm0[1,2,3]
 ; AVX-NEXT:    retq
+
   %c = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32><i32 0, i32 6, i32 2, i32 4>
   %d = shufflevector <4 x float> %a, <4 x float> %c, <4 x i32> <i32 5, i32 1, i32 6, i32 3>
   ret <4 x float> %d
@@ -2578,11 +2578,12 @@ define <4 x float> @combine_insertps2(<4 x float> %a, <4 x float> %b) {
 ; SSE41:       # BB#0:
 ; SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm0[0],xmm1[2],xmm0[2,3]
 ; SSE41-NEXT:    retq
-
+;
 ; AVX-LABEL: combine_insertps2:
 ; AVX:       # BB#0:
 ; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0],xmm1[2],xmm0[2,3]
 ; AVX-NEXT:    retq
+
   %c = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32><i32 0, i32 1, i32 6, i32 7>
   %d = shufflevector <4 x float> %a, <4 x float> %c, <4 x i32> <i32 4, i32 6, i32 2, i32 3>
   ret <4 x float> %d
@@ -2593,11 +2594,12 @@ define <4 x float> @combine_insertps3(<4 x float> %a, <4 x float> %b) {
 ; SSE41:       # BB#0:
 ; SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0],xmm0[3]
 ; SSE41-NEXT:    retq
-
+;
 ; AVX-LABEL: combine_insertps3:
 ; AVX:       # BB#0:
 ; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0],xmm0[3]
 ; AVX-NEXT:    retq
+
   %c = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32><i32 0, i32 4, i32 2, i32 5>
   %d = shufflevector <4 x float> %a, <4 x float> %c, <4 x i32><i32 4, i32 1, i32 5, i32 3>
   ret <4 x float> %d
@@ -2608,11 +2610,12 @@ define <4 x float> @combine_insertps4(<4 x float> %a, <4 x float> %b) {
 ; SSE41:       # BB#0:
 ; SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm0[0,1,2],xmm1[0]
 ; SSE41-NEXT:    retq
-
+;
 ; AVX-LABEL: combine_insertps4:
 ; AVX:       # BB#0:
 ; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,1,2],xmm1[0]
 ; AVX-NEXT:    retq
+
   %c = shufflevector <4 x float> %a, <4 x float> %b, <4 x i32><i32 0, i32 4, i32 2, i32 5>
   %d = shufflevector <4 x float> %a, <4 x float> %c, <4 x i32><i32 4, i32 1, i32 6, i32 5>
   ret <4 x float> %d

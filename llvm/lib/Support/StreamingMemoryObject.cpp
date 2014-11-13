@@ -1,4 +1,4 @@
-//===- StreamableMemoryObject.cpp - Streamable data interface -------------===//
+//===- StreamingMemoryObject.cpp - Streamable data interface -------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Support/StreamableMemoryObject.h"
+#include "llvm/Support/StreamingMemoryObject.h"
 #include "llvm/Support/Compiler.h"
 #include <cassert>
 #include <cstddef>
@@ -18,26 +18,21 @@ using namespace llvm;
 
 namespace {
 
-class RawMemoryObject : public StreamableMemoryObject {
+class RawMemoryObject : public MemoryObject {
 public:
   RawMemoryObject(const unsigned char *Start, const unsigned char *End) :
     FirstChar(Start), LastChar(End) {
     assert(LastChar >= FirstChar && "Invalid start/end range");
   }
 
-  uint64_t getBase() const override { return 0; }
   uint64_t getExtent() const override {
     return LastChar - FirstChar;
   }
-  int readByte(uint64_t address, uint8_t* ptr) const override;
-  int readBytes(uint64_t address, uint64_t size,
-                uint8_t *buf) const override;
+  uint64_t readBytes(uint8_t *Buf, uint64_t Size,
+                     uint64_t Address) const override;
   const uint8_t *getPointer(uint64_t address, uint64_t size) const override;
   bool isValidAddress(uint64_t address) const override {
     return validAddress(address);
-  }
-  bool isObjectEnd(uint64_t address) const override {
-    return objectEnd(address);
   }
 
 private:
@@ -49,26 +44,25 @@ private:
   bool validAddress(uint64_t address) const {
     return static_cast<std::ptrdiff_t>(address) < LastChar - FirstChar;
   }
-  bool objectEnd(uint64_t address) const {
-    return static_cast<std::ptrdiff_t>(address) == LastChar - FirstChar;
-  }
 
   RawMemoryObject(const RawMemoryObject&) LLVM_DELETED_FUNCTION;
   void operator=(const RawMemoryObject&) LLVM_DELETED_FUNCTION;
 };
 
-int RawMemoryObject::readByte(uint64_t address, uint8_t* ptr) const {
-  if (!validAddress(address)) return -1;
-  *ptr = *((uint8_t *)(uintptr_t)(address + FirstChar));
-  return 0;
-}
+uint64_t RawMemoryObject::readBytes(uint8_t *Buf, uint64_t Size,
+                                    uint64_t Address) const {
+  uint64_t BufferSize = LastChar - FirstChar;
+  if (Address >= BufferSize)
+    return 0;
 
-int RawMemoryObject::readBytes(uint64_t address,
-                               uint64_t size,
-                               uint8_t *buf) const {
-  if (!validAddress(address) || !validAddress(address + size - 1)) return -1;
-  memcpy(buf, (uint8_t *)(uintptr_t)(address + FirstChar), size);
-  return size;
+  uint64_t End = Address + Size;
+  if (End > BufferSize)
+    End = BufferSize;
+
+  assert(static_cast<int64_t>(End - Address) >= 0);
+  Size = End - Address;
+  memcpy(Buf, Address + FirstChar, Size);
+  return Size;
 }
 
 const uint8_t *RawMemoryObject::getPointer(uint64_t address,
@@ -85,12 +79,6 @@ bool StreamingMemoryObject::isValidAddress(uint64_t address) const {
     return fetchToPos(address);
 }
 
-bool StreamingMemoryObject::isObjectEnd(uint64_t address) const {
-  if (ObjectSize) return address == ObjectSize;
-  fetchToPos(address);
-  return address == ObjectSize && address != 0;
-}
-
 uint64_t StreamingMemoryObject::getExtent() const {
   if (ObjectSize) return ObjectSize;
   size_t pos = BytesRead + kChunkSize;
@@ -99,18 +87,19 @@ uint64_t StreamingMemoryObject::getExtent() const {
   return ObjectSize;
 }
 
-int StreamingMemoryObject::readByte(uint64_t address, uint8_t* ptr) const {
-  if (!fetchToPos(address)) return -1;
-  *ptr = Bytes[address + BytesSkipped];
-  return 0;
-}
+uint64_t StreamingMemoryObject::readBytes(uint8_t *Buf, uint64_t Size,
+                                          uint64_t Address) const {
+  fetchToPos(Address + Size - 1);
+  if (Address >= BytesRead)
+    return 0;
 
-int StreamingMemoryObject::readBytes(uint64_t address,
-                                     uint64_t size,
-                                     uint8_t *buf) const {
-  if (!fetchToPos(address + size - 1)) return -1;
-  memcpy(buf, &Bytes[address + BytesSkipped], size);
-  return 0;
+  uint64_t End = Address + Size;
+  if (End > BytesRead)
+    End = BytesRead;
+  assert(static_cast<int64_t>(End - Address) >= 0);
+  Size = End - Address;
+  memcpy(Buf, &Bytes[Address + BytesSkipped], Size);
+  return Size;
 }
 
 bool StreamingMemoryObject::dropLeadingBytes(size_t s) {
@@ -125,12 +114,10 @@ void StreamingMemoryObject::setKnownObjectSize(size_t size) {
   Bytes.reserve(size);
 }
 
-StreamableMemoryObject *getNonStreamedMemoryObject(
-    const unsigned char *Start, const unsigned char *End) {
+MemoryObject *getNonStreamedMemoryObject(const unsigned char *Start,
+                                         const unsigned char *End) {
   return new RawMemoryObject(Start, End);
 }
-
-StreamableMemoryObject::~StreamableMemoryObject() { }
 
 StreamingMemoryObject::StreamingMemoryObject(DataStreamer *streamer) :
   Bytes(kChunkSize), Streamer(streamer), BytesRead(0), BytesSkipped(0),
