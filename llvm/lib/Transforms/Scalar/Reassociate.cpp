@@ -176,6 +176,7 @@ namespace {
   private:
     void BuildRankMap(Function &F);
     unsigned getRank(Value *V);
+    void canonicalizeOperands(Instruction *I);
     void ReassociateExpression(BinaryOperator *I);
     void RewriteExprTree(BinaryOperator *I, SmallVectorImpl<ValueEntry> &Ops);
     Value *OptimizeExpression(BinaryOperator *I,
@@ -278,9 +279,11 @@ static bool isUnmovableInstruction(Instruction *I) {
 void Reassociate::BuildRankMap(Function &F) {
   unsigned i = 2;
 
-  // Assign distinct ranks to function arguments
-  for (Function::arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E; ++I)
+  // Assign distinct ranks to function arguments.
+  for (Function::arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E; ++I) {
     ValueRankMap[&*I] = ++i;
+    DEBUG(dbgs() << "Calculated Rank[" << I->getName() << "] = " << i << "\n");
+  }
 
   ReversePostOrderTraversal<Function*> RPOT(&F);
   for (ReversePostOrderTraversal<Function*>::rpo_iterator I = RPOT.begin(),
@@ -324,10 +327,26 @@ unsigned Reassociate::getRank(Value *V) {
        !BinaryOperator::isFNeg(I)))
     ++Rank;
 
-  //DEBUG(dbgs() << "Calculated Rank[" << V->getName() << "] = "
-  //     << Rank << "\n");
+  DEBUG(dbgs() << "Calculated Rank[" << V->getName() << "] = " << Rank << "\n");
 
   return ValueRankMap[I] = Rank;
+}
+
+// Canonicalize constants to RHS.  Otherwise, sort the operands by rank.
+void Reassociate::canonicalizeOperands(Instruction *I) {
+  assert(isa<BinaryOperator>(I) && "Expected binary operator.");
+  assert(I->isCommutative() && "Expected commutative operator.");
+
+  Value *LHS = I->getOperand(0);
+  Value *RHS = I->getOperand(1);
+  unsigned LHSRank = getRank(LHS);
+  unsigned RHSRank = getRank(RHS);
+
+  if (isa<Constant>(RHS))
+    return;
+
+  if (isa<Constant>(LHS) || RHSRank < LHSRank)
+    cast<BinaryOperator>(I)->swapOperands();
 }
 
 static BinaryOperator *CreateAdd(Value *S1, Value *S2, const Twine &Name,
@@ -772,14 +791,11 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
       Value *OldLHS = Op->getOperand(0);
       Value *OldRHS = Op->getOperand(1);
 
-      if (NewLHS == OldLHS && NewRHS == OldRHS)
-        // Nothing changed, leave it alone.
-        break;
-
-      if (NewLHS == OldRHS && NewRHS == OldLHS) {
-        // The order of the operands was reversed.  Swap them.
+      // The new operation differs trivially from the original.
+      if ((NewLHS == OldLHS && NewRHS == OldRHS) ||
+          (NewLHS == OldRHS && NewRHS == OldLHS)) {
         DEBUG(dbgs() << "RA: " << *Op << '\n');
-        Op->swapOperands();
+        canonicalizeOperands(Op);
         DEBUG(dbgs() << "TO: " << *Op << '\n');
         MadeChange = true;
         ++NumChanged;
@@ -801,6 +817,8 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
           NodesToRewrite.push_back(BO);
         Op->setOperand(1, NewRHS);
       }
+      // Put the operands in canonical form.
+      canonicalizeOperands(Op);
       DEBUG(dbgs() << "TO: " << *Op << '\n');
 
       ExpressionChanged = Op;
@@ -837,6 +855,7 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
     // into it.
     BinaryOperator *BO = isReassociableOp(Op->getOperand(0), Opcode);
     if (BO && !NotRewritable.count(BO)) {
+      canonicalizeOperands(Op);
       Op = BO;
       continue;
     }
@@ -861,6 +880,7 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
 
     DEBUG(dbgs() << "RA: " << *Op << '\n');
     Op->setOperand(0, NewOp);
+    canonicalizeOperands(Op);
     DEBUG(dbgs() << "TO: " << *Op << '\n');
     ExpressionChanged = Op;
     MadeChange = true;
@@ -2062,34 +2082,19 @@ void Reassociate::OptimizeInst(Instruction *I) {
   if (Instruction *Res = canonicalizeNegConstExpr(I))
     I = Res;
 
-  // Commute floating point binary operators, to canonicalize the order of their
-  // operands.  This can potentially expose more CSE opportunities, and makes
-  // writing other transformations simpler.
-  if (I->getType()->isFloatingPointTy() || I->getType()->isVectorTy()) {
+  // Commute binary operators, to canonicalize the order of their operands.
+  // This can potentially expose more CSE opportunities, and makes writing other
+  // transformations simpler.
+  if (I->isCommutative())
+    canonicalizeOperands(I);
 
-    // FAdd and FMul can be commuted.
-    unsigned Opcode = I->getOpcode();
-    if (Opcode == Instruction::FMul || Opcode == Instruction::FAdd) {
-      Value *LHS = I->getOperand(0);
-      Value *RHS = I->getOperand(1);
-      unsigned LHSRank = getRank(LHS);
-      unsigned RHSRank = getRank(RHS);
+  // Don't optimize vector instructions.
+  if (I->getType()->isVectorTy())
+    return;
 
-      // Sort the operands by rank.
-      if (RHSRank < LHSRank) {
-        I->setOperand(0, RHS);
-        I->setOperand(1, LHS);
-      }
-    }
-
-    // FIXME: We should commute vector instructions as well.  However, this 
-    // requires further analysis to determine the effect on later passes.
-
-    // Don't try to optimize vector instructions or anything that doesn't have
-    // unsafe algebra.
-    if (I->getType()->isVectorTy() || !I->hasUnsafeAlgebra())
-      return;
-  }
+  // Don't optimize floating point instructions that don't have unsafe algebra.
+  if (I->getType()->isFloatingPointTy() && !I->hasUnsafeAlgebra())
+    return;
 
   // Do not reassociate boolean (i1) expressions.  We want to preserve the
   // original order of evaluation for short-circuited comparisons that

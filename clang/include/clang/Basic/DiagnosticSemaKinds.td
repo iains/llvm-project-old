@@ -3536,6 +3536,8 @@ def note_template_variable_def_here : Note<
   "in instantiation of variable template specialization %q0 requested here">;
 def note_template_enum_def_here : Note<
   "in instantiation of enumeration %q0 requested here">;
+def note_template_nsdmi_here : Note<
+  "in instantiation of default member initializer %q0 requested here">;
 def note_template_type_alias_instantiation_here : Note<
   "in instantiation of template type alias %0 requested here">;
 def note_template_exception_spec_instantiation_here : Note<
@@ -3820,6 +3822,9 @@ def warn_property_method_deprecated :
     InGroup<DeprecatedDeclarations>;
 def warn_deprecated_message : Warning<"%0 is deprecated: %1">,
     InGroup<DeprecatedDeclarations>;
+def warn_deprecated_anonymous_namespace : Warning<
+  "'deprecated' attribute on anonymous namespace ignored">,
+  InGroup<IgnoredAttributes>;
 def warn_deprecated_fwdclass_message : Warning<
     "%0 may be deprecated because the receiver type is unknown">,
     InGroup<DeprecatedDeclarations>;
@@ -6210,9 +6215,12 @@ def err_in_class_initializer_literal_type : Error<
   "'constexpr' specifier">;
 def err_in_class_initializer_non_constant : Error<
   "in-class initializer for static data member is not a constant expression">;
-def err_in_class_initializer_references_def_ctor : Error<
-  "defaulted default constructor of %0 cannot be used by non-static data "
-  "member initializer which appears before end of class definition">;
+def err_in_class_initializer_not_yet_parsed
+    : Error<"cannot use defaulted default constructor of %0 within the class "
+            "outside of member functions because %1 has an initializer">;
+def err_in_class_initializer_not_yet_parsed_outer_class
+    : Error<"cannot use defaulted default constructor of %0 within "
+            "%1 outside of member functions because %2 has an initializer">;
 
 def ext_in_class_initializer_non_constant : Extension<
   "in-class initializer for static data member is not a constant expression; "
@@ -7195,6 +7203,8 @@ def note_omp_implicit_dsa : Note<
   "implicitly determined as %0">;
 def err_omp_loop_var_dsa : Error<
   "loop iteration variable in the associated loop of 'omp %1' directive may not be %0, predetermined as %2">;
+def err_omp_global_loop_var_dsa : Error<
+  "loop iteration variable in the associated loop of 'omp %1' directive may not be a variable with global storage without being explicitly marked as %0">;
 def err_omp_not_for : Error<
   "%select{statement after '#pragma omp %1' must be a for loop|"
   "expected %2 for loops after '#pragma omp %1'%select{|, but found only %4}3}0">;
@@ -7312,7 +7322,9 @@ def err_omp_parallel_reduction_in_task_firstprivate : Error<
   "argument of a reduction clause of a %0 construct must not appear in a firstprivate clause on a task construct">;
 def err_omp_atomic_read_not_expression_statement : Error<
   "the statement for 'atomic read' must be an expression statement of form 'v = x;',"
-  " where v and x are both l-value expressions with scalar type">;
+  " where v and x are both lvalue expressions with scalar type">;
+def note_omp_atomic_read: Note<
+  "%select{expected an expression statement|expected built-in assignment operator|expected expression of scalar type|expected lvalue expression}0">;
 def err_omp_atomic_write_not_expression_statement : Error<
   "the statement for 'atomic write' must be an expression statement of form 'x = expr;',"
   " where x is an l-value expression with scalar type">;

@@ -1733,8 +1733,9 @@ bool GVN::processNonLocalLoad(LoadInst *LI) {
 
   // If this load follows a GEP, see if we can PRE the indices before analyzing.
   if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(LI->getOperand(0))) {
-    for(GetElementPtrInst::op_iterator OI = GEP->idx_begin(),
-        OE = GEP->idx_end(); OI != OE; ++OI)
+    for (GetElementPtrInst::op_iterator OI = GEP->idx_begin(),
+                                        OE = GEP->idx_end();
+         OI != OE; ++OI)
       if (Instruction *I = dyn_cast<Instruction>(OI->get()))
         performScalarPRE(I);
   }
@@ -2444,9 +2445,8 @@ bool GVN::processBlock(BasicBlock *BB) {
 bool GVN::performScalarPRE(Instruction *CurInst) {
   SmallVector<std::pair<Value*, BasicBlock*>, 8> predMap;
 
-  if (isa<AllocaInst>(CurInst) ||
-      isa<TerminatorInst>(CurInst) || isa<PHINode>(CurInst) ||
-      CurInst->getType()->isVoidTy() ||
+  if (isa<AllocaInst>(CurInst) || isa<TerminatorInst>(CurInst) ||
+      isa<PHINode>(CurInst) || CurInst->getType()->isVoidTy() ||
       CurInst->mayReadFromMemory() || CurInst->mayHaveSideEffects() ||
       isa<DbgInfoIntrinsic>(CurInst))
     return false;
@@ -2477,8 +2477,8 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   BasicBlock *CurrentBlock = CurInst->getParent();
   predMap.clear();
 
-  for (pred_iterator PI = pred_begin(CurrentBlock),
-       PE = pred_end(CurrentBlock); PI != PE; ++PI) {
+  for (pred_iterator PI = pred_begin(CurrentBlock), PE = pred_end(CurrentBlock);
+       PI != PE; ++PI) {
     BasicBlock *P = *PI;
     // We're not interested in PRE where the block is its
     // own predecessor, or in blocks with predecessors
@@ -2486,16 +2486,16 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
     if (P == CurrentBlock) {
       NumWithout = 2;
       break;
-    } else if (!DT->isReachableFromEntry(P))  {
+    } else if (!DT->isReachableFromEntry(P)) {
       NumWithout = 2;
       break;
     }
 
-    Value* predV = findLeader(P, ValNo);
+    Value *predV = findLeader(P, ValNo);
     if (!predV) {
       predMap.push_back(std::make_pair(static_cast<Value *>(nullptr), P));
       PREPred = P;
-        ++NumWithout;
+      ++NumWithout;
     } else if (predV == CurInst) {
       /* CurInst dominates this predecessor. */
       NumWithout = 2;
@@ -2563,9 +2563,9 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   addToLeaderTable(ValNo, PREInstr, PREPred);
 
   // Create a PHI to make the value available in this block.
-  PHINode* Phi = PHINode::Create(CurInst->getType(), predMap.size(),
-                                 CurInst->getName() + ".pre-phi",
-                                 CurrentBlock->begin());
+  PHINode *Phi =
+      PHINode::Create(CurInst->getType(), predMap.size(),
+                      CurInst->getName() + ".pre-phi", CurrentBlock->begin());
   for (unsigned i = 0, e = predMap.size(); i != e; ++i) {
     if (Value *V = predMap[i].first)
       Phi->addIncoming(V, predMap[i].second);
@@ -2581,8 +2581,7 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
     // Because we have added a PHI-use of the pointer value, it has now
     // "escaped" from alias analysis' perspective.  We need to inform
     // AA of this.
-    for (unsigned ii = 0, ee = Phi->getNumIncomingValues(); ii != ee;
-         ++ii) {
+    for (unsigned ii = 0, ee = Phi->getNumIncomingValues(); ii != ee; ++ii) {
       unsigned jj = PHINode::getOperandNumForIncomingValue(ii);
       VN.getAliasAnalysis()->addEscapingUse(Phi->getOperandUse(jj));
     }
@@ -2594,7 +2593,8 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   removeFromLeaderTable(ValNo, CurInst, CurrentBlock);
 
   DEBUG(dbgs() << "GVN PRE removed: " << *CurInst << '\n');
-  if (MD) MD->removeInstruction(CurInst);
+  if (MD)
+    MD->removeInstruction(CurInst);
   DEBUG(verifyRemoved(CurInst));
   CurInst->eraseFromParent();
   return true;
@@ -2606,13 +2606,16 @@ bool GVN::performPRE(Function &F) {
   bool Changed = false;
   for (BasicBlock *CurrentBlock : depth_first(&F.getEntryBlock())) {
     // Nothing to PRE in the entry block.
-    if (CurrentBlock == &F.getEntryBlock()) continue;
+    if (CurrentBlock == &F.getEntryBlock())
+      continue;
 
     // Don't perform PRE on a landing pad.
-    if (CurrentBlock->isLandingPad()) continue;
+    if (CurrentBlock->isLandingPad())
+      continue;
 
     for (BasicBlock::iterator BI = CurrentBlock->begin(),
-         BE = CurrentBlock->end(); BI != BE; ) {
+                              BE = CurrentBlock->end();
+         BI != BE;) {
       Instruction *CurInst = BI++;
       Changed = performScalarPRE(CurInst);
     }
@@ -2652,11 +2655,22 @@ bool GVN::iterateOnFunction(Function &F) {
 
   // Top-down walk of the dominator tree
   bool Changed = false;
+  // Save the blocks this function have before transformation begins. GVN may
+  // split critical edge, and hence may invalidate the RPO/DT iterator.
+  //
+  std::vector<BasicBlock *> BBVect;
+  BBVect.reserve(256);
   // Needed for value numbering with phi construction to work.
-  ReversePostOrderTraversal<Function*> RPOT(&F);
-  for (ReversePostOrderTraversal<Function*>::rpo_iterator RI = RPOT.begin(),
-       RE = RPOT.end(); RI != RE; ++RI)
-    Changed |= processBlock(*RI);
+  ReversePostOrderTraversal<Function *> RPOT(&F);
+  for (ReversePostOrderTraversal<Function *>::rpo_iterator RI = RPOT.begin(),
+                                                           RE = RPOT.end();
+       RI != RE; ++RI)
+    BBVect.push_back(*RI);
+
+  for (std::vector<BasicBlock *>::iterator I = BBVect.begin(), E = BBVect.end();
+       I != E; I++)
+    Changed |= processBlock(*I);
+
   return Changed;
 }
 

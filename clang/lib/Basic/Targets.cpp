@@ -1868,6 +1868,7 @@ class X86TargetInfo : public TargetInfo {
     /// This specification is deprecated and will be removed in the future.
     /// Users should prefer \see CK_K8.
     // FIXME: Warn on this when the CPU is set to it.
+    //@{
     CK_x86_64,
     //@}
 
@@ -3546,6 +3547,10 @@ public:
     DefineStd(Builder, "WIN64", Opts);
     Builder.defineMacro("__MINGW64__");
     addMinGWDefines(Opts, Builder);
+
+    // GCC defines this macro when it is using __gxx_personality_seh0.
+    if (!Opts.SjLjExceptions)
+      Builder.defineMacro("__SEH__");
   }
 };
 } // end anonymous namespace
@@ -4497,7 +4502,7 @@ public:
   }
 
   StringRef getABI() const override { return ABI; }
-  virtual bool setABI(const std::string &Name) override {
+  bool setABI(const std::string &Name) override {
     if (Name != "aapcs" && Name != "darwinpcs")
       return false;
 
@@ -4505,7 +4510,7 @@ public:
     return true;
   }
 
-  virtual bool setCPU(const std::string &Name) override {
+  bool setCPU(const std::string &Name) override {
     bool CPUKnown = llvm::StringSwitch<bool>(Name)
                         .Case("generic", true)
                         .Cases("cortex-a53", "cortex-a57", true)
@@ -4580,7 +4585,7 @@ public:
     NumRecords = clang::AArch64::LastTSBuiltin - Builtin::FirstTSBuiltin;
   }
 
-  virtual bool hasFeature(StringRef Feature) const override {
+  bool hasFeature(StringRef Feature) const override {
     return Feature == "aarch64" ||
       Feature == "arm64" ||
       (Feature == "neon" && FPU == NeonMode);
@@ -4605,9 +4610,9 @@ public:
     return true;
   }
 
-  virtual bool isCLZForZeroUndef() const override { return false; }
+  bool isCLZForZeroUndef() const override { return false; }
 
-  virtual BuiltinVaListKind getBuiltinVaListKind() const override {
+  BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::AArch64ABIBuiltinVaList;
   }
 
@@ -4686,7 +4691,7 @@ public:
     }
   }
 
-  virtual const char *getClobbers() const override { return ""; }
+  const char *getClobbers() const override { return ""; }
 
   int getEHDataRegisterNumber(unsigned RegNo) const override {
     if (RegNo == 0)
@@ -4823,7 +4828,7 @@ public:
     TheCXXABI.set(TargetCXXABI::iOS64);
   }
 
-  virtual BuiltinVaListKind getBuiltinVaListKind() const override {
+  BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::CharPtrBuiltinVaList;
   }
 };

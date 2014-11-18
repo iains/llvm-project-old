@@ -70,6 +70,7 @@ static cl::opt<bool> HoistCondStores(
     cl::desc("Hoist conditional stores if an unconditional store precedes"));
 
 STATISTIC(NumBitMaps, "Number of switch instructions turned into bitmaps");
+STATISTIC(NumLinearMaps, "Number of switch instructions turned into linear mapping");
 STATISTIC(NumLookupTables, "Number of switch instructions turned into lookup tables");
 STATISTIC(NumLookupTablesHoles, "Number of switch instructions turned into lookup tables (holes checked)");
 STATISTIC(NumSinkCommons, "Number of common instructions sunk down to the end block");
@@ -3656,6 +3657,11 @@ namespace {
       // store that single value and return it for each lookup.
       SingleValueKind,
 
+      // For tables where there is a linear relationship between table index
+      // and values. We calculate the result with a simple multiplication
+      // and addition instead of a table lookup.
+      LinearMapKind,
+
       // For small tables with integer elements, we can pack them into a bitmap
       // that fits into a target-legal register. Values are retrieved by
       // shift and mask operations.
@@ -3673,6 +3679,10 @@ namespace {
     ConstantInt *BitMap;
     IntegerType *BitMapElementTy;
 
+    // For LinearMapKind, these are the constants used to derive the value.
+    ConstantInt *LinearOffset;
+    ConstantInt *LinearMultiplier;
+
     // For ArrayKind, this is the array.
     GlobalVariable *Array;
   };
@@ -3685,7 +3695,7 @@ SwitchLookupTable::SwitchLookupTable(Module &M,
                                      Constant *DefaultValue,
                                      const DataLayout *DL)
     : SingleValue(nullptr), BitMap(nullptr), BitMapElementTy(nullptr),
-      Array(nullptr) {
+      LinearOffset(nullptr), LinearMultiplier(nullptr), Array(nullptr) {
   assert(Values.size() && "Can't build lookup table without values!");
   assert(TableSize >= Values.size() && "Can't fit values in table!");
 
@@ -3730,6 +3740,43 @@ SwitchLookupTable::SwitchLookupTable(Module &M,
     return;
   }
 
+  // Check if we can derive the value with a linear transformation from the
+  // table index.
+  if (isa<IntegerType>(ValueType)) {
+    bool LinearMappingPossible = true;
+    APInt PrevVal;
+    APInt DistToPrev;
+    assert(TableSize >= 2 && "Should be a SingleValue table.");
+    // Check if there is the same distance between two consecutive values.
+    for (uint64_t I = 0; I < TableSize; ++I) {
+      ConstantInt *ConstVal = dyn_cast<ConstantInt>(TableContents[I]);
+      if (!ConstVal) {
+        // This is an undef. We could deal with it, but undefs in lookup tables
+        // are very seldom. It's probably not worth the additional complexity.
+        LinearMappingPossible = false;
+        break;
+      }
+      APInt Val = ConstVal->getValue();
+      if (I != 0) {
+        APInt Dist = Val - PrevVal;
+        if (I == 1) {
+          DistToPrev = Dist;
+        } else if (Dist != DistToPrev) {
+          LinearMappingPossible = false;
+          break;
+        }
+      }
+      PrevVal = Val;
+    }
+    if (LinearMappingPossible) {
+      LinearOffset = cast<ConstantInt>(TableContents[0]);
+      LinearMultiplier = ConstantInt::get(M.getContext(), DistToPrev);
+      Kind = LinearMapKind;
+      ++NumLinearMaps;
+      return;
+    }
+  }
+
   // If the type is integer and the table fits in a register, build a bitmap.
   if (WouldFitInRegister(DL, TableSize, ValueType)) {
     IntegerType *IT = cast<IntegerType>(ValueType);
@@ -3765,6 +3812,16 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
   switch (Kind) {
     case SingleValueKind:
       return SingleValue;
+    case LinearMapKind: {
+      // Derive the result value from the input value.
+      Value *Result = Builder.CreateIntCast(Index, LinearMultiplier->getType(),
+                                            false, "switch.idx.cast");
+      if (!LinearMultiplier->isOne())
+        Result = Builder.CreateMul(Result, LinearMultiplier, "switch.idx.mult");
+      if (!LinearOffset->isZero())
+        Result = Builder.CreateAdd(Result, LinearOffset, "switch.offset");
+      return Result;
+    }
     case BitMapKind: {
       // Type of the bitmap (e.g. i59).
       IntegerType *MapTy = BitMap->getType();
@@ -3836,9 +3893,8 @@ static bool ShouldBuildLookupTable(SwitchInst *SI,
 
   bool AllTablesFitInRegister = true;
   bool HasIllegalType = false;
-  for (SmallDenseMap<PHINode*, Type*>::const_iterator I = ResultTypes.begin(),
-       E = ResultTypes.end(); I != E; ++I) {
-    Type *Ty = I->second;
+  for (const auto &I : ResultTypes) {
+    Type *Ty = I.second;
 
     // Saturate this flag to true.
     HasIllegalType = HasIllegalType || !TTI.isTypeLegal(Ty);
@@ -3922,16 +3978,17 @@ static bool SwitchToLookupTable(SwitchInst *SI,
       return false;
 
     // Append the result from this case to the list for each phi.
-    for (ResultsTy::iterator I = Results.begin(), E = Results.end(); I!=E; ++I) {
-      if (!ResultLists.count(I->first))
-        PHIs.push_back(I->first);
-      ResultLists[I->first].push_back(std::make_pair(CaseVal, I->second));
+    for (const auto &I : Results) {
+      PHINode *PHI = I.first;
+      Constant *Value = I.second;
+      if (!ResultLists.count(PHI))
+        PHIs.push_back(PHI);
+      ResultLists[PHI].push_back(std::make_pair(CaseVal, Value));
     }
   }
 
   // Keep track of the result types.
-  for (size_t I = 0, E = PHIs.size(); I != E; ++I) {
-    PHINode *PHI = PHIs[I];
+  for (PHINode *PHI : PHIs) {
     ResultTypes[PHI] = ResultLists[PHI][0].second->getType();
   }
 
@@ -3948,6 +4005,7 @@ static bool SwitchToLookupTable(SwitchInst *SI,
     HasDefaultResults = GetCaseResults(SI, nullptr, SI->getDefaultDest(),
                                        &CommonDest, DefaultResultsList, DL);
   }
+
   bool NeedMask = (TableHasHoles && !HasDefaultResults);
   if (NeedMask) {
     // As an extra penalty for the validity test we require more cases.
@@ -3957,9 +4015,9 @@ static bool SwitchToLookupTable(SwitchInst *SI,
       return false;
   }
 
-  for (size_t I = 0, E = DefaultResultsList.size(); I != E; ++I) {
-    PHINode *PHI = DefaultResultsList[I].first;
-    Constant *Result = DefaultResultsList[I].second;
+  for (const auto &I : DefaultResultsList) {
+    PHINode *PHI = I.first;
+    Constant *Result = I.second;
     DefaultResults[PHI] = Result;
   }
 
@@ -4017,9 +4075,12 @@ static bool SwitchToLookupTable(SwitchInst *SI,
                                   CommonDest->getParent(),
                                   CommonDest);
 
+    // Make the mask's bitwidth at least 8bit and a power-of-2 to avoid
+    // unnecessary illegal types.
+    uint64_t TableSizePowOf2 = NextPowerOf2(std::max(7ULL, TableSize - 1ULL));
+    APInt MaskInt(TableSizePowOf2, 0);
+    APInt One(TableSizePowOf2, 1);
     // Build bitmask; fill in a 1 bit for every case.
-    APInt MaskInt(TableSize, 0);
-    APInt One(TableSize, 1);
     const ResultListTy &ResultList = ResultLists[PHIs[0]];
     for (size_t I = 0, E = ResultList.size(); I != E; ++I) {
       uint64_t Idx = (ResultList[I].first->getValue() -

@@ -645,6 +645,10 @@ bool DAGCombiner::isSetCCEquivalent(SDValue N, SDValue &LHS, SDValue &RHS,
       !TLI.isConstFalseVal(N.getOperand(3).getNode()))
     return false;
 
+  if (TLI.getBooleanContents(N.getValueType()) ==
+      TargetLowering::UndefinedBooleanContent)
+    return false;
+
   LHS = N.getOperand(0);
   RHS = N.getOperand(1);
   CC  = N.getOperand(4);
@@ -3826,8 +3830,7 @@ SDValue DAGCombiner::visitXOR(SDNode *N) {
     return RXOR;
 
   // fold !(x cc y) -> (x !cc y)
-  if (N1C && N1C->getAPIntValue().isAllOnesValue() &&
-      isSetCCEquivalent(N0, LHS, RHS, CC)) {
+  if (TLI.isConstTrueVal(N1.getNode()) && isSetCCEquivalent(N0, LHS, RHS, CC)) {
     bool isInt = LHS.getValueType().isInteger();
     ISD::CondCode NotCC = ISD::getSetCCInverse(cast<CondCodeSDNode>(CC)->get(),
                                                isInt);
@@ -11238,6 +11241,26 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
         //   shuffle(shuffle(A, Undef, M0), A, M1) -> shuffle(A, Undef, M2)
         return DAG.getVectorShuffle(VT, SDLoc(N), SV0, N1, &Mask[0]);
       return DAG.getVectorShuffle(VT, SDLoc(N), SV0, SV1, &Mask[0]);
+    }
+
+    // Compute the commuted shuffle mask.
+    for (unsigned i = 0; i != NumElts; ++i) {
+      int idx = Mask[i];
+      if (idx < 0)
+        continue;
+      else if (idx < (int)NumElts)
+        Mask[i] = idx + NumElts;
+      else
+        Mask[i] = idx - NumElts;
+    }
+
+    if (TLI.isShuffleMaskLegal(Mask, VT)) {
+      if (IsSV1Undef)
+        //   shuffle(shuffle(A, Undef, M0), B, M1) -> shuffle(B, A, M2)
+        return DAG.getVectorShuffle(VT, SDLoc(N), N1, SV0, &Mask[0]);
+      //   shuffle(shuffle(A, B, M0), B, M1) -> shuffle(B, A, M2)
+      //   shuffle(shuffle(A, B, M0), A, M1) -> shuffle(B, A, M2)
+      return DAG.getVectorShuffle(VT, SDLoc(N), SV1, SV0, &Mask[0]);
     }
   }
 

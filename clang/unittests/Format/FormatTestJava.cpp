@@ -50,6 +50,10 @@ protected:
   }
 };
 
+TEST_F(FormatTestJava, NoAlternativeOperatorNames) {
+  verifyFormat("someObject.and();");
+}
+
 TEST_F(FormatTestJava, ClassDeclarations) {
   verifyFormat("public class SomeClass {\n"
                "  private int a;\n"
@@ -65,8 +69,11 @@ TEST_F(FormatTestJava, ClassDeclarations) {
                "}");
   verifyFormat("public class A extends B.C {}");
 
+  verifyFormat("abstract class SomeClass\n"
+               "    extends SomeOtherClass implements SomeInterface {}",
+               getStyleWithColumns(60));
   verifyFormat("abstract class SomeClass extends SomeOtherClass\n"
-               "    implements SomeInterface {}",
+               "    implements SomeInterfaceeeeeeeeeeeee {}",
                getStyleWithColumns(60));
   verifyFormat("abstract class SomeClass\n"
                "    extends SomeOtherClass\n"
@@ -77,14 +84,17 @@ TEST_F(FormatTestJava, ClassDeclarations) {
                "    implements SomeInterface,\n"
                "               AnotherInterface {}",
                getStyleWithColumns(40));
+  verifyFormat("abstract class SomeClass\n"
+               "    implements SomeInterface, AnotherInterface {}",
+               getStyleWithColumns(60));
   verifyFormat("@SomeAnnotation()\n"
-               "abstract class aaaaaaaaaaaa extends bbbbbbbbbbbbbbb\n"
-               "    implements cccccccccccc {\n"
+               "abstract class aaaaaaaaaaaa\n"
+               "    extends bbbbbbbbbbbbbbb implements cccccccccccc {\n"
                "}",
                getStyleWithColumns(76));
   verifyFormat("@SomeAnnotation()\n"
-               "abstract class aaaaaaaaa<a> extends bbbbbbbbbbbb<b>\n"
-               "    implements cccccccccccc {\n"
+               "abstract class aaaaaaaaa<a>\n"
+               "    extends bbbbbbbbbbbb<b> implements cccccccccccc {\n"
                "}",
                getStyleWithColumns(76));
   verifyFormat("interface SomeInterface<A> extends Foo, Bar {\n"
@@ -201,8 +211,12 @@ TEST_F(FormatTestJava, Generics) {
   verifyFormat("@Override\n"
                "public Map<String, ?> getAll() {\n}");
 
+  verifyFormat("public <R> ArrayList<R> get() {\n}");
+  verifyFormat("protected <R> ArrayList<R> get() {\n}");
+  verifyFormat("private <R> ArrayList<R> get() {\n}");
   verifyFormat("public static <R> ArrayList<R> get() {\n}");
   verifyFormat("<T extends B> T getInstance(Class<T> type);");
+  verifyFormat("Function<F, ? extends T> function;");
 }
 
 TEST_F(FormatTestJava, StringConcatenation) {

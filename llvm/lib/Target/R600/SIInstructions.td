@@ -33,7 +33,15 @@ def isCI : Predicate<"Subtarget.getGeneration() "
                       ">= AMDGPUSubtarget::SEA_ISLANDS">;
 def HasFlatAddressSpace : Predicate<"Subtarget.hasFlatAddressSpace()">;
 
-def WAIT_FLAG : InstFlag<"printWaitFlag">;
+def SWaitMatchClass : AsmOperandClass {
+  let Name = "SWaitCnt";
+  let RenderMethod = "addImmOperands";
+  let ParserMethod = "parseSWaitCntOps";
+}
+
+def WAIT_FLAG : InstFlag<"printWaitFlag"> {
+  let ParserMatchClass = SWaitMatchClass;
+}
 
 let SubtargetPredicate = isSI in {
 
@@ -289,7 +297,7 @@ def S_MUL_I32 : SOP2_32 <0x00000026, "s_mul_i32",
 def S_BFE_U32 : SOP2_32 <0x00000027, "s_bfe_u32", []>;
 def S_BFE_I32 : SOP2_32 <0x00000028, "s_bfe_i32", []>;
 def S_BFE_U64 : SOP2_64 <0x00000029, "s_bfe_u64", []>;
-def S_BFE_I64 : SOP2_64 <0x0000002a, "s_bfe_i64", []>;
+def S_BFE_I64 : SOP2_64_32 <0x0000002a, "s_bfe_i64", []>;
 //def S_CBRANCH_G_FORK : SOP2_ <0x0000002b, "s_cbranch_g_fork", []>;
 def S_ABSDIFF_I32 : SOP2_32 <0x0000002c, "s_absdiff_i32", []>;
 
@@ -319,7 +327,9 @@ def S_CMP_LE_U32 : SOPC_32 <0x0000000b, "s_cmp_le_u32">;
 // SOPK Instructions
 //===----------------------------------------------------------------------===//
 
+let isReMaterializable = 1 in {
 def S_MOVK_I32 : SOPK_32 <0x00000000, "s_movk_i32", []>;
+} // End isReMaterializable = 1
 def S_CMOVK_I32 : SOPK_32 <0x00000002, "s_cmovk_i32", []>;
 
 /*
@@ -371,7 +381,7 @@ def S_GETREG_REGRD_B32 : SOPK_32 <0x00000014, "s_getreg_regrd_b32", []>;
 // SOPP Instructions
 //===----------------------------------------------------------------------===//
 
-def S_NOP : SOPP <0x00000000, (ins i16imm:$simm16), "s_nop $simm16", []>;
+def S_NOP : SOPP <0x00000000, (ins i16imm:$simm16), "s_nop $simm16">;
 
 let isTerminator = 1 in {
 
@@ -392,36 +402,31 @@ def S_BRANCH : SOPP <
 let DisableEncoding = "$scc" in {
 def S_CBRANCH_SCC0 : SOPP <
   0x00000004, (ins sopp_brtarget:$simm16, SCCReg:$scc),
-  "s_cbranch_scc0 $simm16", []
+  "s_cbranch_scc0 $simm16"
 >;
 def S_CBRANCH_SCC1 : SOPP <
   0x00000005, (ins sopp_brtarget:$simm16, SCCReg:$scc),
-  "s_cbranch_scc1 $simm16",
-  []
+  "s_cbranch_scc1 $simm16"
 >;
 } // End DisableEncoding = "$scc"
 
 def S_CBRANCH_VCCZ : SOPP <
   0x00000006, (ins sopp_brtarget:$simm16, VCCReg:$vcc),
-  "s_cbranch_vccz $simm16",
-  []
+  "s_cbranch_vccz $simm16"
 >;
 def S_CBRANCH_VCCNZ : SOPP <
   0x00000007, (ins sopp_brtarget:$simm16, VCCReg:$vcc),
-  "s_cbranch_vccnz $simm16",
-  []
+  "s_cbranch_vccnz $simm16"
 >;
 
 let DisableEncoding = "$exec" in {
 def S_CBRANCH_EXECZ : SOPP <
   0x00000008, (ins sopp_brtarget:$simm16, EXECReg:$exec),
-  "s_cbranch_execz $simm16",
-  []
+  "s_cbranch_execz $simm16"
 >;
 def S_CBRANCH_EXECNZ : SOPP <
   0x00000009, (ins sopp_brtarget:$simm16, EXECReg:$exec),
-  "s_cbranch_execnz $simm16",
-  []
+  "s_cbranch_execnz $simm16"
 >;
 } // End DisableEncoding = "$exec"
 
@@ -440,12 +445,10 @@ def S_BARRIER : SOPP <0x0000000a, (ins), "s_barrier",
   let mayStore = 1;
 }
 
-def S_WAITCNT : SOPP <0x0000000c, (ins WAIT_FLAG:$simm16), "s_waitcnt $simm16",
-  []
->;
-//def S_SETHALT : SOPP_ <0x0000000d, "s_sethalt", []>;
-//def S_SLEEP : SOPP_ <0x0000000e, "s_sleep", []>;
-//def S_SETPRIO : SOPP_ <0x0000000f, "s_setprio", []>;
+def S_WAITCNT : SOPP <0x0000000c, (ins WAIT_FLAG:$simm16), "s_waitcnt $simm16">;
+def S_SETHALT : SOPP <0x0000000d, (ins i16imm:$simm16), "s_sethalt $simm16">;
+def S_SLEEP : SOPP <0x0000000e, (ins i16imm:$simm16), "s_sleep $simm16">;
+def S_SETPRIO : SOPP <0x0000000f, (ins i16imm:$sim16), "s_setprio $sim16">;
 
 let Uses = [EXEC] in {
   def S_SENDMSG : SOPP <0x00000010, (ins SendMsgImm:$simm16, M0Reg:$m0), "s_sendmsg $simm16",
@@ -455,12 +458,16 @@ let Uses = [EXEC] in {
   }
 } // End Uses = [EXEC]
 
-//def S_SENDMSGHALT : SOPP_ <0x00000011, "s_sendmsghalt", []>;
-//def S_TRAP : SOPP_ <0x00000012, "s_trap", []>;
-//def S_ICACHE_INV : SOPP_ <0x00000013, "s_icache_inv", []>;
-//def S_INCPERFLEVEL : SOPP_ <0x00000014, "s_incperflevel", []>;
-//def S_DECPERFLEVEL : SOPP_ <0x00000015, "s_decperflevel", []>;
-//def S_TTRACEDATA : SOPP_ <0x00000016, "s_ttracedata", []>;
+def S_SENDMSGHALT : SOPP <0x00000011, (ins i16imm:$simm16), "s_sendmsghalt $simm16">;
+def S_TRAP : SOPP <0x00000012, (ins i16imm:$simm16), "s_trap $simm16">;
+def S_ICACHE_INV : SOPP <0x00000013, (ins), "s_icache_inv"> {
+	let simm16 = 0;
+}
+def S_INCPERFLEVEL : SOPP <0x00000014, (ins i16imm:$simm16), "s_incperflevel $simm16">;
+def S_DECPERFLEVEL : SOPP <0x00000015, (ins i16imm:$simm16), "s_decperflevel $simm16">;
+def S_TTRACEDATA : SOPP <0x00000016, (ins), "s_ttracedata"> {
+  let simm16 = 0;
+}
 } // End hasSideEffects
 
 //===----------------------------------------------------------------------===//
@@ -1398,11 +1405,11 @@ defm V_MUL_U32_U24 : VOP2Inst <vop2<0xb>, "v_mul_u32_u24",
 
 
 defm V_MIN_LEGACY_F32 : VOP2Inst <vop2<0xd>, "v_min_legacy_f32",
-  VOP_F32_F32_F32, AMDGPUfmin
+  VOP_F32_F32_F32, AMDGPUfmin_legacy
 >;
 
 defm V_MAX_LEGACY_F32 : VOP2Inst <vop2<0xe>, "v_max_legacy_f32",
-  VOP_F32_F32_F32, AMDGPUfmax
+  VOP_F32_F32_F32, AMDGPUfmax_legacy
 >;
 
 defm V_MIN_F32 : VOP2Inst <vop2<0xf>, "v_min_f32", VOP_F32_F32_F32, fminnum>;
@@ -1568,15 +1575,27 @@ defm V_ALIGNBYTE_B32 : VOP3Inst <vop3<0x14f>, "v_alignbyte_b32",
 >;
 defm V_MULLIT_F32 : VOP3Inst <vop3<0x150>, "v_mullit_f32",
   VOP_F32_F32_F32_F32>;
-////def V_MIN3_F32 : VOP3_MIN3 <0x00000151, "v_min3_f32", []>;
-////def V_MIN3_I32 : VOP3_MIN3 <0x00000152, "v_min3_i32", []>;
-////def V_MIN3_U32 : VOP3_MIN3 <0x00000153, "v_min3_u32", []>;
-////def V_MAX3_F32 : VOP3_MAX3 <0x00000154, "v_max3_f32", []>;
-////def V_MAX3_I32 : VOP3_MAX3 <0x00000155, "v_max3_i32", []>;
-////def V_MAX3_U32 : VOP3_MAX3 <0x00000156, "v_max3_u32", []>;
-////def V_MED3_F32 : VOP3_MED3 <0x00000157, "v_med3_f32", []>;
-////def V_MED3_I32 : VOP3_MED3 <0x00000158, "v_med3_i32", []>;
-////def V_MED3_U32 : VOP3_MED3 <0x00000159, "v_med3_u32", []>;
+defm V_MIN3_F32 : VOP3Inst <vop3<0x151>, "v_min3_f32",
+  VOP_F32_F32_F32_F32, AMDGPUfmin3>;
+
+defm V_MIN3_I32 : VOP3Inst <vop3<0x152>, "v_min3_i32",
+  VOP_I32_I32_I32_I32, AMDGPUsmin3
+>;
+defm V_MIN3_U32 : VOP3Inst <vop3<0x153>, "v_min3_u32",
+  VOP_I32_I32_I32_I32, AMDGPUumin3
+>;
+defm V_MAX3_F32 : VOP3Inst <vop3<0x154>, "v_max3_f32",
+  VOP_F32_F32_F32_F32, AMDGPUfmax3
+>;
+defm V_MAX3_I32 : VOP3Inst <vop3<0x155>, "v_max3_i32",
+  VOP_I32_I32_I32_I32, AMDGPUsmax3
+>;
+defm V_MAX3_U32 : VOP3Inst <vop3<0x156>, "v_max3_u32",
+  VOP_I32_I32_I32_I32, AMDGPUumax3
+>;
+//def V_MED3_F32 : VOP3_MED3 <0x00000157, "v_med3_f32", []>;
+//def V_MED3_I32 : VOP3_MED3 <0x00000158, "v_med3_i32", []>;
+//def V_MED3_U32 : VOP3_MED3 <0x00000159, "v_med3_u32", []>;
 //def V_SAD_U8 : VOP3_U8 <0x0000015a, "v_sad_u8", []>;
 //def V_SAD_HI_U8 : VOP3_U8 <0x0000015b, "v_sad_hi_u8", []>;
 //def V_SAD_U16 : VOP3_U16 <0x0000015c, "v_sad_u16", []>;
@@ -2967,30 +2986,25 @@ defm : SI_INDIRECT_Pattern <v16i32, i32, SI_INDIRECT_DST_V16>;
 def : Pat<(i32 (sext_inreg i32:$src, i1)),
   (S_BFE_I32 i32:$src, 65536)>; // 0 | 1 << 16
 
-// TODO: Match 64-bit BFE. SI has a 64-bit BFE, but it's scalar only so it
-// might not be worth the effort, and will need to expand to shifts when
-// fixing SGPR copies.
-
 // Handle sext_inreg in i64
 def : Pat <
   (i64 (sext_inreg i64:$src, i1)),
-  (REG_SEQUENCE SReg_64,
-    (S_BFE_I32 (EXTRACT_SUBREG i64:$src, sub0), 65536), sub0, // 0 | 1 << 16
-    (S_MOV_B32 -1), sub1)
+  (S_BFE_I64 i64:$src, 0x10000) // 0 | 1 << 16
 >;
 
 def : Pat <
   (i64 (sext_inreg i64:$src, i8)),
-  (REG_SEQUENCE SReg_64,
-    (S_SEXT_I32_I8 (EXTRACT_SUBREG i64:$src, sub0)), sub0,
-    (S_MOV_B32 -1), sub1)
+  (S_BFE_I64 i64:$src, 0x80000) // 0 | 8 << 16
 >;
 
 def : Pat <
   (i64 (sext_inreg i64:$src, i16)),
-  (REG_SEQUENCE SReg_64,
-    (S_SEXT_I32_I16 (EXTRACT_SUBREG i64:$src, sub0)), sub0,
-    (S_MOV_B32 -1), sub1)
+  (S_BFE_I64 i64:$src, 0x100000) // 0 | 16 << 16
+>;
+
+def : Pat <
+  (i64 (sext_inreg i64:$src, i32)),
+  (S_BFE_I64 i64:$src, 0x200000) // 0 | 32 << 16
 >;
 
 class ZExt_i64_i32_Pat <SDNode ext> : Pat <

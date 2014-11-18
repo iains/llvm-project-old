@@ -95,11 +95,13 @@ namespace TemplateArgumentConversion {
 }
 
 namespace CaseStatements {
+  int x;
   void f(int n) {
     switch (n) {
     case MemberZero().zero: // expected-error {{did you mean to call it with no arguments?}} expected-note {{previous}}
     case id(0): // expected-error {{duplicate case value '0'}}
       return;
+    case __builtin_constant_p(true) ? (__SIZE_TYPE__)&x : 0:; // expected-error {{constant}}
     }
   }
 }
@@ -1842,8 +1844,9 @@ namespace ZeroSizeTypes {
 namespace BadDefaultInit {
   template<int N> struct X { static const int n = N; };
 
-  struct A { // expected-note {{subexpression}}
-    int k = X<A().k>::n; // expected-error {{defaulted default constructor of 'A' cannot be used}} expected-error {{not a constant expression}} expected-note {{in call to 'A()'}}
+  struct A {
+    int k = // expected-error {{cannot use defaulted default constructor of 'A' within the class outside of member functions because 'k' has an initializer}}
+        X<A().k>::n; // expected-error {{not a constant expression}} expected-note {{implicit default constructor for 'BadDefaultInit::A' first required here}}
   };
 
   // FIXME: The "constexpr constructor must initialize all members" diagnostic

@@ -2963,6 +2963,9 @@ public:
   bool CollectMultipleMethodsInGlobalPool(Selector Sel,
                                           SmallVectorImpl<ObjCMethodDecl*>& Methods,
                                           bool instance);
+    
+  bool AreMultipleMethodsInGlobalPool(Selector Sel,
+                                      bool instance);
 
 private:
   /// \brief - Returns a selector which best matches given argument list or
@@ -3979,6 +3982,8 @@ public:
                         bool IsStdInitListInitialization, bool RequiresZeroInit,
                         unsigned ConstructKind, SourceRange ParenRange);
 
+  ExprResult BuildCXXDefaultInitExpr(SourceLocation Loc, FieldDecl *Field);
+
   /// BuildCXXDefaultArgExpr - Creates a CXXDefaultArgExpr, instantiating
   /// the default expr if needed.
   ExprResult BuildCXXDefaultArgExpr(SourceLocation CallLoc,
@@ -4105,6 +4110,10 @@ public:
                                    Expr *NoexceptExpr,
                                    SmallVectorImpl<QualType> &Exceptions,
                                    FunctionProtoType::ExceptionSpecInfo &ESI);
+
+  /// \brief Determine if we're in a case where we need to (incorrectly) eagerly
+  /// parse an exception specification to work around a libstdc++ bug.
+  bool isLibstdcxxEagerExceptionSpecHack(const Declarator &D);
 
   /// \brief Add an exception-specification to the given member function
   /// (or member function template). The exception-specification was parsed
@@ -6824,6 +6833,10 @@ public:
                        const MultiLevelTemplateArgumentList &TemplateArgs,
                        TemplateSpecializationKind TSK);
 
+  bool InstantiateInClassInitializer(
+      SourceLocation PointOfInstantiation, FieldDecl *Instantiation,
+      FieldDecl *Pattern, const MultiLevelTemplateArgumentList &TemplateArgs);
+
   struct LateInstantiatedAttribute {
     const Attr *TmplAttr;
     LocalInstantiationScope *Scope;
@@ -8583,6 +8596,7 @@ private:
 
   void CheckFloatComparison(SourceLocation Loc, Expr* LHS, Expr* RHS);
   void CheckImplicitConversions(Expr *E, SourceLocation CC = SourceLocation());
+  void CheckBoolLikeConversion(Expr *E, SourceLocation CC);
   void CheckForIntOverflow(Expr *E);
   void CheckUnsequencedOperations(Expr *E);
 

@@ -6308,7 +6308,7 @@ static void ReportOverrides(Sema& S, unsigned DiagID, const CXXMethodDecl *MD,
 /// AddOverriddenMethods - See if a method overrides any in the base classes,
 /// and if so, check that it's a valid override and remember it.
 bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
-  // Look for virtual methods in base classes that this method might override.
+  // Look for methods in base classes that this method might override.
   CXXBasePaths Paths;
   FindOverriddenMethodData Data;
   Data.Method = MD;
@@ -10579,7 +10579,8 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       }
     }
 
-    assert(ExprCleanupObjects.empty() && "Leftover temporaries in function");
+    assert(ExprCleanupObjects.size() == ExprEvalContexts.back().NumCleanupObjects
+           && "Leftover temporaries in function");
     assert(!ExprNeedsCleanups && "Unaccounted cleanups in function");
     assert(MaybeODRUseExprs.empty() &&
            "Leftover expressions for odr-use checking");

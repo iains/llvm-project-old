@@ -1281,13 +1281,15 @@ unsigned SIInstrInfo::buildExtractSubReg(MachineBasicBlock::iterator MI,
   // value so we don't need to worry about merging its subreg index with the
   // SubIdx passed to this function. The register coalescer should be able to
   // eliminate this extra copy.
-  BuildMI(*MI->getParent(), MI, MI->getDebugLoc(), get(TargetOpcode::COPY),
-          NewSuperReg)
-          .addOperand(SuperReg);
+  MachineBasicBlock *MBB = MI->getParent();
+  DebugLoc DL = MI->getDebugLoc();
 
-  BuildMI(*MI->getParent(), MI, MI->getDebugLoc(), get(TargetOpcode::COPY),
-          SubReg)
-          .addReg(NewSuperReg, 0, SubIdx);
+  BuildMI(*MBB, MI, DL, get(TargetOpcode::COPY), NewSuperReg)
+    .addReg(SuperReg.getReg(), 0, SuperReg.getSubReg());
+
+  BuildMI(*MBB, MI, DL, get(TargetOpcode::COPY), SubReg)
+    .addReg(NewSuperReg, 0, SubIdx);
+
   return SubReg;
 }
 
@@ -1901,8 +1903,13 @@ void SIInstrInfo::moveToVALU(MachineInstr &TopInst) const {
       Inst->eraseFromParent();
       continue;
 
+    case AMDGPU::S_BFE_I64: {
+      splitScalar64BitBFE(Worklist, Inst);
+      Inst->eraseFromParent();
+      continue;
+    }
+
     case AMDGPU::S_BFE_U64:
-    case AMDGPU::S_BFE_I64:
     case AMDGPU::S_BFM_B64:
       llvm_unreachable("Moving this op to VALU not implemented");
     }
@@ -2165,6 +2172,67 @@ void SIInstrInfo::splitScalar64BitBCNT(SmallVectorImpl<MachineInstr *> &Worklist
 
   Worklist.push_back(First);
   Worklist.push_back(Second);
+}
+
+void SIInstrInfo::splitScalar64BitBFE(SmallVectorImpl<MachineInstr *> &Worklist,
+                                      MachineInstr *Inst) const {
+  MachineBasicBlock &MBB = *Inst->getParent();
+  MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+  MachineBasicBlock::iterator MII = Inst;
+  DebugLoc DL = Inst->getDebugLoc();
+
+  MachineOperand &Dest = Inst->getOperand(0);
+  uint32_t Imm = Inst->getOperand(2).getImm();
+  uint32_t Offset = Imm & 0x3f; // Extract bits [5:0].
+  uint32_t BitWidth = (Imm & 0x7f0000) >> 16; // Extract bits [22:16].
+
+  (void) Offset;
+
+  // Only sext_inreg cases handled.
+  assert(Inst->getOpcode() == AMDGPU::S_BFE_I64 &&
+         BitWidth <= 32 &&
+         Offset == 0 &&
+         "Not implemented");
+
+  if (BitWidth < 32) {
+    unsigned MidRegLo = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+    unsigned MidRegHi = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+    unsigned ResultReg = MRI.createVirtualRegister(&AMDGPU::VReg_64RegClass);
+
+    BuildMI(MBB, MII, DL, get(AMDGPU::V_BFE_I32), MidRegLo)
+      .addReg(Inst->getOperand(1).getReg(), 0, AMDGPU::sub0)
+      .addImm(0)
+      .addImm(BitWidth);
+
+    BuildMI(MBB, MII, DL, get(AMDGPU::V_ASHRREV_I32_e32), MidRegHi)
+      .addImm(31)
+      .addReg(MidRegLo);
+
+    BuildMI(MBB, MII, DL, get(TargetOpcode::REG_SEQUENCE), ResultReg)
+      .addReg(MidRegLo)
+      .addImm(AMDGPU::sub0)
+      .addReg(MidRegHi)
+      .addImm(AMDGPU::sub1);
+
+    MRI.replaceRegWith(Dest.getReg(), ResultReg);
+    return;
+  }
+
+  MachineOperand &Src = Inst->getOperand(1);
+  unsigned TmpReg = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+  unsigned ResultReg = MRI.createVirtualRegister(&AMDGPU::VReg_64RegClass);
+
+  BuildMI(MBB, MII, DL, get(AMDGPU::V_ASHRREV_I32_e64), TmpReg)
+    .addImm(31)
+    .addReg(Src.getReg(), 0, AMDGPU::sub0);
+
+  BuildMI(MBB, MII, DL, get(TargetOpcode::REG_SEQUENCE), ResultReg)
+    .addReg(Src.getReg(), 0, AMDGPU::sub0)
+    .addImm(AMDGPU::sub0)
+    .addReg(TmpReg)
+    .addImm(AMDGPU::sub1);
+
+  MRI.replaceRegWith(Dest.getReg(), ResultReg);
 }
 
 void SIInstrInfo::addDescImplicitUseDef(const MCInstrDesc &NewDesc,

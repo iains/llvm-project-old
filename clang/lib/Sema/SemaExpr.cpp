@@ -398,8 +398,8 @@ void Sema::DiagnoseSentinelCalls(NamedDecl *D, SourceLocation Loc,
   if (sentinelExpr->isValueDependent()) return;
   if (Context.isSentinelNullExpr(sentinelExpr)) return;
 
-  // Pick a reasonable string to insert.  Optimistically use 'nil' or
-  // 'NULL' if those are actually defined in the context.  Only use
+  // Pick a reasonable string to insert.  Optimistically use 'nil', 'nullptr',
+  // or 'NULL' if those are actually defined in the context.  Only use
   // 'nil' for ObjC methods, where it's much more likely that the
   // variadic arguments form a list of object pointers.
   SourceLocation MissingNilLoc
@@ -408,6 +408,8 @@ void Sema::DiagnoseSentinelCalls(NamedDecl *D, SourceLocation Loc,
   if (calleeType == CT_Method &&
       PP.getIdentifierInfo("nil")->hasMacroDefinition())
     NullValue = "nil";
+  else if (getLangOpts().CPlusPlus11)
+    NullValue = "nullptr";
   else if (PP.getIdentifierInfo("NULL")->hasMacroDefinition())
     NullValue = "NULL";
   else
@@ -5709,7 +5711,7 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
       RHS.get()->getType()->isVectorType())
     return CheckVectorOperands(LHS, RHS, QuestionLoc, /*isCompAssign*/false);
 
-  UsualArithmeticConversions(LHS, RHS);
+  QualType ResTy = UsualArithmeticConversions(LHS, RHS);
   if (LHS.isInvalid() || RHS.isInvalid())
     return QualType();
 
@@ -5726,8 +5728,12 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   
   // If both operands have arithmetic type, do the usual arithmetic conversions
   // to find a common type: C99 6.5.15p3,5.
-  if (LHSTy->isArithmeticType() && RHSTy->isArithmeticType())
-    return LHS.get()->getType();
+  if (LHSTy->isArithmeticType() && RHSTy->isArithmeticType()) {
+    LHS = ImpCastExprToType(LHS.get(), ResTy, PrepareScalarCast(LHS, ResTy));
+    RHS = ImpCastExprToType(RHS.get(), ResTy, PrepareScalarCast(RHS, ResTy));
+
+    return ResTy;
+  }
 
   // If both operands are the same structure or union type, the result is that
   // type.
@@ -12982,6 +12988,7 @@ ExprResult Sema::CheckBooleanCondition(Expr *E, SourceLocation Loc) {
         << T << E->getSourceRange();
       return ExprError();
     }
+    CheckBoolLikeConversion(E, Loc);
   }
 
   return E;
