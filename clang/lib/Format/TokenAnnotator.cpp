@@ -878,6 +878,7 @@ private:
     if (PreviousNotConst->Type == TT_TemplateCloser)
       return PreviousNotConst && PreviousNotConst->MatchingParen &&
              PreviousNotConst->MatchingParen->Previous &&
+             PreviousNotConst->MatchingParen->Previous->isNot(tok::period) &&
              PreviousNotConst->MatchingParen->Previous->isNot(tok::kw_template);
 
     if (PreviousNotConst->is(tok::r_paren) && PreviousNotConst->MatchingParen &&
@@ -1525,7 +1526,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
   if (Left.is(tok::colon) && Left.Type == TT_ObjCMethodExpr)
     return Line.MightBeFunctionDecl ? 50 : 500;
 
-  if (Left.is(tok::l_paren) && InFunctionDecl)
+  if (Left.is(tok::l_paren) && InFunctionDecl && Style.AlignAfterOpenBracket)
     return 100;
   if (Left.is(tok::equal) && InFunctionDecl)
     return 110;
@@ -1533,9 +1534,12 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 1;
   if (Left.Type == TT_TemplateOpener)
     return 100;
-  if (Left.opensScope())
+  if (Left.opensScope()) {
+    if (!Style.AlignAfterOpenBracket)
+      return 0;
     return Left.ParameterCount > 1 ? Style.PenaltyBreakBeforeFirstCallParameter
                                    : 19;
+  }
 
   if (Right.is(tok::lessless)) {
     if (Left.is(tok::string_literal)) {
@@ -1676,6 +1680,8 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
       Left.MatchingParen->Previous &&
       Left.MatchingParen->Previous->is(tok::period))
     // A.<B>DoSomething();
+    return false;
+  if (Left.Type == TT_TemplateCloser && Right.is(tok::l_square))
     return false;
   return true;
 }

@@ -164,6 +164,20 @@ TEST_F(FormatTestJava, EnumDeclarations) {
                "  public void f() {\n"
                "  }\n"
                "}");
+  verifyFormat("private enum SomeEnum implements Foo<?, B> {\n"
+               "  ABC {\n"
+               "    @Override\n"
+               "    public String toString() {\n"
+               "      return \"ABC\";\n"
+               "    }\n"
+               "  },\n"
+               "  CDE {\n"
+               "    @Override\n"
+               "    public String toString() {\n"
+               "      return \"CDE\";\n"
+               "    }\n"
+               "  };\n"
+               "}");
 }
 
 TEST_F(FormatTestJava, ThrowsDeclarations) {
@@ -217,6 +231,16 @@ TEST_F(FormatTestJava, Generics) {
   verifyFormat("public static <R> ArrayList<R> get() {\n}");
   verifyFormat("<T extends B> T getInstance(Class<T> type);");
   verifyFormat("Function<F, ? extends T> function;");
+
+  verifyFormat("private Foo<X, Y>[] foos;");
+  verifyFormat("Foo<X, Y>[] foos = this.foos;");
+
+  verifyFormat(
+      "SomeLoooooooooooooooooooooongType name =\n"
+      "    SomeType.foo(someArgument)\n"
+      "        .<X>method()\n"
+      "        .aaaaaaaaaaaaaaaaaaa()\n"
+      "        .aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();");
 }
 
 TEST_F(FormatTestJava, StringConcatenation) {
@@ -259,6 +283,38 @@ TEST_F(FormatTestJava, SynchronizedKeyword) {
 TEST_F(FormatTestJava, ImportDeclarations) {
   verifyFormat("import some.really.loooooooooooooooooooooong.imported.Class;",
                getStyleWithColumns(50));
+}
+
+TEST_F(FormatTestJava, MethodDeclarations) {
+  verifyFormat("void methodName(Object arg1,\n"
+               "    Object arg2, Object arg3) {\n"
+               "}",
+               getStyleWithColumns(40));
+  verifyFormat("void methodName(\n"
+               "    Object arg1, Object arg2) {\n"
+               "}",
+               getStyleWithColumns(40));
+}
+
+TEST_F(FormatTestJava, CppKeywords) {
+  verifyFormat("public void union(Type a, Type b);");
+  verifyFormat("public void struct(Object o);");
+  verifyFormat("public void delete(Object o);");
+}
+
+TEST_F(FormatTestJava, NeverAlignAfterReturn) {
+  verifyFormat("return aaaaaaaaaaaaaaaaaaa\n"
+               "    && bbbbbbbbbbbbbbbbbbb\n"
+               "    && ccccccccccccccccccc;",
+               getStyleWithColumns(40));
+  verifyFormat("return (result == null)\n"
+               "    ? aaaaaaaaaaaaaaaaa\n"
+               "    : bbbbbbbbbbbbbbbbb;",
+               getStyleWithColumns(40));
+  verifyFormat("return aaaaaaaaaaaaaaaaaaa()\n"
+               "    .bbbbbbbbbbbbbbbbbbb()\n"
+               "    .ccccccccccccccccccc();",
+               getStyleWithColumns(40));
 }
 
 } // end namespace tooling
