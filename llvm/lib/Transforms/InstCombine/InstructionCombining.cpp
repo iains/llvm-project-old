@@ -86,6 +86,7 @@ INITIALIZE_PASS_BEGIN(InstCombiner, "instcombine",
                 "Combine redundant instructions", false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionTracker)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfo)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(InstCombiner, "instcombine",
                 "Combine redundant instructions", false, false)
 
@@ -93,6 +94,8 @@ void InstCombiner::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesCFG();
   AU.addRequired<AssumptionTracker>();
   AU.addRequired<TargetLibraryInfo>();
+  AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addPreserved<DominatorTreeWrapperPass>();
 }
 
 
@@ -2092,7 +2095,8 @@ Instruction *InstCombiner::visitSwitchInst(SwitchInst &SI) {
   // the largest legal integer type. We need to be conservative here since
   // x86 generates redundant zero-extenstion instructions if the operand is
   // truncated to i8 or i16.
-  if (BitWidth > NewWidth && NewWidth >= DL->getLargestLegalIntTypeSize()) {
+  if (DL && BitWidth > NewWidth &&
+      NewWidth >= DL->getLargestLegalIntTypeSize()) {
     IntegerType *Ty = IntegerType::get(SI.getContext(), NewWidth);
     Builder->SetInsertPoint(&SI);
     Value *NewCond = Builder->CreateTrunc(SI.getCondition(), Ty, "trunc");
@@ -2962,11 +2966,8 @@ bool InstCombiner::runOnFunction(Function &F) {
   AT = &getAnalysis<AssumptionTracker>();
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
   DL = DLP ? &DLP->getDataLayout() : nullptr;
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   TLI = &getAnalysis<TargetLibraryInfo>();
-
-  DominatorTreeWrapperPass *DTWP =
-      getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-  DT = DTWP ? &DTWP->getDomTree() : nullptr;
 
   // Minimizing size?
   MinimizeSize = F.getAttributes().hasAttribute(AttributeSet::FunctionIndex,

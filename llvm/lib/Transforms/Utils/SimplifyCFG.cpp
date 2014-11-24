@@ -357,6 +357,8 @@ static ConstantInt *GetConstantInt(Value *V, const DataLayout *DL) {
   return nullptr;
 }
 
+namespace {
+
 /// Given a chain of or (||) or and (&&) comparison of a value against a
 /// constant, this will try to recover the information required for a switch
 /// structure.
@@ -392,7 +394,8 @@ private:
   /// it wasn't set before or if the new value is the same as the old one
   bool setValueOnce(Value *NewVal) {
     if(CompValue && CompValue != NewVal) return false;
-    return CompValue = NewVal;
+    CompValue = NewVal;
+    return (CompValue != nullptr);
   }
 
   /// Try to match Instruction "I" as a comparison against a constant and
@@ -524,6 +527,8 @@ private:
     }
   }
 };
+
+}
 
 static void EraseTerminatorInstAndDCECond(TerminatorInst *TI) {
   Instruction *Cond = nullptr;

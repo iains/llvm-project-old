@@ -384,6 +384,9 @@ ExprResult Sema::BuildCXXTypeId(QualType TypeInfoType,
       RequireCompleteType(TypeidLoc, T, diag::err_incomplete_typeid))
     return ExprError();
 
+  if (T->isVariablyModifiedType())
+    return ExprError(Diag(TypeidLoc, diag::err_variably_modified_typeid) << T);
+
   return new (Context) CXXTypeidExpr(TypeInfoType.withConst(), Operand,
                                      SourceRange(TypeidLoc, RParenLoc));
 }
@@ -437,6 +440,10 @@ ExprResult Sema::BuildCXXTypeId(QualType TypeInfoType,
       E = ImpCastExprToType(E, UnqualT, CK_NoOp, E->getValueKind()).get();
     }
   }
+
+  if (E->getType()->isVariablyModifiedType())
+    return ExprError(Diag(TypeidLoc, diag::err_variably_modified_typeid)
+                     << E->getType());
 
   return new (Context) CXXTypeidExpr(TypeInfoType.withConst(), E,
                                      SourceRange(TypeidLoc, RParenLoc));
@@ -5920,12 +5927,79 @@ static void CheckIfAnyEnclosingLambdasMustCaptureAnyPotentialCaptures(
   CurrentLSI->clearPotentialCaptures();
 }
 
+static ExprResult attemptRecovery(Sema &SemaRef,
+                                  const TypoCorrectionConsumer &Consumer,
+                                  TypoCorrection TC) {
+  LookupResult R(SemaRef, Consumer.getLookupResult().getLookupNameInfo(),
+                 Consumer.getLookupResult().getLookupKind());
+  const CXXScopeSpec *SS = Consumer.getSS();
+  CXXScopeSpec NewSS;
+
+  // Use an approprate CXXScopeSpec for building the expr.
+  if (auto *NNS = TC.getCorrectionSpecifier())
+    NewSS.MakeTrivial(SemaRef.Context, NNS, TC.getCorrectionRange());
+  else if (SS && !TC.WillReplaceSpecifier())
+    NewSS = *SS;
+
+  if (auto *ND = TC.getCorrectionDecl()) {
+    R.addDecl(ND);
+    if (ND->isCXXClassMember()) {
+      // Figure out the correct naming class to ad to the LookupResult.
+      CXXRecordDecl *Record = nullptr;
+      if (auto *NNS = TC.getCorrectionSpecifier())
+        Record = NNS->getAsType()->getAsCXXRecordDecl();
+      if (!Record)
+        Record = cast<CXXRecordDecl>(ND->getDeclContext()->getRedeclContext());
+      R.setNamingClass(Record);
+
+      // Detect and handle the case where the decl might be an implicit
+      // member.
+      bool MightBeImplicitMember;
+      if (!Consumer.isAddressOfOperand())
+        MightBeImplicitMember = true;
+      else if (!NewSS.isEmpty())
+        MightBeImplicitMember = false;
+      else if (R.isOverloadedResult())
+        MightBeImplicitMember = false;
+      else if (R.isUnresolvableResult())
+        MightBeImplicitMember = true;
+      else
+        MightBeImplicitMember = isa<FieldDecl>(ND) ||
+                                isa<IndirectFieldDecl>(ND) ||
+                                isa<MSPropertyDecl>(ND);
+
+      if (MightBeImplicitMember)
+        return SemaRef.BuildPossibleImplicitMemberExpr(
+            NewSS, /*TemplateKWLoc*/ SourceLocation(), R,
+            /*TemplateArgs*/ nullptr);
+    } else if (auto *Ivar = dyn_cast<ObjCIvarDecl>(ND)) {
+      return SemaRef.LookupInObjCMethod(R, Consumer.getScope(),
+                                        Ivar->getIdentifier());
+    }
+  }
+
+  return SemaRef.BuildDeclarationNameExpr(NewSS, R, /*NeedsADL*/ false,
+                                          /*AcceptInvalidDecl*/ true);
+}
+
 namespace {
+class FindTypoExprs : public RecursiveASTVisitor<FindTypoExprs> {
+  llvm::SmallSetVector<TypoExpr *, 2> &TypoExprs;
+
+public:
+  explicit FindTypoExprs(llvm::SmallSetVector<TypoExpr *, 2> &TypoExprs)
+      : TypoExprs(TypoExprs) {}
+  bool VisitTypoExpr(TypoExpr *TE) {
+    TypoExprs.insert(TE);
+    return true;
+  }
+};
+
 class TransformTypos : public TreeTransform<TransformTypos> {
   typedef TreeTransform<TransformTypos> BaseTransform;
 
   llvm::function_ref<ExprResult(Expr *)> ExprFilter;
-  llvm::SmallSetVector<TypoExpr *, 2> TypoExprs;
+  llvm::SmallSetVector<TypoExpr *, 2> TypoExprs, AmbiguousTypoExprs;
   llvm::SmallDenseMap<TypoExpr *, ExprResult, 2> TransformCache;
   llvm::SmallDenseMap<OverloadExpr *, Expr *, 4> OverloadResolution;
 
@@ -5992,6 +6066,15 @@ class TransformTypos : public TreeTransform<TransformTypos> {
     return nullptr;
   }
 
+  ExprResult TryTransform(Expr *E) {
+    Sema::SFINAETrap Trap(SemaRef);
+    ExprResult Res = TransformExpr(E);
+    if (Trap.hasErrorOccurred() || Res.isInvalid())
+      return ExprError();
+
+    return ExprFilter(Res.get());
+  }
+
 public:
   TransformTypos(Sema &SemaRef, llvm::function_ref<ExprResult(Expr *)> Filter)
       : BaseTransform(SemaRef), ExprFilter(Filter) {}
@@ -6012,26 +6095,42 @@ public:
   ExprResult TransformLambdaExpr(LambdaExpr *E) { return Owned(E); }
 
   ExprResult Transform(Expr *E) {
-    ExprResult res;
-    bool error = false;
+    ExprResult Res;
     while (true) {
-      Sema::SFINAETrap Trap(SemaRef);
-      res = TransformExpr(E);
-      error = Trap.hasErrorOccurred();
-
-      if (!(error || res.isInvalid()))
-        res = ExprFilter(res.get());
+      Res = TryTransform(E);
 
       // Exit if either the transform was valid or if there were no TypoExprs
       // to transform that still have any untried correction candidates..
-      if (!(error || res.isInvalid()) ||
+      if (!Res.isInvalid() ||
           !CheckAndAdvanceTypoExprCorrectionStreams())
         break;
     }
 
+    // Ensure none of the TypoExprs have multiple typo correction candidates
+    // with the same edit length that pass all the checks and filters.
+    // TODO: Properly handle various permutations of possible corrections when
+    // there is more than one potentially ambiguous typo correction.
+    while (!AmbiguousTypoExprs.empty()) {
+      auto TE  = AmbiguousTypoExprs.back();
+      auto Cached = TransformCache[TE];
+      AmbiguousTypoExprs.pop_back();
+      TransformCache.erase(TE);
+      if (!TryTransform(E).isInvalid()) {
+        SemaRef.getTypoExprState(TE).Consumer->resetCorrectionStream();
+        TransformCache.erase(TE);
+        Res = ExprError();
+        break;
+      } else
+        TransformCache[TE] = Cached;
+    }
+
+    // Ensure that all of the TypoExprs within the current Expr have been found.
+    if (!Res.isUsable())
+      FindTypoExprs(TypoExprs).TraverseStmt(E);
+
     EmitAllDiagnostics();
 
-    return res;
+    return Res;
   }
 
   ExprResult TransformTypoExpr(TypoExpr *E) {
@@ -6049,21 +6148,24 @@ public:
     // For the first TypoExpr and an uncached TypoExpr, find the next likely
     // typo correction and return it.
     while (TypoCorrection TC = State.Consumer->getNextCorrection()) {
-      ExprResult NE;
-      if (State.RecoveryHandler) {
-        NE = State.RecoveryHandler(SemaRef, E, TC);
-      } else {
-        LookupResult R(SemaRef,
-                       State.Consumer->getLookupResult().getLookupNameInfo(),
-                       State.Consumer->getLookupResult().getLookupKind());
-        if (!TC.isKeyword())
-          R.addDecl(TC.getCorrectionDecl());
-        NE = SemaRef.BuildDeclarationNameExpr(CXXScopeSpec(), R, false);
-      }
-      assert(!NE.isUnset() &&
-             "Typo was transformed into a valid-but-null ExprResult");
-      if (!NE.isInvalid())
+      ExprResult NE = State.RecoveryHandler ?
+          State.RecoveryHandler(SemaRef, E, TC) :
+          attemptRecovery(SemaRef, *State.Consumer, TC);
+      if (!NE.isInvalid()) {
+        // Check whether there may be a second viable correction with the same
+        // edit distance; if so, remember this TypoExpr may have an ambiguous
+        // correction so it can be more thoroughly vetted later.
+        TypoCorrection Next;
+        if ((Next = State.Consumer->peekNextCorrection()) &&
+            Next.getEditDistance(false) == TC.getEditDistance(false)) {
+          AmbiguousTypoExprs.insert(E);
+        } else {
+          AmbiguousTypoExprs.remove(E);
+        }
+        assert(!NE.isUnset() &&
+               "Typo was transformed into a valid-but-null ExprResult");
         return CacheEntry = NE;
+      }
     }
     return CacheEntry = ExprError();
   }

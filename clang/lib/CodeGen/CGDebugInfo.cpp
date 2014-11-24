@@ -2940,7 +2940,7 @@ llvm::DIType CGDebugInfo::CreateSelfType(const QualType &QualTy,
 
 void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
     const VarDecl *VD, llvm::Value *Storage, CGBuilderTy &Builder,
-    const CGBlockInfo &blockInfo) {
+    const CGBlockInfo &blockInfo, llvm::Instruction *InsertPoint) {
   assert(DebugKind >= CodeGenOptions::LimitedDebugInfo);
   assert(!LexicalBlockStack.empty() && "Region stack mismatch, stack empty!");
 
@@ -2998,8 +2998,11 @@ void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
                                    VD->getName(), Unit, Line, Ty);
 
   // Insert an llvm.dbg.declare into the current block.
-  llvm::Instruction *Call = DBuilder.insertDeclare(
-      Storage, D, DBuilder.createExpression(addr), Builder.GetInsertPoint());
+  llvm::Instruction *Call = InsertPoint ?
+      DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(addr),
+                             InsertPoint)
+    : DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(addr),
+                             Builder.GetInsertBlock());
   Call->setDebugLoc(
       llvm::DebugLoc::get(Line, Column, LexicalBlockStack.back()));
 }
@@ -3275,22 +3278,18 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD,
   if (isa<FunctionDecl>(VD->getDeclContext()))
     return;
   VD = cast<ValueDecl>(VD->getCanonicalDecl());
-  llvm::DIDescriptor DContext =
-      getContextDescriptor(dyn_cast<Decl>(VD->getDeclContext()));
   auto *VarD = cast<VarDecl>(VD);
-
-  // If this is only a declaration, it might be the declaration of a static
-  // variable with an initializer - we still want to ensure that's emitted, but
-  // merely calling getContextDescriptor above has already ensured that. Since
-  // there's no definition to emit, there's no further work to do.
-  if (!VarD->hasDefinition()) {
+  if (VarD->isStaticDataMember()) {
+    auto *RD = cast<RecordDecl>(VarD->getDeclContext());
+    getContextDescriptor(RD);
     // Ensure that the type is retained even though it's otherwise unreferenced.
     RetainedTypes.push_back(
-        CGM.getContext()
-            .getRecordType(cast<RecordDecl>(VD->getDeclContext()))
-            .getAsOpaquePtr());
+        CGM.getContext().getRecordType(RD).getAsOpaquePtr());
     return;
   }
+
+  llvm::DIDescriptor DContext =
+      getContextDescriptor(dyn_cast<Decl>(VD->getDeclContext()));
 
   auto pair = DeclCache.insert(std::make_pair(VD, llvm::WeakVH()));
   if (!pair.second)
@@ -3412,12 +3411,6 @@ void CGDebugInfo::finalize() {
       VH = p.second;
     else
       VH = it->second;
-
-    // Functions have a fake temporary MDNode operand that is supposed
-    // to get RAUWed upon DIBuilder finalization. Do not leak these
-    // nodes for the temporary functions we are about to delete.
-    if (FwdDecl.isSubprogram())
-      llvm::MDNode::deleteTemporary(llvm::DISubprogram(FwdDecl).getVariablesNodes());
 
     FwdDecl.replaceAllUsesWith(CGM.getLLVMContext(),
                                llvm::DIDescriptor(cast<llvm::MDNode>(VH)));

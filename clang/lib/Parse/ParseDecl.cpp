@@ -302,7 +302,8 @@ unsigned Parser::ParseAttributeArgsCommon(
         Unevaluated.reset(
             new EnterExpressionEvaluationContext(Actions, Sema::Unevaluated));
 
-      ExprResult ArgExpr(ParseAssignmentExpression());
+      ExprResult ArgExpr(
+          Actions.CorrectDelayedTyposInExpr(ParseAssignmentExpression()));
       if (ArgExpr.isInvalid()) {
         SkipUntil(tok::r_paren, StopAtSemi);
         return 0;
@@ -5281,8 +5282,24 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 
       // Parse exception-specification[opt].
       bool Delayed = D.isFirstDeclarationOfMember() &&
-                     D.isFunctionDeclaratorAFunctionDeclaration() &&
-                     !Actions.isLibstdcxxEagerExceptionSpecHack(D);
+                     D.isFunctionDeclaratorAFunctionDeclaration();
+      if (Delayed && Actions.isLibstdcxxEagerExceptionSpecHack(D) &&
+          GetLookAheadToken(0).is(tok::kw_noexcept) &&
+          GetLookAheadToken(1).is(tok::l_paren) &&
+          GetLookAheadToken(2).is(tok::kw_noexcept) &&
+          GetLookAheadToken(3).is(tok::l_paren) &&
+          GetLookAheadToken(4).is(tok::identifier) &&
+          GetLookAheadToken(4).getIdentifierInfo()->isStr("swap")) {
+        // HACK: We've got an exception-specification
+        //   noexcept(noexcept(swap(...)))
+        // or
+        //   noexcept(noexcept(swap(...)) && noexcept(swap(...)))
+        // on a 'swap' member function. This is a libstdc++ bug; the lookup
+        // for 'swap' will only find the function we're currently declaring,
+        // whereas it expects to find a non-member swap through ADL. Turn off
+        // delayed parsing to give it a chance to find what it expects.
+        Delayed = false;
+      }
       ESpecType = tryParseExceptionSpecification(Delayed,
                                                  ESpecRange,
                                                  DynamicExceptions,
@@ -5566,6 +5583,7 @@ void Parser::ParseParameterDeclarationClause(
             DefArgResult = ParseBraceInitializer();
           } else
             DefArgResult = ParseAssignmentExpression();
+          DefArgResult = Actions.CorrectDelayedTyposInExpr(DefArgResult);
           if (DefArgResult.isInvalid()) {
             Actions.ActOnParamDefaultArgumentError(Param, EqualLoc);
             SkipUntil(tok::comma, tok::r_paren, StopAtSemi | StopBeforeMatch);
@@ -5706,7 +5724,8 @@ void Parser::ParseBracketDeclarator(Declarator &D) {
     } else {
       EnterExpressionEvaluationContext Unevaluated(Actions,
                                                    Sema::ConstantEvaluated);
-      NumElements = ParseAssignmentExpression();
+      NumElements =
+          Actions.CorrectDelayedTyposInExpr(ParseAssignmentExpression());
     }
   } else {
     if (StaticLoc.isValid()) {

@@ -418,6 +418,8 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
 }
 
 static bool IsGoogScope(const UnwrappedLine &Line) {
+  // FIXME: Closure-library specific stuff should not be hard-coded but be
+  // configurable.
   if (Line.Tokens.size() < 4)
     return false;
   auto I = Line.Tokens.begin();
@@ -867,6 +869,9 @@ bool UnwrappedLineParser::tryToParseLambda() {
     case tok::l_paren:
       parseParens();
       break;
+    case tok::amp:
+    case tok::star:
+    case tok::kw_const:
     case tok::less:
     case tok::greater:
     case tok::identifier:

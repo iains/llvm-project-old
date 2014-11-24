@@ -1496,6 +1496,9 @@ def note_uninit_reference_member : Note<
   "uninitialized reference member is here">;
 def warn_field_is_uninit : Warning<"field %0 is uninitialized when used here">,
   InGroup<Uninitialized>;
+def warn_base_class_is_uninit : Warning<
+  "base class %0 is uninitialized when used here to access %q1">,
+  InGroup<Uninitialized>;
 def warn_reference_field_is_uninit : Warning<
   "reference %0 is not yet bound to a value when used here">,
   InGroup<Uninitialized>;
@@ -5300,6 +5303,7 @@ def err_uuidof_without_guid : Error<
 def err_uuidof_with_multiple_guids : Error<
   "cannot call operator __uuidof on a type with multiple GUIDs">;
 def err_incomplete_typeid : Error<"'typeid' of incomplete type %0">;
+def err_variably_modified_typeid : Error<"'typeid' of variably modified type %0">;
 def err_static_illegal_in_new : Error<
   "the 'static' modifier for the array size is not legal in new expressions">;
 def err_array_new_needs_size : Error<
@@ -6112,6 +6116,11 @@ def warn_zero_size_struct_union_compat : Warning<"%select{|empty }0"
 def warn_zero_size_struct_union_in_extern_c : Warning<"%select{|empty }0"
   "%select{struct|union}1 has size 0 in C, %select{size 1|non-zero size}2 in C++">,
   InGroup<ExternCCompat>;
+def warn_cast_qual : Warning<"cast from %0 to %1 drops %select{const and "
+  "volatile qualifiers|const qualifier|volatile qualifier}2">,
+  InGroup<CastQual>, DefaultIgnore;
+def warn_cast_qual2 : Warning<"cast from %0 to %1 must have all intermediate "
+  "pointers const qualified to be safe">, InGroup<CastQual>, DefaultIgnore;
 } // End of general sema category.
 
 // inline asm.
