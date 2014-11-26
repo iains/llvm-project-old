@@ -20,7 +20,6 @@
 
 #include "sanitizer/allocator_interface.h"
 #include "sanitizer/msan_interface.h"
-#include "msandr_test_so.h"
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -1832,6 +1831,16 @@ TEST(MemorySanitizer, wcsnrtombs) {
   EXPECT_EQ(buff[0], 'a');
   EXPECT_EQ(buff[1], 'b');
   EXPECT_POISONED(buff[2]);
+}
+
+TEST(MemorySanitizer, wmemset) {
+    wchar_t x[25];
+    break_optimization(x);
+    EXPECT_POISONED(x[0]);
+    wmemset(x, L'A', 10);
+    EXPECT_EQ(x[0], L'A');
+    EXPECT_EQ(x[9], L'A');
+    EXPECT_POISONED(x[10]);
 }
 
 TEST(MemorySanitizer, mbtowc) {

@@ -12,14 +12,14 @@
 //
 // Compiler instrumentation:
 // For every interesting basic block the compiler injects the following code:
-// if (*Guard) {
-//    __sanitizer_cov();
-//    *Guard = 1;
+// if (Guard) {
+//    __sanitizer_cov(&Guard);
 // }
 // It's fine to call __sanitizer_cov more than once for a given block.
 //
 // Run-time:
 //  - __sanitizer_cov(): record that we've executed the PC (GET_CALLER_PC).
+//    and atomically set Guard to 1.
 //  - __sanitizer_cov_dump: dump the coverage data to disk.
 //  For every module of the current process that has coverage data
 //  this will create a file module_name.PID.sancov. The file format is simple:
@@ -65,7 +65,7 @@ class CoverageData {
   void BeforeFork();
   void AfterFork(int child_pid);
   void Extend(uptr npcs);
-  void Add(uptr pc);
+  void Add(uptr pc, u8 *guard);
   void IndirCall(uptr caller, uptr callee, uptr callee_cache[],
                  uptr cache_size);
   void DumpCallerCalleePairs();
@@ -132,7 +132,7 @@ class CoverageData {
 static CoverageData coverage_data;
 
 void CoverageData::DirectOpen() {
-  InternalScopedString path(1024);
+  InternalScopedString path(kMaxPathLength);
   internal_snprintf((char *)path.data(), path.size(), "%s/%zd.sancov.raw",
                     common_flags()->coverage_dir, internal_getpid());
   pc_fd = OpenFile(path.data(), true);
@@ -230,15 +230,19 @@ void CoverageData::Extend(uptr npcs) {
   atomic_store(&pc_array_size, size, memory_order_release);
 }
 
-// Simply add the pc into the vector under lock. If the function is called more
-// than once for a given PC it will be inserted multiple times, which is fine.
-void CoverageData::Add(uptr pc) {
+// Atomically add the pc to the vector. The atomically set the guard to 1.
+// If the function is called more than once for a given PC it will
+// be inserted multiple times, which is fine.
+void CoverageData::Add(uptr pc, u8 *guard) {
   if (!pc_array) return;
   uptr idx = atomic_fetch_add(&pc_array_index, 1, memory_order_relaxed);
   CHECK_LT(idx * sizeof(uptr),
            atomic_load(&pc_array_size, memory_order_acquire));
   pc_array[idx] = pc;
   atomic_fetch_add(&coverage_counter, 1, memory_order_relaxed);
+  // Set the guard.
+  atomic_uint8_t *atomic_guard = reinterpret_cast<atomic_uint8_t*>(guard);
+  atomic_store(atomic_guard, 1, memory_order_relaxed);
 }
 
 // Registers a pair caller=>callee.
@@ -335,7 +339,7 @@ static void CovWritePacked(int pid, const char *module, const void *blob,
 // If packed = true and name != 0: <name>.<sancov>.<packed> (name is
 // user-supplied).
 static int CovOpenFile(bool packed, const char* name) {
-  InternalScopedBuffer<char> path(1024);
+  InternalScopedBuffer<char> path(kMaxPathLength);
   if (!packed) {
     CHECK(name);
     internal_snprintf((char *)path.data(), path.size(), "%s/%s.%zd.sancov",
@@ -461,8 +465,8 @@ static void CovDump() {
   SortArray(vb, size);
   MemoryMappingLayout proc_maps(/*cache_enabled*/true);
   uptr mb, me, off, prot;
-  InternalScopedBuffer<char> module(4096);
-  InternalScopedBuffer<char> path(4096 * 2);
+  InternalScopedBuffer<char> module(kMaxPathLength);
+  InternalScopedBuffer<char> path(kMaxPathLength);
   for (int i = 0;
        proc_maps.Next(&mb, &me, &off, module.data(), module.size(), &prot);
        i++) {
@@ -537,8 +541,9 @@ void CovAfterFork(int child_pid) {
 }  // namespace __sanitizer
 
 extern "C" {
-SANITIZER_INTERFACE_ATTRIBUTE void __sanitizer_cov() {
-  coverage_data.Add(StackTrace::GetPreviousInstructionPc(GET_CALLER_PC()));
+SANITIZER_INTERFACE_ATTRIBUTE void __sanitizer_cov(u8 *guard) {
+  coverage_data.Add(StackTrace::GetPreviousInstructionPc(GET_CALLER_PC()),
+                    guard);
 }
 SANITIZER_INTERFACE_ATTRIBUTE void
 __sanitizer_cov_indir_call16(uptr callee, uptr callee_cache16[]) {

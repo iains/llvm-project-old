@@ -275,15 +275,28 @@ struct FormatToken {
   bool is(const IdentifierInfo *II) const {
     return II && II == Tok.getIdentifierInfo();
   }
-
-  bool isOneOf() const { return false; }
-  template <typename T, typename... L> bool isOneOf(T Type, L... args) const {
-    return is(Type) || isOneOf(args...);
-  }
-  // This overload increases performance by ~3%.
-  // FIXME: Re-evaluate this.
-  template <typename T> bool isOneOf(T K1, T K2) const {
+  template <typename A, typename B> bool isOneOf(A K1, B K2) const {
     return is(K1) || is(K2);
+  }
+  template <typename A, typename B, typename C>
+  bool isOneOf(A K1, B K2, C K3) const {
+    return is(K1) || is(K2) || is(K3);
+  }
+  template <typename A, typename B, typename C, typename D>
+  bool isOneOf(A K1, B K2, C K3, D K4) const {
+    return is(K1) || is(K2) || is(K3) || is(K4);
+  }
+  template <typename A, typename B, typename C, typename D, typename E>
+  bool isOneOf(A K1, B K2, C K3, D K4, E K5) const {
+    return is(K1) || is(K2) || is(K3) || is(K4) || is(K5);
+  }
+  template <typename T>
+  bool isOneOf(T K1, T K2, T K3, T K4, T K5, T K6, T K7 = tok::NUM_TOKENS,
+               T K8 = tok::NUM_TOKENS, T K9 = tok::NUM_TOKENS,
+               T K10 = tok::NUM_TOKENS, T K11 = tok::NUM_TOKENS,
+               T K12 = tok::NUM_TOKENS) const {
+    return is(K1) || is(K2) || is(K3) || is(K4) || is(K5) || is(K6) || is(K7) ||
+           is(K8) || is(K9) || is(K10) || is(K11) || is(K12);
   }
 
   template <typename T> bool isNot(T Kind) const { return !is(Kind); }
