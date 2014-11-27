@@ -69,6 +69,21 @@ TEST_F(FormatTestJava, FormatsInstanceOfLikeOperators) {
                Style);
 }
 
+TEST_F(FormatTestJava, Chromium) {
+  verifyFormat("class SomeClass {\n"
+               "    void f() {}\n"
+               "    int g() {\n"
+               "        return 0;\n"
+               "    }\n"
+               "    void h() {\n"
+               "        while (true) f();\n"
+               "        for (;;) f();\n"
+               "        if (true) f();\n"
+               "    }\n"
+               "}",
+               getChromiumStyle(FormatStyle::LK_Java));
+}
+
 TEST_F(FormatTestJava, ClassKeyword) {
   verifyFormat("SomeClass.class.getName();");
   verifyFormat("Class c = SomeClass.class;");
@@ -302,6 +317,11 @@ TEST_F(FormatTestJava, SynchronizedKeyword) {
   verifyFormat("synchronized (mData) {\n"
                "  // ...\n"
                "}");
+}
+
+TEST_F(FormatTestJava, PackageDeclarations) {
+  verifyFormat("package some.really.loooooooooooooooooooooong.package;",
+               getStyleWithColumns(50));
 }
 
 TEST_F(FormatTestJava, ImportDeclarations) {
