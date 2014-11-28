@@ -2234,7 +2234,7 @@ def warn_attribute_wrong_decl_type : Warning<
   "%0 attribute only applies to %select{functions|unions|"
   "variables and functions|functions and methods|parameters|"
   "functions, methods and blocks|functions, methods, and classes|"
-  "functions, methods, and parameters|classes|variables|methods|"
+  "functions, methods, and parameters|classes|enums|variables|methods|"
   "variables, functions and labels|fields and global variables|structs|"
   "variables and typedefs|thread-local variables|"
   "variables and fields|variables, data members and tag types|"
@@ -4053,6 +4053,9 @@ def ext_enum_too_large : ExtWarn<
 def ext_enumerator_increment_too_large : ExtWarn<
   "incremented enumerator value %0 is not representable in the "
   "largest integer type">, InGroup<EnumTooLarge>;
+def warn_flag_enum_constant_out_of_range : Warning<
+  "enumeration value %0 is out of range of flags in enumeration type %1">,
+  InGroup<FlagEnum>;
   
 def warn_illegal_constant_array_size : Extension<
   "size of static array must be an integer constant expression">;
@@ -7354,11 +7357,11 @@ def err_omp_parallel_reduction_in_task_firstprivate : Error<
 def err_omp_atomic_read_not_expression_statement : Error<
   "the statement for 'atomic read' must be an expression statement of form 'v = x;',"
   " where v and x are both lvalue expressions with scalar type">;
-def note_omp_atomic_read: Note<
+def note_omp_atomic_read_write: Note<
   "%select{expected an expression statement|expected built-in assignment operator|expected expression of scalar type|expected lvalue expression}0">;
 def err_omp_atomic_write_not_expression_statement : Error<
   "the statement for 'atomic write' must be an expression statement of form 'x = expr;',"
-  " where x is an l-value expression with scalar type">;
+  " where x is a lvalue expression with scalar type">;
 def err_omp_atomic_update_not_expression_statement : Error<
   "the statement for 'atomic%select{| update}0' must be an expression statement of form '++x;', '--x;', 'x++;', 'x--;', 'x binop= expr;', 'x = x binop expr' or 'x = expr binop x',"
   " where x is an l-value expression with scalar type">;
