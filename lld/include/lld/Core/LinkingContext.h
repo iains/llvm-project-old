@@ -318,8 +318,11 @@ public:
   /// Return the next ordinal and Increment it.
   virtual uint64_t getNextOrdinalAndIncrement() const { return _nextOrdinal++; }
 
-  /// @}
+#ifndef NDEBUG
+  bool runRoundTripPass() const { return _runRoundTripPasses; }
+#endif
 
+  /// @}
 protected:
   LinkingContext(); // Must be subclassed
 
@@ -350,6 +353,9 @@ protected:
   bool _allowRemainingUndefines;
   bool _logInputFiles;
   bool _allowShlibUndefines;
+#ifndef NDEBUG
+  bool _runRoundTripPasses;
+#endif
   OutputFileType _outputFileType;
   std::vector<StringRef> _deadStripRoots;
   std::map<std::string, std::string> _aliasSymbols;

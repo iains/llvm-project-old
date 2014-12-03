@@ -47,6 +47,8 @@ class TypeMapTy : public ValueMapTypeRemapper {
   /// roll back.
   SmallVector<Type*, 16> SpeculativeTypes;
 
+  SmallVector<StructType*, 16> SpeculativeDstOpaqueTypes;
+
   /// This is a list of non-opaque structs in the source module that are mapped
   /// to an opaque struct in the destination module.
   SmallVector<StructType*, 16> SrcDefinitionsToResolve;
@@ -94,15 +96,29 @@ private:
 }
 
 void TypeMapTy::addTypeMapping(Type *DstTy, Type *SrcTy) {
+  assert(SpeculativeTypes.empty());
+  assert(SpeculativeDstOpaqueTypes.empty());
+
   // Check to see if these types are recursively isomorphic and establish a
   // mapping between them if so.
   if (!areTypesIsomorphic(DstTy, SrcTy)) {
     // Oops, they aren't isomorphic.  Just discard this request by rolling out
     // any speculative mappings we've established.
-    for (unsigned i = 0, e = SpeculativeTypes.size(); i != e; ++i)
-      MappedTypes.erase(SpeculativeTypes[i]);
+    for (Type *Ty : SpeculativeTypes)
+      MappedTypes.erase(Ty);
+
+    SrcDefinitionsToResolve.resize(SrcDefinitionsToResolve.size() -
+                                   SpeculativeDstOpaqueTypes.size());
+    for (StructType *Ty : SpeculativeDstOpaqueTypes)
+      DstResolvedOpaqueTypes.erase(Ty);
+  } else {
+    for (Type *Ty : SpeculativeTypes)
+      if (auto *STy = dyn_cast<StructType>(Ty))
+        if (STy->hasName())
+          STy->setName("");
   }
   SpeculativeTypes.clear();
+  SpeculativeDstOpaqueTypes.clear();
 }
 
 /// Recursively walk this pair of types, returning true if they are isomorphic,
@@ -137,14 +153,15 @@ bool TypeMapTy::areTypesIsomorphic(Type *DstTy, Type *SrcTy) {
 
     // Mapping a non-opaque source type to an opaque dest.  If this is the first
     // type that we're mapping onto this destination type then we succeed.  Keep
-    // the dest, but fill it in later.  This doesn't need to be speculative.  If
-    // this is the second (different) type that we're trying to map onto the
-    // same opaque type then we fail.
+    // the dest, but fill it in later. If this is the second (different) type
+    // that we're trying to map onto the same opaque type then we fail.
     if (cast<StructType>(DstTy)->isOpaque()) {
       // We can only map one source type onto the opaque destination type.
       if (!DstResolvedOpaqueTypes.insert(cast<StructType>(DstTy)).second)
         return false;
       SrcDefinitionsToResolve.push_back(SSTy);
+      SpeculativeTypes.push_back(SrcTy);
+      SpeculativeDstOpaqueTypes.push_back(cast<StructType>(DstTy));
       Entry = DstTy;
       return true;
     }
@@ -209,6 +226,13 @@ void TypeMapTy::linkDefinedTypeBodies() {
 }
 
 Type *TypeMapTy::get(Type *Ty) {
+#ifndef NDEBUG
+  for (auto &Pair : MappedTypes) {
+    assert(!(Pair.first != Ty && Pair.second == Ty) &&
+           "mapping to a source type");
+  }
+#endif
+
   // If we already have an entry for this type, return it.
   Type **Entry = &MappedTypes[Ty];
   if (*Entry)
@@ -767,43 +791,42 @@ void ModuleLinker::computeTypeMapping() {
   // At this point, the destination module may have a type "%foo = { i32 }" for
   // example.  When the source module got loaded into the same LLVMContext, if
   // it had the same type, it would have been renamed to "%foo.42 = { i32 }".
-  TypeFinder SrcStructTypes;
-  SrcStructTypes.run(*SrcM, true);
-  SmallPtrSet<StructType*, 32> SrcStructTypesSet(SrcStructTypes.begin(),
-                                                 SrcStructTypes.end());
-
-  for (unsigned i = 0, e = SrcStructTypes.size(); i != e; ++i) {
-    StructType *ST = SrcStructTypes[i];
-    if (!ST->hasName()) continue;
+  std::vector<StructType *> Types = SrcM->getIdentifiedStructTypes();
+  for (StructType *ST : Types) {
+    if (!ST->hasName())
+      continue;
 
     // Check to see if there is a dot in the name followed by a digit.
     size_t DotPos = ST->getName().rfind('.');
     if (DotPos == 0 || DotPos == StringRef::npos ||
         ST->getName().back() == '.' ||
-        !isdigit(static_cast<unsigned char>(ST->getName()[DotPos+1])))
+        !isdigit(static_cast<unsigned char>(ST->getName()[DotPos + 1])))
       continue;
 
     // Check to see if the destination module has a struct with the prefix name.
-    if (StructType *DST = DstM->getTypeByName(ST->getName().substr(0, DotPos)))
-      // Don't use it if this actually came from the source module. They're in
-      // the same LLVMContext after all. Also don't use it unless the type is
-      // actually used in the destination module. This can happen in situations
-      // like this:
-      //
-      //      Module A                         Module B
-      //      --------                         --------
-      //   %Z = type { %A }                %B = type { %C.1 }
-      //   %A = type { %B.1, [7 x i8] }    %C.1 = type { i8* }
-      //   %B.1 = type { %C }              %A.2 = type { %B.3, [5 x i8] }
-      //   %C = type { i8* }               %B.3 = type { %C.1 }
-      //
-      // When we link Module B with Module A, the '%B' in Module B is
-      // used. However, that would then use '%C.1'. But when we process '%C.1',
-      // we prefer to take the '%C' version. So we are then left with both
-      // '%C.1' and '%C' being used for the same types. This leads to some
-      // variables using one type and some using the other.
-      if (!SrcStructTypesSet.count(DST) && TypeMap.DstStructTypesSet.count(DST))
-        TypeMap.addTypeMapping(DST, ST);
+    StructType *DST = DstM->getTypeByName(ST->getName().substr(0, DotPos));
+    if (!DST)
+      continue;
+
+    // Don't use it if this actually came from the source module. They're in
+    // the same LLVMContext after all. Also don't use it unless the type is
+    // actually used in the destination module. This can happen in situations
+    // like this:
+    //
+    //      Module A                         Module B
+    //      --------                         --------
+    //   %Z = type { %A }                %B = type { %C.1 }
+    //   %A = type { %B.1, [7 x i8] }    %C.1 = type { i8* }
+    //   %B.1 = type { %C }              %A.2 = type { %B.3, [5 x i8] }
+    //   %C = type { i8* }               %B.3 = type { %C.1 }
+    //
+    // When we link Module B with Module A, the '%B' in Module B is
+    // used. However, that would then use '%C.1'. But when we process '%C.1',
+    // we prefer to take the '%C' version. So we are then left with both
+    // '%C.1' and '%C' being used for the same types. This leads to some
+    // variables using one type and some using the other.
+    if (TypeMap.DstStructTypesSet.count(DST))
+      TypeMap.addTypeMapping(DST, ST);
   }
 
   // Now that we have discovered all of the type equivalences, get a body for
@@ -1480,11 +1503,16 @@ bool ModuleLinker::run() {
     if (DoNotLinkFromSource.count(SF)) continue;
 
     Function *DF = cast<Function>(ValueMap[SF]);
-    if (SF->hasPrefixData()) {
-      // Link in the prefix data.
+
+    // Link in the prefix data.
+    if (SF->hasPrefixData())
       DF->setPrefixData(MapValue(
           SF->getPrefixData(), ValueMap, RF_None, &TypeMap, &ValMaterializer));
-    }
+
+    // Link in the prologue data.
+    if (SF->hasPrologueData())
+      DF->setPrologueData(MapValue(
+          SF->getPrologueData(), ValueMap, RF_None, &TypeMap, &ValMaterializer));
 
     // Materialize if needed.
     if (std::error_code EC = SF->materialize())

@@ -585,7 +585,8 @@ def warn_atprotocol_protocol : Warning<
   "@protocol is using a forward protocol declaration of %0">, InGroup<AtProtocol>;
 def warn_readonly_property : Warning<
   "attribute 'readonly' of property %0 restricts attribute "
-  "'readwrite' of property inherited from %1">;
+  "'readwrite' of property inherited from %1">,
+  InGroup<PropertyAttr>;
 
 def warn_property_attribute : Warning<
   "'%1' attribute on property %0 does not match the property inherited from %2">,
@@ -5286,7 +5287,7 @@ def err_bad_cxx_cast_member_pointer_size : Error<
   "cannot %select{||reinterpret_cast||C-style cast|}0 from member pointer "
   "type %1 to member pointer type %2 of different size">;
 def err_bad_reinterpret_cast_reference : Error<
-  "reinterpret_cast of a %0 to %1 needs its address which is not allowed">;
+  "reinterpret_cast of a %0 to %1 needs its address, which is not allowed">;
 def warn_undefined_reinterpret_cast : Warning<
   "reinterpret_cast from %0 to %1 has undefined behavior">,
   InGroup<UndefinedReinterpretCast>, DefaultIgnore;

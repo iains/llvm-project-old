@@ -165,7 +165,7 @@ static SDValue InsertSubVector(SDValue Result, SDValue Vec,
 /// sets things up to match to an AVX VINSERTF128/VINSERTI128 or
 /// AVX-512 VINSERTF32x4/VINSERTI32x4 instructions or a
 /// simple superregister reference.  Idx is an index in the 128 bits
-/// we want.  It need not be aligned to a 128-bit bounday.  That makes
+/// we want.  It need not be aligned to a 128-bit boundary.  That makes
 /// lowering INSERT_VECTOR_ELT operations easier.
 static SDValue Insert128BitVector(SDValue Result, SDValue Vec,
                                   unsigned IdxVal, SelectionDAG &DAG,
@@ -1321,21 +1321,13 @@ void X86TargetLowering::resetOperationActions() {
 
       // Extract subvector is special because the value type
       // (result) is 128-bit but the source is 256-bit wide.
-      if (VT.is128BitVector()) {
-        if (VT.getScalarSizeInBits() >= 32) {
-          setOperationAction(ISD::MLOAD,  VT, Custom);
-          setOperationAction(ISD::MSTORE, VT, Custom);
-        }
+      if (VT.is128BitVector())
         setOperationAction(ISD::EXTRACT_SUBVECTOR, VT, Custom);
-      }
+
       // Do not attempt to custom lower other non-256-bit vectors
       if (!VT.is256BitVector())
         continue;
 
-      if (VT.getScalarSizeInBits() >= 32) {
-        setOperationAction(ISD::MLOAD,  VT, Legal);
-        setOperationAction(ISD::MSTORE, VT, Legal);
-      }
       setOperationAction(ISD::BUILD_VECTOR,       VT, Custom);
       setOperationAction(ISD::VECTOR_SHUFFLE,     VT, Custom);
       setOperationAction(ISD::INSERT_VECTOR_ELT,  VT, Custom);
@@ -1502,13 +1494,9 @@ void X86TargetLowering::resetOperationActions() {
       unsigned EltSize = VT.getVectorElementType().getSizeInBits();
       // Extract subvector is special because the value type
       // (result) is 256/128-bit but the source is 512-bit wide.
-      if (VT.is128BitVector() || VT.is256BitVector()) {
+      if (VT.is128BitVector() || VT.is256BitVector())
         setOperationAction(ISD::EXTRACT_SUBVECTOR, VT, Custom);
-        if ( EltSize >= 32) {
-          setOperationAction(ISD::MLOAD,   VT, Legal);
-          setOperationAction(ISD::MSTORE,  VT, Legal);
-        }
-      }
+
       if (VT.getVectorElementType() == MVT::i1)
         setOperationAction(ISD::EXTRACT_SUBVECTOR, VT, Legal);
 
@@ -1524,8 +1512,6 @@ void X86TargetLowering::resetOperationActions() {
         setOperationAction(ISD::EXTRACT_VECTOR_ELT,  VT, Custom);
         setOperationAction(ISD::SCALAR_TO_VECTOR,    VT, Custom);
         setOperationAction(ISD::INSERT_SUBVECTOR,    VT, Custom);
-        setOperationAction(ISD::MLOAD,               VT, Legal);
-        setOperationAction(ISD::MSTORE,              VT, Legal);
       }
     }
     for (int i = MVT::v32i8; i != MVT::v8i64; ++i) {
@@ -21359,6 +21345,11 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   case X86::EH_SjLj_LongJmp32:
   case X86::EH_SjLj_LongJmp64:
     return emitEHSjLjLongJmp(MI, BB);
+
+  case TargetOpcode::STATEPOINT:
+    // As an implementation detail, STATEPOINT shares the STACKMAP format at
+    // this point in the process.  We diverge later.
+    return emitPatchPoint(MI, BB);
 
   case TargetOpcode::STACKMAP:
   case TargetOpcode::PATCHPOINT:

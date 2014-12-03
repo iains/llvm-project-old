@@ -1489,8 +1489,7 @@ static const unsigned R600AddrSpaceMap[] = {
   1,    // opencl_global
   3,    // opencl_local
   2,    // opencl_constant
-  // FIXME: generic has to be added to the target
-  0,    // opencl_generic
+  4,    // opencl_generic
   1,    // cuda_device
   2,    // cuda_constant
   3     // cuda_shared
@@ -6062,7 +6061,7 @@ public:
     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
     DescriptionString =
-        "e-S128-p:64:64-v16:16-v32:32-v64:64-v96:32-v128:32-m:e-n8:16:32:64";
+        "e-m:e-v128:32-v16:16-v32:32-v96:32-n8:16:32:64-S128";
   }
 
   void getTargetDefines(const LangOptions &Opts,
