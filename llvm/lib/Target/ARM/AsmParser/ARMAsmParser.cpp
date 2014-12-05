@@ -4418,16 +4418,31 @@ ARMAsmParser::parseModImm(OperandVector &Operands) {
   MCAsmLexer &Lexer = getLexer();
   int64_t Imm1, Imm2;
 
-  if ((Parser.getTok().isNot(AsmToken::Hash) &&
-       Parser.getTok().isNot(AsmToken::Dollar) /* looking for an immediate */ )
-      || Lexer.peekTok().is(AsmToken::Colon)
-      || Lexer.peekTok().is(AsmToken::LParen) /* avoid complex operands */ )
-    return MatchOperand_NoMatch;
-
   SMLoc S = Parser.getTok().getLoc();
 
-  // Eat the hash (or dollar)
-  Parser.Lex();
+  // 1) A mod_imm operand can appear in the place of a register name:
+  //   add r0, #mod_imm
+  //   add r0, r0, #mod_imm
+  // to correctly handle the latter, we bail out as soon as we see an
+  // identifier.
+  //
+  // 2) Similarly, we do not want to parse into complex operands:
+  //   mov r0, #mod_imm
+  //   mov r0, :lower16:(_foo)
+  if (Parser.getTok().is(AsmToken::Identifier) ||
+      Parser.getTok().is(AsmToken::Colon))
+    return MatchOperand_NoMatch;
+
+  // Hash (dollar) is optional as per the ARMARM
+  if (Parser.getTok().is(AsmToken::Hash) ||
+      Parser.getTok().is(AsmToken::Dollar)) {
+    // Avoid parsing into complex operands (#:)
+    if (Lexer.peekTok().is(AsmToken::Colon))
+      return MatchOperand_NoMatch;
+
+    // Eat the hash (dollar)
+    Parser.Lex();
+  }
 
   SMLoc Sx1, Ex1;
   Sx1 = Parser.getTok().getLoc();
@@ -4440,7 +4455,7 @@ ARMAsmParser::parseModImm(OperandVector &Operands) {
   const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Imm1Exp);
 
   if (CE) {
-    // immediate must fit within 32-bits
+    // Immediate must fit within 32-bits
     Imm1 = CE->getValue();
     if (Imm1 < INT32_MIN || Imm1 > UINT32_MAX) {
       Error(Sx1, "immediate operand must be representable with 32 bits");
@@ -4455,27 +4470,32 @@ ARMAsmParser::parseModImm(OperandVector &Operands) {
                                                   Sx1, Ex1));
       return MatchOperand_Success;
     }
-  } else {
-    Error(Sx1, "constant expression expected");
-    return MatchOperand_ParseFail;
-  }
 
-  if (Parser.getTok().isNot(AsmToken::Comma)) {
-    // Consider [mov r0, #-10], which is aliased with mvn. We cannot fail
-    // the parse here.
+    // We have parsed an immediate which is not for us, fallback to a plain
+    // immediate. This can happen for instruction aliases. For an example,
+    // ARMInstrInfo.td defines the alias [mov <-> mvn] which can transform
+    // a mov (mvn) with a mod_imm_neg/mod_imm_not operand into the opposite
+    // instruction with a mod_imm operand. The alias is defined such that the
+    // parser method is shared, that's why we have to do this here.
+    if (Parser.getTok().is(AsmToken::EndOfStatement)) {
+      Operands.push_back(ARMOperand::CreateImm(Imm1Exp, Sx1, Ex1));
+      return MatchOperand_Success;
+    }
+  } else {
+    // Operands like #(l1 - l2) can only be evaluated at a later stage (via an
+    // MCFixup). Fallback to a plain immediate.
     Operands.push_back(ARMOperand::CreateImm(Imm1Exp, Sx1, Ex1));
     return MatchOperand_Success;
   }
 
   // From this point onward, we expect the input to be a (#bits, #rot) pair
-  if (Imm1 & ~0xFF) {
-    Error(Sx1, "immediate operand must a number in the range [0, 255]");
+  if (Parser.getTok().isNot(AsmToken::Comma)) {
+    Error(Sx1, "expected modified immediate operand: #[0, 255], #even[0-30]");
     return MatchOperand_ParseFail;
   }
 
-  if (Lexer.peekTok().isNot(AsmToken::Hash) &&
-       Lexer.peekTok().isNot(AsmToken::Dollar)) {
-    Error(Lexer.peekTok().getLoc(), "immediate operand expected");
+  if (Imm1 & ~0xFF) {
+    Error(Sx1, "immediate operand must a number in the range [0, 255]");
     return MatchOperand_ParseFail;
   }
 
@@ -4486,8 +4506,10 @@ ARMAsmParser::parseModImm(OperandVector &Operands) {
   SMLoc Sx2, Ex2;
   Sx2 = Parser.getTok().getLoc();
 
-  // Eat the hash (or dollar)
-  Parser.Lex();
+  // Eat the optional hash (dollar)
+  if (Parser.getTok().is(AsmToken::Hash) ||
+      Parser.getTok().is(AsmToken::Dollar))
+    Parser.Lex();
 
   const MCExpr *Imm2Exp;
   if (getParser().parseExpression(Imm2Exp, Ex2)) {
@@ -9084,11 +9106,14 @@ bool ARMAsmParser::parseDirectiveCPU(SMLoc L) {
   StringRef CPU = getParser().parseStringToEndOfStatement().trim();
   getTargetStreamer().emitTextAttribute(ARMBuildAttrs::CPU_name, CPU);
 
-  if (!STI.CPUStringIsValid(CPU)) {
+  if (!STI.isCPUStringValid(CPU)) {
     Error(L, "Unknown CPU name");
     return false;
   }
 
+  // FIXME: This switches the CPU features globally, therefore it might
+  // happen that code you would not expect to assemble will. For details
+  // see: http://llvm.org/bugs/show_bug.cgi?id=20757
   STI.InitMCProcessorInfo(CPU, "");
   STI.InitCPUSchedModel(CPU);
   unsigned FB = ComputeAvailableFeatures(STI.getFeatureBits());

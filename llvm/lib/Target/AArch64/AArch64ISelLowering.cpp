@@ -2107,7 +2107,8 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
       unsigned ArgSize = VA.getValVT().getSizeInBits() / 8;
 
       uint32_t BEAlign = 0;
-      if (ArgSize < 8 && !Subtarget->isLittleEndian())
+      if (!Subtarget->isLittleEndian() && ArgSize < 8 &&
+          !Ins[i].Flags.isInConsecutiveRegs())
         BEAlign = 8 - ArgSize;
 
       int FI = MFI->CreateFixedObject(ArgSize, ArgOffset + BEAlign, true);
@@ -2661,7 +2662,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       unsigned OpSize = Flags.isByVal() ? Flags.getByValSize() * 8
                                         : VA.getValVT().getSizeInBits();
       OpSize = (OpSize + 7) / 8;
-      if (!Subtarget->isLittleEndian() && !Flags.isByVal()) {
+      if (!Subtarget->isLittleEndian() && !Flags.isByVal() &&
+          !Flags.isInConsecutiveRegs()) {
         if (OpSize < 8)
           BEAlign = 8 - OpSize;
       }
@@ -6949,7 +6951,8 @@ static SDValue performVectorCompareAndMaskUnaryOpCombine(SDNode *N,
   return SDValue();
 }
 
-static SDValue performIntToFpCombine(SDNode *N, SelectionDAG &DAG) {
+static SDValue performIntToFpCombine(SDNode *N, SelectionDAG &DAG,
+                                     const AArch64Subtarget *Subtarget) {
   // First try to optimize away the conversion when it's conditionally from
   // a constant. Vectors only.
   SDValue Res = performVectorCompareAndMaskUnaryOpCombine(N, DAG);
@@ -6968,7 +6971,7 @@ static SDValue performIntToFpCombine(SDNode *N, SelectionDAG &DAG) {
   // conversion, use a fp load instead and a AdvSIMD scalar {S|U}CVTF instead.
   // This eliminates an "integer-to-vector-move UOP and improve throughput.
   SDValue N0 = N->getOperand(0);
-  if (ISD::isNormalLoad(N0.getNode()) && N0.hasOneUse() &&
+  if (Subtarget->hasNEON() && ISD::isNormalLoad(N0.getNode()) && N0.hasOneUse() &&
       // Do not change the width of a volatile load.
       !cast<LoadSDNode>(N0)->isVolatile()) {
     LoadSDNode *LN0 = cast<LoadSDNode>(N0);
@@ -8525,7 +8528,7 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
     return performMulCombine(N, DAG, DCI, Subtarget);
   case ISD::SINT_TO_FP:
   case ISD::UINT_TO_FP:
-    return performIntToFpCombine(N, DAG);
+    return performIntToFpCombine(N, DAG, Subtarget);
   case ISD::OR:
     return performORCombine(N, DCI, Subtarget);
   case ISD::INTRINSIC_WO_CHAIN:

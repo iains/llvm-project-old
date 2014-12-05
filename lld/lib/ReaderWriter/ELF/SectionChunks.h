@@ -48,10 +48,10 @@ public:
 
   /// \brief Modify the section contents before assigning virtual addresses
   //  or assigning file offsets
-  virtual void doPreFlight() override {}
+  void doPreFlight() override {}
 
   /// \brief Finalize the section contents before writing
-  virtual void finalize() override {}
+  void finalize() override {}
 
   /// \brief Does this section have an output segment.
   virtual bool hasOutputSegment() {
@@ -95,7 +95,9 @@ public:
     this->_segmentType = segmentType;
   }
 
-  virtual bool findAtomAddrByName(StringRef, uint64_t &) { return false; }
+  virtual const AtomLayout *findAtomLayoutByName(StringRef) const {
+    return nullptr;
+  }
 
   void setOutputSection(OutputSection<ELFT> *os, bool isFirst = false) {
     _outputSection = os;
@@ -210,7 +212,7 @@ public:
   uint64_t alignOffset(uint64_t offset, DefinedAtom::Alignment &atomAlign);
 
   /// Return if the section is a loadable section that occupies memory
-  virtual bool isLoadableSection() const { return _isLoadedInMemory; }
+  bool isLoadableSection() const override { return _isLoadedInMemory; }
 
   // \brief Append an atom to a Section. The atom gets pushed into a vector
   // contains the atom, the atom file offset, the atom virtual address
@@ -220,7 +222,7 @@ public:
   /// \brief Set the virtual address of each Atom in the Section. This
   /// routine gets called after the linker fixes up the virtual address
   /// of the section
-  virtual void assignVirtualAddress(uint64_t addr) {
+  virtual void assignVirtualAddress(uint64_t addr) override {
     for (auto &ai : _atoms) {
       ai->_virtualAddr = addr + ai->_fileOffset;
     }
@@ -228,7 +230,7 @@ public:
 
   /// \brief Set the file offset of each Atom in the section. This routine
   /// gets called after the linker fixes up the section offset
-  virtual void assignFileOffsets(uint64_t offset) {
+  void assignFileOffsets(uint64_t offset) override {
     for (auto &ai : _atoms) {
       ai->_fileOffset = offset + ai->_fileOffset;
     }
@@ -237,14 +239,11 @@ public:
   /// \brief Find the Atom address given a name, this is needed to properly
   ///  apply relocation. The section class calls this to find the atom address
   ///  to fix the relocation
-  virtual bool findAtomAddrByName(StringRef name, uint64_t &addr) {
-    for (auto ai : _atoms) {
-      if (ai->_atom->name() == name) {
-        addr = ai->_virtualAddr;
-        return true;
-      }
-    }
-    return false;
+  const AtomLayout *findAtomLayoutByName(StringRef name) const override {
+    for (auto ai : _atoms)
+      if (ai->_atom->name() == name)
+        return ai;
+    return nullptr;
   }
 
   /// \brief Return the raw flags, we need this to sort segments
@@ -257,8 +256,8 @@ public:
 
   range<atom_iter> atoms() { return _atoms; }
 
-  virtual void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
-                     llvm::FileOutputBuffer &buffer);
+  void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
+             llvm::FileOutputBuffer &buffer) override;
 
   static bool classof(const Chunk<ELFT> *c) {
     return c->kind() == Chunk<ELFT>::Kind::AtomSection;

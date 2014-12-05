@@ -3337,6 +3337,13 @@ TEST_F(FormatTest, NoOperandAlignment) {
                "    + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
                "        * cccccccccccccccccccccccccccccccccccc;",
                Style);
+
+  Style.AlignAfterOpenBracket = false;
+  verifyFormat("return (a > b\n"
+               "    // comment1\n"
+               "    // comment2\n"
+               "    || c);",
+               Style);
 }
 
 TEST_F(FormatTest, BreakingBeforeNonAssigmentOperators) {
@@ -5604,6 +5611,10 @@ TEST_F(FormatTest, HandlesIncludeDirectives) {
   Style.AlwaysBreakBeforeMultilineStrings = true;
   Style.ColumnLimit = 0;
   verifyFormat("#import \"abc.h\"", Style);
+
+  // But 'import' might also be a regular C++ namespace.
+  verifyFormat("import::SomeFunction(aaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "                     aaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
 }
 
 //===----------------------------------------------------------------------===//
