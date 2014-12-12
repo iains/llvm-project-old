@@ -23,18 +23,6 @@
 
 namespace lld {
 
-
-class DarwinInputGraph : public InputGraph {
-public:
-  DarwinInputGraph() : _librariesPhase(false), _repeatLibraries(false) { }
-  ErrorOr<File &> getNextFile() override;
-  void notifyProgress() override;
-private:
-  bool _librariesPhase;
-  bool _repeatLibraries;
-};
-
-
 /// \brief Represents a MachO File
 class MachOFileNode : public FileNode {
 public:
@@ -65,7 +53,7 @@ public:
   }
 
 private:
- void narrowFatBuffer(StringRef filePath);
+  void narrowFatBuffer(std::unique_ptr<MemoryBuffer> &mb, StringRef filePath);
 
   MachOLinkingContext &_context;
   std::unique_ptr<const ArchiveLibraryFile> _archiveFile;

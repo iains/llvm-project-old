@@ -26,6 +26,7 @@ namespace lld {
 namespace mach_o {
 class ArchHandler;
 class MachODylibFile;
+class MachOFile;
 }
 
 class MachOLinkingContext : public LinkingContext {
@@ -282,6 +283,8 @@ public:
   /// Construct 32-bit value from string "X.Y.Z" where
   /// bits are xxxx.yy.zz.  Largest number is 65535.255.255
   static bool parsePackedVersion(StringRef str, uint32_t &result);
+
+  void maybeSortInputFiles() override;
 
 private:
   Writer &writer() const override;

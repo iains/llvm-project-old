@@ -463,12 +463,11 @@ bool DwarfUnit::addRegisterOpPiece(DIELoc &TheDie, unsigned Reg,
 /// addRegisterOffset - Add register offset.
 bool DwarfUnit::addRegisterOffset(DIELoc &TheDie, unsigned Reg,
                                   int64_t Offset) {
-  const TargetRegisterInfo *RI = Asm->TM.getSubtargetImpl()->getRegisterInfo();
-  int DWReg = RI->getDwarfRegNum(Reg, false);
+  const TargetRegisterInfo *TRI = Asm->TM.getSubtargetImpl()->getRegisterInfo();
+  int DWReg = TRI->getDwarfRegNum(Reg, false);
   if (DWReg < 0)
     return false;
 
-  const TargetRegisterInfo *TRI = Asm->TM.getSubtargetImpl()->getRegisterInfo();
   if (Reg == TRI->getFrameRegister(*Asm->MF))
     // If variable offset is based in frame register then use fbreg.
     addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_fbreg);
@@ -1193,10 +1192,10 @@ DwarfUnit::constructTemplateValueParameterDIE(DIE &Buffer,
     addType(ParamDIE, resolve(VP.getType()));
   if (!VP.getName().empty())
     addString(ParamDIE, dwarf::DW_AT_name, VP.getName());
-  if (Value *Val = VP.getValue()) {
-    if (ConstantInt *CI = dyn_cast<ConstantInt>(Val))
+  if (Metadata *Val = VP.getValue()) {
+    if (ConstantInt *CI = mdconst::dyn_extract<ConstantInt>(Val))
       addConstantValue(ParamDIE, CI, resolve(VP.getType()));
-    else if (GlobalValue *GV = dyn_cast<GlobalValue>(Val)) {
+    else if (GlobalValue *GV = mdconst::dyn_extract<GlobalValue>(Val)) {
       // For declaration non-type template parameters (such as global values and
       // functions)
       DIELoc *Loc = new (DIEValueAllocator) DIELoc();

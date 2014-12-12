@@ -272,21 +272,12 @@ std::error_code rename(const Twine &from, const Twine &to) {
   return ec;
 }
 
-std::error_code resize_file(const Twine &path, uint64_t size) {
-  SmallVector<wchar_t, 128> path_utf16;
-
-  if (std::error_code ec = widenPath(path, path_utf16))
-    return ec;
-
-  int fd = ::_wopen(path_utf16.begin(), O_BINARY | _O_RDWR, S_IWRITE);
-  if (fd == -1)
-    return std::error_code(errno, std::generic_category());
+std::error_code resize_file(int FD, uint64_t Size) {
 #ifdef HAVE__CHSIZE_S
-  errno_t error = ::_chsize_s(fd, size);
+  errno_t error = ::_chsize_s(FD, Size);
 #else
-  errno_t error = ::_chsize(fd, size);
+  errno_t error = ::_chsize(FD, Size);
 #endif
-  ::close(fd);
   return std::error_code(error, std::generic_category());
 }
 
@@ -467,13 +458,12 @@ std::error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
   return std::error_code();
 }
 
-std::error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) {
+std::error_code mapped_file_region::init(int FD, uint64_t Offset,
+                                         mapmode Mode) {
   FileDescriptor = FD;
   // Make sure that the requested size fits within SIZE_T.
   if (Size > std::numeric_limits<SIZE_T>::max()) {
     if (FileDescriptor) {
-      if (CloseFD)
-        _close(FileDescriptor);
     } else
       ::CloseHandle(FileHandle);
     return make_error_code(errc::invalid_argument);
@@ -494,8 +484,6 @@ std::error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) 
   if (FileMappingHandle == NULL) {
     std::error_code ec = windows_error(GetLastError());
     if (FileDescriptor) {
-      if (CloseFD)
-        _close(FileDescriptor);
     } else
       ::CloseHandle(FileHandle);
     return ec;
@@ -516,8 +504,6 @@ std::error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) 
     std::error_code ec = windows_error(GetLastError());
     ::CloseHandle(FileMappingHandle);
     if (FileDescriptor) {
-      if (CloseFD)
-        _close(FileDescriptor);
     } else
       ::CloseHandle(FileHandle);
     return ec;
@@ -531,8 +517,6 @@ std::error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) 
       ::UnmapViewOfFile(Mapping);
       ::CloseHandle(FileMappingHandle);
       if (FileDescriptor) {
-        if (CloseFD)
-          _close(FileDescriptor);
       } else
         ::CloseHandle(FileHandle);
       return ec;
@@ -544,78 +528,23 @@ std::error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) 
   // alive.
   ::CloseHandle(FileMappingHandle);
   if (FileDescriptor) {
-    if (CloseFD)
-      _close(FileDescriptor); // Also closes FileHandle.
   } else
     ::CloseHandle(FileHandle);
   return std::error_code();
 }
 
-mapped_file_region::mapped_file_region(const Twine &path,
-                                       mapmode mode,
-                                       uint64_t length,
-                                       uint64_t offset,
-                                       std::error_code &ec)
-  : Mode(mode)
-  , Size(length)
-  , Mapping()
-  , FileDescriptor()
-  , FileHandle(INVALID_HANDLE_VALUE)
-  , FileMappingHandle() {
-  SmallVector<wchar_t, 128> path_utf16;
-
-  // Convert path to UTF-16.
-  if ((ec = widenPath(path, path_utf16)))
-    return;
-
-  // Get file handle for creating a file mapping.
-  FileHandle = ::CreateFileW(c_str(path_utf16),
-                             Mode == readonly ? GENERIC_READ
-                                              : GENERIC_READ | GENERIC_WRITE,
-                             Mode == readonly ? FILE_SHARE_READ
-                                              : 0,
-                             0,
-                             Mode == readonly ? OPEN_EXISTING
-                                              : OPEN_ALWAYS,
-                             Mode == readonly ? FILE_ATTRIBUTE_READONLY
-                                              : FILE_ATTRIBUTE_NORMAL,
-                             0);
-  if (FileHandle == INVALID_HANDLE_VALUE) {
-    ec = windows_error(::GetLastError());
-    return;
-  }
-
-  FileDescriptor = 0;
-  ec = init(FileDescriptor, true, offset);
-  if (ec) {
-    Mapping = FileMappingHandle = 0;
-    FileHandle = INVALID_HANDLE_VALUE;
-    FileDescriptor = 0;
-  }
-}
-
-mapped_file_region::mapped_file_region(int fd,
-                                       bool closefd,
-                                       mapmode mode,
-                                       uint64_t length,
-                                       uint64_t offset,
-                                       std::error_code &ec)
-  : Mode(mode)
-  , Size(length)
-  , Mapping()
-  , FileDescriptor(fd)
-  , FileHandle(INVALID_HANDLE_VALUE)
-  , FileMappingHandle() {
+mapped_file_region::mapped_file_region(int fd, mapmode mode, uint64_t length,
+                                       uint64_t offset, std::error_code &ec)
+    : Size(length), Mapping(), FileDescriptor(fd),
+      FileHandle(INVALID_HANDLE_VALUE), FileMappingHandle() {
   FileHandle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
   if (FileHandle == INVALID_HANDLE_VALUE) {
-    if (closefd)
-      _close(FileDescriptor);
     FileDescriptor = 0;
     ec = make_error_code(errc::bad_file_descriptor);
     return;
   }
 
-  ec = init(FileDescriptor, closefd, offset);
+  ec = init(FileDescriptor, offset, mode);
   if (ec) {
     Mapping = FileMappingHandle = 0;
     FileHandle = INVALID_HANDLE_VALUE;
@@ -628,30 +557,12 @@ mapped_file_region::~mapped_file_region() {
     ::UnmapViewOfFile(Mapping);
 }
 
-mapped_file_region::mapped_file_region(mapped_file_region &&other)
-  : Mode(other.Mode)
-  , Size(other.Size)
-  , Mapping(other.Mapping)
-  , FileDescriptor(other.FileDescriptor)
-  , FileHandle(other.FileHandle)
-  , FileMappingHandle(other.FileMappingHandle) {
-  other.Mapping = other.FileMappingHandle = 0;
-  other.FileHandle = INVALID_HANDLE_VALUE;
-  other.FileDescriptor = 0;
-}
-
-mapped_file_region::mapmode mapped_file_region::flags() const {
-  assert(Mapping && "Mapping failed but used anyway!");
-  return Mode;
-}
-
 uint64_t mapped_file_region::size() const {
   assert(Mapping && "Mapping failed but used anyway!");
   return Size;
 }
 
 char *mapped_file_region::data() const {
-  assert(Mode != readonly && "Cannot get non-const data for readonly mapping!");
   assert(Mapping && "Mapping failed but used anyway!");
   return reinterpret_cast<char*>(Mapping);
 }

@@ -3146,9 +3146,21 @@ static void handleAlwaysInlineAttr(Sema &S, Decl *D,
                               Attr.getAttributeSpellingListIndex()));
 }
 
+static void handleMinSizeAttr(Sema &S, Decl *D,
+                              const AttributeList &Attr) {
+  if (checkAttrMutualExclusion<OptimizeNoneAttr>(S, D, Attr))
+    return;
+
+  D->addAttr(::new (S.Context)
+             MinSizeAttr(Attr.getRange(), S.Context,
+                         Attr.getAttributeSpellingListIndex()));
+}
+
 static void handleOptimizeNoneAttr(Sema &S, Decl *D,
                                    const AttributeList &Attr) {
   if (checkAttrMutualExclusion<AlwaysInlineAttr>(S, D, Attr))
+    return;
+  if (checkAttrMutualExclusion<MinSizeAttr>(S, D, Attr))
     return;
 
   D->addAttr(::new (S.Context)
@@ -4340,7 +4352,7 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleExtVectorTypeAttr(S, scope, D, Attr);
     break;
   case AttributeList::AT_MinSize:
-    handleSimpleAttribute<MinSizeAttr>(S, D, Attr);
+    handleMinSizeAttr(S, D, Attr);
     break;
   case AttributeList::AT_OptimizeNone:
     handleOptimizeNoneAttr(S, D, Attr);
@@ -4762,15 +4774,23 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
   if (!D->hasAttr<OpenCLKernelAttr>()) {
     // These attributes cannot be applied to a non-kernel function.
     if (Attr *A = D->getAttr<ReqdWorkGroupSizeAttr>()) {
+      // FIXME: This emits a different error message than
+      // diag::err_attribute_wrong_decl_type + ExpectedKernelFunction.
       Diag(D->getLocation(), diag::err_opencl_kernel_attr) << A;
       D->setInvalidDecl();
-    }
-    if (Attr *A = D->getAttr<WorkGroupSizeHintAttr>()) {
+    } else if (Attr *A = D->getAttr<WorkGroupSizeHintAttr>()) {
       Diag(D->getLocation(), diag::err_opencl_kernel_attr) << A;
       D->setInvalidDecl();
-    }
-    if (Attr *A = D->getAttr<VecTypeHintAttr>()) {
+    } else if (Attr *A = D->getAttr<VecTypeHintAttr>()) {
       Diag(D->getLocation(), diag::err_opencl_kernel_attr) << A;
+      D->setInvalidDecl();
+    } else if (Attr *A = D->getAttr<AMDGPUNumVGPRAttr>()) {
+      Diag(D->getLocation(), diag::err_attribute_wrong_decl_type)
+        << A << ExpectedKernelFunction;
+      D->setInvalidDecl();
+    } else if (Attr *A = D->getAttr<AMDGPUNumSGPRAttr>()) {
+      Diag(D->getLocation(), diag::err_attribute_wrong_decl_type)
+        << A << ExpectedKernelFunction;
       D->setInvalidDecl();
     }
   }
