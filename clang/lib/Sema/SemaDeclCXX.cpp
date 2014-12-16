@@ -2656,13 +2656,14 @@ void Sema::ActOnFinishCXXInClassMemberInitializer(Decl *D,
   // Pop the notional constructor scope we created earlier.
   PopFunctionScopeInfo(nullptr, D);
 
-  FieldDecl *FD = cast<FieldDecl>(D);
-  assert(FD->getInClassInitStyle() != ICIS_NoInit &&
+  FieldDecl *FD = dyn_cast<FieldDecl>(D);
+  assert((isa<MSPropertyDecl>(D) || FD->getInClassInitStyle() != ICIS_NoInit) &&
          "must set init style when field is created");
 
   if (!InitExpr) {
-    FD->setInvalidDecl();
-    FD->removeInClassInitializer();
+    D->setInvalidDecl();
+    if (FD)
+      FD->removeInClassInitializer();
     return;
   }
 
@@ -4747,7 +4748,7 @@ static void checkDLLAttribute(Sema &S, CXXRecordDecl *Class) {
 
     if (MD && ClassExported) {
       if (MD->isUserProvided()) {
-        // Instantiate non-default methods..
+        // Instantiate non-default class member functions ...
 
         // .. except for certain kinds of template specializations.
         if (TSK == TSK_ExplicitInstantiationDeclaration)
@@ -4756,16 +4757,21 @@ static void checkDLLAttribute(Sema &S, CXXRecordDecl *Class) {
           continue;
 
         S.MarkFunctionReferenced(Class->getLocation(), MD);
+
+        // The function will be passed to the consumer when its definition is
+        // encountered.
       } else if (!MD->isTrivial() || MD->isExplicitlyDefaulted() ||
                  MD->isCopyAssignmentOperator() ||
                  MD->isMoveAssignmentOperator()) {
-        // Instantiate non-trivial or explicitly defaulted methods, and the
-        // copy assignment / move assignment operators.
+        // Synthesize and instantiate non-trivial implicit methods, explicitly
+        // defaulted methods, and the copy and move assignment operators. The
+        // latter are exported even if they are trivial, because the address of
+        // an operator can be taken and should compare equal accross libraries.
         S.MarkFunctionReferenced(Class->getLocation(), MD);
-        // Resolve its exception specification; CodeGen needs it.
-        auto *FPT = MD->getType()->getAs<FunctionProtoType>();
-        S.ResolveExceptionSpec(Class->getLocation(), FPT);
-        S.ActOnFinishInlineMethodDef(MD);
+
+        // There is no later point when we will see the definition of this
+        // function, so pass it to the consumer now.
+        S.Consumer.HandleTopLevelDecl(DeclGroupRef(MD));
       }
     }
   }

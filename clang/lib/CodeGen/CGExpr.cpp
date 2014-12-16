@@ -1906,6 +1906,22 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   QualType T = E->getType();
 
   if (const auto *VD = dyn_cast<VarDecl>(ND)) {
+    // Check for captured variables.
+    if (E->refersToCapturedVariable()) {
+      if (auto *FD = LambdaCaptureFields.lookup(VD))
+        return EmitCapturedFieldLValue(*this, FD, CXXABIThisValue);
+      else if (CapturedStmtInfo) {
+        if (auto *V = LocalDeclMap.lookup(VD))
+          return MakeAddrLValue(V, T, Alignment);
+        else
+          return EmitCapturedFieldLValue(*this, CapturedStmtInfo->lookup(VD),
+                                         CapturedStmtInfo->getContextValue());
+      }
+      assert(isa<BlockDecl>(CurCodeDecl));
+      return MakeAddrLValue(GetAddrOfBlockDecl(VD, VD->hasAttr<BlocksAttr>()),
+                            T, Alignment);
+    }
+
     // Global Named registers access via intrinsics only
     if (VD->getStorageClass() == SC_Register &&
         VD->hasAttr<AsmLabelAttr>() && !VD->isLocalVarDecl())
@@ -1955,21 +1971,6 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
       return EmitThreadPrivateVarDeclLValue(
           *this, VD, T, V, getTypes().ConvertTypeForMem(VD->getType()),
           Alignment, E->getExprLoc());
-
-    // Use special handling for lambdas.
-    if (!V) {
-      if (FieldDecl *FD = LambdaCaptureFields.lookup(VD)) {
-        return EmitCapturedFieldLValue(*this, FD, CXXABIThisValue);
-      } else if (CapturedStmtInfo) {
-        if (const FieldDecl *FD = CapturedStmtInfo->lookup(VD))
-          return EmitCapturedFieldLValue(*this, FD,
-                                         CapturedStmtInfo->getContextValue());
-      }
-
-      assert(isa<BlockDecl>(CurCodeDecl) && E->refersToEnclosingLocal());
-      return MakeAddrLValue(GetAddrOfBlockDecl(VD, isBlockVariable),
-                            T, Alignment);
-    }
 
     assert(V && "DeclRefExpr not entered in LocalDeclMap?");
 
@@ -3049,7 +3050,7 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
   const Decl *TargetDecl = E->getCalleeDecl();
   if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(TargetDecl)) {
     if (unsigned builtinID = FD->getBuiltinID())
-      return EmitBuiltinExpr(FD, builtinID, E);
+      return EmitBuiltinExpr(FD, builtinID, E, ReturnValue);
   }
 
   if (const auto *CE = dyn_cast<CXXOperatorCallExpr>(E))
@@ -3286,7 +3287,7 @@ LValue CodeGenFunction::EmitStmtExprLValue(const StmtExpr *E) {
 
 RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
                                  const CallExpr *E, ReturnValueSlot ReturnValue,
-                                 const Decl *TargetDecl) {
+                                 const Decl *TargetDecl, llvm::Value *Chain) {
   // Get the actual function type. The callee type will always be a pointer to
   // function type or a block pointer type.
   assert(CalleeType->isFunctionPointerType() &&
@@ -3351,12 +3352,15 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
   }
 
   CallArgList Args;
+  if (Chain)
+    Args.add(RValue::get(Builder.CreateBitCast(Chain, CGM.VoidPtrTy)),
+             CGM.getContext().VoidPtrTy);
   EmitCallArgs(Args, dyn_cast<FunctionProtoType>(FnType), E->arg_begin(),
                E->arg_end(), E->getDirectCallee(), /*ParamsToSkip*/ 0,
                ForceColumnInfo);
 
-  const CGFunctionInfo &FnInfo =
-    CGM.getTypes().arrangeFreeFunctionCall(Args, FnType);
+  const CGFunctionInfo &FnInfo = CGM.getTypes().arrangeFreeFunctionCall(
+      Args, FnType, /*isChainCall=*/Chain);
 
   // C99 6.5.2.2p6:
   //   If the expression that denotes the called function has a type
@@ -3375,7 +3379,10 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
   // through an unprototyped function type works like a *non-variadic*
   // call.  The way we make this work is to cast to the exact type
   // of the promoted arguments.
-  if (isa<FunctionNoProtoType>(FnType)) {
+  //
+  // Chain calls use this same code path to add the invisible chain parameter
+  // to the function type.
+  if (isa<FunctionNoProtoType>(FnType) || Chain) {
     llvm::Type *CalleeTy = getTypes().GetFunctionType(FnInfo);
     CalleeTy = CalleeTy->getPointerTo();
     Callee = Builder.CreateBitCast(Callee, CalleeTy, "callee.knr.cast");

@@ -8577,7 +8577,9 @@ static SDValue PerformBFICombine(SDNode *N,
     unsigned InvMask = cast<ConstantSDNode>(N->getOperand(2))->getZExtValue();
     unsigned LSB = countTrailingZeros(~InvMask);
     unsigned Width = (32 - countLeadingZeros(~InvMask)) - LSB;
-    unsigned Mask = (1 << Width)-1;
+    assert(Width < std::numeric_limits<unsigned>::digits &&
+           "undefined behavior");
+    unsigned Mask = (1u << Width) - 1;
     unsigned Mask2 = N11C->getZExtValue();
     if ((Mask & (~Mask2)) == 0)
       return DCI.DAG.getNode(ARMISD::BFI, SDLoc(N), N->getValueType(0),
@@ -9142,7 +9144,8 @@ static SDValue PerformLOADCombine(SDNode *N,
   EVT VT = N->getValueType(0);
 
   // If this is a legal vector load, try to combine it into a VLD1_UPD.
-  if (VT.isVector() && DCI.DAG.getTargetLoweringInfo().isTypeLegal(VT))
+  if (ISD::isNormalLoad(N) && VT.isVector() &&
+      DCI.DAG.getTargetLoweringInfo().isTypeLegal(VT))
     return CombineBaseUpdate(N, DCI);
 
   return SDValue();
@@ -9289,7 +9292,8 @@ static SDValue PerformSTORECombine(SDNode *N,
   }
 
   // If this is a legal vector store, try to combine it into a VST1_UPD.
-  if (VT.isVector() && DCI.DAG.getTargetLoweringInfo().isTypeLegal(VT))
+  if (ISD::isNormalStore(N) && VT.isVector() &&
+      DCI.DAG.getTargetLoweringInfo().isTypeLegal(VT))
     return CombineBaseUpdate(N, DCI);
 
   return SDValue();
