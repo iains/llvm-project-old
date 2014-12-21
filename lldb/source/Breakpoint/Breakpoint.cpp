@@ -69,6 +69,7 @@ Breakpoint::Breakpoint (Target &new_target, Breakpoint &source_bp) :
     m_being_created(true),
     m_hardware(source_bp.m_hardware),
     m_target(new_target),
+    m_name_list (source_bp.m_name_list),
     m_options (source_bp.m_options),
     m_locations(*this),
     m_resolve_indirect_symbols(source_bp.m_resolve_indirect_symbols)
@@ -782,6 +783,23 @@ Breakpoint::GetNumLocations() const
     return m_locations.GetSize();
 }
 
+bool
+Breakpoint::AddName (const char *new_name, Error &error)
+{
+    if (!new_name)
+        return false;
+    if (!BreakpointID::StringIsBreakpointName(new_name, error))
+    {
+        error.SetErrorStringWithFormat("input name \"%s\" not a breakpoint name.", new_name);
+        return false;
+    }
+    if (!error.Success())
+        return false;
+
+    m_name_list.insert(new_name);
+    return true;
+}
+
 void
 Breakpoint::GetDescription (Stream *s, lldb::DescriptionLevel level, bool show_locations)
 {
@@ -832,6 +850,20 @@ Breakpoint::GetDescription (Stream *s, lldb::DescriptionLevel level, bool show_l
         
         if (level == lldb::eDescriptionLevelFull)
         {
+            if (!m_name_list.empty())
+            {
+                s->EOL();
+                s->Indent();
+                s->Printf ("Names:");
+                s->EOL();
+                s->IndentMore();
+                for (std::string name : m_name_list)
+                {
+                    s->Indent();
+                    s->Printf("%s\n", name.c_str());
+                }
+                s->IndentLess();
+            }
             s->IndentLess();
             s->EOL();
         }

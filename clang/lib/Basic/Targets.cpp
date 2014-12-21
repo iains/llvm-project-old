@@ -3899,6 +3899,9 @@ public:
       case llvm::Triple::EABI:
         setABI("aapcs");
         break;
+      case llvm::Triple::GNU:
+	setABI("apcs-gnu");
+	break;
       default:
         if (Triple.getOS() == llvm::Triple::NetBSD)
           setABI("apcs-gnu");
@@ -3942,11 +3945,6 @@ public:
   }
 
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const override {
-    if (IsAAPCS)
-      Features["aapcs"] = true;
-    else
-      Features["apcs"] = true;
-
     StringRef ArchName = getTriple().getArchName();
     if (CPU == "arm1136jf-s" || CPU == "arm1176jzf-s" || CPU == "mpcore")
       Features["vfp2"] = true;
@@ -5749,8 +5747,7 @@ public:
   }
 
   const char *getClobbers() const override {
-    // FIXME: Implement!
-    return "";
+    return "~{$1}";
   }
 
   bool handleTargetFeatures(std::vector<std::string> &Features,
