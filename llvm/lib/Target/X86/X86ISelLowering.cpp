@@ -2550,14 +2550,10 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
   }
 
   // Figure out if XMM registers are in use.
-  bool HaveXMMArgs = Is64Bit && !IsWin64;
-  bool NoImplicitFloatOps = Fn->getAttributes().hasAttribute(
-      AttributeSet::FunctionIndex, Attribute::NoImplicitFloat);
-  assert(!(MF.getTarget().Options.UseSoftFloat && NoImplicitFloatOps) &&
+  assert(!(MF.getTarget().Options.UseSoftFloat &&
+           Fn->getAttributes().hasAttribute(AttributeSet::FunctionIndex,
+                                            Attribute::NoImplicitFloat)) &&
          "SSE register cannot be used when SSE is disabled!");
-  if (MF.getTarget().Options.UseSoftFloat || NoImplicitFloatOps ||
-      !Subtarget->hasSSE1())
-    HaveXMMArgs = false;
 
   // 64-bit calling conventions support varargs and register parameters, so we
   // have to do extra work to spill them in the prologue.
@@ -3884,6 +3880,16 @@ bool X86TargetLowering::isExtractSubvectorCheap(EVT ResVT,
     return false;
 
   return (Index == 0 || Index == ResVT.getVectorNumElements());
+}
+
+bool X86TargetLowering::isCheapToSpeculateCttz() const {
+  // Don't try to speculate cttz if we can't directly use TZCNT.
+  return Subtarget->hasBMI();
+}
+
+bool X86TargetLowering::isCheapToSpeculateCtlz() const {
+  // Don't try to speculate ctlz if we can't directly use LZCNT.
+  return Subtarget->hasLZCNT();
 }
 
 /// isUndefOrInRange - Return true if Val is undef or if its value falls within
@@ -17031,6 +17037,16 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, const X86Subtarget *Subtarget
                                   DAG.getIntPtrConstant(0));
       return DAG.getNode(IntrData->Opc0, dl, VT, VMask, Op.getOperand(1),
                          Op.getOperand(2));
+    }
+    case FMA_OP_MASK:
+    {
+        return getVectorMaskingNode(DAG.getNode(IntrData->Opc0,
+            dl, Op.getValueType(),
+            Op.getOperand(1),
+            Op.getOperand(2),
+            Op.getOperand(3)),
+            Op.getOperand(4), Op.getOperand(1),
+            Subtarget, DAG);
     }
     default:
       break;
