@@ -591,6 +591,11 @@ def POPCNTD : XForm_11<31, 506, (outs g8rc:$rA), (ins g8rc:$rS),
                        "popcntd $rA, $rS", IIC_IntGeneral,
                        [(set i64:$rA, (ctpop i64:$rS))]>;
 
+let isCodeGenOnly = 1, isCommutable = 1 in
+def CMPB8 : XForm_6<31, 508, (outs g8rc:$rA), (ins g8rc:$rS, g8rc:$rB),
+                    "cmpb $rA, $rS, $rB", IIC_IntGeneral,
+                    [(set i64:$rA, (PPCcmpb i64:$rS, i64:$rB))]>;
+
 // popcntw also does a population count on the high 32 bits (storing the
 // results in the high 32-bits of the output). We'll ignore that here (which is
 // safe because we never separately use the high part of the 64-bit registers).
@@ -617,13 +622,11 @@ def MULLI8 : DForm_2<7, (outs g8rc:$rD), (ins g8rc:$rA, s16imm64:$imm),
 }
 
 let hasSideEffects = 0 in {
-let isCommutable = 1 in {
 defm RLDIMI : MDForm_1r<30, 3, (outs g8rc:$rA),
                         (ins g8rc:$rSi, g8rc:$rS, u6imm:$SH, u6imm:$MBE),
                         "rldimi", "$rA, $rS, $SH, $MBE", IIC_IntRotateDI,
                         []>, isPPC64, RegConstraint<"$rSi = $rA">,
                         NoEncode<"$rSi">;
-}
 
 // Rotate instructions.
 defm RLDCL  : MDSForm_1r<30, 8,
