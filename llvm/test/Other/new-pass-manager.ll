@@ -15,10 +15,21 @@
 ; CHECK-MODULE-PRINT: Running module pass: VerifierPass
 ; CHECK-MODULE-PRINT: Finished module pass manager
 
+; RUN: opt -disable-output -debug-pass-manager -disable-verify -passes='print,verify' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-MODULE-VERIFY
+; CHECK-MODULE-VERIFY: Starting module pass manager
+; CHECK-MODULE-VERIFY: Running module pass: PrintModulePass
+; CHECK-MODULE-VERIFY: ModuleID
+; CHECK-MODULE-VERIFY: define void @foo()
+; CHECK-MODULE-VERIFY: Running module pass: VerifierPass
+; CHECK-MODULE-VERIFY: Finished module pass manager
+
 ; RUN: opt -disable-output -debug-pass-manager -passes='function(print)' %s 2>&1 \
 ; RUN:     | FileCheck %s --check-prefix=CHECK-FUNCTION-PRINT
 ; CHECK-FUNCTION-PRINT: Starting module pass manager
 ; CHECK-FUNCTION-PRINT: Running module pass: VerifierPass
+; CHECK-FUNCTION-PRINT: Running module pass: ModuleToFunctionPassAdaptor
+; CHECK-FUNCTION-PRINT: Running module analysis: FunctionAnalysisManagerModuleProxy
 ; CHECK-FUNCTION-PRINT: Starting function pass manager
 ; CHECK-FUNCTION-PRINT: Running function pass: PrintFunctionPass
 ; CHECK-FUNCTION-PRINT-NOT: ModuleID
@@ -26,6 +37,17 @@
 ; CHECK-FUNCTION-PRINT: Finished function pass manager
 ; CHECK-FUNCTION-PRINT: Running module pass: VerifierPass
 ; CHECK-FUNCTION-PRINT: Finished module pass manager
+
+; RUN: opt -disable-output -debug-pass-manager -disable-verify -passes='function(print,verify)' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-FUNCTION-VERIFY
+; CHECK-FUNCTION-VERIFY: Starting module pass manager
+; CHECK-FUNCTION-VERIFY: Starting function pass manager
+; CHECK-FUNCTION-VERIFY: Running function pass: PrintFunctionPass
+; CHECK-FUNCTION-VERIFY-NOT: ModuleID
+; CHECK-FUNCTION-VERIFY: define void @foo()
+; CHECK-FUNCTION-VERIFY: Running function pass: VerifierPass
+; CHECK-FUNCTION-VERIFY: Finished function pass manager
+; CHECK-FUNCTION-VERIFY: Finished module pass manager
 
 ; RUN: opt -S -o - -passes='no-op-module,no-op-module' %s \
 ; RUN:     | FileCheck %s --check-prefix=CHECK-NOOP
@@ -63,6 +85,78 @@
 ; CHECK-NO-VERIFY: Finished function pass manager
 ; CHECK-NO-VERIFY-NOT: VerifierPass
 ; CHECK-NO-VERIFY: Finished module pass manager
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='require<no-op-module>,cgscc(require<no-op-cgscc>,function(require<no-op-function>))' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-ANALYSES
+; CHECK-ANALYSES: Starting module pass manager
+; CHECK-ANALYSES: Running module pass: No-op Analysis Requirement Pass
+; CHECK-ANALYSES: Running module analysis: NoOpModuleAnalysis
+; CHECK-ANALYSES: Starting CGSCC pass manager
+; CHECK-ANALYSES: Running CGSCC pass: No-op Analysis Requirement Pass
+; CHECK-ANALYSES: Running CGSCC analysis: NoOpCGSCCAnalysis
+; CHECK-ANALYSES: Starting function pass manager
+; CHECK-ANALYSES: Running function pass: No-op Analysis Requirement Pass
+; CHECK-ANALYSES: Running function analysis: NoOpFunctionAnalysis
+
+; Make sure no-op passes that preserve all analyses don't even try to do any
+; analysis invalidation.
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='require<no-op-module>,cgscc(require<no-op-cgscc>,function(require<no-op-function>))' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-NO-OP-INVALIDATION
+; CHECK-NO-OP-INVALIDATION: Starting module pass manager
+; CHECK-NO-OP-INVALIDATION-NOT: Invalidating all non-preserved analyses
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='require<no-op-module>,require<no-op-module>,require<no-op-module>' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-CACHE-MODULE-ANALYSIS-RESULTS
+; CHECK-DO-CACHE-MODULE-ANALYSIS-RESULTS: Starting module pass manager
+; CHECK-DO-CACHE-MODULE-ANALYSIS-RESULTS: Running module pass: No-op Analysis Requirement Pass
+; CHECK-DO-CACHE-MODULE-ANALYSIS-RESULTS: Running module analysis: NoOpModuleAnalysis
+; CHECK-DO-CACHE-MODULE-ANALYSIS-RESULTS-NOT: Running module analysis: NoOpModuleAnalysis
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='require<no-op-module>,invalidate<no-op-module>,require<no-op-module>' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS
+; CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS: Starting module pass manager
+; CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS: Running module pass: No-op Analysis Requirement Pass
+; CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS: Running module analysis: NoOpModuleAnalysis
+; CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS: Invalidating module analysis: NoOpModuleAnalysis
+; CHECK-DO-INVALIDATE-MODULE-ANALYSIS-RESULTS: Running module analysis: NoOpModuleAnalysis
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='cgscc(require<no-op-cgscc>,require<no-op-cgscc>,require<no-op-cgscc>)' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-CACHE-CGSCC-ANALYSIS-RESULTS
+; CHECK-DO-CACHE-CGSCC-ANALYSIS-RESULTS: Starting CGSCC pass manager
+; CHECK-DO-CACHE-CGSCC-ANALYSIS-RESULTS: Running CGSCC pass: No-op Analysis Requirement Pass
+; CHECK-DO-CACHE-CGSCC-ANALYSIS-RESULTS: Running CGSCC analysis: NoOpCGSCCAnalysis
+; CHECK-DO-CACHE-CGSCC-ANALYSIS-RESULTS-NOT: Running CGSCC analysis: NoOpCGSCCAnalysis
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='cgscc(require<no-op-cgscc>,invalidate<no-op-cgscc>,require<no-op-cgscc>)' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS
+; CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS: Starting CGSCC pass manager
+; CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS: Running CGSCC pass: No-op Analysis Requirement Pass
+; CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS: Running CGSCC analysis: NoOpCGSCCAnalysis
+; CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS: Invalidating CGSCC analysis: NoOpCGSCCAnalysis
+; CHECK-DO-INVALIDATE-CGSCC-ANALYSIS-RESULTS: Running CGSCC analysis: NoOpCGSCCAnalysis
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='function(require<no-op-function>,require<no-op-function>,require<no-op-function>)' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-CACHE-FUNCTION-ANALYSIS-RESULTS
+; CHECK-DO-CACHE-FUNCTION-ANALYSIS-RESULTS: Starting function pass manager
+; CHECK-DO-CACHE-FUNCTION-ANALYSIS-RESULTS: Running function pass: No-op Analysis Requirement Pass
+; CHECK-DO-CACHE-FUNCTION-ANALYSIS-RESULTS: Running function analysis: NoOpFunctionAnalysis
+; CHECK-DO-CACHE-FUNCTION-ANALYSIS-RESULTS-NOT: Running function analysis: NoOpFunctionAnalysis
+
+; RUN: opt -disable-output -debug-pass-manager -debug-cgscc-pass-manager \
+; RUN:     -passes='function(require<no-op-function>,invalidate<no-op-function>,require<no-op-function>)' %s 2>&1 \
+; RUN:     | FileCheck %s --check-prefix=CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS
+; CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS: Starting function pass manager
+; CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS: Running function pass: No-op Analysis Requirement Pass
+; CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS: Running function analysis: NoOpFunctionAnalysis
+; CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS: Invalidating function analysis: NoOpFunctionAnalysis
+; CHECK-DO-INVALIDATE-FUNCTION-ANALYSIS-RESULTS: Running function analysis: NoOpFunctionAnalysis
 
 define void @foo() {
   ret void

@@ -28,62 +28,123 @@ namespace {
 
 /// \brief No-op module pass which does nothing.
 struct NoOpModulePass {
-  PreservedAnalyses run(Module *M) { return PreservedAnalyses::all(); }
+  PreservedAnalyses run(Module &M) { return PreservedAnalyses::all(); }
   static StringRef name() { return "NoOpModulePass"; }
 };
 
+/// \brief No-op module analysis.
+struct NoOpModuleAnalysis {
+  struct Result {};
+  Result run(Module &) { return Result(); }
+  static StringRef name() { return "NoOpModuleAnalysis"; }
+  static void *ID() { return (void *)&PassID; }
+private:
+  static char PassID;
+};
+
+char NoOpModuleAnalysis::PassID;
+
 /// \brief No-op CGSCC pass which does nothing.
 struct NoOpCGSCCPass {
-  PreservedAnalyses run(LazyCallGraph::SCC *C) {
+  PreservedAnalyses run(LazyCallGraph::SCC &C) {
     return PreservedAnalyses::all();
   }
   static StringRef name() { return "NoOpCGSCCPass"; }
 };
 
+/// \brief No-op CGSCC analysis.
+struct NoOpCGSCCAnalysis {
+  struct Result {};
+  Result run(LazyCallGraph::SCC &) { return Result(); }
+  static StringRef name() { return "NoOpCGSCCAnalysis"; }
+  static void *ID() { return (void *)&PassID; }
+private:
+  static char PassID;
+};
+
+char NoOpCGSCCAnalysis::PassID;
+
 /// \brief No-op function pass which does nothing.
 struct NoOpFunctionPass {
-  PreservedAnalyses run(Function *F) { return PreservedAnalyses::all(); }
+  PreservedAnalyses run(Function &F) { return PreservedAnalyses::all(); }
   static StringRef name() { return "NoOpFunctionPass"; }
 };
 
+/// \brief No-op function analysis.
+struct NoOpFunctionAnalysis {
+  struct Result {};
+  Result run(Function &) { return Result(); }
+  static StringRef name() { return "NoOpFunctionAnalysis"; }
+  static void *ID() { return (void *)&PassID; }
+private:
+  static char PassID;
+};
+
+char NoOpFunctionAnalysis::PassID;
+
 } // End anonymous namespace.
 
-static bool isModulePassName(StringRef Name) {
-  if (Name == "no-op-module") return true;
+void llvm::registerModuleAnalyses(ModuleAnalysisManager &MAM) {
+#define MODULE_ANALYSIS(NAME, CREATE_PASS) \
+  MAM.registerPass(CREATE_PASS);
+#include "PassRegistry.def"
+}
 
+void llvm::registerCGSCCAnalyses(CGSCCAnalysisManager &CGAM) {
+#define CGSCC_ANALYSIS(NAME, CREATE_PASS) \
+  CGAM.registerPass(CREATE_PASS);
+#include "PassRegistry.def"
+}
+
+void llvm::registerFunctionAnalyses(FunctionAnalysisManager &FAM) {
+#define FUNCTION_ANALYSIS(NAME, CREATE_PASS) \
+  FAM.registerPass(CREATE_PASS);
+#include "PassRegistry.def"
+}
+
+static bool isModulePassName(StringRef Name) {
 #define MODULE_PASS(NAME, CREATE_PASS) if (Name == NAME) return true;
+#define MODULE_ANALYSIS(NAME, CREATE_PASS)                                     \
+  if (Name == "require<" NAME ">" || Name == "invalidate<" NAME ">")           \
+    return true;
 #include "PassRegistry.def"
 
   return false;
 }
 
 static bool isCGSCCPassName(StringRef Name) {
-  if (Name == "no-op-cgscc") return true;
-
 #define CGSCC_PASS(NAME, CREATE_PASS) if (Name == NAME) return true;
+#define CGSCC_ANALYSIS(NAME, CREATE_PASS)                                      \
+  if (Name == "require<" NAME ">" || Name == "invalidate<" NAME ">")           \
+    return true;
 #include "PassRegistry.def"
 
   return false;
 }
 
 static bool isFunctionPassName(StringRef Name) {
-  if (Name == "no-op-function") return true;
-
 #define FUNCTION_PASS(NAME, CREATE_PASS) if (Name == NAME) return true;
+#define FUNCTION_ANALYSIS(NAME, CREATE_PASS)                                   \
+  if (Name == "require<" NAME ">" || Name == "invalidate<" NAME ">")           \
+    return true;
 #include "PassRegistry.def"
 
   return false;
 }
 
 static bool parseModulePassName(ModulePassManager &MPM, StringRef Name) {
-  if (Name == "no-op-module") {
-    MPM.addPass(NoOpModulePass());
-    return true;
-  }
-
 #define MODULE_PASS(NAME, CREATE_PASS)                                         \
   if (Name == NAME) {                                                          \
     MPM.addPass(CREATE_PASS);                                                  \
+    return true;                                                               \
+  }
+#define MODULE_ANALYSIS(NAME, CREATE_PASS)                                     \
+  if (Name == "require<" NAME ">") {                                           \
+    MPM.addPass(NoopAnalysisRequirementPass<decltype(CREATE_PASS)>());         \
+    return true;                                                               \
+  }                                                                            \
+  if (Name == "invalidate<" NAME ">") {                                        \
+    MPM.addPass(NoopAnalysisInvalidationPass<decltype(CREATE_PASS)>());        \
     return true;                                                               \
   }
 #include "PassRegistry.def"
@@ -92,14 +153,18 @@ static bool parseModulePassName(ModulePassManager &MPM, StringRef Name) {
 }
 
 static bool parseCGSCCPassName(CGSCCPassManager &CGPM, StringRef Name) {
-  if (Name == "no-op-cgscc") {
-    CGPM.addPass(NoOpCGSCCPass());
-    return true;
-  }
-
 #define CGSCC_PASS(NAME, CREATE_PASS)                                          \
   if (Name == NAME) {                                                          \
     CGPM.addPass(CREATE_PASS);                                                 \
+    return true;                                                               \
+  }
+#define CGSCC_ANALYSIS(NAME, CREATE_PASS)                                      \
+  if (Name == "require<" NAME ">") {                                           \
+    CGPM.addPass(NoopAnalysisRequirementPass<decltype(CREATE_PASS)>());        \
+    return true;                                                               \
+  }                                                                            \
+  if (Name == "invalidate<" NAME ">") {                                        \
+    CGPM.addPass(NoopAnalysisInvalidationPass<decltype(CREATE_PASS)>());       \
     return true;                                                               \
   }
 #include "PassRegistry.def"
@@ -108,14 +173,18 @@ static bool parseCGSCCPassName(CGSCCPassManager &CGPM, StringRef Name) {
 }
 
 static bool parseFunctionPassName(FunctionPassManager &FPM, StringRef Name) {
-  if (Name == "no-op-function") {
-    FPM.addPass(NoOpFunctionPass());
-    return true;
-  }
-
 #define FUNCTION_PASS(NAME, CREATE_PASS)                                       \
   if (Name == NAME) {                                                          \
     FPM.addPass(CREATE_PASS);                                                  \
+    return true;                                                               \
+  }
+#define FUNCTION_ANALYSIS(NAME, CREATE_PASS)                                   \
+  if (Name == "require<" NAME ">") {                                           \
+    FPM.addPass(NoopAnalysisRequirementPass<decltype(CREATE_PASS)>());         \
+    return true;                                                               \
+  }                                                                            \
+  if (Name == "invalidate<" NAME ">") {                                        \
+    FPM.addPass(NoopAnalysisInvalidationPass<decltype(CREATE_PASS)>());        \
     return true;                                                               \
   }
 #include "PassRegistry.def"
