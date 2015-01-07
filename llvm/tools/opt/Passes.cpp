@@ -102,6 +102,7 @@ void llvm::registerFunctionAnalyses(FunctionAnalysisManager &FAM) {
 #include "PassRegistry.def"
 }
 
+#ifndef NDEBUG
 static bool isModulePassName(StringRef Name) {
 #define MODULE_PASS(NAME, CREATE_PASS) if (Name == NAME) return true;
 #define MODULE_ANALYSIS(NAME, CREATE_PASS)                                     \
@@ -111,6 +112,7 @@ static bool isModulePassName(StringRef Name) {
 
   return false;
 }
+#endif
 
 static bool isCGSCCPassName(StringRef Name) {
 #define CGSCC_PASS(NAME, CREATE_PASS) if (Name == NAME) return true;
@@ -347,34 +349,21 @@ static bool parseModulePassPipeline(ModulePassManager &MPM,
 // pre-populate the analysis managers with target-specific stuff?
 bool llvm::parsePassPipeline(ModulePassManager &MPM, StringRef PipelineText,
                              bool VerifyEachPass) {
-  // Look at the first entry to figure out which layer to start parsing at.
-  if (PipelineText.startswith("module("))
-    return parseModulePassPipeline(MPM, PipelineText, VerifyEachPass) &&
-           PipelineText.empty();
-  if (PipelineText.startswith("cgscc(")) {
-    CGSCCPassManager CGPM;
-    if (!parseCGSCCPassPipeline(CGPM, PipelineText, VerifyEachPass) ||
-        !PipelineText.empty())
-      return false;
-    MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(std::move(CGPM)));
-    return true;
-  }
-  if (PipelineText.startswith("function(")) {
-    FunctionPassManager FPM;
-    if (!parseFunctionPassPipeline(FPM, PipelineText, VerifyEachPass) ||
-        !PipelineText.empty())
-      return false;
-    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
-    return true;
-  }
+  // By default, try to parse the pipeline as-if it were within an implicit
+  // 'module(...)' pass pipeline. If this will parse at all, it needs to
+  // consume the entire string.
+  if (parseModulePassPipeline(MPM, PipelineText, VerifyEachPass))
+    return PipelineText.empty();
 
-  // This isn't a direct pass manager name, look for the end of a pass name.
+  // This isn't parsable as a module pipeline, look for the end of a pass name
+  // and directly drop down to that layer.
   StringRef FirstName =
       PipelineText.substr(0, PipelineText.find_first_of(",)"));
-  if (isModulePassName(FirstName))
-    return parseModulePassPipeline(MPM, PipelineText, VerifyEachPass) &&
-           PipelineText.empty();
+  assert(!isModulePassName(FirstName) &&
+         "Already handled all module pipeline options.");
 
+  // If this looks like a CGSCC pass, parse the whole thing as a CGSCC
+  // pipeline.
   if (isCGSCCPassName(FirstName)) {
     CGSCCPassManager CGPM;
     if (!parseCGSCCPassPipeline(CGPM, PipelineText, VerifyEachPass) ||
@@ -384,6 +373,8 @@ bool llvm::parsePassPipeline(ModulePassManager &MPM, StringRef PipelineText,
     return true;
   }
 
+  // Similarly, if this looks like a Function pass, parse the whole thing as
+  // a Function pipelien.
   if (isFunctionPassName(FirstName)) {
     FunctionPassManager FPM;
     if (!parseFunctionPassPipeline(FPM, PipelineText, VerifyEachPass) ||
