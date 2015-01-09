@@ -74,8 +74,10 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM)
   addRegisterClass(MVT::f64, &PPC::F8RCRegClass);
 
   // PowerPC has an i16 but no i8 (or i1) SEXTLOAD
-  setLoadExtAction(ISD::SEXTLOAD, MVT::i1, Promote);
-  setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Expand);
+  for (MVT VT : MVT::integer_valuetypes()) {
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i8, Expand);
+  }
 
   setTruncStoreAction(MVT::f64, MVT::f32, Expand);
 
@@ -114,12 +116,11 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM)
     if (ANDIGlueBug)
       setOperationAction(ISD::TRUNCATE, MVT::i1, Custom);
 
-    setLoadExtAction(ISD::SEXTLOAD, MVT::i1, Promote);
-    setLoadExtAction(ISD::ZEXTLOAD, MVT::i1, Promote);
-    setTruncStoreAction(MVT::i64, MVT::i1, Expand);
-    setTruncStoreAction(MVT::i32, MVT::i1, Expand);
-    setTruncStoreAction(MVT::i16, MVT::i1, Expand);
-    setTruncStoreAction(MVT::i8, MVT::i1, Expand);
+    for (MVT VT : MVT::integer_valuetypes()) {
+      setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
+      setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
+      setTruncStoreAction(VT, MVT::i1, Expand);
+    }
 
     addRegisterClass(MVT::i1, &PPC::CRBITRCRegClass);
   }
@@ -394,10 +395,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM)
   if (Subtarget.hasAltivec()) {
     // First set operation action for all vector types to expand. Then we
     // will selectively turn on ones that can be effectively codegen'd.
-    for (unsigned i = (unsigned)MVT::FIRST_VECTOR_VALUETYPE;
-         i <= (unsigned)MVT::LAST_VECTOR_VALUETYPE; ++i) {
-      MVT::SimpleValueType VT = (MVT::SimpleValueType)i;
-
+    for (MVT VT : MVT::vector_valuetypes()) {
       // add/sub are legal for all supported vector VT's.
       setOperationAction(ISD::ADD , VT, Legal);
       setOperationAction(ISD::SUB , VT, Legal);
@@ -464,14 +462,12 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM)
       setOperationAction(ISD::VSELECT, VT, Expand);
       setOperationAction(ISD::SIGN_EXTEND_INREG, VT, Expand);
 
-      for (unsigned j = (unsigned)MVT::FIRST_VECTOR_VALUETYPE;
-           j <= (unsigned)MVT::LAST_VECTOR_VALUETYPE; ++j) {
-        MVT::SimpleValueType InnerVT = (MVT::SimpleValueType)j;
+      for (MVT InnerVT : MVT::vector_valuetypes()) {
         setTruncStoreAction(VT, InnerVT, Expand);
+        setLoadExtAction(ISD::SEXTLOAD, VT, InnerVT, Expand);
+        setLoadExtAction(ISD::ZEXTLOAD, VT, InnerVT, Expand);
+        setLoadExtAction(ISD::EXTLOAD, VT, InnerVT, Expand);
       }
-      setLoadExtAction(ISD::SEXTLOAD, VT, Expand);
-      setLoadExtAction(ISD::ZEXTLOAD, VT, Expand);
-      setLoadExtAction(ISD::EXTLOAD, VT, Expand);
     }
 
     // We can custom expand all VECTOR_SHUFFLEs to VPERM, others we can handle
@@ -5487,9 +5483,11 @@ SDValue PPCTargetLowering::LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
 // factor (see spliceIntoChain below for this last part).
 bool PPCTargetLowering::canReuseLoadAddress(SDValue Op, EVT MemVT,
                                             ReuseLoadInfo &RLI,
-                                            SelectionDAG &DAG) const {
+                                            SelectionDAG &DAG,
+                                            ISD::LoadExtType ET) const {
   SDLoc dl(Op);
-  if ((Op.getOpcode() == ISD::FP_TO_UINT ||
+  if (ET == ISD::NON_EXTLOAD &&
+      (Op.getOpcode() == ISD::FP_TO_UINT ||
        Op.getOpcode() == ISD::FP_TO_SINT) &&
       isOperationLegalOrCustom(Op.getOpcode(),
                                Op.getOperand(0).getValueType())) {
@@ -5499,7 +5497,8 @@ bool PPCTargetLowering::canReuseLoadAddress(SDValue Op, EVT MemVT,
   }
 
   LoadSDNode *LD = dyn_cast<LoadSDNode>(Op);
-  if (!LD || !ISD::isNON_EXTLoad(LD) || LD->isVolatile() || LD->isNonTemporal())
+  if (!LD || LD->getExtensionType() != ET || LD->isVolatile() ||
+      LD->isNonTemporal())
     return false;
   if (LD->getMemoryVT() != MemVT)
     return false;
@@ -5619,11 +5618,64 @@ SDValue PPCTargetLowering::LowerINT_TO_FP(SDValue Op,
     ReuseLoadInfo RLI;
     SDValue Bits;
 
+    MachineFunction &MF = DAG.getMachineFunction();
     if (canReuseLoadAddress(SINT, MVT::i64, RLI, DAG)) {
       Bits = DAG.getLoad(MVT::f64, dl, RLI.Chain, RLI.Ptr, RLI.MPI, false,
                          false, RLI.IsInvariant, RLI.Alignment, RLI.AAInfo,
                          RLI.Ranges);
       spliceIntoChain(RLI.ResChain, Bits.getValue(1), DAG);
+    } else if (Subtarget.hasLFIWAX() &&
+               canReuseLoadAddress(SINT, MVT::i32, RLI, DAG, ISD::SEXTLOAD)) {
+      MachineMemOperand *MMO =
+        MF.getMachineMemOperand(RLI.MPI, MachineMemOperand::MOLoad, 4,
+                                RLI.Alignment, RLI.AAInfo, RLI.Ranges);
+      SDValue Ops[] = { RLI.Chain, RLI.Ptr };
+      Bits = DAG.getMemIntrinsicNode(PPCISD::LFIWAX, dl,
+                                     DAG.getVTList(MVT::f64, MVT::Other),
+                                     Ops, MVT::i32, MMO);
+      spliceIntoChain(RLI.ResChain, Bits.getValue(1), DAG);
+    } else if (Subtarget.hasFPCVT() &&
+               canReuseLoadAddress(SINT, MVT::i32, RLI, DAG, ISD::ZEXTLOAD)) {
+      MachineMemOperand *MMO =
+        MF.getMachineMemOperand(RLI.MPI, MachineMemOperand::MOLoad, 4,
+                                RLI.Alignment, RLI.AAInfo, RLI.Ranges);
+      SDValue Ops[] = { RLI.Chain, RLI.Ptr };
+      Bits = DAG.getMemIntrinsicNode(PPCISD::LFIWZX, dl,
+                                     DAG.getVTList(MVT::f64, MVT::Other),
+                                     Ops, MVT::i32, MMO);
+      spliceIntoChain(RLI.ResChain, Bits.getValue(1), DAG);
+    } else if (((Subtarget.hasLFIWAX() &&
+                 SINT.getOpcode() == ISD::SIGN_EXTEND) ||
+                (Subtarget.hasFPCVT() &&
+                 SINT.getOpcode() == ISD::ZERO_EXTEND)) &&
+               SINT.getOperand(0).getValueType() == MVT::i32) {
+      MachineFrameInfo *FrameInfo = MF.getFrameInfo();
+      EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
+
+      int FrameIdx = FrameInfo->CreateStackObject(4, 4, false);
+      SDValue FIdx = DAG.getFrameIndex(FrameIdx, PtrVT);
+
+      SDValue Store =
+        DAG.getStore(DAG.getEntryNode(), dl, SINT.getOperand(0), FIdx,
+                     MachinePointerInfo::getFixedStack(FrameIdx),
+                     false, false, 0);
+
+      assert(cast<StoreSDNode>(Store)->getMemoryVT() == MVT::i32 &&
+             "Expected an i32 store");
+
+      RLI.Ptr = FIdx;
+      RLI.Chain = Store;
+      RLI.MPI = MachinePointerInfo::getFixedStack(FrameIdx);
+      RLI.Alignment = 4;
+
+      MachineMemOperand *MMO =
+        MF.getMachineMemOperand(RLI.MPI, MachineMemOperand::MOLoad, 4,
+                                RLI.Alignment, RLI.AAInfo, RLI.Ranges);
+      SDValue Ops[] = { RLI.Chain, RLI.Ptr };
+      Bits = DAG.getMemIntrinsicNode(SINT.getOpcode() == ISD::ZERO_EXTEND ?
+                                     PPCISD::LFIWZX : PPCISD::LFIWAX,
+                                     dl, DAG.getVTList(MVT::f64, MVT::Other),
+                                     Ops, MVT::i32, MMO);
     } else
       Bits = DAG.getNode(ISD::BITCAST, dl, MVT::f64, SINT);
 

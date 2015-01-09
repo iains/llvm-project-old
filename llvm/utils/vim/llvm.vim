@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language:   llvm
 " Maintainer: The LLVM team, http://llvm.org/
-" Version:      $Revision: 224155 $
+" Version:      $Revision: 225474 $
 
 if version < 600
   syntax clear
@@ -41,7 +41,7 @@ syn keyword llvmKeyword alignstack alwaysinline appending arm_aapcs_vfpcc
 syn keyword llvmKeyword arm_aapcscc arm_apcscc asm atomic available_externally
 syn keyword llvmKeyword blockaddress byval c catch cc ccc cleanup coldcc common
 syn keyword llvmKeyword constant datalayout declare default define deplibs
-syn keyword llvmKeyword dllexport dllimport except extern_weak external
+syn keyword llvmKeyword distinct dllexport dllimport except extern_weak external
 syn keyword llvmKeyword externally_initialized fastcc filter gc global hidden
 syn keyword llvmKeyword initialexec inlinehint inreg intel_ocl_bicc inteldialect
 syn keyword llvmKeyword internal linkonce linkonce_odr localdynamic localexec

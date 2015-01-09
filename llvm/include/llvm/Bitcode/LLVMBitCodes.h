@@ -140,7 +140,7 @@ namespace bitc {
     METADATA_VALUE         = 2,   // VALUE:         [type num, value num]
     METADATA_NODE          = 3,   // NODE:          [n x md num]
     METADATA_NAME          = 4,   // STRING:        [values]
-    // 5 is unused.
+    METADATA_DISTINCT_NODE = 5,   // DISTINCT_NODE: [n x md num]
     METADATA_KIND          = 6,   // [n x [id, name]]
     // 7 is unused.
     METADATA_OLD_NODE      = 8,   // OLD_NODE:      [n x (type num, value num)]
@@ -314,7 +314,7 @@ namespace bitc {
 
     FUNC_CODE_INST_CALL        = 34, // CALL:    [attr, cc, fnty, fnid, args...]
 
-    FUNC_CODE_DEBUG_LOC        = 35, // DEBUG_LOC:  [Line,Col,ScopeVal, IAVal]
+    FUNC_CODE_DEBUG_LOC_OLD    = 35, // DEBUG_LOC:  [Line,Col,ScopeVal, IAVal]
     FUNC_CODE_INST_FENCE       = 36, // FENCE: [ordering, synchscope]
     FUNC_CODE_INST_CMPXCHG     = 37, // CMPXCHG: [ptrty,ptr,cmp,new, align, vol,
                                      //           ordering, synchscope]

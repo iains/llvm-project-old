@@ -75,7 +75,7 @@ identifiers, for different purposes:
 #. Named values are represented as a string of characters with their
    prefix. For example, ``%foo``, ``@DivisionByZero``,
    ``%a.really.long.identifier``. The actual regular expression used is
-   '``[%@][a-zA-Z$._][a-zA-Z$._0-9]*``'. Identifiers that require other
+   '``[%@][-a-zA-Z$._][-a-zA-Z$._0-9]*``'. Identifiers that require other
    characters in their names can be surrounded with quotes. Special
    characters may be escaped using ``"\xx"`` where ``xx`` is the ASCII
    code for the character in hexadecimal. In this way, any character can
@@ -2847,6 +2847,16 @@ their operand. For example:
 .. code-block:: llvm
 
     !{ !"test\00", i32 10}
+
+Metadata nodes that aren't uniqued use the ``distinct`` keyword. For example:
+
+.. code-block:: llvm
+
+    !0 = distinct !{!"test\00", i32 10}
+
+``distinct`` nodes are useful when nodes shouldn't be merged based on their
+content.  They can also occur when transformations cause uniquing collisions
+when metadata operands change.
 
 A :ref:`named metadata <namedmetadatastructure>` is a collection of
 metadata nodes, which can be looked up in the module symbol table. For
