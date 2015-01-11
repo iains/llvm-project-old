@@ -5472,12 +5472,6 @@ static bool getTargetShuffleMask(SDNode *N, MVT VT,
       return false;
 
     if (auto *C = dyn_cast<Constant>(MaskCP->getConstVal())) {
-      // FIXME: Support AVX-512 here.
-      Type *Ty = C->getType();
-      if (!Ty->isVectorTy() || (Ty->getVectorNumElements() != 16 &&
-                                Ty->getVectorNumElements() != 32))
-        return false;
-
       DecodePSHUFBMask(C, Mask);
       break;
     }
@@ -8163,6 +8157,84 @@ static SDValue lowerVectorShuffleAsBroadcast(MVT VT, SDLoc DL, SDValue V,
   return DAG.getNode(X86ISD::VBROADCAST, DL, VT, V);
 }
 
+// Check for whether we can use INSERTPS to perform the shuffle. We only use
+// INSERTPS when the V1 elements are already in the correct locations
+// because otherwise we can just always use two SHUFPS instructions which
+// are much smaller to encode than a SHUFPS and an INSERTPS. We can also
+// perform INSERTPS if a single V1 element is out of place and all V2
+// elements are zeroable.
+static SDValue lowerVectorShuffleAsInsertPS(SDValue Op, SDValue V1, SDValue V2,
+                                            ArrayRef<int> Mask,
+                                            SelectionDAG &DAG) {
+  assert(Op.getSimpleValueType() == MVT::v4f32 && "Bad shuffle type!");
+  assert(V1.getSimpleValueType() == MVT::v4f32 && "Bad operand type!");
+  assert(V2.getSimpleValueType() == MVT::v4f32 && "Bad operand type!");
+  assert(Mask.size() == 4 && "Unexpected mask size for v4 shuffle!");
+
+  SmallBitVector Zeroable = computeZeroableShuffleElements(Mask, V1, V2);
+
+  unsigned ZMask = 0;
+  int V1DstIndex = -1;
+  int V2DstIndex = -1;
+  bool V1UsedInPlace = false;
+
+  for (int i = 0; i < 4; i++) {
+    // Synthesize a zero mask from the zeroable elements (includes undefs).
+    if (Zeroable[i]) {
+      ZMask |= 1 << i;
+      continue;
+    }
+
+    // Flag if we use any V1 inputs in place.
+    if (i == Mask[i]) {
+      V1UsedInPlace = true;
+      continue;
+    }
+
+    // We can only insert a single non-zeroable element.
+    if (V1DstIndex != -1 || V2DstIndex != -1)
+      return SDValue();
+
+    if (Mask[i] < 4) {
+      // V1 input out of place for insertion.
+      V1DstIndex = i;
+    } else {
+      // V2 input for insertion.
+      V2DstIndex = i;
+    }
+  }
+
+  // Don't bother if we have no (non-zeroable) element for insertion.
+  if (V1DstIndex == -1 && V2DstIndex == -1)
+    return SDValue();
+
+  // Determine element insertion src/dst indices. The src index is from the
+  // start of the inserted vector, not the start of the concatenated vector.
+  unsigned V2SrcIndex = 0;
+  if (V1DstIndex != -1) {
+    // If we have a V1 input out of place, we use V1 as the V2 element insertion
+    // and don't use the original V2 at all.
+    V2SrcIndex = Mask[V1DstIndex];
+    V2DstIndex = V1DstIndex;
+    V2 = V1;
+  } else {
+    V2SrcIndex = Mask[V2DstIndex] - 4;
+  }
+
+  // If no V1 inputs are used in place, then the result is created only from
+  // the zero mask and the V2 insertion - so remove V1 dependency.
+  if (!V1UsedInPlace)
+    V1 = DAG.getUNDEF(MVT::v4f32);
+
+  unsigned InsertPSMask = V2SrcIndex << 6 | V2DstIndex << 4 | ZMask;
+  assert((InsertPSMask & ~0xFFu) == 0 && "Invalid mask!");
+
+  // Insert the V2 element into the desired position.
+  SDLoc DL(Op);
+  return DAG.getNode(X86ISD::INSERTPS, DL, MVT::v4f32, V1, V2,
+                     DAG.getConstant(InsertPSMask, MVT::i8));
+}
+
 /// \brief Handle lowering of 2-lane 64-bit floating point shuffles.
 ///
 /// This is the basis function for the 2-lane 64-bit shuffles as we have full
@@ -8468,52 +8540,14 @@ static SDValue lowerV4F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
                                                          Mask, Subtarget, DAG))
       return V;
 
-  if (Subtarget->hasSSE41())
+  if (Subtarget->hasSSE41()) {
     if (SDValue Blend = lowerVectorShuffleAsBlend(DL, MVT::v4f32, V1, V2, Mask,
                                                   Subtarget, DAG))
       return Blend;
 
-  // Check for whether we can use INSERTPS to perform the blend. We only use
-  // INSERTPS when the V1 elements are already in the correct locations
-  // because otherwise we can just always use two SHUFPS instructions which
-  // are much smaller to encode than a SHUFPS and an INSERTPS.
-  if (NumV2Elements == 1 && Subtarget->hasSSE41()) {
-    int V2Index =
-        std::find_if(Mask.begin(), Mask.end(), [](int M) { return M >= 4; }) -
-        Mask.begin();
-
-    // When using INSERTPS we can zero any lane of the destination. Collect
-    // the zero inputs into a mask and drop them from the lanes of V1 which
-    // actually need to be present as inputs to the INSERTPS.
-    SmallBitVector Zeroable = computeZeroableShuffleElements(Mask, V1, V2);
-
-    // Synthesize a shuffle mask for the non-zero and non-v2 inputs.
-    bool InsertNeedsShuffle = false;
-    unsigned ZMask = 0;
-    for (int i = 0; i < 4; ++i)
-      if (i != V2Index) {
-        if (Zeroable[i]) {
-          ZMask |= 1 << i;
-        } else if (Mask[i] != i) {
-          InsertNeedsShuffle = true;
-          break;
-        }
-      }
-
-    // We don't want to use INSERTPS or other insertion techniques if it will
-    // require shuffling anyways.
-    if (!InsertNeedsShuffle) {
-      // If all of V1 is zeroable, replace it with undef.
-      if ((ZMask | 1 << V2Index) == 0xF)
-        V1 = DAG.getUNDEF(MVT::v4f32);
-
-      unsigned InsertPSMask = (Mask[V2Index] - 4) << 6 | V2Index << 4 | ZMask;
-      assert((InsertPSMask & ~0xFFu) == 0 && "Invalid mask!");
-
-      // Insert the V2 element into the desired position.
-      return DAG.getNode(X86ISD::INSERTPS, DL, MVT::v4f32, V1, V2,
-                         DAG.getConstant(InsertPSMask, MVT::i8));
-    }
+    // Use INSERTPS if we can complete the shuffle efficiently.
+    if (SDValue V = lowerVectorShuffleAsInsertPS(Op, V1, V2, Mask, DAG))
+      return V;
   }
 
   // Otherwise fall back to a SHUFPS lowering strategy.
@@ -9599,23 +9633,41 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   if (Subtarget->hasSSSE3()) {
     SDValue V1Mask[16];
     SDValue V2Mask[16];
-    for (int i = 0; i < 16; ++i)
+    bool V1InUse = false;
+    bool V2InUse = false;
+    SmallBitVector Zeroable = computeZeroableShuffleElements(Mask, V1, V2);
+
+    for (int i = 0; i < 16; ++i) {
       if (Mask[i] == -1) {
         V1Mask[i] = V2Mask[i] = DAG.getUNDEF(MVT::i8);
       } else {
-        V1Mask[i] = DAG.getConstant(Mask[i] < 16 ? Mask[i] : 0x80, MVT::i8);
-        V2Mask[i] =
-            DAG.getConstant(Mask[i] < 16 ? 0x80 : Mask[i] - 16, MVT::i8);
+        const int ZeroMask = 0x80;
+        int V1Idx = (Mask[i] < 16 ? Mask[i] : ZeroMask);
+        int V2Idx = (Mask[i] < 16 ? ZeroMask : Mask[i] - 16);
+        if (Zeroable[i])
+          V1Idx = V2Idx = ZeroMask;
+        V1Mask[i] = DAG.getConstant(V1Idx, MVT::i8);
+        V2Mask[i] = DAG.getConstant(V2Idx, MVT::i8);
+        V1InUse |= (ZeroMask != V1Idx);
+        V2InUse |= (ZeroMask != V2Idx);
       }
-    V1 = DAG.getNode(X86ISD::PSHUFB, DL, MVT::v16i8, V1,
-                     DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v16i8, V1Mask));
-    if (isSingleInputShuffleMask(Mask))
-      return V1; // Single inputs are easy.
+    }
+    assert((V1InUse || V2InUse) && "Shuffling to a zeroable vector");
 
-    // Otherwise, blend the two.
-    V2 = DAG.getNode(X86ISD::PSHUFB, DL, MVT::v16i8, V2,
-                     DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v16i8, V2Mask));
-    return DAG.getNode(ISD::OR, DL, MVT::v16i8, V1, V2);
+    if (V1InUse)
+      V1 = DAG.getNode(X86ISD::PSHUFB, DL, MVT::v16i8, V1,
+                       DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v16i8, V1Mask));
+    if (V2InUse)
+      V2 = DAG.getNode(X86ISD::PSHUFB, DL, MVT::v16i8, V2,
+                       DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v16i8, V2Mask));
+
+    // If we need shuffled inputs from both, blend the two.
+    if (V1InUse && V2InUse)
+      return DAG.getNode(ISD::OR, DL, MVT::v16i8, V1, V2);
+    if (V1InUse)
+      return V1; // Single inputs are easy.
+    if (V2InUse)
+      return V2; // Single inputs are easy.
   }
 
   // There are special ways we can lower some single-element blends.
@@ -26197,9 +26249,34 @@ void X86TargetLowering::LowerAsmOperandForConstraint(SDValue Op,
       }
     }
     return;
+  case 'L':
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
+      if (C->getZExtValue() == 0xff || C->getZExtValue() == 0xffff ||
+          (Subtarget->is64Bit() && C->getZExtValue() == 0xffffffff)) {
+        Result = DAG.getTargetConstant(C->getSExtValue(), Op.getValueType());
+        break;
+      }
+    }
+    return;
+  case 'M':
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
+      if (C->getZExtValue() <= 3) {
+        Result = DAG.getTargetConstant(C->getZExtValue(), Op.getValueType());
+        break;
+      }
+    }
+    return;
   case 'N':
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
       if (C->getZExtValue() <= 255) {
+        Result = DAG.getTargetConstant(C->getZExtValue(), Op.getValueType());
+        break;
+      }
+    }
+    return;
+  case 'O':
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
+      if (C->getZExtValue() <= 127) {
         Result = DAG.getTargetConstant(C->getZExtValue(), Op.getValueType());
         break;
       }
