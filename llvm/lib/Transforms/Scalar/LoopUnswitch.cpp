@@ -170,8 +170,8 @@ namespace {
       AU.addRequired<AssumptionCacheTracker>();
       AU.addRequiredID(LoopSimplifyID);
       AU.addPreservedID(LoopSimplifyID);
-      AU.addRequired<LoopInfo>();
-      AU.addPreserved<LoopInfo>();
+      AU.addRequired<LoopInfoWrapperPass>();
+      AU.addPreserved<LoopInfoWrapperPass>();
       AU.addRequiredID(LCSSAID);
       AU.addPreservedID(LCSSAID);
       AU.addPreserved<DominatorTreeWrapperPass>();
@@ -336,7 +336,7 @@ INITIALIZE_PASS_BEGIN(LoopUnswitch, "loop-unswitch", "Unswitch loops",
 INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
-INITIALIZE_PASS_DEPENDENCY(LoopInfo)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_END(LoopUnswitch, "loop-unswitch", "Unswitch loops",
                       false, false)
@@ -387,7 +387,7 @@ bool LoopUnswitch::runOnLoop(Loop *L, LPPassManager &LPM_Ref) {
 
   AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(
       *L->getHeader()->getParent());
-  LI = &getAnalysis<LoopInfo>();
+  LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   LPM = &LPM_Ref;
   DominatorTreeWrapperPass *DTWP =
       getAnalysisIfAvailable<DominatorTreeWrapperPass>();
@@ -675,7 +675,7 @@ static Loop *CloneLoop(Loop *L, Loop *PL, ValueToValueMapTy &VM,
   for (Loop::block_iterator I = L->block_begin(), E = L->block_end();
        I != E; ++I)
     if (LI->getLoopFor(*I) == L)
-      New->addBasicBlockToLoop(cast<BasicBlock>(VM[*I]), LI->getBase());
+      New->addBasicBlockToLoop(cast<BasicBlock>(VM[*I]), *LI);
 
   // Add all of the subloops to the new loop.
   for (Loop::iterator I = L->begin(), E = L->end(); I != E; ++I)
@@ -737,7 +737,7 @@ void LoopUnswitch::UnswitchTrivialCondition(Loop *L, Value *Cond,
   // without actually branching to it (the exit block should be dominated by the
   // loop header, not the preheader).
   assert(!L->contains(ExitBlock) && "Exit block is in the loop?");
-  BasicBlock *NewExit = SplitBlock(ExitBlock, ExitBlock->begin(), this);
+  BasicBlock *NewExit = SplitBlock(ExitBlock, ExitBlock->begin(), DT, LI);
 
   // Okay, now we have a position to branch from and a position to branch to,
   // insert the new conditional branch.
@@ -769,7 +769,9 @@ void LoopUnswitch::SplitExitEdges(Loop *L,
     // Although SplitBlockPredecessors doesn't preserve loop-simplify in
     // general, if we call it on all predecessors of all exits then it does.
     if (!ExitBlock->isLandingPad()) {
-      SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa", this);
+      SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa",
+                             /*AliasAnalysis*/ nullptr, DT, LI,
+                             /*PreserveLCSSA*/ true);
     } else {
       SmallVector<BasicBlock*, 2> NewBBs;
       SplitLandingPadPredecessors(ExitBlock, Preds, ".us-lcssa", ".us-lcssa",
@@ -850,14 +852,14 @@ void LoopUnswitch::UnswitchNontrivialCondition(Value *LIC, Constant *Val,
   if (ParentLoop) {
     // Make sure to add the cloned preheader and exit blocks to the parent loop
     // as well.
-    ParentLoop->addBasicBlockToLoop(NewBlocks[0], LI->getBase());
+    ParentLoop->addBasicBlockToLoop(NewBlocks[0], *LI);
   }
 
   for (unsigned i = 0, e = ExitBlocks.size(); i != e; ++i) {
     BasicBlock *NewExit = cast<BasicBlock>(VMap[ExitBlocks[i]]);
     // The new exit block should be in the same loop as the old one.
     if (Loop *ExitBBLoop = LI->getLoopFor(ExitBlocks[i]))
-      ExitBBLoop->addBasicBlockToLoop(NewExit, LI->getBase());
+      ExitBBLoop->addBasicBlockToLoop(NewExit, *LI);
 
     assert(NewExit->getTerminator()->getNumSuccessors() == 1 &&
            "Exit block should have been split to have one successor!");

@@ -23,7 +23,9 @@
 namespace llvm {
 
 class AliasAnalysis;
+class MemoryDependenceAnalysis;
 class DominatorTree;
+class LoopInfo;
 class Instruction;
 class MDNode;
 class Pass;
@@ -39,7 +41,8 @@ void DeleteDeadBlock(BasicBlock *BB);
 /// any single-entry PHI nodes in it, fold them away.  This handles the case
 /// when all entries to the PHI nodes in a block are guaranteed equal, such as
 /// when the block has exactly one predecessor.
-void FoldSingleEntryPHINodes(BasicBlock *BB, Pass *P = nullptr);
+void FoldSingleEntryPHINodes(BasicBlock *BB, AliasAnalysis *AA = nullptr,
+                             MemoryDependenceAnalysis *MemDep = nullptr);
 
 /// DeleteDeadPHIs - Examine each PHI in the given block and delete it if it
 /// is dead. Also recursively delete any operands that become dead as
@@ -50,7 +53,10 @@ bool DeleteDeadPHIs(BasicBlock *BB, const TargetLibraryInfo *TLI = nullptr);
 
 /// MergeBlockIntoPredecessor - Attempts to merge a block into its predecessor,
 /// if possible.  The return value indicates success or failure.
-bool MergeBlockIntoPredecessor(BasicBlock *BB, Pass *P = nullptr);
+bool MergeBlockIntoPredecessor(BasicBlock *BB, DominatorTree *DT = nullptr,
+                               LoopInfo *LI = nullptr,
+                               AliasAnalysis *AA = nullptr,
+                               MemoryDependenceAnalysis *MemDep = nullptr);
 
 // ReplaceInstWithValue - Replace all uses of an instruction (specified by BI)
 // with a value, then remove and delete the original instruction.
@@ -147,7 +153,8 @@ BasicBlock *SplitEdge(BasicBlock *From, BasicBlock *To, Pass *P);
 /// to a new block.  The two blocks are joined by an unconditional branch and
 /// the loop info is updated.
 ///
-BasicBlock *SplitBlock(BasicBlock *Old, Instruction *SplitPt, Pass *P);
+BasicBlock *SplitBlock(BasicBlock *Old, Instruction *SplitPt,
+                       DominatorTree *DT = nullptr, LoopInfo *LI = nullptr);
 
 /// SplitBlockPredecessors - This method transforms BB by introducing a new
 /// basic block into the function, and moving some of the predecessors of BB to
@@ -161,8 +168,12 @@ BasicBlock *SplitBlock(BasicBlock *Old, Instruction *SplitPt, Pass *P);
 /// complicated to handle the case where one of the edges being split
 /// is an exit of a loop with other exits).
 ///
-BasicBlock *SplitBlockPredecessors(BasicBlock *BB, ArrayRef<BasicBlock*> Preds,
-                                   const char *Suffix, Pass *P = nullptr);
+BasicBlock *SplitBlockPredecessors(BasicBlock *BB, ArrayRef<BasicBlock *> Preds,
+                                   const char *Suffix,
+                                   AliasAnalysis *AA = nullptr,
+                                   DominatorTree *DT = nullptr,
+                                   LoopInfo *LI = nullptr,
+                                   bool PreserveLCSSA = false);
 
 /// SplitLandingPadPredecessors - This method transforms the landing pad,
 /// OrigBB, by introducing two new basic blocks into the function. One of those

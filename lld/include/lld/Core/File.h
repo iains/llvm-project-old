@@ -20,6 +20,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace lld {
@@ -161,11 +162,15 @@ public:
   /// (because YAML reader does not read blobs but structured data).
   void setLastError(std::error_code err) { _lastError = err; }
 
-  std::error_code parse() {
-    if (!_lastError.hasValue())
-      _lastError = doParse();
-    return _lastError.getValue();
-  }
+  std::error_code parse();
+
+  // This function is called just before the core linker tries to use
+  // a file. Currently the PECOFF reader uses this to trigger the
+  // driver to parse .drectve section (which contains command line options).
+  // If you want to do something having side effects, don't do that in
+  // doParse() because a file could be pre-loaded speculatively.
+  // Use this hook instead.
+  virtual void beforeLink() {}
 
   // Usually each file owns a std::unique_ptr<MemoryBuffer>.
   // However, there's one special case. If a file is an archive file,
@@ -239,7 +244,6 @@ protected:
   static atom_collection_empty<UndefinedAtom>     _noUndefinedAtoms;
   static atom_collection_empty<SharedLibraryAtom> _noSharedLibraryAtoms;
   static atom_collection_empty<AbsoluteAtom>      _noAbsoluteAtoms;
-  llvm::Optional<std::error_code>                 _lastError;
   mutable llvm::BumpPtrAllocator                  _allocator;
 
 private:
@@ -247,6 +251,8 @@ private:
   Kind              _kind;
   mutable uint64_t  _ordinal;
   std::shared_ptr<MemoryBuffer> _sharedMemoryBuffer;
+  llvm::Optional<std::error_code> _lastError;
+  std::mutex _parseMutex;
 };
 
 /// \brief A mutable File.
@@ -274,7 +280,8 @@ protected:
 /// can do unit testing a driver using non-existing file paths.
 class ErrorFile : public File {
 public:
-  ErrorFile(StringRef p, std::error_code ec) : File(p, kindObject), _ec(ec) {}
+  ErrorFile(StringRef path, std::error_code ec)
+      : File(path, kindObject), _ec(ec) {}
 
   std::error_code doParse() override { return _ec; }
 

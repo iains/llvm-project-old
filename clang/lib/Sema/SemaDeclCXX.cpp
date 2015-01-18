@@ -388,9 +388,14 @@ void Sema::CheckExtraCXXDefaultArguments(Declarator &D) {
         ParmVarDecl *Param = cast<ParmVarDecl>(chunk.Fun.Params[argIdx].Param);
         if (Param->hasUnparsedDefaultArg()) {
           CachedTokens *Toks = chunk.Fun.Params[argIdx].DefaultArgTokens;
+          SourceRange SR;
+          if (Toks->size() > 1)
+            SR = SourceRange((*Toks)[1].getLocation(),
+                             Toks->back().getLocation());
+          else
+            SR = UnparsedDefaultArgLocs[Param];
           Diag(Param->getLocation(), diag::err_param_default_argument_nonfunc)
-            << SourceRange((*Toks)[1].getLocation(),
-                           Toks->back().getLocation());
+            << SR;
           delete Toks;
           chunk.Fun.Params[argIdx].DefaultArgTokens = nullptr;
         } else if (Param->getDefaultArg()) {
@@ -2154,7 +2159,8 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
       assert(Member && "HandleField never returns null");
     }
   } else {
-    assert(InitStyle == ICIS_NoInit || D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static);
+    assert(InitStyle == ICIS_NoInit ||
+           D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static);
 
     Member = HandleDeclarator(S, D, TemplateParameterLists);
     if (!Member)
@@ -4704,14 +4710,19 @@ static void checkDLLAttribute(Sema &S, CXXRecordDecl *Class) {
   const bool ClassExported = ClassAttr->getKind() == attr::DLLExport;
   const bool ClassImported = !ClassExported;
 
+  TemplateSpecializationKind TSK = Class->getTemplateSpecializationKind();
+
+  // Don't dllexport explicit class template instantiation declarations.
+  if (ClassExported && TSK == TSK_ExplicitInstantiationDeclaration) {
+    Class->dropAttr<DLLExportAttr>();
+    return;
+  }
+
   // Force declaration of implicit members so they can inherit the attribute.
   S.ForceDeclarationOfImplicitMembers(Class);
 
   // FIXME: MSVC's docs say all bases must be exportable, but this doesn't
   // seem to be true in practice?
-
-  TemplateSpecializationKind TSK =
-    Class->getTemplateSpecializationKind();
 
   for (Decl *Member : Class->decls()) {
     VarDecl *VD = dyn_cast<VarDecl>(Member);
@@ -13117,7 +13128,8 @@ bool Sema::DefineUsedVTables() {
     DefinedAnything = true;
     MarkVirtualMembersReferenced(Loc, Class);
     CXXRecordDecl *Canonical = cast<CXXRecordDecl>(Class->getCanonicalDecl());
-    Consumer.HandleVTable(Class, VTablesUsed[Canonical]);
+    if (VTablesUsed[Canonical])
+      Consumer.HandleVTable(Class);
 
     // Optionally warn if we're emitting a weak vtable.
     if (Class->isExternallyVisible() &&
