@@ -125,7 +125,8 @@ static void ConnectProlog(Loop *L, Value *TripCount, unsigned Count,
   } else {
     SmallVector<BasicBlock*, 2> NewBBs;
     SplitLandingPadPredecessors(Exit, Preds, ".unr1-lcssa", ".unr2-lcssa",
-                                P, NewBBs);
+                                NewBBs, AA, DT, LI,
+                                P->mustPreserveAnalysisID(LCSSAID));
   }
   // Add the branch to the exit block (around the unrolled loop)
   BranchInst::Create(Exit, NewPH, BrLoopExit, InsertPt);
@@ -322,7 +323,6 @@ bool llvm::UnrollRuntimeLoopProlog(Loop *L, unsigned Count, LoopInfo *LI,
     SE->forgetLoop(ParentLoop);
 
   // Grab analyses that we preserve.
-  auto *AA = LPM->getAnalysisIfAvailable<AliasAnalysis>();
   auto *DTWP = LPM->getAnalysisIfAvailable<DominatorTreeWrapperPass>();
   auto *DT = DTWP ? &DTWP->getDomTree() : nullptr;
 
@@ -331,7 +331,7 @@ bool llvm::UnrollRuntimeLoopProlog(Loop *L, unsigned Count, LoopInfo *LI,
   BasicBlock *Latch = L->getLoopLatch();
   // It helps to splits the original preheader twice, one for the end of the
   // prolog code and one for a new loop preheader
-  BasicBlock *PEnd = SplitEdge(PH, Header, LPM->getAsPass());
+  BasicBlock *PEnd = SplitEdge(PH, Header, DT, LI);
   BasicBlock *NewPH = SplitBlock(PEnd, PEnd->getTerminator(), DT, LI);
   BranchInst *PreHeaderBR = cast<BranchInst>(PH->getTerminator());
 
@@ -402,7 +402,7 @@ bool llvm::UnrollRuntimeLoopProlog(Loop *L, unsigned Count, LoopInfo *LI,
   // PHI functions.
   BasicBlock *LastLoopBB = cast<BasicBlock>(VMap[Latch]);
   ConnectProlog(L, TripCount, Count, LastLoopBB, PEnd, PH, NewPH, VMap,
-                AA, DT, LI, LPM->getAsPass());
+                /*AliasAnalysis*/ nullptr, DT, LI, LPM->getAsPass());
   NumRuntimeUnrolled++;
   return true;
 }

@@ -224,9 +224,7 @@ public:
 
   /// EmitLocation - Emit metadata to indicate a change in line/column
   /// information in the source file.
-  /// \param ForceColumnInfo  Assume DebugColumnInfo option is true.
-  void EmitLocation(CGBuilderTy &Builder, SourceLocation Loc,
-                    bool ForceColumnInfo = false);
+  void EmitLocation(CGBuilderTy &Builder, SourceLocation Loc);
 
   /// EmitFunctionStart - Emit a call to llvm.dbg.function.start to indicate
   /// start of a new function.
@@ -446,14 +444,17 @@ private:
 };
 
 class ApplyDebugLocation {
+private:
+  void init(SourceLocation TemporaryLocation);
+
 protected:
   llvm::DebugLoc OriginalLocation;
   CodeGenFunction &CGF;
 
 public:
   ApplyDebugLocation(CodeGenFunction &CGF,
-                     SourceLocation TemporaryLocation = SourceLocation(),
-                     bool ForceColumnInfo = false);
+                     SourceLocation TemporaryLocation = SourceLocation());
+  ApplyDebugLocation(CodeGenFunction &CGF, const Expr *E);
   ApplyDebugLocation(CodeGenFunction &CGF, llvm::DebugLoc Loc);
   ~ApplyDebugLocation();
 };

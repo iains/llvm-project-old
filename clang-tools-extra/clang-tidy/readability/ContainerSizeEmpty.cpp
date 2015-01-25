@@ -13,7 +13,6 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/ASTMatchers/ASTMatchersInternal.h"
 #include "clang/Lex/Lexer.h"
 
 using namespace clang::ast_matchers;
@@ -46,12 +45,7 @@ bool isContainer(llvm::StringRef ClassName) {
 
 namespace clang {
 namespace ast_matchers {
-AST_MATCHER_P(QualType, unqualifiedType, internal::Matcher<Type>,
-              InnerMatcher) {
-  return InnerMatcher.matches(*Node, Finder, Builder);
-}
-
-AST_MATCHER(Type, isBoolType) { return Node.isBooleanType(); }
+AST_MATCHER(QualType, isBoolType) { return Node->isBooleanType(); }
 
 AST_MATCHER(NamedDecl, stlContainer) {
   return isContainer(Node.getQualifiedNameAsString());
@@ -74,23 +68,21 @@ void ContainerSizeEmptyCheck::registerMatchers(MatchFinder *Finder) {
               anyOf(has(integerLiteral(equals(0))),
                     allOf(anyOf(hasOperatorName("<"), hasOperatorName(">="),
                                 hasOperatorName(">"), hasOperatorName("<=")),
-                          anyOf(hasRHS(integerLiteral(equals(1))),
-                                hasLHS(integerLiteral(equals(1)))))))
+                          hasEitherOperand(integerLiteral(equals(1))))))
               .bind("SizeBinaryOp")),
       hasParent(implicitCastExpr(
-          hasImplicitDestinationType(unqualifiedType(isBoolType())),
+          hasImplicitDestinationType(isBoolType()),
           anyOf(
               hasParent(unaryOperator(hasOperatorName("!")).bind("NegOnSize")),
               anything()))),
-      hasParent(
-          explicitCastExpr(hasDestinationType(unqualifiedType(isBoolType())))));
+      hasParent(explicitCastExpr(hasDestinationType(isBoolType()))));
 
   Finder->addMatcher(
       memberCallExpr(
           on(expr(anyOf(hasType(namedDecl(stlContainer())),
-                        hasType(qualType(pointsTo(namedDecl(stlContainer())))),
-                        hasType(qualType(references(
-                            namedDecl(stlContainer())))))).bind("STLObject")),
+                        hasType(pointsTo(namedDecl(stlContainer()))),
+                        hasType(references(namedDecl(stlContainer())))))
+                 .bind("STLObject")),
           callee(methodDecl(hasName("size"))), WrongUse).bind("SizeCallExpr"),
       this);
 }
@@ -101,9 +93,9 @@ void ContainerSizeEmptyCheck::check(const MatchFinder::MatchResult &Result) {
   const auto *BinaryOp = Result.Nodes.getNodeAs<BinaryOperator>("SizeBinaryOp");
   const auto *E = Result.Nodes.getNodeAs<Expr>("STLObject");
   FixItHint Hint;
-  std::string ReplacementText =
-      Lexer::getSourceText(CharSourceRange::getTokenRange(E->getSourceRange()),
-                           *Result.SourceManager, LangOptions());
+  std::string ReplacementText = Lexer::getSourceText(
+      CharSourceRange::getTokenRange(E->getSourceRange()),
+      *Result.SourceManager, Result.Context->getLangOpts());
   if (E->getType()->isPointerType())
     ReplacementText += "->empty()";
   else

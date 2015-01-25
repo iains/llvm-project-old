@@ -231,18 +231,15 @@ void llvm::ReplaceInstWithInst(Instruction *From, Instruction *To) {
 
 /// SplitEdge -  Split the edge connecting specified block. Pass P must
 /// not be NULL.
-BasicBlock *llvm::SplitEdge(BasicBlock *BB, BasicBlock *Succ, Pass *P) {
+BasicBlock *llvm::SplitEdge(BasicBlock *BB, BasicBlock *Succ, DominatorTree *DT,
+                            LoopInfo *LI) {
   unsigned SuccNum = GetSuccessorNumber(BB, Succ);
 
   // If this is a critical edge, let SplitCriticalEdge do it.
   TerminatorInst *LatchTerm = BB->getTerminator();
-  if (SplitCriticalEdge(LatchTerm, SuccNum, P))
+  if (SplitCriticalEdge(LatchTerm, SuccNum, CriticalEdgeSplittingOptions(DT, LI)
+                                                .setPreserveLCSSA()))
     return LatchTerm->getSuccessor(SuccNum);
-
-  auto *DTWP = P->getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-  auto *DT = DTWP ? &DTWP->getDomTree() : nullptr;
-  auto *LIWP = P->getAnalysisIfAvailable<LoopInfoWrapperPass>();
-  auto *LI = LIWP ? &LIWP->getLoopInfo() : nullptr;
 
   // If the edge isn't critical, then BB has a single successor or Succ has a
   // single pred.  Split the block.
@@ -261,13 +258,15 @@ BasicBlock *llvm::SplitEdge(BasicBlock *BB, BasicBlock *Succ, Pass *P) {
   return SplitBlock(BB, BB->getTerminator(), DT, LI);
 }
 
-unsigned llvm::SplitAllCriticalEdges(Function &F, Pass *P) {
+unsigned
+llvm::SplitAllCriticalEdges(Function &F,
+                            const CriticalEdgeSplittingOptions &Options) {
   unsigned NumBroken = 0;
   for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I) {
     TerminatorInst *TI = I->getTerminator();
     if (TI->getNumSuccessors() > 1 && !isa<IndirectBrInst>(TI))
       for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i)
-        if (SplitCriticalEdge(TI, i, P))
+        if (SplitCriticalEdge(TI, i, Options))
           ++NumBroken;
   }
   return NumBroken;
@@ -523,10 +522,11 @@ BasicBlock *llvm::SplitBlockPredecessors(BasicBlock *BB,
 /// exits).
 ///
 void llvm::SplitLandingPadPredecessors(BasicBlock *OrigBB,
-                                       ArrayRef<BasicBlock*> Preds,
+                                       ArrayRef<BasicBlock *> Preds,
                                        const char *Suffix1, const char *Suffix2,
-                                       Pass *P,
-                                       SmallVectorImpl<BasicBlock*> &NewBBs) {
+                                       SmallVectorImpl<BasicBlock *> &NewBBs,
+                                       AliasAnalysis *AA, DominatorTree *DT,
+                                       LoopInfo *LI, bool PreserveLCSSA) {
   assert(OrigBB->isLandingPad() && "Trying to split a non-landing pad!");
 
   // Create a new basic block for OrigBB's predecessors listed in Preds. Insert
@@ -549,18 +549,11 @@ void llvm::SplitLandingPadPredecessors(BasicBlock *OrigBB,
     Preds[i]->getTerminator()->replaceUsesOfWith(OrigBB, NewBB1);
   }
 
-  // Update DominatorTree, LoopInfo, and LCCSA analysis information.
-  auto *DTWP = P->getAnalysisIfAvailable<DominatorTreeWrapperPass>();
-  auto *DT = DTWP ? &DTWP->getDomTree() : nullptr;
-  auto *LIWP = P->getAnalysisIfAvailable<LoopInfoWrapperPass>();
-  auto *LI = LIWP ? &LIWP->getLoopInfo() : nullptr;
-  bool PreserveLCSSA = P->mustPreserveAnalysisID(LCSSAID);
   bool HasLoopExit = false;
   UpdateAnalysisInformation(OrigBB, NewBB1, Preds, DT, LI, PreserveLCSSA,
                             HasLoopExit);
 
   // Update the PHI nodes in OrigBB with the values coming from NewBB1.
-  AliasAnalysis *AA = P ? P->getAnalysisIfAvailable<AliasAnalysis>() : nullptr;
   UpdatePHINodes(OrigBB, NewBB1, Preds, BI1, AA, HasLoopExit);
 
   // Move the remaining edges from OrigBB to point to NewBB2.

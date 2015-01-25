@@ -286,6 +286,9 @@ public:
     if ((_symbol->getType() == llvm::ELF::STT_COMMON) ||
         _symbol->st_shndx == llvm::ELF::SHN_COMMON) {
       return Alignment(llvm::Log2_64(_symbol->st_value));
+    } else if (_section->sh_addralign == 0) {
+      // sh_addralign of 0 means no alignment
+      return Alignment(0, _symbol->st_value);
     }
     return Alignment(llvm::Log2_64(_section->sh_addralign),
                      _symbol->st_value % _section->sh_addralign);
@@ -678,6 +681,11 @@ public:
   void addReferenceELF_AArch64(uint16_t relocType, uint64_t off, const Atom *t,
                                Reference::Addend a) {
     this->addReferenceELF(Reference::KindArch::AArch64, relocType, off, t, a);
+  }
+
+  void addReferenceELF_ARM(uint16_t relocType, uint64_t off, const Atom *t,
+                               Reference::Addend a) {
+    this->addReferenceELF(Reference::KindArch::ARM, relocType, off, t, a);
   }
 };
 

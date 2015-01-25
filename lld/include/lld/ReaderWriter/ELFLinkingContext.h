@@ -15,8 +15,8 @@
 #include "lld/Core/PassManager.h"
 #include "lld/Core/STDExtras.h"
 #include "lld/Core/range.h"
-#include "lld/ReaderWriter/Reader.h"
-#include "lld/ReaderWriter/Writer.h"
+#include "lld/Core/Reader.h"
+#include "lld/Core/Writer.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Object/ELF.h"
@@ -115,8 +115,6 @@ public:
       return false;
     return true;
   }
-
-  static std::unique_ptr<ELFLinkingContext> create(llvm::Triple);
 
   /// \brief Use Elf_Rela format to output relocation tables.
   virtual bool isRelaOutputFormat() const { return true; }

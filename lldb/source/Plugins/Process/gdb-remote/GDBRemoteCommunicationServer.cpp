@@ -45,6 +45,7 @@
 
 // Project includes
 #include "Utility/StringExtractorGDBRemote.h"
+#include "Utility/UriParser.h"
 #include "ProcessGDBRemote.h"
 #include "ProcessGDBRemoteLog.h"
 
@@ -1910,6 +1911,9 @@ GDBRemoteCommunicationServer::Handle_qLaunchGDBServer (StringExtractorGDBRemote 
         // Spawn a new thread to accept the port that gets bound after
         // binding to port 0 (zero).
 
+        // ignore the hostname send from the remote end, just use the ip address
+        // that we're currently communicating with as the hostname
+
         // Spawn a debugserver and try to get the port it listens to.
         ProcessLaunchInfo debugserver_launch_info;
         if (hostname.empty())
@@ -1919,7 +1923,14 @@ GDBRemoteCommunicationServer::Handle_qLaunchGDBServer (StringExtractorGDBRemote 
 
         debugserver_launch_info.SetMonitorProcessCallback(ReapDebugserverProcess, this, false);
 
-        Error error = StartDebugserverProcess (hostname.empty() ? NULL : hostname.c_str(),
+        std::string platform_scheme;
+        std::string platform_ip;
+        int platform_port;
+        std::string platform_path;
+        bool ok = UriParser::Parse(GetConnection()->GetURI().c_str(), platform_scheme, platform_ip, platform_port, platform_path);
+        assert(ok);
+        Error error = StartDebugserverProcess (
+                                         platform_ip.c_str(),
                                          port,
                                          debugserver_launch_info,
                                          port);
@@ -2984,7 +2995,7 @@ GDBRemoteCommunicationServer::Handle_qRegisterInfo (StringExtractorGDBRemote &pa
         return SendErrorResponse (69);
 
     // Return the end of registers response if we've iterated one past the end of the register set.
-    if (reg_index >= reg_context_sp->GetRegisterCount ())
+    if (reg_index >= reg_context_sp->GetUserRegisterCount ())
         return SendErrorResponse (69);
 
     const RegisterInfo *reg_info = reg_context_sp->GetRegisterInfoAtIndex(reg_index);
@@ -3185,10 +3196,10 @@ GDBRemoteCommunicationServer::Handle_p (StringExtractorGDBRemote &packet)
     }
 
     // Return the end of registers response if we've iterated one past the end of the register set.
-    if (reg_index >= reg_context_sp->GetRegisterCount ())
+    if (reg_index >= reg_context_sp->GetUserRegisterCount ())
     {
         if (log)
-            log->Printf ("GDBRemoteCommunicationServer::%s failed, requested register %" PRIu32 " beyond register count %" PRIu32, __FUNCTION__, reg_index, reg_context_sp->GetRegisterCount ());
+            log->Printf ("GDBRemoteCommunicationServer::%s failed, requested register %" PRIu32 " beyond register count %" PRIu32, __FUNCTION__, reg_index, reg_context_sp->GetUserRegisterCount ());
         return SendErrorResponse (0x15);
     }
 
@@ -3294,10 +3305,10 @@ GDBRemoteCommunicationServer::Handle_P (StringExtractorGDBRemote &packet)
     }
 
     // Return the end of registers response if we've iterated one past the end of the register set.
-    if (reg_index >= reg_context_sp->GetRegisterCount ())
+    if (reg_index >= reg_context_sp->GetUserRegisterCount ())
     {
         if (log)
-            log->Printf ("GDBRemoteCommunicationServer::%s failed, requested register %" PRIu32 " beyond register count %" PRIu32, __FUNCTION__, reg_index, reg_context_sp->GetRegisterCount ());
+            log->Printf ("GDBRemoteCommunicationServer::%s failed, requested register %" PRIu32 " beyond register count %" PRIu32, __FUNCTION__, reg_index, reg_context_sp->GetUserRegisterCount ());
         return SendErrorResponse (0x47);
     }
 

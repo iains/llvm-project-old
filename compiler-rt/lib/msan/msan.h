@@ -163,15 +163,11 @@ void ReportUMRInsideAddressRange(const char *what, const void *start, uptr size,
 void UnpoisonParam(uptr n);
 void UnpoisonThreadLocalState();
 
-u32 GetOriginIfPoisoned(uptr a, uptr size);
-void SetOriginIfPoisoned(uptr addr, uptr src_shadow, uptr size, u32 src_origin);
-void CopyOrigin(void *dst, const void *src, uptr size, StackTrace *stack);
-void MovePoison(void *dst, const void *src, uptr size, StackTrace *stack);
-void CopyPoison(void *dst, const void *src, uptr size, StackTrace *stack);
-
 // Returns a "chained" origin id, pointing to the given stack trace followed by
 // the previous origin id.
 u32 ChainOrigin(u32 id, StackTrace *stack);
+
+const int STACK_TRACE_TAG_POISON = StackTrace::TAG_CUSTOM + 1;
 
 #define GET_MALLOC_STACK_TRACE                                                 \
   BufferedStackTrace stack;                                                    \

@@ -42,6 +42,11 @@
 
 namespace llvm {
 
+// FIXME: Replace this brittle forward declaration with the include of the new
+// PassManager.h when doing so doesn't break the PassManagerBuilder.
+template <typename IRUnitT> class AnalysisManager;
+class PreservedAnalyses;
+
 template<typename T>
 inline void RemoveFromVector(std::vector<T*> &V, T *N) {
   typename std::vector<T*>::iterator I = std::find(V.begin(), V.end(), N);
@@ -497,17 +502,32 @@ class LoopInfoBase {
   friend class LoopInfo;
 
   void operator=(const LoopInfoBase &) LLVM_DELETED_FUNCTION;
-  LoopInfoBase(const LoopInfo &) LLVM_DELETED_FUNCTION;
+  LoopInfoBase(const LoopInfoBase &) LLVM_DELETED_FUNCTION;
 public:
   LoopInfoBase() { }
   ~LoopInfoBase() { releaseMemory(); }
 
-  void releaseMemory() {
-    for (typename std::vector<LoopT *>::iterator I =
-         TopLevelLoops.begin(), E = TopLevelLoops.end(); I != E; ++I)
-      delete *I;   // Delete all of the loops...
+  LoopInfoBase(LoopInfoBase &&Arg)
+      : BBMap(std::move(Arg.BBMap)),
+        TopLevelLoops(std::move(Arg.TopLevelLoops)) {
+    // We have to clear the arguments top level loops as we've taken ownership.
+    Arg.TopLevelLoops.clear();
+  }
+  LoopInfoBase &operator=(LoopInfoBase &&RHS) {
+    BBMap = std::move(RHS.BBMap);
 
-    BBMap.clear();                           // Reset internal state of analysis
+    for (auto *L : TopLevelLoops)
+      delete L;
+    TopLevelLoops = std::move(RHS.TopLevelLoops);
+    RHS.TopLevelLoops.clear();
+    return *this;
+  }
+
+  void releaseMemory() {
+    BBMap.clear();
+
+    for (auto *L : TopLevelLoops)
+      delete L;
     TopLevelLoops.clear();
   }
 
@@ -576,8 +596,7 @@ public:
   /// list with the indicated loop.
   void changeTopLevelLoop(LoopT *OldLoop,
                           LoopT *NewLoop) {
-    typename std::vector<LoopT *>::iterator I =
-                 std::find(TopLevelLoops.begin(), TopLevelLoops.end(), OldLoop);
+    auto I = std::find(TopLevelLoops.begin(), TopLevelLoops.end(), OldLoop);
     assert(I != TopLevelLoops.end() && "Old loop not at top level!");
     *I = NewLoop;
     assert(!NewLoop->ParentLoop && !OldLoop->ParentLoop &&
@@ -595,7 +614,7 @@ public:
   /// including all of the Loop objects it is nested in and our mapping from
   /// BasicBlocks to loops.
   void removeBlock(BlockT *BB) {
-    typename DenseMap<BlockT *, LoopT *>::iterator I = BBMap.find(BB);
+    auto I = BBMap.find(BB);
     if (I != BBMap.end()) {
       for (LoopT *L = I->second; L; L = L->getParentLoop())
         L->removeBlockFromLoop(BB);
@@ -636,6 +655,12 @@ class LoopInfo : public LoopInfoBase<BasicBlock, Loop> {
   LoopInfo(const LoopInfo &) LLVM_DELETED_FUNCTION;
 public:
   LoopInfo() {}
+
+  LoopInfo(LoopInfo &&Arg) : BaseT(std::move(static_cast<BaseT &>(Arg))) {}
+  LoopInfo &operator=(LoopInfo &&RHS) {
+    BaseT::operator=(std::move(static_cast<BaseT &>(RHS)));
+    return *this;
+  }
 
   // Most of the public interface is provided via LoopInfoBase.
 
@@ -692,6 +717,39 @@ template <> struct GraphTraits<Loop*> {
   static inline ChildIteratorType child_end(NodeType *N) {
     return N->end();
   }
+};
+
+/// \brief Analysis pass that exposes the \c LoopInfo for a function.
+class LoopAnalysis {
+  static char PassID;
+
+public:
+  typedef LoopInfo Result;
+
+  /// \brief Opaque, unique identifier for this analysis pass.
+  static void *ID() { return (void *)&PassID; }
+
+  /// \brief Provide a name for the analysis for debugging and logging.
+  static StringRef name() { return "LoopAnalysis"; }
+
+  LoopAnalysis() {}
+  LoopAnalysis(const LoopAnalysis &Arg) {}
+  LoopAnalysis(LoopAnalysis &&Arg) {}
+  LoopAnalysis &operator=(const LoopAnalysis &RHS) { return *this; }
+  LoopAnalysis &operator=(LoopAnalysis &&RHS) { return *this; }
+
+  LoopInfo run(Function &F, AnalysisManager<Function> *AM);
+};
+
+/// \brief Printer pass for the \c LoopAnalysis results.
+class LoopPrinterPass {
+  raw_ostream &OS;
+
+public:
+  explicit LoopPrinterPass(raw_ostream &OS) : OS(OS) {}
+  PreservedAnalyses run(Function &F, AnalysisManager<Function> *AM);
+
+  static StringRef name() { return "LoopPrinterPass"; }
 };
 
 /// \brief The legacy pass manager's analysis pass to compute loop information.
