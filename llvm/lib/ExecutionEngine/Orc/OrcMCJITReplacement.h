@@ -20,7 +20,6 @@
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/Object/Archive.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 
 namespace llvm {
 
@@ -119,14 +118,13 @@ public:
 
   OrcMCJITReplacement(std::unique_ptr<RTDyldMemoryManager> MM,
                       std::unique_ptr<TargetMachine> TM)
-      : TM(std::move(TM)), MM(std::move(MM)),
-        Mang(this->TM->getSubtargetImpl()->getDataLayout()),
+      : TM(std::move(TM)), MM(std::move(MM)), Mang(this->TM->getDataLayout()),
         NotifyObjectLoaded(*this), NotifyFinalized(*this),
         ObjectLayer(ObjectLayerT::CreateRTDyldMMFtor(), NotifyObjectLoaded,
                     NotifyFinalized),
         CompileLayer(ObjectLayer, SimpleCompiler(*this->TM)),
         LazyEmitLayer(CompileLayer) {
-    setDataLayout(this->TM->getSubtargetImpl()->getDataLayout());
+    setDataLayout(this->TM->getDataLayout());
   }
 
   void addModule(std::unique_ptr<Module> M) override {
@@ -258,7 +256,7 @@ private:
                     const ObjListT &Objects,
                     const LoadedObjInfoListT &Infos) const {
       M.UnfinalizedSections[H] = std::move(M.SectionsAllocatedSinceLastLoad);
-      M.SectionsAllocatedSinceLastLoad = SectionAddrSet{};
+      M.SectionsAllocatedSinceLastLoad = SectionAddrSet();
       assert(Objects.size() == Infos.size() &&
              "Incorrect number of Infos for Objects.");
       for (unsigned I = 0; I < Objects.size(); ++I)

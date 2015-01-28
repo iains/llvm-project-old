@@ -276,7 +276,7 @@ LLVM_YAML_STRONG_TYPEDEF(bool, ShlibCanBeNull)
 struct RefKind {
   Reference::KindNamespace  ns;
   Reference::KindArch       arch;
-  uint16_t                  value;
+  Reference::KindValue      value;
 };
 
 } // namespace anon
@@ -394,6 +394,7 @@ template <> struct ScalarEnumerationTraits<lld::DefinedAtom::CodeModel> {
     io.enumCase(value, "mips-micro", lld::DefinedAtom::codeMipsMicro);
     io.enumCase(value, "mips-micro-pic", lld::DefinedAtom::codeMipsMicroPIC);
     io.enumCase(value, "mips-16", lld::DefinedAtom::codeMips16);
+    io.enumCase(value, "arm-thumb", lld::DefinedAtom::codeARMThumb);
   }
 };
 
@@ -1266,7 +1267,7 @@ public:
   std::error_code writeFile(const lld::File &file, StringRef outPath) override {
     // Create stream to path.
     std::error_code ec;
-    llvm::raw_fd_ostream out(outPath.data(), ec, llvm::sys::fs::F_Text);
+    llvm::raw_fd_ostream out(outPath, ec, llvm::sys::fs::F_Text);
     if (ec)
       return ec;
 

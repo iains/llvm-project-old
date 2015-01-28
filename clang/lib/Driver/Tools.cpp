@@ -958,6 +958,11 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
     if (A->getOption().matches(options::OPT_mno_global_merge))
       CmdArgs.push_back("-mno-global-merge");
   }
+
+  if (Args.hasArg(options::OPT_ffixed_x18)) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-aarch64-reserve-x18");
+  }
 }
 
 // Get CPU and ABI names. They are not independent
@@ -1438,6 +1443,10 @@ static const char *getX86TargetCPU(const ArgList &Args,
       return "core-avx2";
     return Is64Bit ? "core2" : "yonah";
   }
+
+  // Set up default CPU name for PS4 compilers.
+  if (Triple.isPS4CPU())
+    return "btver2";
 
   // On Android use targets compatible with gcc
   if (Triple.getEnvironment() == llvm::Triple::Android)
@@ -1965,7 +1974,8 @@ static void addExceptionArgs(const ArgList &Args, types::ID InputType,
   }
 
   if (types::isCXX(InputType)) {
-    bool CXXExceptionsEnabled = Triple.getArch() != llvm::Triple::xcore;
+    bool CXXExceptionsEnabled =
+        Triple.getArch() != llvm::Triple::xcore && !Triple.isPS4CPU();
     if (Arg *A = Args.getLastArg(options::OPT_fcxx_exceptions,
                                  options::OPT_fno_cxx_exceptions,
                                  options::OPT_fexceptions,
@@ -2322,6 +2332,9 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
   if (Arg *A = Args.getLastArg(options::OPT_mno_omit_leaf_frame_pointer,
                                options::OPT_momit_leaf_frame_pointer))
     return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
+
+  if (Triple.isPS4CPU())
+    return false;
 
   return shouldUseFramePointerForTarget(Args, Triple);
 }
@@ -6897,6 +6910,8 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
     break;
   case llvm::Triple::armeb:
   case llvm::Triple::thumbeb:
+    if (!Args.hasArg(options::OPT_r))
+      CmdArgs.push_back("--be8");
     CmdArgs.push_back("-m");
     switch (getToolChain().getTriple().getEnvironment()) {
     case llvm::Triple::EABI:

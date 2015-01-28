@@ -20,6 +20,7 @@
 #ifndef LLVM_SUPPORT_COMMANDLINE_H
 #define LLVM_SUPPORT_COMMANDLINE_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
@@ -1930,6 +1931,15 @@ bool ExpandResponseFiles(StringSaver &Saver, TokenizerCallback Tokenizer,
 /// not specific to the tool. This function allows a tool to specify a single
 /// option category to display in the -help output.
 void HideUnrelatedOptions(cl::OptionCategory &Category);
+
+/// \brief Mark all options not part of the categories as cl::ReallyHidden.
+///
+/// \param Categories the categories of options to keep displaying.
+///
+/// Some tools (like clang-format) like to be able to hide all options that are
+/// not specific to the tool. This function allows a tool to specify a single
+/// option category to display in the -help output.
+void HideUnrelatedOptions(ArrayRef<const cl::OptionCategory *> Categories);
 
 } // End namespace cl
 
