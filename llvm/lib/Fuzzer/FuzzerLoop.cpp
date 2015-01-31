@@ -12,9 +12,7 @@
 #include "FuzzerInternal.h"
 #include <sanitizer/asan_interface.h>
 #include <algorithm>
-#include <string>
 #include <iostream>
-#include <stdlib.h>
 
 // This function should be defined by the user.
 extern "C" void TestOneInput(const uint8_t *Data, size_t Size);
@@ -41,12 +39,12 @@ void Fuzzer::AlarmCallback() {
       duration_cast<seconds>(system_clock::now() - UnitStartTime).count();
   std::cerr << "ALARM: working on the last Unit for " << Seconds << " seconds"
             << std::endl;
-  if (Seconds > 60) {
+  if (Seconds >= 3) {
     Print(CurrentUnit, "\n");
     PrintASCII(CurrentUnit, "\n");
     WriteToCrash(CurrentUnit, "timeout-");
   }
-  abort();
+  exit(1);
 }
 
 void Fuzzer::ShuffleAndMinimize() {
@@ -78,6 +76,35 @@ void Fuzzer::ShuffleAndMinimize() {
 size_t Fuzzer::RunOne(const Unit &U) {
   UnitStartTime = system_clock::now();
   TotalNumberOfRuns++;
+  if (Options.UseFullCoverageSet)
+    return RunOneMaximizeFullCoverageSet(U);
+  return RunOneMaximizeTotalCoverage(U);
+}
+
+static uintptr_t HashOfArrayOfPCs(uintptr_t *PCs, uintptr_t NumPCs) {
+  uintptr_t Res = 0;
+  for (uintptr_t i = 0; i < NumPCs; i++) {
+    Res = (Res + PCs[i]) * 7;
+  }
+  return Res;
+}
+
+// Fuly reset the current coverage state, run a single unit,
+// compute a hash function from the full coverage set,
+// return non-zero if the hash value is new.
+// This produces tons of new units and as is it's only suitable for small tests,
+// e.g. test/FullCoverageSetTest.cpp. FIXME: make it scale.
+size_t Fuzzer::RunOneMaximizeFullCoverageSet(const Unit &U) {
+  __sanitizer_reset_coverage();
+  TestOneInput(U.data(), U.size());
+  uintptr_t *PCs;
+  uintptr_t NumPCs =__sanitizer_get_coverage_guards(&PCs);
+  if (FullCoverageSets.insert(HashOfArrayOfPCs(PCs, NumPCs)).second)
+    return FullCoverageSets.size();
+  return 0;
+}
+
+size_t Fuzzer::RunOneMaximizeTotalCoverage(const Unit &U) {
   size_t OldCoverage = __sanitizer_get_total_unique_coverage();
   TestOneInput(U.data(), U.size());
   size_t NewCoverage = __sanitizer_get_total_unique_coverage();
@@ -96,7 +123,7 @@ size_t Fuzzer::RunOne(const Unit &U) {
 
 void Fuzzer::WriteToOutputCorpus(const Unit &U) {
   if (Options.OutputCorpus.empty()) return;
-  std::string Path = Options.OutputCorpus + "/" + Hash(U);
+  std::string Path = DirPlusFile(Options.OutputCorpus, Hash(U));
   WriteToFile(U, Path);
   if (Options.Verbosity >= 2)
     std::cerr << "Written to " << Path << std::endl;
@@ -106,6 +133,15 @@ void Fuzzer::WriteToCrash(const Unit &U, const char *Prefix) {
   std::string Path = Prefix + Hash(U);
   WriteToFile(U, Path);
   std::cerr << "CRASHED; file written to " << Path << std::endl;
+}
+
+void Fuzzer::SaveCorpus() {
+  if (Options.OutputCorpus.empty()) return;
+  for (const auto &U : Corpus)
+    WriteToFile(U, DirPlusFile(Options.OutputCorpus, Hash(U)));
+  if (Options.Verbosity)
+    std::cerr << "Written corpus of " << Corpus.size() << " files to "
+              << Options.OutputCorpus << "\n";
 }
 
 size_t Fuzzer::MutateAndTestOne(Unit *U) {

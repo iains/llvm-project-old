@@ -3266,7 +3266,9 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
     if (Ty == Context.DoubleTy) {
       if (getLangOpts().SinglePrecisionConstants) {
         Res = ImpCastExprToType(Res, Context.FloatTy, CK_FloatingCast).get();
-      } else if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp64) {
+      } else if (getLangOpts().OpenCL &&
+                 !((getLangOpts().OpenCLVersion >= 120) ||
+                   getOpenCLOptions().cl_khr_fp64)) {
         Diag(Tok.getLocation(), diag::warn_double_const_requires_fp64);
         Res = ImpCastExprToType(Res, Context.FloatTy, CK_FloatingCast).get();
       }
@@ -4762,12 +4764,8 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
                                      VK_RValue, RParenLoc);
 
   // Bail out early if calling a builtin with custom typechecking.
-  if (BuiltinID && Context.BuiltinInfo.hasCustomTypechecking(BuiltinID)) {
-    ExprResult Res = CorrectDelayedTyposInExpr(TheCall);
-    if (!Res.isUsable() || !isa<CallExpr>(Res.get()))
-      return Res;
-    return CheckBuiltinFunctionCall(FDecl, BuiltinID, cast<CallExpr>(Res.get()));
-  }
+  if (BuiltinID && Context.BuiltinInfo.hasCustomTypechecking(BuiltinID))
+    return CheckBuiltinFunctionCall(FDecl, BuiltinID, TheCall);
 
  retry:
   const FunctionType *FuncT;

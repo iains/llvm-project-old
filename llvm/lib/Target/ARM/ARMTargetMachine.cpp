@@ -14,6 +14,7 @@
 #include "ARMFrameLowering.h"
 #include "ARMTargetMachine.h"
 #include "ARMTargetObjectFile.h"
+#include "ARMTargetTransformInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -215,12 +216,8 @@ ARMBaseTargetMachine::getSubtargetImpl(const Function &F) const {
   return I.get();
 }
 
-void ARMBaseTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
-  // Add first the target-independent BasicTTI pass, then our ARM pass. This
-  // allows the ARM pass to delegate to the target independent layer when
-  // appropriate.
-  PM.add(createBasicTargetTransformInfoPass(this));
-  PM.add(createARMTargetTransformInfoPass(this));
+TargetTransformInfo ARMBaseTargetMachine::getTTI() {
+  return TargetTransformInfo(ARMTTIImpl(this));
 }
 
 

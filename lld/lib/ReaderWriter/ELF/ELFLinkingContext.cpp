@@ -8,12 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "lld/ReaderWriter/ELFLinkingContext.h"
-#include "ArrayOrderPass.h"
 #include "ELFFile.h"
+#include "OrderPass.h"
 #include "TargetHandler.h"
 #include "lld/Core/Instrumentation.h"
 #include "lld/Core/SharedLibraryFile.h"
-#include "lld/Passes/LayoutPass.h"
 #include "lld/Passes/RoundTripYAMLPass.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Config/config.h"
@@ -59,16 +58,14 @@ ELFLinkingContext::ELFLinkingContext(
     : _outputELFType(llvm::ELF::ET_EXEC), _triple(triple),
       _targetHandler(std::move(targetHandler)), _baseAddress(0),
       _isStaticExecutable(false), _noInhibitExec(false), _exportDynamic(false),
-      _mergeCommonStrings(false), _runLayoutPass(true),
-      _useShlibUndefines(true), _dynamicLinkerArg(false),
-      _noAllowDynamicLibraries(false), _mergeRODataToTextSegment(true),
-      _demangle(true), _alignSegments(true), _outputMagic(OutputMagic::DEFAULT),
-      _initFunction("_init"), _finiFunction("_fini"), _sysrootPath("") {}
+      _mergeCommonStrings(false), _useShlibUndefines(true),
+      _dynamicLinkerArg(false), _noAllowDynamicLibraries(false),
+      _mergeRODataToTextSegment(true), _demangle(true), _alignSegments(true),
+      _outputMagic(OutputMagic::DEFAULT), _initFunction("_init"),
+      _finiFunction("_fini"), _sysrootPath("") {}
 
 void ELFLinkingContext::addPasses(PassManager &pm) {
-  if (_runLayoutPass)
-    pm.add(std::unique_ptr<Pass>(new LayoutPass(registry())));
-  pm.add(std::unique_ptr<Pass>(new elf::ArrayOrderPass()));
+  pm.add(std::unique_ptr<Pass>(new elf::OrderPass()));
 }
 
 uint16_t ELFLinkingContext::getOutputMachine() const {
@@ -82,8 +79,6 @@ uint16_t ELFLinkingContext::getOutputMachine() const {
   case llvm::Triple::mipsel:
   case llvm::Triple::mips64el:
     return llvm::ELF::EM_MIPS;
-  case llvm::Triple::ppc:
-    return llvm::ELF::EM_PPC;
   case llvm::Triple::aarch64:
     return llvm::ELF::EM_AARCH64;
   case llvm::Triple::arm:

@@ -77,7 +77,6 @@ void initializeAlignmentFromAssumptionsPass(PassRegistry&);
 void initializeBarrierNoopPass(PassRegistry&);
 void initializeBasicAliasAnalysisPass(PassRegistry&);
 void initializeCallGraphWrapperPassPass(PassRegistry &);
-void initializeBasicTTIPass(PassRegistry&);
 void initializeBlockExtractorPassPass(PassRegistry&);
 void initializeBlockFrequencyInfoPass(PassRegistry&);
 void initializeBoundsCheckingPass(PassRegistry&);
@@ -245,6 +244,7 @@ void initializeSROA_SSAUpPass(PassRegistry&);
 void initializeScalarEvolutionAliasAnalysisPass(PassRegistry&);
 void initializeScalarEvolutionPass(PassRegistry&);
 void initializeSimpleInlinerPass(PassRegistry&);
+void initializeShadowStackGCLoweringPass(PassRegistry&);  
 void initializeRegisterCoalescerPass(PassRegistry&);
 void initializeSingleLoopExtractorPass(PassRegistry&);
 void initializeSinkingPass(PassRegistry&);
@@ -263,9 +263,8 @@ void initializeTailCallElimPass(PassRegistry&);
 void initializeTailDuplicatePassPass(PassRegistry&);
 void initializeTargetPassConfigPass(PassRegistry&);
 void initializeDataLayoutPassPass(PassRegistry &);
-void initializeTargetTransformInfoAnalysisGroup(PassRegistry&);
+void initializeTargetTransformInfoWrapperPassPass(PassRegistry &);
 void initializeFunctionTargetTransformInfoPass(PassRegistry &);
-void initializeNoTTIPass(PassRegistry&);
 void initializeTargetLibraryInfoWrapperPassPass(PassRegistry &);
 void initializeAssumptionCacheTrackerPass(PassRegistry &);
 void initializeTwoAddressInstructionPassPass(PassRegistry&);
@@ -288,6 +287,7 @@ void initializeStackMapLivenessPass(PassRegistry&);
 void initializeMachineCombinerPass(PassRegistry &);
 void initializeLoadCombinePass(PassRegistry&);
 void initializeRewriteSymbolsPass(PassRegistry&);
+void initializeWinEHPreparePass(PassRegistry&);
 }
 
 #endif

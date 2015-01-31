@@ -14,6 +14,7 @@
 #include "PPCTargetMachine.h"
 #include "PPC.h"
 #include "PPCTargetObjectFile.h"
+#include "PPCTargetTransformInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/MC/MCStreamer.h"
@@ -196,10 +197,6 @@ public:
     return getTM<PPCTargetMachine>();
   }
 
-  const PPCSubtarget &getPPCSubtarget() const {
-    return *getPPCTargetMachine().getSubtargetImpl();
-  }
-
   void addIRPasses() override;
   bool addPreISel() override;
   bool addILPOpts() override;
@@ -278,10 +275,6 @@ void PPCPassConfig::addPreEmitPass() {
   addPass(createPPCBranchSelectionPass(), false);
 }
 
-void PPCTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
-  // Add first the target-independent BasicTTI pass, then our PPC pass. This
-  // allows the PPC pass to delegate to the target independent layer when
-  // appropriate.
-  PM.add(createBasicTargetTransformInfoPass(this));
-  PM.add(createPPCTargetTransformInfoPass(this));
+TargetTransformInfo PPCTargetMachine::getTTI() {
+  return TargetTransformInfo(PPCTTIImpl(this));
 }

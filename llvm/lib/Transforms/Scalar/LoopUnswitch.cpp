@@ -176,7 +176,7 @@ namespace {
       AU.addPreservedID(LCSSAID);
       AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addPreserved<ScalarEvolution>();
-      AU.addRequired<TargetTransformInfo>();
+      AU.addRequired<TargetTransformInfoWrapperPass>();
     }
 
   private:
@@ -333,7 +333,7 @@ void LUAnalysisCache::cloneData(const Loop *NewLoop, const Loop *OldLoop,
 char LoopUnswitch::ID = 0;
 INITIALIZE_PASS_BEGIN(LoopUnswitch, "loop-unswitch", "Unswitch loops",
                       false, false)
-INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
@@ -432,8 +432,9 @@ bool LoopUnswitch::processCurrentLoop() {
 
   // Probably we reach the quota of branches for this loop. If so
   // stop unswitching.
-  if (!BranchesInfo.countLoop(currentLoop, getAnalysis<TargetTransformInfo>(),
-                              AC))
+  if (!BranchesInfo.countLoop(
+          currentLoop, getAnalysis<TargetTransformInfoWrapperPass>().getTTI(),
+          AC))
     return false;
 
   // Loop over all of the basic blocks in the loop.  If we find an interior
@@ -769,16 +770,9 @@ void LoopUnswitch::SplitExitEdges(Loop *L,
 
     // Although SplitBlockPredecessors doesn't preserve loop-simplify in
     // general, if we call it on all predecessors of all exits then it does.
-    if (!ExitBlock->isLandingPad()) {
-      SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa",
-                             /*AliasAnalysis*/ nullptr, DT, LI,
-                             /*PreserveLCSSA*/ true);
-    } else {
-      SmallVector<BasicBlock*, 2> NewBBs;
-      SplitLandingPadPredecessors(ExitBlock, Preds, ".us-lcssa", ".us-lcssa",
-                                  NewBBs, /*AliasAnalysis*/ nullptr, DT, LI,
-                                  /*PreserveLCSSA*/ true);
-    }
+    SplitBlockPredecessors(ExitBlock, Preds, ".us-lcssa",
+                           /*AliasAnalysis*/ nullptr, DT, LI,
+                           /*PreserveLCSSA*/ true);
   }
 }
 

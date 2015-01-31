@@ -600,7 +600,7 @@ protected:
       if (Opts.RTTIData)
         Builder.defineMacro("_CPPRTTI");
 
-      if (Opts.Exceptions)
+      if (Opts.CXXExceptions)
         Builder.defineMacro("_CPPUNWIND");
     }
 
@@ -685,11 +685,6 @@ public:
       assert(Triple.getArch() == llvm::Triple::le32);
       this->DescriptionString = "e-p:32:32-i64:64";
     }
-  }
-  typename Target::CallingConvCheckResult checkCallingConvention(
-      CallingConv CC) const override {
-    return CC == CC_PnaclCall ? Target::CCCR_OK :
-        Target::checkCallingConvention(CC);
   }
 };
 } // end anonymous namespace.
@@ -1597,8 +1592,15 @@ class R600TargetInfo : public TargetInfo {
 
 public:
   R600TargetInfo(const llvm::Triple &Triple)
-      : TargetInfo(Triple), GPU(GK_R600) {
-    DescriptionString = DescriptionStringR600;
+      : TargetInfo(Triple) {
+
+    if (Triple.getArch() == llvm::Triple::amdgcn) {
+      DescriptionString = DescriptionStringSI;
+      GPU = GK_SOUTHERN_ISLANDS;
+    } else {
+      DescriptionString = DescriptionStringR600;
+      GPU = GK_R600;
+    }
     AddrSpaceMap = &R600AddrSpaceMap;
     UseAddrSpaceMapMangling = true;
   }
@@ -5694,14 +5696,6 @@ public:
   }
   const std::string& getCPU() const { return CPU; }
   void getDefaultFeatures(llvm::StringMap<bool> &Features) const override {
-    // The backend enables certain ABI's by default according to the
-    // architecture.
-    // Disable both possible defaults so that we don't end up with multiple
-    // ABI's selected and trigger an assertion.
-    Features["o32"] = false;
-    Features["n64"] = false;
-
-    Features[ABI] = true;
     if (CPU == "octeon")
       Features["mips64r2"] = Features["cnmips"] = true;
     else

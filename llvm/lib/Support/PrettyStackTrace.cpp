@@ -16,6 +16,7 @@
 #include "llvm-c/Core.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Config/config.h"     // Get autoconf configuration settings
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/Watchdog.h"
 #include "llvm/Support/raw_ostream.h"
@@ -26,18 +27,17 @@
 
 using namespace llvm;
 
+// If backtrace support is not enabled, compile out support for pretty stack
+// traces.  This has the secondary effect of not requiring thread local storage
+// when backtrace support is disabled.
+#if defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
+
 // We need a thread local pointer to manage the stack of our stack trace
 // objects, but we *really* cannot tolerate destructors running and do not want
 // to pay any overhead of synchronizing. As a consequence, we use a raw
-// thread-local variable. Some day, we should be able to use a limited subset
-// of C++11's thread_local, but compilers aren't up for it today.
-// FIXME: This should be moved to a Compiler.h abstraction.
-#ifdef _MSC_VER // MSVC supports this with a __declspec.
-static __declspec(thread) const PrettyStackTraceEntry
-    *PrettyStackTraceHead = nullptr;
-#else // Clang, GCC, and all compatible compilers tend to use __thread.
-static __thread const PrettyStackTraceEntry *PrettyStackTraceHead = nullptr;
-#endif
+// thread-local variable.
+static LLVM_THREAD_LOCAL const PrettyStackTraceEntry *PrettyStackTraceHead =
+    nullptr;
 
 static unsigned PrintStack(const PrettyStackTraceEntry *Entry, raw_ostream &OS){
   unsigned NextID = 0;
@@ -108,16 +108,23 @@ static void CrashHandler(void *) {
 #endif
 }
 
+// defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
+#endif
+
 PrettyStackTraceEntry::PrettyStackTraceEntry() {
+#if defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
   // Link ourselves.
   NextEntry = PrettyStackTraceHead;
   PrettyStackTraceHead = this;
+#endif
 }
 
 PrettyStackTraceEntry::~PrettyStackTraceEntry() {
+#if defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
   assert(PrettyStackTraceHead == this &&
          "Pretty stack trace entry destruction is out of order");
   PrettyStackTraceHead = getNextEntry();
+#endif
 }
 
 void PrettyStackTraceString::print(raw_ostream &OS) const {
@@ -132,15 +139,19 @@ void PrettyStackTraceProgram::print(raw_ostream &OS) const {
   OS << '\n';
 }
 
+#if defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
 static bool RegisterCrashPrinter() {
   sys::AddSignalHandler(CrashHandler, nullptr);
   return false;
 }
+#endif
 
 void llvm::EnablePrettyStackTrace() {
+#if defined(HAVE_BACKTRACE) && defined(ENABLE_BACKTRACES)
   // The first time this is called, we register the crash printer.
   static bool HandlerRegistered = RegisterCrashPrinter();
   (void)HandlerRegistered;
+#endif
 }
 
 void LLVMEnablePrettyStackTrace() {
