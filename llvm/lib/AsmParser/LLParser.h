@@ -88,10 +88,11 @@ namespace llvm {
 
     void assign(FieldTy Val) {
       Seen = true;
-      this->Val = Val;
+      this->Val = std::move(Val);
     }
 
-    explicit MDFieldImpl(FieldTy Default) : Val(Default), Seen(false) {}
+    explicit MDFieldImpl(FieldTy Default)
+        : Val(std::move(Default)), Seen(false) {}
   };
   template <class NumTy> struct MDUnsignedField : public MDFieldImpl<NumTy> {
     typedef typename MDUnsignedField::ImplTy ImplTy;
@@ -101,8 +102,17 @@ namespace llvm {
                     NumTy Max = std::numeric_limits<NumTy>::max())
         : ImplTy(Default), Max(Max) {}
   };
+  struct DwarfTagField : public MDUnsignedField<uint32_t> {
+    DwarfTagField() : MDUnsignedField<uint32_t>(0, ~0u >> 16) {}
+  };
   struct MDField : public MDFieldImpl<Metadata *> {
     MDField() : ImplTy(nullptr) {}
+  };
+  struct MDStringField : public MDFieldImpl<std::string> {
+    MDStringField() : ImplTy(std::string()) {}
+  };
+  struct MDFieldList : public MDFieldImpl<SmallVector<Metadata *, 4>> {
+    MDFieldList() : ImplTy(SmallVector<Metadata *, 4>()) {}
   };
 
   class LLParser {
@@ -420,7 +430,10 @@ namespace llvm {
 
     bool ParseMDField(LocTy Loc, StringRef Name,
                       MDUnsignedField<uint32_t> &Result);
+    bool ParseMDField(LocTy Loc, StringRef Name, DwarfTagField &Result);
     bool ParseMDField(LocTy Loc, StringRef Name, MDField &Result);
+    bool ParseMDField(LocTy Loc, StringRef Name, MDStringField &Result);
+    bool ParseMDField(LocTy Loc, StringRef Name, MDFieldList &Result);
     template <class FieldTy> bool ParseMDField(StringRef Name, FieldTy &Result);
     template <class ParserTy>
     bool ParseMDFieldsImplBody(ParserTy parseField);
@@ -428,6 +441,7 @@ namespace llvm {
     bool ParseMDFieldsImpl(ParserTy parseField, LocTy &ClosingLoc);
     bool ParseSpecializedMDNode(MDNode *&N, bool IsDistinct = false);
     bool ParseMDLocation(MDNode *&Result, bool IsDistinct);
+    bool ParseGenericDebugNode(MDNode *&Result, bool IsDistinct);
 
     // Function Parsing.
     struct ArgInfo {

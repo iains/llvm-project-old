@@ -82,15 +82,15 @@ public:
                                           std::unique_ptr<MemoryBuffer> mb,
                                           raw_ostream &diag);
 
+  /// A factory method to create an instance of ELFLinkingContext.
+  static std::unique_ptr<ELFLinkingContext>
+  createELFLinkingContext(llvm::Triple triple);
+
 private:
   static llvm::Triple getDefaultTarget(const char *progName);
   static bool applyEmulation(llvm::Triple &triple,
                              llvm::opt::InputArgList &args,
                              raw_ostream &diag);
-  static void addPlatformSearchDirs(ELFLinkingContext &ctx,
-                                    llvm::Triple &triple,
-                                    llvm::Triple &baseTriple);
-
   GnuLdDriver() LLVM_DELETED_FUNCTION;
 };
 
@@ -141,7 +141,6 @@ private:
 /// Driver for lld unit tests
 class CoreDriver : public Driver {
 public:
-
   /// Parses command line arguments same as lld-core and performs link.
   /// Returns true iff there was an error.
   static bool link(int argc, const char *argv[],

@@ -181,15 +181,15 @@ unsigned PPCTTIImpl::getIntImmCost(unsigned Opcode, unsigned Idx,
   return PPCTTIImpl::getIntImmCost(Imm, Ty);
 }
 
-void PPCTTIImpl::getUnrollingPreferences(const Function *F, Loop *L,
+void PPCTTIImpl::getUnrollingPreferences(Loop *L,
                                          TTI::UnrollingPreferences &UP) {
-  if (TM->getSubtarget<PPCSubtarget>(F).getDarwinDirective() == PPC::DIR_A2) {
+  if (ST->getDarwinDirective() == PPC::DIR_A2) {
     // The A2 is in-order with a deep pipeline, and concatenation unrolling
     // helps expose latency-hiding opportunities to the instruction scheduler.
     UP.Partial = UP.Runtime = true;
   }
 
-  BaseT::getUnrollingPreferences(F, L, UP);
+  BaseT::getUnrollingPreferences(L, UP);
 }
 
 unsigned PPCTTIImpl::getNumberOfRegisters(bool Vector) {

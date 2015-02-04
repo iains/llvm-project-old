@@ -3148,6 +3148,9 @@ is_partitioned(_InputIterator __first, _InputIterator __last, _Predicate __pred)
     for (; __first != __last; ++__first)
         if (!__pred(*__first))
             break;
+    if ( __first == __last )
+        return true;
+    ++__first;
     for (; __first != __last; ++__first)
         if (__pred(*__first))
             return false;
@@ -4407,6 +4410,9 @@ __inplace_merge(_BidirectionalIterator __first, _BidirectionalIterator __middle,
         // if __middle == __last, we're done
         if (__len2 == 0)
             return;
+        if (__len1 <= __buff_size || __len2 <= __buff_size)
+            return __buffered_inplace_merge<_Compare>
+                   (__first, __middle, __last, __comp, __len1, __len2, __buff);
         // shrink [__first, __middle) as much as possible (with no moves), returning if it shrinks to 0
         for (; true; ++__first, (void) --__len1)
         {
@@ -4414,11 +4420,6 @@ __inplace_merge(_BidirectionalIterator __first, _BidirectionalIterator __middle,
                 return;
             if (__comp(*__middle, *__first))
                 break;
-        }
-        if (__len1 <= __buff_size || __len2 <= __buff_size)
-        {
-            __buffered_inplace_merge<_Compare>(__first, __middle, __last, __comp, __len1, __len2, __buff);
-            return;
         }
         // __first < __middle < __last
         // *__first > *__middle
@@ -4484,12 +4485,6 @@ __inplace_merge(_BidirectionalIterator __first, _BidirectionalIterator __middle,
     }
 }
 
-template <class _Tp>
-struct __inplace_merge_switch
-{
-    static const unsigned value = is_trivially_copy_assignable<_Tp>::value;
-};
-
 template <class _BidirectionalIterator, class _Compare>
 inline _LIBCPP_INLINE_VISIBILITY
 void
@@ -4501,13 +4496,9 @@ inplace_merge(_BidirectionalIterator __first, _BidirectionalIterator __middle, _
     difference_type __len1 = _VSTD::distance(__first, __middle);
     difference_type __len2 = _VSTD::distance(__middle, __last);
     difference_type __buf_size = _VSTD::min(__len1, __len2);
-    pair<value_type*, ptrdiff_t> __buf(0, 0);
-    unique_ptr<value_type, __return_temporary_buffer> __h;
-    if (__inplace_merge_switch<value_type>::value && __buf_size > 8)
-    {
-        __buf = _VSTD::get_temporary_buffer<value_type>(__buf_size);
-        __h.reset(__buf.first);
-    }
+    pair<value_type*, ptrdiff_t> __buf = _VSTD::get_temporary_buffer<value_type>(__buf_size);
+    unique_ptr<value_type, __return_temporary_buffer> __h(__buf.first);
+
 #ifdef _LIBCPP_DEBUG
     typedef typename add_lvalue_reference<__debug_less<_Compare> >::type _Comp_ref;
     __debug_less<_Compare> __c(__comp);

@@ -240,18 +240,17 @@ static bool isPathUnderSysroot(StringRef sysroot, StringRef path) {
 }
 
 static std::error_code
-evaluateLinkerScriptGroup(ELFLinkingContext &ctx, StringRef path,
-                          const script::Group *group, raw_ostream &diag) {
+addFilesFromLinkerScript(ELFLinkingContext &ctx, StringRef scriptPath,
+                         const std::vector<script::Path> &inputPaths,
+                         raw_ostream &diag) {
   bool sysroot = (!ctx.getSysroot().empty()
-                  && isPathUnderSysroot(ctx.getSysroot(), path));
-  int numfiles = 0;
-  for (const script::Path &path : group->getPaths()) {
+                  && isPathUnderSysroot(ctx.getSysroot(), scriptPath));
+  for (const script::Path &path : inputPaths) {
     ErrorOr<StringRef> pathOrErr = path._isDashlPrefix
       ? ctx.searchLibrary(path._path) : ctx.searchFile(path._path, sysroot);
     if (std::error_code ec = pathOrErr.getError()) {
       auto file = llvm::make_unique<ErrorFile>(path._path, ec);
       ctx.getNodes().push_back(llvm::make_unique<FileNode>(std::move(file)));
-      ++numfiles;
       continue;
     }
 
@@ -261,10 +260,8 @@ evaluateLinkerScriptGroup(ELFLinkingContext &ctx, StringRef path,
       if (ctx.logInputFiles())
         diag << file->path() << "\n";
       ctx.getNodes().push_back(llvm::make_unique<FileNode>(std::move(file)));
-      ++numfiles;
     }
   }
-  ctx.getNodes().push_back(llvm::make_unique<GroupEnd>(numfiles));
   return std::error_code();
 }
 
@@ -274,17 +271,36 @@ GnuLdDriver::evalLinkerScript(ELFLinkingContext &ctx,
                               raw_ostream &diag) {
   // Read the script file from disk and parse.
   StringRef path = mb->getBufferIdentifier();
-  auto lexer = llvm::make_unique<script::Lexer>(std::move(mb));
-  auto parser = llvm::make_unique<script::Parser>(*lexer);
-  script::LinkerScript *script = parser->parse();
+  auto parser = llvm::make_unique<script::Parser>(std::move(mb));
+  if (std::error_code ec = parser->parse())
+    return ec;
+  script::LinkerScript *script = parser->get();
   if (!script)
     return LinkerScriptReaderError::parse_error;
   // Evaluate script commands.
-  // Currently we only recognize GROUP() command.
-  for (const script::Command *c : script->_commands)
-    if (auto *group = dyn_cast<script::Group>(c))
-      if (std::error_code ec = evaluateLinkerScriptGroup(ctx, path, group, diag))
+  // Currently we only recognize this subset of linker script commands.
+  for (const script::Command *c : script->_commands) {
+    if (auto *input = dyn_cast<script::Input>(c))
+      if (std::error_code ec = addFilesFromLinkerScript(
+            ctx, path, input->getPaths(), diag))
         return ec;
+    if (auto *group = dyn_cast<script::Group>(c)) {
+      int origSize = ctx.getNodes().size();
+      if (std::error_code ec = addFilesFromLinkerScript(
+            ctx, path, group->getPaths(), diag))
+        return ec;
+      size_t groupSize = ctx.getNodes().size() - origSize;
+      ctx.getNodes().push_back(llvm::make_unique<GroupEnd>(groupSize));
+    }
+    if (auto *searchDir = dyn_cast<script::SearchDir>(c))
+      ctx.addSearchPath(searchDir->getSearchPath());
+    if (auto *entry = dyn_cast<script::Entry>(c))
+      ctx.setEntrySymbolName(entry->getEntryName());
+    if (auto *output = dyn_cast<script::Output>(c))
+      ctx.setOutputPath(output->getOutputFileName());
+  }
+  // Transfer ownership of the script to the linking context
+  ctx.addLinkerScript(std::move(parser));
   return std::error_code();
 }
 
@@ -304,34 +320,21 @@ bool GnuLdDriver::applyEmulation(llvm::Triple &triple,
   return true;
 }
 
-void GnuLdDriver::addPlatformSearchDirs(ELFLinkingContext &ctx,
-                                       llvm::Triple &triple,
-                                       llvm::Triple &baseTriple) {
-  if (triple.getOS() == llvm::Triple::NetBSD &&
-      triple.getArch() == llvm::Triple::x86 &&
-      baseTriple.getArch() == llvm::Triple::x86_64) {
-    ctx.addSearchPath("=/usr/lib/i386");
-    return;
-  }
-  ctx.addSearchPath("=/usr/lib");
-}
-
-#define LLVM_TARGET(targetName) \
-  if ((p = elf::targetName##LinkingContext::create(triple))) return p;
-
 std::unique_ptr<ELFLinkingContext>
-createELFLinkingContext(llvm::Triple triple) {
+GnuLdDriver::createELFLinkingContext(llvm::Triple triple) {
   std::unique_ptr<ELFLinkingContext> p;
   // FIXME: #include "llvm/Config/Targets.def"
+#define LLVM_TARGET(targetName) \
+  if ((p = elf::targetName##LinkingContext::create(triple))) return p;
   LLVM_TARGET(AArch64)
   LLVM_TARGET(ARM)
   LLVM_TARGET(Hexagon)
   LLVM_TARGET(Mips)
   LLVM_TARGET(X86)
   LLVM_TARGET(X86_64)
+#undef LLVM_TARGET
   return nullptr;
 }
-#undef LLVM_TARGET
 
 bool GnuLdDriver::parse(int argc, const char *argv[],
                         std::unique_ptr<ELFLinkingContext> &context,
@@ -396,8 +399,9 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
   for (auto libDir : parsedArgs->filtered(OPT_L))
     ctx->addSearchPath(libDir->getValue());
 
+  // Add the default search directory specific to the target.
   if (!parsedArgs->hasArg(OPT_nostdlib))
-    addPlatformSearchDirs(*ctx, triple, baseTriple);
+    ctx->addDefaultSearchDirs(baseTriple);
 
   // Handle --demangle option(For compatibility)
   if (parsedArgs->getLastArg(OPT_demangle))

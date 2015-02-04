@@ -23,6 +23,9 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace llvm {
+
+class raw_ostream;
+
 namespace PBQP {
 namespace RegAlloc {
 
@@ -309,6 +312,8 @@ public:
   }
 
   void handleAddNode(NodeId NId) {
+    assert(G.getNodeCosts(NId).getLength() > 1 &&
+           "PBQP Graph should not contain single or zero-option nodes");
     G.getNodeMetadata(NId).setup(G.getNodeCosts(NId));
   }
   void handleRemoveNode(NodeId NId) {}
@@ -499,6 +504,17 @@ private:
   typedef PBQP::Graph<RegAllocSolverImpl> BaseT;
 public:
   PBQPRAGraph(GraphMetadata Metadata) : BaseT(Metadata) {}
+
+  /// @brief Dump this graph to dbgs().
+  void dump() const;
+
+  /// @brief Dump this graph to an output stream.
+  /// @param OS Output stream to print on.
+  void dump(raw_ostream &OS) const;
+
+  /// @brief Print a representation of this graph in DOT format.
+  /// @param OS Output stream to print on.
+  void printDot(raw_ostream &OS) const;
 };
 
 inline Solution solve(PBQPRAGraph& G) {

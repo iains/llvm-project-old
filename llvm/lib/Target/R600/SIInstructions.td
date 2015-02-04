@@ -1444,45 +1444,29 @@ defm V_MIN_F32 : VOP2Inst <vop2<0xf, 0xa>, "v_min_f32", VOP_F32_F32_F32,
   fminnum>;
 defm V_MAX_F32 : VOP2Inst <vop2<0x10, 0xb>, "v_max_f32", VOP_F32_F32_F32,
   fmaxnum>;
-defm V_MIN_I32 : VOP2Inst <vop2<0x11, 0xc>, "v_min_i32", VOP_I32_I32_I32,
-  AMDGPUsmin
->;
-defm V_MAX_I32 : VOP2Inst <vop2<0x12, 0xd>, "v_max_i32", VOP_I32_I32_I32,
-  AMDGPUsmax
->;
-defm V_MIN_U32 : VOP2Inst <vop2<0x13, 0xe>, "v_min_u32", VOP_I32_I32_I32,
-  AMDGPUumin
->;
-defm V_MAX_U32 : VOP2Inst <vop2<0x14, 0xf>, "v_max_u32", VOP_I32_I32_I32,
-  AMDGPUumax
->;
+defm V_MIN_I32 : VOP2Inst <vop2<0x11, 0xc>, "v_min_i32", VOP_I32_I32_I32>;
+defm V_MAX_I32 : VOP2Inst <vop2<0x12, 0xd>, "v_max_i32", VOP_I32_I32_I32>;
+defm V_MIN_U32 : VOP2Inst <vop2<0x13, 0xe>, "v_min_u32", VOP_I32_I32_I32>;
+defm V_MAX_U32 : VOP2Inst <vop2<0x14, 0xf>, "v_max_u32", VOP_I32_I32_I32>;
 
-// No non-Rev Op on VI
 defm V_LSHRREV_B32 : VOP2Inst <
   vop2<0x16, 0x10>, "v_lshrrev_b32", VOP_I32_I32_I32, null_frag,
-    "v_lshr_b32", "v_lshrrev_b32"
+    "v_lshr_b32"
 >;
 
-// No non-Rev OP on VI
 defm V_ASHRREV_I32 : VOP2Inst <
   vop2<0x18, 0x11>, "v_ashrrev_i32", VOP_I32_I32_I32, null_frag,
-    "v_ashr_i32", "v_ashrrev_i32"
+    "v_ashr_i32"
 >;
 
-// No non-Rev OP on VI
 defm V_LSHLREV_B32 : VOP2Inst <
   vop2<0x1a, 0x12>, "v_lshlrev_b32", VOP_I32_I32_I32, null_frag,
-    "v_lshl_b32", "v_lshlrev_b32"
+    "v_lshl_b32"
 >;
 
-defm V_AND_B32 : VOP2Inst <vop2<0x1b, 0x13>, "v_and_b32",
-  VOP_I32_I32_I32, and>;
-defm V_OR_B32 : VOP2Inst <vop2<0x1c, 0x14>, "v_or_b32",
-  VOP_I32_I32_I32, or
->;
-defm V_XOR_B32 : VOP2Inst <vop2<0x1d, 0x15>, "v_xor_b32",
-  VOP_I32_I32_I32, xor
->;
+defm V_AND_B32 : VOP2Inst <vop2<0x1b, 0x13>, "v_and_b32", VOP_I32_I32_I32>;
+defm V_OR_B32 : VOP2Inst <vop2<0x1c, 0x14>, "v_or_b32", VOP_I32_I32_I32>;
+defm V_XOR_B32 : VOP2Inst <vop2<0x1d, 0x15>, "v_xor_b32", VOP_I32_I32_I32>;
 
 defm V_MAC_F32 : VOP2Inst <vop2<0x1f, 0x16>, "v_mac_f32", VOP_F32_F32_F32>;
 } // End isCommutable = 1
@@ -1502,9 +1486,7 @@ let isCommutable = 1, Defs = [VCC] in { // Carry-out goes to VCC
 defm V_ADD_I32 : VOP2bInst <vop2<0x25, 0x19>, "v_add_i32",
   VOP_I32_I32_I32, add
 >;
-defm V_SUB_I32 : VOP2bInst <vop2<0x26, 0x1a>, "v_sub_i32",
-  VOP_I32_I32_I32, sub
->;
+defm V_SUB_I32 : VOP2bInst <vop2<0x26, 0x1a>, "v_sub_i32", VOP_I32_I32_I32>;
 
 defm V_SUBREV_I32 : VOP2bInst <vop2<0x27, 0x1b>, "v_subrev_i32",
   VOP_I32_I32_I32, null_frag, "v_sub_i32"
@@ -1512,10 +1494,10 @@ defm V_SUBREV_I32 : VOP2bInst <vop2<0x27, 0x1b>, "v_subrev_i32",
 
 let Uses = [VCC] in { // Carry-in comes from VCC
 defm V_ADDC_U32 : VOP2bInst <vop2<0x28, 0x1c>, "v_addc_u32",
-  VOP_I32_I32_I32_VCC, adde
+  VOP_I32_I32_I32_VCC
 >;
 defm V_SUBB_U32 : VOP2bInst <vop2<0x29, 0x1d>, "v_subb_u32",
-  VOP_I32_I32_I32_VCC, sube
+  VOP_I32_I32_I32_VCC
 >;
 defm V_SUBBREV_U32 : VOP2bInst <vop2<0x2a, 0x1e>, "v_subbrev_u32",
   VOP_I32_I32_I32_VCC, null_frag, "v_subb_u32"
@@ -1543,31 +1525,25 @@ defm V_WRITELANE_B32 : VOP2SI_3VI_m <
 // These instructions only exist on SI and CI
 let SubtargetPredicate = isSICI in {
 
-let isCommutable = 1 in {
-defm V_MAC_LEGACY_F32 : VOP2Inst <vop2<0x6>, "v_mac_legacy_f32",
-  VOP_F32_F32_F32
->;
-} // End isCommutable = 1
-
-defm V_MIN_LEGACY_F32 : VOP2Inst <vop2<0xd>, "v_min_legacy_f32",
+defm V_MIN_LEGACY_F32 : VOP2InstSI <vop2<0xd>, "v_min_legacy_f32",
   VOP_F32_F32_F32, AMDGPUfmin_legacy
 >;
-defm V_MAX_LEGACY_F32 : VOP2Inst <vop2<0xe>, "v_max_legacy_f32",
+defm V_MAX_LEGACY_F32 : VOP2InstSI <vop2<0xe>, "v_max_legacy_f32",
   VOP_F32_F32_F32, AMDGPUfmax_legacy
 >;
 
 let isCommutable = 1 in {
-defm V_LSHR_B32 : VOP2Inst <vop2<0x15>, "v_lshr_b32", VOP_I32_I32_I32, srl>;
-defm V_ASHR_I32 : VOP2Inst <vop2<0x17>, "v_ashr_i32",
-  VOP_I32_I32_I32, sra
->;
-
-let hasPostISelHook = 1 in {
-defm V_LSHL_B32 : VOP2Inst <vop2<0x19>, "v_lshl_b32", VOP_I32_I32_I32, shl>;
-}
-
+defm V_LSHR_B32 : VOP2InstSI <vop2<0x15>, "v_lshr_b32", VOP_I32_I32_I32>;
+defm V_ASHR_I32 : VOP2InstSI <vop2<0x17>, "v_ashr_i32", VOP_I32_I32_I32>;
+defm V_LSHL_B32 : VOP2InstSI <vop2<0x19>, "v_lshl_b32", VOP_I32_I32_I32>;
 } // End isCommutable = 1
 } // End let SubtargetPredicate = SICI
+
+let isCommutable = 1 in {
+defm V_MAC_LEGACY_F32 : VOP2_VI3_Inst <vop23<0x6, 0x28e>, "v_mac_legacy_f32",
+  VOP_F32_F32_F32
+>;
+} // End isCommutable = 1
 
 defm V_BFM_B32 : VOP2_VI3_Inst <vop23<0x1e, 0x293>, "v_bfm_b32", VOP_I32_I32_I32,
   AMDGPUbfm
@@ -1585,14 +1561,25 @@ defm V_LDEXP_F32 : VOP2_VI3_Inst <vop23<0x2b, 0x288>, "v_ldexp_f32",
   VOP_F32_F32_I32, AMDGPUldexp
 >;
 
-////def V_CVT_PKACCUM_U8_F32 : VOP2_U8 <0x0000002c, "v_cvt_pkaccum_u8_f32", []>;
-////def V_CVT_PKNORM_I16_F32 : VOP2_I16 <0x0000002d, "v_cvt_pknorm_i16_f32", []>;
-////def V_CVT_PKNORM_U16_F32 : VOP2_U16 <0x0000002e, "v_cvt_pknorm_u16_f32", []>;
-defm V_CVT_PKRTZ_F16_F32 : VOP2_VI3_Inst <vop23<0x2f, 0x296>, "v_cvt_pkrtz_f16_f32",
- VOP_I32_F32_F32, int_SI_packf16
+
+defm V_CVT_PKACCUM_U8_F32 : VOP2_VI3_Inst <vop23<0x2c, 0x1f0>, "v_cvt_pkaccum_u8_f32",
+  VOP_I32_F32_I32>; // TODO: set "Uses = dst"
+
+defm V_CVT_PKNORM_I16_F32 : VOP2_VI3_Inst <vop23<0x2d, 0x294>, "v_cvt_pknorm_i16_f32",
+  VOP_I32_F32_F32
 >;
-////def V_CVT_PK_U16_U32 : VOP2_U16 <0x00000030, "v_cvt_pk_u16_u32", []>;
-////def V_CVT_PK_I16_I32 : VOP2_I16 <0x00000031, "v_cvt_pk_i16_i32", []>;
+defm V_CVT_PKNORM_U16_F32 : VOP2_VI3_Inst <vop23<0x2e, 0x295>, "v_cvt_pknorm_u16_f32",
+  VOP_I32_F32_F32
+>;
+defm V_CVT_PKRTZ_F16_F32 : VOP2_VI3_Inst <vop23<0x2f, 0x296>, "v_cvt_pkrtz_f16_f32",
+  VOP_I32_F32_F32, int_SI_packf16
+>;
+defm V_CVT_PK_U16_U32 : VOP2_VI3_Inst <vop23<0x30, 0x297>, "v_cvt_pk_u16_u32",
+  VOP_I32_I32_I32
+>;
+defm V_CVT_PK_I16_I32 : VOP2_VI3_Inst <vop23<0x31, 0x298>, "v_cvt_pk_i16_i32",
+  VOP_I32_I32_I32
+>;
 
 //===----------------------------------------------------------------------===//
 // VOP3 Instructions
@@ -1780,22 +1767,28 @@ defm V_TRIG_PREOP_F64 : VOP3Inst <
 // These instructions only exist on SI and CI
 let SubtargetPredicate = isSICI in {
 
-defm V_LSHL_B64 : VOP3Inst <vop3<0x161>, "v_lshl_b64",
-  VOP_I64_I64_I32, shl
->;
-
-defm V_LSHR_B64 : VOP3Inst <vop3<0x162>, "v_lshr_b64",
-  VOP_I64_I64_I32, srl
->;
-
-defm V_ASHR_I64 : VOP3Inst <vop3<0x163>, "v_ashr_i64",
-  VOP_I64_I64_I32, sra
->;
+defm V_LSHL_B64 : VOP3Inst <vop3<0x161>, "v_lshl_b64", VOP_I64_I64_I32>;
+defm V_LSHR_B64 : VOP3Inst <vop3<0x162>, "v_lshr_b64", VOP_I64_I64_I32>;
+defm V_ASHR_I64 : VOP3Inst <vop3<0x163>, "v_ashr_i64", VOP_I64_I64_I32>;
 
 defm V_MULLIT_F32 : VOP3Inst <vop3<0x150>, "v_mullit_f32",
   VOP_F32_F32_F32_F32>;
 
 } // End SubtargetPredicate = isSICI
+
+let SubtargetPredicate = isVI in {
+
+defm V_LSHLREV_B64 : VOP3Inst <vop3<0, 0x28f>, "v_lshlrev_b64",
+  VOP_I64_I32_I64
+>;
+defm V_LSHRREV_B64 : VOP3Inst <vop3<0, 0x290>, "v_lshrrev_b64",
+  VOP_I64_I32_I64
+>;
+defm V_ASHRREV_I64 : VOP3Inst <vop3<0, 0x291>, "v_ashrrev_i64",
+  VOP_I64_I32_I64
+>;
+
+} // End SubtargetPredicate = isVI
 
 //===----------------------------------------------------------------------===//
 // Pseudo Instructions

@@ -1076,6 +1076,20 @@ define <4 x i32> @shuffle_v4i32_0z1z(<4 x i32> %a) {
   ret <4 x i32> %shuffle
 }
 
+define <4 x i32> @shuffle_v4i32_01zu(<4 x i32> %a) {
+; SSE-LABEL: shuffle_v4i32_01zu:
+; SSE:       # BB#0:
+; SSE-NEXT:    movq {{.*#+}} xmm0 = xmm0[0],zero
+; SSE-NEXT:    retq
+;
+; AVX-LABEL: shuffle_v4i32_01zu:
+; AVX:       # BB#0:
+; AVX-NEXT:    vmovq {{.*#+}} xmm0 = xmm0[0],zero
+; AVX-NEXT:    retq
+  %shuffle = shufflevector <4 x i32> %a, <4 x i32> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 7, i32 undef>
+  ret <4 x i32> %shuffle
+}
+
 define <4 x i32> @insert_reg_and_zero_v4i32(i32 %a) {
 ; SSE-LABEL: insert_reg_and_zero_v4i32:
 ; SSE:       # BB#0:
@@ -1358,4 +1372,36 @@ define <4 x float> @shuffle_mem_v4f32_3210(<4 x float>* %ptr) {
   %a = load <4 x float>* %ptr
   %shuffle = shufflevector <4 x float> %a, <4 x float> undef, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
   ret <4 x float> %shuffle
+}
+
+;
+; Shuffle to logical bit shifts
+;
+
+define <4 x i32> @shuffle_v4i32_z0zX(<4 x i32> %a) {
+; SSE-LABEL: shuffle_v4i32_z0zX:
+; SSE:       # BB#0:
+; SSE-NEXT:    psllq $32, %xmm0
+; SSE-NEXT:    retq
+;
+; AVX-LABEL: shuffle_v4i32_z0zX:
+; AVX:       # BB#0:
+; AVX-NEXT:    vpsllq $32, %xmm0, %xmm0
+; AVX-NEXT:    retq
+  %shuffle = shufflevector <4 x i32> %a, <4 x i32> zeroinitializer, <4 x i32> <i32 4, i32 0, i32 4, i32 undef>
+  ret <4 x i32> %shuffle
+}
+
+define <4 x i32> @shuffle_v4i32_1z3z(<4 x i32> %a) {
+; SSE-LABEL: shuffle_v4i32_1z3z:
+; SSE:       # BB#0:
+; SSE-NEXT:    psrlq $32, %xmm0
+; SSE-NEXT:    retq
+;
+; AVX-LABEL: shuffle_v4i32_1z3z:
+; AVX:       # BB#0:
+; AVX-NEXT:    vpsrlq $32, %xmm0, %xmm0
+; AVX-NEXT:    retq
+  %shuffle = shufflevector <4 x i32> %a, <4 x i32> zeroinitializer, <4 x i32> <i32 1, i32 4, i32 3, i32 4>
+  ret <4 x i32> %shuffle
 }

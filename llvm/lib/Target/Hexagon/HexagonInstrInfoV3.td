@@ -106,7 +106,7 @@ def A2_addspl : T_ALU64_addsp_hl<":raw:lo", 0b110>;
 def A2_addsph : T_ALU64_addsp_hl<":raw:hi", 0b111>;
 }
 
-let hasSideEffects = 0, isCodeGenOnly = 0 in
+let hasSideEffects = 0, isAsmParserOnly = 1 in
 def A2_addsp : ALU64_rr<(outs DoubleRegs:$Rd),
   (ins IntRegs:$Rs, DoubleRegs:$Rt), "$Rd = add($Rs, $Rt)",
   [(set (i64 DoubleRegs:$Rd), (i64 (add (i64 (sext (i32 IntRegs:$Rs))),
@@ -224,6 +224,12 @@ def M2_vrcmpys_s1_h: T_vrcmpRaw<"hi", 0b101>;
 def M2_vrcmpys_s1_l: T_vrcmpRaw<"lo", 0b111>;
 }
 
+// Assembler mapped to M2_vrcmpys_s1_h or M2_vrcmpys_s1_l
+let hasSideEffects = 0, isAsmParserOnly = 1 in
+def M2_vrcmpys_s1
+ : MInst<(outs DoubleRegs:$Rdd), (ins DoubleRegs:$Rss, IntRegs:$Rt),
+ "$Rdd=vrcmpys($Rss,$Rt):<<1:sat">;
+
 // Vector reduce complex multiply by scalar with accumulation.
 let Defs = [USR_OVF], hasSideEffects = 0 in
 class T_vrcmpys_acc<string HiLo, bits<3>MajOp>:
@@ -250,10 +256,26 @@ def M2_vrcmpys_acc_s1_h: T_vrcmpys_acc<"hi", 0b101>;
 def M2_vrcmpys_acc_s1_l: T_vrcmpys_acc<"lo", 0b111>;
 }
 
+// Assembler mapped to M2_vrcmpys_acc_s1_h or M2_vrcmpys_acc_s1_l
+
+let isAsmParserOnly = 1 in
+def M2_vrcmpys_acc_s1
+  : MInst <(outs DoubleRegs:$dst),
+           (ins DoubleRegs:$dst2, DoubleRegs:$src1, IntRegs:$src2),
+           "$dst += vrcmpys($src1, $src2):<<1:sat", [],
+           "$dst2 = $dst">;
+
 let isCodeGenOnly = 0 in {
 def M2_vrcmpys_s1rp_h : T_MType_vrcmpy <"vrcmpys", 0b101, 0b110, 1>;
 def M2_vrcmpys_s1rp_l : T_MType_vrcmpy <"vrcmpys", 0b101, 0b111, 0>;
 }
+
+// Assembler mapped to M2_vrcmpys_s1rp_h or M2_vrcmpys_s1rp_l
+let isAsmParserOnly = 1 in
+def M2_vrcmpys_s1rp
+  : MInst <(outs IntRegs:$Rd), (ins DoubleRegs:$Rss, IntRegs:$Rt),
+  "$Rd=vrcmpys($Rss,$Rt):<<1:rnd:sat">;
+
 
 // S2_cabacdecbin: Cabac decode bin.
 let Defs = [P0], isPredicateLate = 1, Itinerary = S_3op_tc_1_SLOT23,

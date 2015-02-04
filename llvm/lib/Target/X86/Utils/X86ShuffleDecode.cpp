@@ -400,14 +400,14 @@ void DecodeVPERMILPMask(const Constant *C, SmallVectorImpl<int> &ShuffleMask) {
 }
 
 void DecodeZeroExtendMask(MVT SrcVT, MVT DstVT, SmallVectorImpl<int> &Mask) {
-  unsigned NumSrcElts = SrcVT.getVectorNumElements();
   unsigned NumDstElts = DstVT.getVectorNumElements();
   unsigned SrcScalarBits = SrcVT.getScalarSizeInBits();
   unsigned DstScalarBits = DstVT.getScalarSizeInBits();
   unsigned Scale = DstScalarBits / SrcScalarBits;
   assert(SrcScalarBits < DstScalarBits &&
          "Expected zero extension mask to increase scalar size");
-  assert(NumSrcElts >= NumDstElts && "Too many zero extension lanes");
+  assert(SrcVT.getVectorNumElements() >= NumDstElts &&
+         "Too many zero extension lanes");
 
   for (unsigned i = 0; i != NumDstElts; i++) {
     Mask.push_back(i);
@@ -429,6 +429,6 @@ void DecodeScalarMoveMask(MVT VT, bool IsLoad, SmallVectorImpl<int> &Mask) {
   unsigned NumElts = VT.getVectorNumElements();
   Mask.push_back(NumElts);
   for (unsigned i = 1; i < NumElts; i++)
-    Mask.push_back(IsLoad ? SM_SentinelZero : i);
+    Mask.push_back(IsLoad ? static_cast<int>(SM_SentinelZero) : i);
 }
 } // llvm namespace

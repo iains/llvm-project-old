@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FuzzerInternal.h"
-#include <sanitizer/asan_interface.h>
+#include <sanitizer/coverage_interface.h>
 #include <algorithm>
 #include <iostream>
 
@@ -157,6 +157,7 @@ size_t Fuzzer::MutateAndTestOne(Unit *U) {
         std::cerr << "#" << TotalNumberOfRuns
                   << "\tNEW: " << NewCoverage
                   << " L: " << U->size()
+                  << " S: " << Corpus.size()
                   << "\t";
         if (U->size() < 30) {
           PrintASCII(*U);

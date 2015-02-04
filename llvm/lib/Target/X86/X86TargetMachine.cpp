@@ -165,8 +165,9 @@ UseVZeroUpper("x86-use-vzeroupper", cl::Hidden,
 // X86 TTI query.
 //===----------------------------------------------------------------------===//
 
-TargetTransformInfo X86TargetMachine::getTTI() {
-  return TargetTransformInfo(X86TTIImpl(this));
+TargetIRAnalysis X86TargetMachine::getTargetIRAnalysis() {
+  return TargetIRAnalysis(
+      [this](Function &F) { return TargetTransformInfo(X86TTIImpl(this, F)); });
 }
 
 
@@ -192,6 +193,7 @@ public:
   void addIRPasses() override;
   bool addInstSelector() override;
   bool addILPOpts() override;
+  void addPreRegAlloc() override;
   void addPostRegAlloc() override;
   void addPreEmitPass() override;
 };
@@ -223,6 +225,10 @@ bool X86PassConfig::addInstSelector() {
 bool X86PassConfig::addILPOpts() {
   addPass(&EarlyIfConverterID);
   return true;
+}
+
+void X86PassConfig::addPreRegAlloc() {
+  addPass(createX86CallFrameOptimization());
 }
 
 void X86PassConfig::addPostRegAlloc() {

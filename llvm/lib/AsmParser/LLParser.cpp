@@ -16,6 +16,7 @@
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
@@ -23,6 +24,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/ValueSymbolTable.h"
+#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
@@ -2935,12 +2937,52 @@ bool LLParser::ParseMDField(LocTy Loc, StringRef Name,
   return false;
 }
 
+bool LLParser::ParseMDField(LocTy Loc, StringRef Name, DwarfTagField &Result) {
+  if (Lex.getKind() == lltok::APSInt)
+    return ParseMDField(Loc, Name,
+                        static_cast<MDUnsignedField<uint32_t> &>(Result));
+
+  if (Result.Seen)
+    return Error(Loc,
+                 "field '" + Name + "' cannot be specified more than once");
+
+  if (Lex.getKind() != lltok::DwarfTag)
+    return TokError("expected DWARF tag");
+
+  unsigned Tag = dwarf::getTag(Lex.getStrVal());
+  if (Tag == dwarf::DW_TAG_invalid)
+    return TokError("invalid DWARF tag" + Twine(" '") + Lex.getStrVal() + "'");
+  assert(Tag < 1u << 16 && "Expected valid DWARF tag");
+
+  Result.assign(Tag);
+  Lex.Lex();
+  return false;
+}
+
 bool LLParser::ParseMDField(LocTy Loc, StringRef Name, MDField &Result) {
   Metadata *MD;
   if (ParseMetadata(MD, nullptr))
     return true;
 
   Result.assign(MD);
+  return false;
+}
+
+bool LLParser::ParseMDField(LocTy Loc, StringRef Name, MDStringField &Result) {
+  std::string S;
+  if (ParseStringConstant(S))
+    return true;
+
+  Result.assign(std::move(S));
+  return false;
+}
+
+bool LLParser::ParseMDField(LocTy Loc, StringRef Name, MDFieldList &Result) {
+  SmallVector<Metadata *, 4> MDs;
+  if (ParseMDNodeVector(MDs))
+    return true;
+
+  Result.assign(std::move(MDs));
   return false;
 }
 
@@ -2989,6 +3031,7 @@ bool LLParser::ParseSpecializedMDNode(MDNode *&N, bool IsDistinct) {
     return Parse##CLASS(N, IsDistinct);
 
   DISPATCH_TO_PARSER(MDLocation);
+  DISPATCH_TO_PARSER(GenericDebugNode);
 #undef DISPATCH_TO_PARSER
 
   return TokError("expected metadata type");
@@ -3013,6 +3056,8 @@ bool LLParser::ParseSpecializedMDNode(MDNode *&N, bool IsDistinct) {
       return true;                                                             \
     VISIT_MD_FIELDS(NOP_FIELD, REQUIRE_FIELD)                                  \
   } while (false)
+#define GET_OR_DISTINCT(CLASS, ARGS)                                           \
+  (IsDistinct ? CLASS::getDistinct ARGS : CLASS::get ARGS)
 
 /// ParseMDLocationFields:
 ///   ::= !MDLocation(line: 43, column: 8, scope: !5, inlinedAt: !6)
@@ -3027,6 +3072,21 @@ bool LLParser::ParseMDLocation(MDNode *&Result, bool IsDistinct) {
 
   auto get = (IsDistinct ? MDLocation::getDistinct : MDLocation::get);
   Result = get(Context, line.Val, column.Val, scope.Val, inlinedAt.Val);
+  return false;
+}
+
+/// ParseGenericDebugNode:
+///   ::= !GenericDebugNode(tag: 15, header: "...", operands: {...})
+bool LLParser::ParseGenericDebugNode(MDNode *&Result, bool IsDistinct) {
+#define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
+  REQUIRED(tag, DwarfTagField, );                                              \
+  OPTIONAL(header, MDStringField, );                                           \
+  OPTIONAL(operands, MDFieldList, );
+  PARSE_MD_FIELDS();
+#undef VISIT_MD_FIELDS
+
+  Result = GET_OR_DISTINCT(GenericDebugNode,
+                           (Context, tag.Val, header.Val, operands.Val));
   return false;
 }
 #undef PARSE_MD_FIELD
