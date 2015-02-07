@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -triple x86_64-pc-win32 -fexceptions -fms-extensions -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 %s -triple x86_64-pc-win32 -fms-extensions -emit-llvm -o - | FileCheck %s
 
 // FIXME: Perform this outlining automatically CodeGen.
 void try_body(int numerator, int denominator, int *myres) {
@@ -138,17 +138,22 @@ void basic_finally(void) {
 // CHECK:       to label %[[cont:[^ ]*]] unwind label %[[lpad:[^ ]*]]
 //
 // CHECK: [[cont]]
+// CHECK: br label %[[finally:[^ ]*]]
+//
+// CHECK: [[finally]]
 // CHECK: load i32* @g
 // CHECK: add i32 %{{.*}}, -1
 // CHECK: store i32 %{{.*}}, i32* @g
+// CHECK: icmp eq
+// CHECK: br i1 %{{.*}}, label
+//
 // CHECK: ret void
 //
 // CHECK: [[lpad]]
 // CHECK: landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__C_specific_handler to i8*)
 // CHECK-NEXT: cleanup
-// CHECK: load i32* @g
-// CHECK: add i32 %{{.*}}, -1
-// CHECK: store i32 %{{.*}}, i32* @g
+// CHECK: br label %[[finally]]
+//
 // CHECK: resume
 
 int returns_int(void);

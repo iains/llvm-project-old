@@ -265,10 +265,10 @@ addFilesFromLinkerScript(ELFLinkingContext &ctx, StringRef scriptPath,
   return std::error_code();
 }
 
-std::error_code
-GnuLdDriver::evalLinkerScript(ELFLinkingContext &ctx,
-                              std::unique_ptr<MemoryBuffer> mb,
-                              raw_ostream &diag) {
+std::error_code GnuLdDriver::evalLinkerScript(ELFLinkingContext &ctx,
+                                              std::unique_ptr<MemoryBuffer> mb,
+                                              raw_ostream &diag,
+                                              bool nostdlib) {
   // Read the script file from disk and parse.
   StringRef path = mb->getBufferIdentifier();
   auto parser = llvm::make_unique<script::Parser>(std::move(mb));
@@ -293,7 +293,8 @@ GnuLdDriver::evalLinkerScript(ELFLinkingContext &ctx,
       ctx.getNodes().push_back(llvm::make_unique<GroupEnd>(groupSize));
     }
     if (auto *searchDir = dyn_cast<script::SearchDir>(c))
-      ctx.addSearchPath(searchDir->getSearchPath());
+      if (!nostdlib)
+        ctx.addSearchPath(searchDir->getSearchPath());
     if (auto *entry = dyn_cast<script::Entry>(c))
       ctx.setEntrySymbolName(entry->getEntryName());
     if (auto *output = dyn_cast<script::Output>(c))
@@ -318,6 +319,18 @@ bool GnuLdDriver::applyEmulation(llvm::Triple &triple,
   }
   triple.setArch(*arch);
   return true;
+}
+
+void GnuLdDriver::addPlatformSearchDirs(ELFLinkingContext &ctx,
+                                        llvm::Triple &triple,
+                                        llvm::Triple &baseTriple) {
+  if (triple.getOS() == llvm::Triple::NetBSD &&
+      triple.getArch() == llvm::Triple::x86 &&
+      baseTriple.getArch() == llvm::Triple::x86_64) {
+    ctx.addSearchPath("=/usr/lib/i386");
+    return;
+  }
+  ctx.addSearchPath("=/usr/lib");
 }
 
 std::unique_ptr<ELFLinkingContext>
@@ -386,6 +399,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
 
   bool _outputOptionSet = false;
 
+  bool hasNoStdLib = false;
+
   // Ignore unknown arguments.
   for (auto unknownArg : parsedArgs->filtered(OPT_UNKNOWN))
     diag << "warning: ignoring unknown argument: "
@@ -400,8 +415,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
     ctx->addSearchPath(libDir->getValue());
 
   // Add the default search directory specific to the target.
-  if (!parsedArgs->hasArg(OPT_nostdlib))
-    ctx->addDefaultSearchDirs(baseTriple);
+  if (!(hasNoStdLib = parsedArgs->hasArg(OPT_nostdlib)))
+    addPlatformSearchDirs(*ctx, triple, baseTriple);
 
   // Handle --demangle option(For compatibility)
   if (parsedArgs->getLastArg(OPT_demangle))
@@ -632,7 +647,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
           diag << "Cannot open " << path << ": " << ec.message() << "\n";
           return false;
         }
-        std::error_code ec = evalLinkerScript(*ctx, std::move(mb.get()), diag);
+        std::error_code ec =
+            evalLinkerScript(*ctx, std::move(mb.get()), diag, hasNoStdLib);
         if (ec) {
           diag << path << ": Error parsing linker script: "
                << ec.message() << "\n";

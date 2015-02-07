@@ -16,22 +16,6 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <elf.h>
-#if defined(__ANDROID_NDK__) && defined (__arm__)
-#include <linux/personality.h>
-#include <linux/user.h>
-#else
-#include <sys/personality.h>
-#include <sys/user.h>
-#endif
-#ifndef __ANDROID__
-#include <sys/procfs.h>
-#endif
-#include <sys/ptrace.h>
-#include <sys/uio.h>
-#include <sys/socket.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 
 // C++ Includes
 // Other libraries and framework includes
@@ -51,6 +35,20 @@
 #include "ProcessLinux.h"
 #include "Plugins/Process/POSIX/ProcessPOSIXLog.h"
 #include "ProcessMonitor.h"
+
+// System includes - They have to be included after framework includes because they define some
+// macros which collide with variable names in other modules
+#ifndef __ANDROID__
+#include <sys/procfs.h>
+#endif
+#include <sys/personality.h>
+#include <sys/ptrace.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <sys/user.h>
+#include <sys/wait.h>
 
 #ifdef __ANDROID__
 #define __ptrace_request int
@@ -1356,6 +1354,11 @@ ProcessMonitor::Launch(LaunchArgs *args)
         if (PTRACE(PTRACE_TRACEME, 0, NULL, NULL, 0) < 0)
             exit(ePtraceFailed);
 
+        // terminal has already dupped the tty descriptors to stdin/out/err.
+        // This closes original fd from which they were copied (and avoids
+        // leaking descriptors to the debugged process.
+        terminal.CloseSlaveFileDescriptor();
+
         // Do not inherit setgid powers.
         if (setgid(getgid()) != 0)
             exit(eSetGidFailed);
@@ -2319,7 +2322,10 @@ ProcessMonitor::DupDescriptor(const char *path, int fd, int flags)
     if (target_fd == -1)
         return false;
 
-    return (dup2(target_fd, fd) == -1) ? false : true;
+    if (dup2(target_fd, fd) == -1)
+        return false;
+
+    return (close(target_fd) == -1) ? false : true;
 }
 
 void
@@ -2339,11 +2345,10 @@ ProcessMonitor::StopMonitor()
     StopOpThread();
     sem_destroy(&m_operation_pending);
     sem_destroy(&m_operation_done);
-
-    // Note: ProcessPOSIX passes the m_terminal_fd file descriptor to
-    // Process::SetSTDIOFileDescriptor, which in turn transfers ownership of
-    // the descriptor to a ConnectionFileDescriptor object.  Consequently
-    // even though still has the file descriptor, we shouldn't close it here.
+    if (m_terminal_fd >= 0) {
+        close(m_terminal_fd);
+        m_terminal_fd = -1;
+    }
 }
 
 void

@@ -352,17 +352,13 @@ define <4 x i32> @combine_bitwise_ops_test3b(<4 x i32> %a, <4 x i32> %b, <4 x i3
 ; SSE2-LABEL: combine_bitwise_ops_test3b:
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    xorps %xmm1, %xmm0
-; SSE2-NEXT:    xorps %xmm1, %xmm1
-; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,2],xmm1[1,3]
-; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,2,1,3]
+; SSE2-NEXT:    andps {{.*}}(%rip), %xmm0
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: combine_bitwise_ops_test3b:
 ; SSSE3:       # BB#0:
 ; SSSE3-NEXT:    xorps %xmm1, %xmm0
-; SSSE3-NEXT:    xorps %xmm1, %xmm1
-; SSSE3-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,2],xmm1[1,3]
-; SSSE3-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,2,1,3]
+; SSSE3-NEXT:    andps {{.*}}(%rip), %xmm0
 ; SSSE3-NEXT:    retq
 ;
 ; SSE41-LABEL: combine_bitwise_ops_test3b:
@@ -475,19 +471,13 @@ define <4 x i32> @combine_bitwise_ops_test6b(<4 x i32> %a, <4 x i32> %b, <4 x i3
 ; SSE2-LABEL: combine_bitwise_ops_test6b:
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    xorps %xmm1, %xmm0
-; SSE2-NEXT:    xorps %xmm1, %xmm1
-; SSE2-NEXT:    shufps {{.*#+}} xmm1 = xmm1[0,2],xmm0[1,3]
-; SSE2-NEXT:    shufps {{.*#+}} xmm1 = xmm1[0,2,1,3]
-; SSE2-NEXT:    movaps %xmm1, %xmm0
+; SSE2-NEXT:    andps {{.*}}(%rip), %xmm0
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: combine_bitwise_ops_test6b:
 ; SSSE3:       # BB#0:
 ; SSSE3-NEXT:    xorps %xmm1, %xmm0
-; SSSE3-NEXT:    xorps %xmm1, %xmm1
-; SSSE3-NEXT:    shufps {{.*#+}} xmm1 = xmm1[0,2],xmm0[1,3]
-; SSSE3-NEXT:    shufps {{.*#+}} xmm1 = xmm1[0,2,1,3]
-; SSSE3-NEXT:    movaps %xmm1, %xmm0
+; SSSE3-NEXT:    andps {{.*}}(%rip), %xmm0
 ; SSSE3-NEXT:    retq
 ;
 ; SSE41-LABEL: combine_bitwise_ops_test6b:
@@ -2134,13 +2124,13 @@ define <4 x float> @combine_undef_input_test5(<4 x float> %a, <4 x float> %b) {
 ; SSE2-LABEL: combine_undef_input_test5:
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movsd {{.*#+}} xmm1 = xmm0[0],xmm1[1]
-; SSE2-NEXT:    movaps %xmm1, %xmm0
+; SSE2-NEXT:    movapd %xmm1, %xmm0
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: combine_undef_input_test5:
 ; SSSE3:       # BB#0:
 ; SSSE3-NEXT:    movsd {{.*#+}} xmm1 = xmm0[0],xmm1[1]
-; SSSE3-NEXT:    movaps %xmm1, %xmm0
+; SSSE3-NEXT:    movapd %xmm1, %xmm0
 ; SSSE3-NEXT:    retq
 ;
 ; SSE41-LABEL: combine_undef_input_test5:
@@ -2319,13 +2309,13 @@ define <4 x float> @combine_undef_input_test15(<4 x float> %a, <4 x float> %b) {
 ; SSE2-LABEL: combine_undef_input_test15:
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movsd {{.*#+}} xmm1 = xmm0[0],xmm1[1]
-; SSE2-NEXT:    movaps %xmm1, %xmm0
+; SSE2-NEXT:    movapd %xmm1, %xmm0
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: combine_undef_input_test15:
 ; SSSE3:       # BB#0:
 ; SSSE3-NEXT:    movsd {{.*#+}} xmm1 = xmm0[0],xmm1[1]
-; SSSE3-NEXT:    movaps %xmm1, %xmm0
+; SSSE3-NEXT:    movapd %xmm1, %xmm0
 ; SSSE3-NEXT:    retq
 ;
 ; SSE41-LABEL: combine_undef_input_test15:

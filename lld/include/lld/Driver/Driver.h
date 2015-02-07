@@ -80,7 +80,7 @@ public:
   /// Public function for testing.
   static std::error_code evalLinkerScript(ELFLinkingContext &ctx,
                                           std::unique_ptr<MemoryBuffer> mb,
-                                          raw_ostream &diag);
+                                          raw_ostream &diag, bool nostdlib);
 
   /// A factory method to create an instance of ELFLinkingContext.
   static std::unique_ptr<ELFLinkingContext>
@@ -91,6 +91,10 @@ private:
   static bool applyEmulation(llvm::Triple &triple,
                              llvm::opt::InputArgList &args,
                              raw_ostream &diag);
+  static void addPlatformSearchDirs(ELFLinkingContext &ctx,
+                                    llvm::Triple &triple,
+                                    llvm::Triple &baseTriple);
+
   GnuLdDriver() LLVM_DELETED_FUNCTION;
 };
 

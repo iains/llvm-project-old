@@ -124,6 +124,7 @@ namespace clang {
     class RedeclarableResult {
       ASTReader &Reader;
       GlobalDeclID FirstID;
+      Decl *MergeWith;
       mutable bool Owning;
       Decl::Kind DeclKind;
       
@@ -131,13 +132,14 @@ namespace clang {
       
     public:
       RedeclarableResult(ASTReader &Reader, GlobalDeclID FirstID,
-                         Decl::Kind DeclKind)
-        : Reader(Reader), FirstID(FirstID), Owning(true), DeclKind(DeclKind) { }
+                         Decl *MergeWith, Decl::Kind DeclKind)
+        : Reader(Reader), FirstID(FirstID), MergeWith(MergeWith),
+          Owning(true), DeclKind(DeclKind) {}
 
       RedeclarableResult(const RedeclarableResult &Other)
-        : Reader(Other.Reader), FirstID(Other.FirstID), Owning(Other.Owning) ,
-          DeclKind(Other.DeclKind)
-      { 
+        : Reader(Other.Reader), FirstID(Other.FirstID),
+          MergeWith(Other.MergeWith), Owning(Other.Owning),
+          DeclKind(Other.DeclKind) {
         Other.Owning = false;
       }
 
@@ -149,7 +151,11 @@ namespace clang {
       
       /// \brief Retrieve the first ID.
       GlobalDeclID getFirstID() const { return FirstID; }
-      
+
+      /// \brief Get a known declaration that this should be merged with, if
+      /// any.
+      Decl *getKnownMergeTarget() const { return MergeWith; }
+
       /// \brief Do not introduce this declaration ID into the set of pending
       /// declaration chains.
       void suppress() {
@@ -472,8 +478,7 @@ void ASTDeclReader::VisitTranslationUnitDecl(TranslationUnitDecl *TU) {
 void ASTDeclReader::VisitNamedDecl(NamedDecl *ND) {
   VisitDecl(ND);
   ND->setDeclName(Reader.ReadDeclarationName(F, Record, Idx));
-  if (needsAnonymousDeclarationNumber(ND))
-    AnonymousDeclNumber = Record[Idx++];
+  AnonymousDeclNumber = Record[Idx++];
 }
 
 void ASTDeclReader::VisitTypeDecl(TypeDecl *TD) {
@@ -2077,15 +2082,23 @@ ASTDeclReader::VisitDeclContext(DeclContext *DC) {
 }
 
 template <typename T>
-ASTDeclReader::RedeclarableResult 
+ASTDeclReader::RedeclarableResult
 ASTDeclReader::VisitRedeclarable(Redeclarable<T> *D) {
   DeclID FirstDeclID = ReadDeclID(Record, Idx);
-  
+  Decl *MergeWith = nullptr;
+
   // 0 indicates that this declaration was the only declaration of its entity,
   // and is used for space optimization.
   if (FirstDeclID == 0)
     FirstDeclID = ThisDeclID;
-  
+  else if (Record[Idx++]) {
+    // We need to merge with FirstDeclID. Read it now to ensure that it is
+    // before us in the redecl chain, then forget we saw it so that we will
+    // merge with it.
+    MergeWith = Reader.GetDecl(FirstDeclID);
+    FirstDeclID = ThisDeclID;
+  }
+
   T *FirstDecl = cast_or_null<T>(Reader.GetDecl(FirstDeclID));
   if (FirstDecl != D) {
     // We delay loading of the redeclaration chain to avoid deeply nested calls.
@@ -2100,7 +2113,7 @@ ASTDeclReader::VisitRedeclarable(Redeclarable<T> *D) {
                              
   // The result structure takes care to note that we need to load the 
   // other declaration chains for this ID.
-  return RedeclarableResult(Reader, FirstDeclID,
+  return RedeclarableResult(Reader, FirstDeclID, MergeWith,
                             static_cast<T *>(D)->getKind());
 }
 
@@ -2127,7 +2140,10 @@ void ASTDeclReader::mergeRedeclarable(Redeclarable<T> *DBase,
   if (!Reader.getContext().getLangOpts().Modules)
     return;
 
-  if (FindExistingResult ExistingRes = findExisting(D))
+  if (auto *Existing = Redecl.getKnownMergeTarget())
+    // We already know of an existing declaration we should merge with.
+    mergeRedeclarable(D, cast<T>(Existing), Redecl, TemplatePatternID);
+  else if (FindExistingResult ExistingRes = findExisting(D))
     if (T *Existing = ExistingRes)
       mergeRedeclarable(D, Existing, Redecl, TemplatePatternID);
 }
@@ -2148,7 +2164,7 @@ void ASTDeclReader::mergeTemplatePattern(RedeclarableTemplateDecl *D,
   auto *DPattern = D->getTemplatedDecl();
   auto *ExistingPattern = Existing->getTemplatedDecl();
   RedeclarableResult Result(Reader, DPattern->getCanonicalDecl()->getGlobalID(),
-                            DPattern->getKind());
+                            /*MergeWith*/ExistingPattern, DPattern->getKind());
 
   if (auto *DClass = dyn_cast<CXXRecordDecl>(DPattern)) {
     // Merge with any existing definition.
@@ -2591,6 +2607,11 @@ DeclContext *ASTDeclReader::getPrimaryContextForMerging(ASTReader &Reader,
     return ED->getASTContext().getLangOpts().CPlusPlus? ED->getDefinition()
                                                       : nullptr;
 
+  // We can see the TU here only if we have no Sema object. In that case,
+  // there's no TU scope to look in, so using the DC alone is sufficient.
+  if (auto *TU = dyn_cast<TranslationUnitDecl>(DC))
+    return TU;
+
   return nullptr;
 }
 
@@ -2609,8 +2630,7 @@ ASTDeclReader::FindExistingResult::~FindExistingResult() {
 
   DeclarationName Name = New->getDeclName();
   DeclContext *DC = New->getDeclContext()->getRedeclContext();
-  if (!Name) {
-    assert(needsAnonymousDeclarationNumber(New));
+  if (needsAnonymousDeclarationNumber(New)) {
     setAnonymousDeclForMerging(Reader, New->getLexicalDeclContext(),
                                AnonymousDeclNumber, New);
   } else if (DC->isTranslationUnit() && Reader.SemaObj) {
@@ -2659,17 +2679,12 @@ NamedDecl *ASTDeclReader::getAnonymousDeclForMerging(ASTReader &Reader,
   // If this is the first time, but we have parsed a declaration of the context,
   // build the anonymous declaration list from the parsed declaration.
   if (!cast<Decl>(DC)->isFromASTFile()) {
-    unsigned Index = 0;
-    for (Decl *LexicalD : DC->decls()) {
-      auto *ND = dyn_cast<NamedDecl>(LexicalD);
-      if (!ND || !needsAnonymousDeclarationNumber(ND))
-        continue;
-      if (Previous.size() == Index)
+    numberAnonymousDeclsWithin(DC, [&](NamedDecl *ND, unsigned Number) {
+      if (Previous.size() == Number)
         Previous.push_back(cast<NamedDecl>(ND->getCanonicalDecl()));
       else
-        Previous[Index] = cast<NamedDecl>(ND->getCanonicalDecl());
-      ++Index;
-    }
+        Previous[Number] = cast<NamedDecl>(ND->getCanonicalDecl());
+    });
   }
 
   return Index < Previous.size() ? Previous[Index] : nullptr;
@@ -2718,10 +2733,9 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
     // was not imported.
   }
 
-  if (!Name) {
+  if (needsAnonymousDeclarationNumber(D)) {
     // This is an anonymous declaration that we may need to merge. Look it up
     // in its context by number.
-    assert(needsAnonymousDeclarationNumber(D));
     if (auto *Existing = getAnonymousDeclForMerging(
             Reader, D->getLexicalDeclContext(), AnonymousDeclNumber))
       if (isSameEntity(Existing, D))
