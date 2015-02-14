@@ -52,7 +52,7 @@ DEFINE_LIBUNWIND_FUNCTION(unw_getcontext)
   xorl  %eax, %eax    # return UNW_ESUCCESS
   ret
 
-#elif __x86_64__
+#elif defined(__x86_64__)
 
 #
 # extern int unw_getcontext(unw_context_t* thread_state)
@@ -87,7 +87,7 @@ DEFINE_LIBUNWIND_FUNCTION(unw_getcontext)
   xorl  %eax, %eax    # return UNW_ESUCCESS
   ret
 
-#elif __ppc__
+#elif defined(__ppc__)
 
 ;
 ; extern int unw_getcontext(unw_context_t* thread_state)
@@ -230,7 +230,7 @@ DEFINE_LIBUNWIND_FUNCTION(unw_getcontext)
   blr
 
 
-#elif __arm64__
+#elif defined(__arm64__)
 
 ;
 ; extern int unw_getcontext(unw_context_t* thread_state)
@@ -280,7 +280,7 @@ DEFINE_LIBUNWIND_FUNCTION(unw_getcontext)
   ldr    x0, #0      ; return UNW_ESUCCESS
   ret
 
-#elif __arm__ && !__APPLE__
+#elif defined(__arm__) && !defined(__APPLE__)
 
 #if !defined(__ARM_ARCH_ISA_ARM)
   .thumb
@@ -316,7 +316,14 @@ DEFINE_LIBUNWIND_FUNCTION(unw_getcontext)
   str lr, [r0, #56]
   str lr, [r0, #60]  @ store return address as pc
 #endif
+#if __ARM_ARCH_ISA_THUMB == 1
+  @ T1 does not have a non-cpsr-clobbering register-zeroing instruction.
+  @ It is safe to use here though because we are about to return, and cpsr is
+  @ not expected to be preserved.
+  movs r0, #0        @ return UNW_ESUCCESS
+#else
   mov r0, #0         @ return UNW_ESUCCESS
+#endif
   JMP(lr)
 
 @
@@ -369,7 +376,7 @@ DEFINE_LIBUNWIND_PRIVATE_FUNCTION(_ZN9libunwind13Registers_arm9saveVFPv3EPy)
   @ these registers implies they are, actually, available on the target, so
   @ it's ok to execute.
   @ So, generate the instructions using the corresponding coprocessor mnemonic.
-#ifndef __ARM_NEON
+#if !defined(__ARM_NEON)
   stcl p11, cr0, [r0], {0x20}  @ vstm r0, {d16-d31}
 #else
   vstmia r0, {d16-d31}
@@ -385,7 +392,7 @@ DEFINE_LIBUNWIND_PRIVATE_FUNCTION(_ZN9libunwind13Registers_arm9saveVFPv3EPy)
 @
   .p2align 2
 DEFINE_LIBUNWIND_PRIVATE_FUNCTION(_ZN9libunwind13Registers_arm9saveiWMMXEPy)
-#if (!defined(__ARM_ARCH_6M__) && !defined(__ARM_ARCH_6SM__)) || __ARM_WMMX
+#if (!defined(__ARM_ARCH_6M__) && !defined(__ARM_ARCH_6SM__)) || defined(__ARM_WMMX)
   stcl p1, cr0, [r0], #8  @ wstrd wR0, [r0], #8
   stcl p1, cr1, [r0], #8  @ wstrd wR1, [r0], #8
   stcl p1, cr2, [r0], #8  @ wstrd wR2, [r0], #8
@@ -413,7 +420,7 @@ DEFINE_LIBUNWIND_PRIVATE_FUNCTION(_ZN9libunwind13Registers_arm9saveiWMMXEPy)
 @
   .p2align 2
 DEFINE_LIBUNWIND_PRIVATE_FUNCTION(_ZN9libunwind13Registers_arm16saveiWMMXControlEPj)
-#if (!defined(__ARM_ARCH_6M__) && !defined(__ARM_ARCH_6SM__)) || __ARM_WMMX
+#if (!defined(__ARM_ARCH_6M__) && !defined(__ARM_ARCH_6SM__)) || defined(__ARM_WMMX)
   stc2 p1, cr8, [r0], #4  @ wstrw wCGR0, [r0], #4
   stc2 p1, cr9, [r0], #4  @ wstrw wCGR1, [r0], #4
   stc2 p1, cr10, [r0], #4  @ wstrw wCGR2, [r0], #4

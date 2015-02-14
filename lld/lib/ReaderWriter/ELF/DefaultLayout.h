@@ -258,10 +258,6 @@ public:
 
   inline ELFHeader<ELFT> *getHeader() { return _elfHeader; }
 
-  inline ProgramHeader<ELFT> *getProgramHeader() {
-    return _programHeader;
-  }
-
   bool hasDynamicRelocationTable() const { return !!_dynamicRelocationTable; }
 
   bool hasPLTRelocationTable() const { return !!_pltRelocationTable; }
@@ -328,16 +324,6 @@ protected:
   AtomSetT _referencedDynAtoms;
   llvm::StringSet<> _copiedDynSymNames;
   const ELFLinkingContext &_context;
-};
-
-/// \brief Handle linker scripts. TargetLayouts would derive
-/// from this class to override some of the functionalities.
-template<class ELFT>
-class ScriptLayout: public DefaultLayout<ELFT> {
-public:
-  ScriptLayout(const ELFLinkingContext &context)
-    : DefaultLayout<ELFT>(context)
-  {}
 };
 
 template <class ELFT>
@@ -585,10 +571,10 @@ ErrorOr<const lld::AtomLayout &> DefaultLayout<ELFT>::addAtom(const Atom *atom) 
     // Add runtime relocations to the .rela section.
     for (const auto &reloc : *definedAtom) {
       bool isLocalReloc = true;
-      if (_context.isDynamicRelocation(*definedAtom, *reloc)) {
+      if (_context.isDynamicRelocation(*reloc)) {
         getDynamicRelocationTable()->addRelocation(*definedAtom, *reloc);
         isLocalReloc = false;
-      } else if (_context.isPLTRelocation(*definedAtom, *reloc)) {
+      } else if (_context.isPLTRelocation(*reloc)) {
         getPLTRelocationTable()->addRelocation(*definedAtom, *reloc);
         isLocalReloc = false;
       }

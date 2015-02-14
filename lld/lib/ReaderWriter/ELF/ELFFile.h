@@ -17,6 +17,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Allocator.h"
@@ -115,19 +117,24 @@ template <class ELFT> class ELFFile : public File {
   typedef typename MergedSectionMapT::iterator MergedSectionMapIterT;
 
 public:
-  ELFFile(StringRef name)
-      : File(name, kindObject), _ordinal(0), _doStringsMerge(false) {
+  ELFFile(StringRef name, ELFLinkingContext &ctx)
+      : File(name, kindObject), _ordinal(0),
+        _doStringsMerge(ctx.mergeCommonStrings()), _useWrap(false), _ctx(ctx) {
     setLastError(std::error_code());
   }
 
-  ELFFile(std::unique_ptr<MemoryBuffer> mb, bool atomizeStrings = false)
+  ELFFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx)
       : File(mb->getBufferIdentifier(), kindObject), _mb(std::move(mb)),
-        _ordinal(0), _doStringsMerge(atomizeStrings) {}
+        _ordinal(0), _doStringsMerge(ctx.mergeCommonStrings()),
+        _useWrap(ctx.wrapCalls().size()), _ctx(ctx) {}
 
   static ErrorOr<std::unique_ptr<ELFFile>>
-  create(std::unique_ptr<MemoryBuffer> mb, bool atomizeStrings);
+  create(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx);
 
   virtual Reference::KindArch kindArch();
+
+  /// \brief Create symbols from LinkingContext.
+  std::error_code createAtomsFromContext();
 
   /// \brief Read input sections and populate necessary data structures
   /// to read them later and create atoms
@@ -360,6 +367,15 @@ protected:
 
   /// \brief the cached options relevant while reading the ELF File
   bool _doStringsMerge;
+
+  /// \brief Is --wrap on ?
+  bool _useWrap;
+
+  /// \brief The LinkingContext.
+  ELFLinkingContext &_ctx;
+
+  // Wrap map
+  llvm::StringMap<UndefinedAtom *> _wrapSymbolMap;
 };
 
 /// \brief All atoms are owned by a File. To add linker specific atoms
@@ -370,8 +386,8 @@ protected:
 template <class ELFT> class CRuntimeFile : public ELFFile<ELFT> {
 public:
   typedef llvm::object::Elf_Sym_Impl<ELFT> Elf_Sym;
-  CRuntimeFile(const ELFLinkingContext &context, StringRef name = "C runtime")
-      : ELFFile<ELFT>(name) {}
+  CRuntimeFile(ELFLinkingContext &context, StringRef name = "C runtime")
+      : ELFFile<ELFT>(name, context) {}
 
   /// \brief add a global absolute atom
   virtual Atom *addAbsoluteAtom(StringRef symbolName) {
@@ -411,9 +427,9 @@ public:
 
 template <class ELFT>
 ErrorOr<std::unique_ptr<ELFFile<ELFT>>>
-ELFFile<ELFT>::create(std::unique_ptr<MemoryBuffer> mb, bool atomizeStrings) {
-  std::unique_ptr<ELFFile<ELFT>> file(
-      new ELFFile<ELFT>(std::move(mb), atomizeStrings));
+ELFFile<ELFT>::create(std::unique_ptr<MemoryBuffer> mb,
+                      ELFLinkingContext &ctx) {
+  std::unique_ptr<ELFFile<ELFT>> file(new ELFFile<ELFT>(std::move(mb), ctx));
   return std::move(file);
 }
 
@@ -422,6 +438,9 @@ std::error_code ELFFile<ELFT>::doParse() {
   std::error_code ec;
   _objFile.reset(new llvm::object::ELFFile<ELFT>(_mb->getBuffer(), ec));
   if (ec)
+    return ec;
+
+  if ((ec = createAtomsFromContext()))
     return ec;
 
   // Read input sections from the input file that need to be converted to
@@ -575,6 +594,13 @@ std::error_code ELFFile<ELFT>::createSymbolsFromAtomizableSections() {
       _absoluteAtoms._atoms.push_back(*absAtom);
       _symbolToAtomMapping.insert(std::make_pair(&*SymI, *absAtom));
     } else if (isUndefinedSymbol(&*SymI)) {
+      if (_useWrap &&
+          (_wrapSymbolMap.find(*symbolName) != _wrapSymbolMap.end())) {
+        auto wrapAtom = _wrapSymbolMap.find(*symbolName);
+        _symbolToAtomMapping.insert(
+            std::make_pair(&*SymI, wrapAtom->getValue()));
+        continue;
+      }
       ErrorOr<ELFUndefinedAtom<ELFT> *> undefAtom =
           handleUndefinedSymbol(*symbolName, &*SymI);
       _undefinedAtoms._atoms.push_back(*undefAtom);
@@ -724,6 +750,39 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
   }
 
   updateReferences();
+  return std::error_code();
+}
+
+template <class ELFT> std::error_code ELFFile<ELFT>::createAtomsFromContext() {
+  if (!_useWrap)
+    return std::error_code();
+  // Steps :-
+  // a) Create an undefined atom for the symbol specified by the --wrap option,
+  // as that
+  // may be needed to be pulled from an archive.
+  // b) Create an undefined atom for __wrap_<symbolname>.
+  // c) All references to the symbol specified by wrap should point to
+  // __wrap_<symbolname>
+  // d) All references to __real_symbol should point to the <symbol>
+  for (auto &wrapsym : _ctx.wrapCalls()) {
+    StringRef wrapStr = wrapsym.getKey();
+    // Create a undefined symbol fror the wrap symbol.
+    UndefinedAtom *wrapSymAtom =
+        new (_readerStorage) SimpleUndefinedAtom(*this, wrapStr);
+    StringRef wrapCallSym =
+        _ctx.allocateString((llvm::Twine("__wrap_") + wrapStr).str());
+    StringRef realCallSym =
+        _ctx.allocateString((llvm::Twine("__real_") + wrapStr).str());
+    UndefinedAtom *wrapCallAtom =
+        new (_readerStorage) SimpleUndefinedAtom(*this, wrapCallSym);
+    // Create maps, when there is call to sym, it should point to wrapCallSym.
+    _wrapSymbolMap.insert(std::make_pair(wrapStr, wrapCallAtom));
+    // Whenever there is a reference to realCall it should point to the symbol
+    // created for each wrap usage.
+    _wrapSymbolMap.insert(std::make_pair(realCallSym, wrapSymAtom));
+    _undefinedAtoms._atoms.push_back(wrapSymAtom);
+    _undefinedAtoms._atoms.push_back(wrapCallAtom);
+  }
   return std::error_code();
 }
 

@@ -275,6 +275,7 @@ public:
 
   EHScopeStack EHStack;
   llvm::SmallVector<char, 256> LifetimeExtendedCleanupStack;
+  llvm::SmallVector<const JumpDest *, 2> SEHTryEpilogueStack;
 
   /// Header for data within LifetimeExtendedCleanupStack.
   struct LifetimeExtendedCleanupHeader {
@@ -360,6 +361,9 @@ public:
     llvm::BasicBlock *ContBB;
     llvm::BasicBlock *ResumeBB;
   };
+
+  /// Returns true inside SEH __try blocks.
+  bool isSEHTryScope() const { return !SEHTryEpilogueStack.empty(); }
 
   /// pushFullExprCleanup - Push a cleanup to be run at the end of the
   /// current full-expression.  Safe against the possibility that
@@ -1122,6 +1126,11 @@ public:
     return getInvokeDestImpl();
   }
 
+  bool currentFunctionUsesSEHTry() const {
+    const auto *FD = dyn_cast_or_null<FunctionDecl>(CurCodeDecl);
+    return FD && FD->usesSEHTry();
+  }
+
   const TargetInfo &getTarget() const { return Target; }
   llvm::LLVMContext &getLLVMContext() { return CGM.getLLVMContext(); }
 
@@ -1293,7 +1302,8 @@ public:
   /// legal to call this function even if there is no current insertion point.
   void FinishFunction(SourceLocation EndLoc=SourceLocation());
 
-  void StartThunk(llvm::Function *Fn, GlobalDecl GD, const CGFunctionInfo &FnInfo);
+  void StartThunk(llvm::Function *Fn, GlobalDecl GD,
+                  const CGFunctionInfo &FnInfo);
 
   void EmitCallAndReturnForThunk(llvm::Value *Callee, const ThunkInfo *Thunk);
 
@@ -2137,10 +2147,20 @@ public:
 
   void EmitAtomicInit(Expr *E, LValue lvalue);
 
+  bool LValueIsSuitableForInlineAtomic(LValue Src);
+  bool typeIsSuitableForInlineAtomic(QualType Ty, bool IsVolatile) const;
+
+  RValue EmitAtomicLoad(LValue LV, SourceLocation SL,
+                        AggValueSlot Slot = AggValueSlot::ignored());
+
   RValue EmitAtomicLoad(LValue lvalue, SourceLocation loc,
+                        llvm::AtomicOrdering AO, bool IsVolatile = false,
                         AggValueSlot slot = AggValueSlot::ignored());
 
   void EmitAtomicStore(RValue rvalue, LValue lvalue, bool isInit);
+
+  void EmitAtomicStore(RValue rvalue, LValue lvalue, llvm::AtomicOrdering AO,
+                       bool IsVolatile, bool isInit);
 
   std::pair<RValue, RValue> EmitAtomicCompareExchange(
       LValue Obj, RValue Expected, RValue Desired, SourceLocation Loc,
@@ -2215,8 +2235,8 @@ public:
   /// Emit an l-value for an assignment (simple or compound) of complex type.
   LValue EmitComplexAssignmentLValue(const BinaryOperator *E);
   LValue EmitComplexCompoundAssignmentLValue(const CompoundAssignOperator *E);
-  LValue EmitScalarCompooundAssignWithComplex(const CompoundAssignOperator *E,
-                                              llvm::Value *&Result);
+  LValue EmitScalarCompoundAssignWithComplex(const CompoundAssignOperator *E,
+                                             llvm::Value *&Result);
 
   // Note: only available for agg return types
   LValue EmitBinaryOperatorLValue(const BinaryOperator *E);

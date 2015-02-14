@@ -90,16 +90,17 @@
 //
 // See PreprocessorTracker.cpp for additional details.
 //
-// Modularize also has an option ("-module-map-path=module.map") that will
-// skip the checks, and instead act as a module.map generation assistant,
+// Modularize also has an option ("-module-map-path=module.modulemap") that will
+// skip the checks, and instead act as a module.modulemap generation assistant,
 // generating a module map file based on the header list.  An optional
 // "-root-module=(rootName)" argument can specify a root module to be
-// created in the generated module.map file.  Note that you will likely
+// created in the generated module.modulemap file.  Note that you will likely
 // need to edit this file to suit the needs of your headers.
 //
-// An example command line for generating a module.map file:
+// An example command line for generating a module.modulemap file:
 //
-//   modularize -module-map-path=module.map -root-module=myroot headerlist.txt
+//   modularize -module-map-path=module.modulemap -root-module=myroot \
+//      headerlist.txt
 //
 // Note that if the headers in the header list have partial paths, sub-modules
 // will be created for the subdirectires involved, assuming that the
@@ -143,6 +144,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Modularize.h"
+#include "ModularizeUtilities.h"
 #include "PreprocessorTracker.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
@@ -177,9 +179,10 @@ using namespace llvm::opt;
 using namespace Modularize;
 
 // Option to specify a file name for a list of header files to check.
-cl::opt<std::string>
-ListFileName(cl::Positional,
-             cl::desc("<name of file containing list of headers to check>"));
+cl::list<std::string>
+ListFileNames(cl::Positional, cl::value_desc("list"),
+              cl::desc("<list of one or more header list files>"),
+              cl::CommaSeparated);
 
 // Collect all other arguments, which will be passed to the front end.
 cl::list<std::string>
@@ -208,84 +211,19 @@ cl::opt<std::string>
 RootModule("root-module", cl::init(""),
            cl::desc("Specify the name of the root module."));
 
+// Option for limiting the #include-inside-extern-or-namespace-block
+// check to only those headers explicitly listed in the header list.
+// This is a work-around for private includes that purposefully get
+// included inside blocks.
+static cl::opt<bool>
+BlockCheckHeaderListOnly("block-check-header-list-only", cl::init(false),
+cl::desc("Only warn if #include directives are inside extern or namespace"
+  " blocks if the included header is in the header list."));
+
 // Save the program name for error messages.
 const char *Argv0;
 // Save the command line for comments.
 std::string CommandLine;
-
-// Read the header list file and collect the header file names and
-// optional dependencies.
-std::error_code
-getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
-                   DependencyMap &Dependencies, StringRef ListFileName,
-                   StringRef HeaderPrefix) {
-  // By default, use the path component of the list file name.
-  SmallString<256> HeaderDirectory(ListFileName);
-  sys::path::remove_filename(HeaderDirectory);
-  SmallString<256> CurrentDirectory;
-  sys::fs::current_path(CurrentDirectory);
-
-  // Get the prefix if we have one.
-  if (HeaderPrefix.size() != 0)
-    HeaderDirectory = HeaderPrefix;
-
-  // Read the header list file into a buffer.
-  ErrorOr<std::unique_ptr<MemoryBuffer>> listBuffer =
-      MemoryBuffer::getFile(ListFileName);
-  if (std::error_code EC = listBuffer.getError())
-    return EC;
-
-  // Parse the header list into strings.
-  SmallVector<StringRef, 32> Strings;
-  listBuffer.get()->getBuffer().split(Strings, "\n", -1, false);
-
-  // Collect the header file names from the string list.
-  for (SmallVectorImpl<StringRef>::iterator I = Strings.begin(),
-                                            E = Strings.end();
-       I != E; ++I) {
-    StringRef Line = I->trim();
-    // Ignore comments and empty lines.
-    if (Line.empty() || (Line[0] == '#'))
-      continue;
-    std::pair<StringRef, StringRef> TargetAndDependents = Line.split(':');
-    SmallString<256> HeaderFileName;
-    // Prepend header file name prefix if it's not absolute.
-    if (sys::path::is_absolute(TargetAndDependents.first))
-      llvm::sys::path::native(TargetAndDependents.first, HeaderFileName);
-    else {
-      if (HeaderDirectory.size() != 0)
-        HeaderFileName = HeaderDirectory;
-      else
-        HeaderFileName = CurrentDirectory;
-      sys::path::append(HeaderFileName, TargetAndDependents.first);
-      sys::path::native(HeaderFileName);
-    }
-    // Handle optional dependencies.
-    DependentsVector Dependents;
-    SmallVector<StringRef, 4> DependentsList;
-    TargetAndDependents.second.split(DependentsList, " ", -1, false);
-    int Count = DependentsList.size();
-    for (int Index = 0; Index < Count; ++Index) {
-      SmallString<256> Dependent;
-      if (sys::path::is_absolute(DependentsList[Index]))
-        Dependent = DependentsList[Index];
-      else {
-        if (HeaderDirectory.size() != 0)
-          Dependent = HeaderDirectory;
-        else
-          Dependent = CurrentDirectory;
-        sys::path::append(Dependent, DependentsList[Index]);
-      }
-      sys::path::native(Dependent);
-      Dependents.push_back(Dependent.str());
-    }
-    // Save the resulting header file path and dependencies.
-    HeaderFileNames.push_back(HeaderFileName.str());
-    Dependencies[HeaderFileName.str()] = Dependents;
-  }
-
-  return std::error_code();
-}
 
 // Helper function for finding the input file in an arguments list.
 std::string findInputFile(const CommandLineArguments &CLArgs) {
@@ -679,7 +617,7 @@ int main(int Argc, const char **Argv) {
   // Save program name for error messages.
   Argv0 = Argv[0];
 
-  // Save program arguments for use in module.map comment.
+  // Save program arguments for use in module.modulemap comment.
   CommandLine = sys::path::stem(sys::path::filename(Argv0));
   for (int ArgIndex = 1; ArgIndex < Argc; ArgIndex++) {
     CommandLine.append(" ");
@@ -690,25 +628,25 @@ int main(int Argc, const char **Argv) {
   cl::ParseCommandLineOptions(Argc, Argv, "modularize.\n");
 
   // No go if we have no header list file.
-  if (ListFileName.size() == 0) {
+  if (ListFileNames.size() == 0) {
     cl::PrintHelpMessage();
     return 1;
   }
 
+  std::unique_ptr<ModularizeUtilities> ModUtil;
+  
+  ModUtil.reset(
+    ModularizeUtilities::createModularizeUtilities(
+      ListFileNames, HeaderPrefix));
+
   // Get header file names and dependencies.
-  SmallVector<std::string, 32> Headers;
-  DependencyMap Dependencies;
-  if (std::error_code EC = getHeaderFileNames(Headers, Dependencies,
-                                              ListFileName, HeaderPrefix)) {
-    errs() << Argv[0] << ": error: Unable to get header list '" << ListFileName
-           << "': " << EC.message() << '\n';
-    return 1;
-  }
+  ModUtil->loadAllHeaderListsAndDependencies();
+
 
   // If we are in assistant mode, output the module map and quit.
   if (ModuleMapPath.length() != 0) {
-    if (!createModuleMap(ModuleMapPath, Headers, Dependencies, HeaderPrefix,
-                         RootModule))
+    if (!createModuleMap(ModuleMapPath, ModUtil->HeaderFileNames,
+                         ModUtil->Dependencies, HeaderPrefix, RootModule))
       return 1; // Failed.
     return 0;   // Success - Skip checks in assistant mode.
   }
@@ -721,12 +659,14 @@ int main(int Argc, const char **Argv) {
       new FixedCompilationDatabase(Twine(PathBuf), CC1Arguments));
 
   // Create preprocessor tracker, to watch for macro and conditional problems.
-  std::unique_ptr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
+  std::unique_ptr<PreprocessorTracker> PPTracker(
+    PreprocessorTracker::create(ModUtil->HeaderFileNames,
+                                BlockCheckHeaderListOnly));
 
   // Parse all of the headers, detecting duplicates.
   EntityMap Entities;
-  ClangTool Tool(*Compilations, Headers);
-  Tool.appendArgumentsAdjuster(getAddDependenciesAdjuster(Dependencies));
+  ClangTool Tool(*Compilations, ModUtil->HeaderFileNames);
+  Tool.appendArgumentsAdjuster(getAddDependenciesAdjuster(ModUtil->Dependencies));
   int HadErrors = 0;
   ModularizeFrontendActionFactory Factory(Entities, *PPTracker, HadErrors);
   HadErrors |= Tool.run(&Factory);

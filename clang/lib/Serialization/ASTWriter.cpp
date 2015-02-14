@@ -941,10 +941,11 @@ void ASTWriter::WriteBlockInfoBlock() {
 
   // Preprocessor Block.
   BLOCK(PREPROCESSOR_BLOCK);
+  RECORD(PP_MACRO_DIRECTIVE_HISTORY);
   RECORD(PP_MACRO_OBJECT_LIKE);
   RECORD(PP_MACRO_FUNCTION_LIKE);
   RECORD(PP_TOKEN);
-  
+
   // Decls and Types block.
   BLOCK(DECLTYPES_BLOCK);
   RECORD(TYPE_EXT_QUAL);
@@ -1215,6 +1216,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
       Record.push_back(0);
     }
 
+    Record.push_back(WritingModule->IsSystem);
     Stream.EmitRecord(MODULE_MAP_FILE, Record);
   }
 
@@ -1468,7 +1470,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
 
   unsigned UserFilesNum = 0;
   // Write out all of the input files.
-  std::vector<uint32_t> InputFileOffsets;
+  std::vector<uint64_t> InputFileOffsets;
   for (std::deque<InputFileEntry>::iterator
          I = SortedFiles.begin(), E = SortedFiles.end(); I != E; ++I) {
     const InputFileEntry &Entry = *I;

@@ -24,6 +24,7 @@
 #include "llvm/Support/ELF.h"
 #include <map>
 #include <memory>
+#include <set>
 
 namespace lld {
 class DefinedAtom;
@@ -38,16 +39,15 @@ public:
   virtual ~TargetHandlerBase() {}
   virtual void registerRelocationNames(Registry &) = 0;
 
-  virtual std::unique_ptr<Reader> getObjReader(bool) = 0;
+  virtual std::unique_ptr<Reader> getObjReader() = 0;
 
-  virtual std::unique_ptr<Reader> getDSOReader(bool) = 0;
+  virtual std::unique_ptr<Reader> getDSOReader() = 0;
 
   virtual std::unique_ptr<Writer> getWriter() = 0;
 };
 
 class ELFLinkingContext : public LinkingContext {
 public:
-
   /// \brief The type of ELF executable that the linker
   /// creates.
   enum class OutputMagic : uint8_t {
@@ -92,10 +92,7 @@ public:
   /// referenced by the DT_RELA{,ENT,SZ} entries in the dynamic table.
   /// Relocations that return true will be added to the dynamic relocation
   /// table.
-  virtual bool isDynamicRelocation(const DefinedAtom &,
-                                   const Reference &) const {
-    return false;
-  }
+  virtual bool isDynamicRelocation(const Reference &) const { return false; }
 
   /// \brief Is this a copy relocation?
   ///
@@ -127,9 +124,7 @@ public:
   /// by the DT_{JMPREL,PLTRELSZ} entries in the dynamic table.
   /// Relocations that return true will be added to the dynamic plt relocation
   /// table.
-  virtual bool isPLTRelocation(const DefinedAtom &, const Reference &) const {
-    return false;
-  }
+  virtual bool isPLTRelocation(const Reference &) const { return false; }
 
   /// \brief The path to the dynamic interpreter
   virtual StringRef getDefaultInterpreter() const {
@@ -292,11 +287,20 @@ public:
   bool alignSegments() const { return _alignSegments; }
   void setAlignSegments(bool align) { _alignSegments = align; }
 
+  /// \brief Strip symbols.
+  bool stripSymbols() const { return _stripSymbols; }
+  void setStripSymbols(bool strip) { _stripSymbols = strip; }
+
   // We can parse several linker scripts via command line whose ASTs are stored
   // in the current linking context via addLinkerScript().
   void addLinkerScript(std::unique_ptr<script::Parser> script) {
     _scripts.push_back(std::move(script));
   }
+
+  // --wrap option.
+  void addWrapForSymbol(StringRef sym) { _wrapCalls.insert(sym); }
+
+  const llvm::StringSet<> &wrapCalls() const { return _wrapCalls; }
 
 private:
   ELFLinkingContext() LLVM_DELETED_FUNCTION;
@@ -322,6 +326,7 @@ protected:
   bool _noAllowDynamicLibraries;
   bool _mergeRODataToTextSegment;
   bool _demangle;
+  bool _stripSymbols;
   bool _alignSegments;
   bool _nostdlib;
   llvm::Optional<uint64_t> _maxPageSize;
@@ -336,6 +341,7 @@ protected:
   StringRef _soname;
   StringRefVector _rpathList;
   StringRefVector _rpathLinkList;
+  llvm::StringSet<> _wrapCalls;
   std::map<std::string, uint64_t> _absoluteSymbols;
   llvm::StringSet<> _dynamicallyExportedSymbols;
   std::vector<std::unique_ptr<script::Parser>> _scripts;

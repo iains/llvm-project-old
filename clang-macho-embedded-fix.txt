@@ -1,0 +1,41 @@
+Index: clang-trunk/runtime/compiler-rt/Makefile
+===================================================================
+--- clang-trunk/runtime/compiler-rt/Makefile	(revision 445527)
++++ clang-trunk/runtime/compiler-rt/Makefile	(working copy)
+@@ -82,9 +82,34 @@
+ 	profile_osx.a \
+ 	ubsan_osx.a
+ 
+-IOS_SDK := $(shell xcrun --show-sdk-path -sdk iphoneos 2> /dev/null)
+-IOSSIM_SDK := $(shell xcrun --show-sdk-path -sdk iphonesimulator 2> /dev/null)
++# Prefer building with the internal SDKs.
++XCRunSdkPath = \
++  $(shell \
++    result=`xcrun --sdk $(1).internal --show-sdk-path 2> /dev/null`; \
++    if [ "$$?" != "0" ]; then \
++      result=`xcrun --sdk $(1) --show-sdk-path 2> /dev/null`; \
++      if [ "$$?" != "0" ]; then result=""; fi; \
++    fi; \
++    echo $$result)
+ 
++XCbuildSdkPath = \
++  $(shell \
++    result=`xcodebuild -version -sdk $(1)  2> /dev/null | grep ^Path | sed s/^Path:\ // `; \
++    echo $$result)
++
++  major = $(shell sw_vers | grep 'ProductVersion:' | grep -o '[0-9]*\.[0-9]*\.[0-9]*' | cut -d . -f2)
++  ifeq (10,$(major))
++    p := $(shell printf 1>&2  "[10.$(major)] $(CC) $(OSX_SDK)\n")
++
++    IOS_SDK := $(call XCRunSdkPath,iphoneos)
++    IOSSIM_SDK := $(call XCRunSdkPath,iphonesimulator)
++
++  else
++
++    IOS_SDK := $(call XCbuildSdkPath,iphoneos)
++    IOSSIM_SDK := $(call XCbuildSdkPath,iphonesimulator)
++  endif
++
+ ifneq ($(IOS_SDK)$(IOSSIM_SDK),)
+ RuntimeLibrary.darwin.Configs += ios.a profile_ios.a
+ endif
