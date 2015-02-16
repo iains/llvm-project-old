@@ -92,24 +92,6 @@
 #define LLVM_LVALUE_FUNCTION
 #endif
 
-/// LLVM_DELETED_FUNCTION - Expands to = delete if the compiler supports it.
-/// Use to mark functions as uncallable. Member functions with this should
-/// be declared private so that some behavior is kept in C++03 mode.
-///
-/// class DontCopy {
-/// private:
-///   DontCopy(const DontCopy&) LLVM_DELETED_FUNCTION;
-///   DontCopy &operator =(const DontCopy&) LLVM_DELETED_FUNCTION;
-/// public:
-///   ...
-/// };
-#if __has_feature(cxx_deleted_functions) || \
-    defined(__GXX_EXPERIMENTAL_CXX0X__) || LLVM_MSC_PREREQ(1800)
-#define LLVM_DELETED_FUNCTION = delete
-#else
-#define LLVM_DELETED_FUNCTION
-#endif
-
 #if __has_feature(cxx_constexpr) || defined(__GXX_EXPERIMENTAL_CXX0X__)
 # define LLVM_CONSTEXPR constexpr
 #else
@@ -338,16 +320,6 @@
 # define LLVM_IS_UNALIGNED_ACCESS_FAST 1
 #else
 # define LLVM_IS_UNALIGNED_ACCESS_FAST 0
-#endif
-
-/// \macro LLVM_EXPLICIT
-/// \brief Expands to explicit on compilers which support explicit conversion
-/// operators. Otherwise expands to nothing.
-#if __has_feature(cxx_explicit_conversions) || \
-    defined(__GXX_EXPERIMENTAL_CXX0X__) || LLVM_MSC_PREREQ(1800)
-#define LLVM_EXPLICIT explicit
-#else
-#define LLVM_EXPLICIT
 #endif
 
 /// \brief Does the compiler support generalized initializers (using braced

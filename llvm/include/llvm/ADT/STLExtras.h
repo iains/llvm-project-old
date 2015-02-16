@@ -194,6 +194,28 @@ struct less_second {
   }
 };
 
+// A subset of N3658. More stuff can be added as-needed.
+
+/// \brief Represents a compile-time sequence of integers.
+template <class T, T... I> struct integer_sequence {
+  typedef T value_type;
+
+  static LLVM_CONSTEXPR size_t size() { return sizeof...(I); }
+};
+
+/// \brief Alias for the common case of a sequence of size_ts.
+template <size_t... I>
+struct index_sequence : integer_sequence<std::size_t, I...> {};
+
+template <std::size_t N, std::size_t... I>
+struct build_index_impl : build_index_impl<N - 1, N - 1, I...> {};
+template <std::size_t... I>
+struct build_index_impl<0, I...> : index_sequence<I...> {};
+
+/// \brief Creates a compile-time integer sequence for a parameter pack.
+template <class... Ts>
+struct index_sequence_for : build_index_impl<sizeof...(Ts)> {};
+
 //===----------------------------------------------------------------------===//
 //     Extra additions for arrays
 //===----------------------------------------------------------------------===//
@@ -318,7 +340,7 @@ make_unique(size_t n) {
 /// This function isn't used and is only here to provide better compile errors.
 template <class T, class... Args>
 typename std::enable_if<std::extent<T>::value != 0>::type
-make_unique(Args &&...) LLVM_DELETED_FUNCTION;
+make_unique(Args &&...) = delete;
 
 struct FreeDeleter {
   void operator()(void* v) {

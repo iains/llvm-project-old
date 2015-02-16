@@ -1,0 +1,49 @@
+diff --git a/libcxxabi/lib/buildit b/libcxxabi/lib/buildit
+index 0a6d998..2a8ae89 100755
+--- a/libcxxabi/lib/buildit
++++ b/libcxxabi/lib/buildit
+@@ -27,6 +27,16 @@ then
+     CC=clang
+ fi
+ 
++if [ -z "$AR" ]
++then
++    AR=ar
++fi
++
++if [ -z "$CXX_LANG" ]
++then
++    CXX_LANG=c++11
++fi
++
+ if [ -z "$MACOSX_DEPLOYMENT_TARGET" ]
+ then
+     if [ -z "$IPHONEOS_DEPLOYMENT_TARGET" ]
+@@ -51,13 +61,17 @@ case $TRIPLE in
+   *-apple-*)
+     if [ -z $RC_XBS ]
+     then
+-      RC_CFLAGS="-arch i386 -arch x86_64"
++      case $TRIPLE in
++          powerpc*) RC_CFLAGS="-arch ppc -arch i386" ;;
++          i?86* | x86_64*) RC_CFLAGS="-arch i386 -arch x86_64";;
++      esac
+     fi
+ 
+     SOEXT=dylib
+     if [ -n "$SDKROOT" ]
+     then
+         EXTRA_FLAGS+=" --sysroot ${SDKROOT} "
++        LDSHARED_FLAGS=" --sysroot ${SDKROOT} "
+     fi
+     LDSHARED_FLAGS="-o libc++abi.dylib \
+         -dynamiclib -nodefaultlibs  \
+@@ -120,7 +134,7 @@ case $TRIPLE in
+   ;;
+ esac
+ 
+-$CC *.o $RC_CFLAGS $LDSHARED_FLAGS $EXTRA_FLAGS
++$CXX *.o $RC_CFLAGS $LDSHARED_FLAGS $EXTRA_FLAGS
+ 
+ if [ -z $RC_XBS ]
+ then
