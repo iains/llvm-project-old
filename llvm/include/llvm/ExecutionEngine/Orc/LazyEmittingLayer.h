@@ -119,7 +119,7 @@ private:
       return BaseLayer.addModuleSet(std::move(Ms), std::move(MM));
     }
 
-    bool provides(StringRef Name, bool ExportedSymbolsOnly) const {
+    bool provides(StringRef Name, bool ExportedSymbolsOnly) const override {
       // FIXME: We could clean all this up if we had a way to reliably demangle
       //        names: We could just demangle name and search, rather than
       //        mangling everything else.
