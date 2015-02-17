@@ -94,9 +94,8 @@ void DIBuilder::finalize() {
   for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i) {
     DISubprogram SP(SPs.getElement(i));
     if (MDNode *Temp = SP.getVariablesNodes()) {
-      SmallVector<Metadata *, 4> Variables;
-      for (Metadata *V : PreservedVariables.lookup(SP))
-        Variables.push_back(V);
+      const auto &PV = PreservedVariables.lookup(SP);
+      SmallVector<Metadata *, 4> Variables(PV.begin(), PV.end());
       DIArray AV = getOrCreateArray(Variables);
       DIType(Temp).replaceAllUsesWith(AV);
     }
@@ -105,9 +104,8 @@ void DIBuilder::finalize() {
   DIArray GVs = getOrCreateArray(AllGVs);
   DIType(TempGVs).replaceAllUsesWith(GVs);
 
-  SmallVector<Metadata *, 16> RetainValuesI;
-  for (unsigned I = 0, E = AllImportedModules.size(); I < E; I++)
-    RetainValuesI.push_back(AllImportedModules[I]);
+  SmallVector<Metadata *, 16> RetainValuesI(AllImportedModules.begin(),
+                                            AllImportedModules.end());
   DIArray IMs = getOrCreateArray(RetainValuesI);
   DIType(TempImportedModules).replaceAllUsesWith(IMs);
 
@@ -416,7 +414,6 @@ DIDerivedType DIBuilder::createInheritance(DIType Ty, DIType BaseTy,
                           .get(VMContext),
                       nullptr, Ty.getRef(), BaseTy.getRef()};
   auto R = DIDerivedType(MDNode::get(VMContext, Elts));
-  trackIfUnresolved(R);
   return R;
 }
 
@@ -583,6 +580,7 @@ DICompositeType DIBuilder::createClassType(DIDescriptor Context, StringRef Name,
          "createClassType should return a DICompositeType");
   if (!UniqueIdentifier.empty())
     retainType(R);
+  trackIfUnresolved(R);
   return R;
 }
 
@@ -616,6 +614,7 @@ DICompositeType DIBuilder::createStructType(DIDescriptor Context,
          "createStructType should return a DICompositeType");
   if (!UniqueIdentifier.empty())
     retainType(R);
+  trackIfUnresolved(R);
   return R;
 }
 
@@ -644,6 +643,7 @@ DICompositeType DIBuilder::createUnionType(DIDescriptor Scope, StringRef Name,
   DICompositeType R(MDNode::get(VMContext, Elts));
   if (!UniqueIdentifier.empty())
     retainType(R);
+  trackIfUnresolved(R);
   return R;
 }
 
@@ -690,6 +690,7 @@ DICompositeType DIBuilder::createEnumerationType(
   AllEnumTypes.push_back(CTy);
   if (!UniqueIdentifier.empty())
     retainType(CTy);
+  trackIfUnresolved(CTy);
   return CTy;
 }
 
@@ -711,7 +712,9 @@ DICompositeType DIBuilder::createArrayType(uint64_t Size, uint64_t AlignInBits,
       Ty.getRef(), Subscripts, nullptr, nullptr,
       nullptr // Type Identifer
   };
-  return DICompositeType(MDNode::get(VMContext, Elts));
+  DICompositeType R(MDNode::get(VMContext, Elts));
+  trackIfUnresolved(R);
+  return R;
 }
 
 DICompositeType DIBuilder::createVectorType(uint64_t Size, uint64_t AlignInBits,
@@ -732,7 +735,9 @@ DICompositeType DIBuilder::createVectorType(uint64_t Size, uint64_t AlignInBits,
       Ty.getRef(), Subscripts, nullptr, nullptr,
       nullptr // Type Identifer
   };
-  return DICompositeType(MDNode::get(VMContext, Elts));
+  DICompositeType R(MDNode::get(VMContext, Elts));
+  trackIfUnresolved(R);
+  return R;
 }
 
 static HeaderBuilder setTypeFlagsInHeader(StringRef Header,
@@ -758,8 +763,7 @@ static DIType createTypeWithFlags(LLVMContext &Context, DIType Ty,
   assert(N && "Unexpected input DIType!");
   // Update header field.
   Elts.push_back(setTypeFlagsInHeader(Ty.getHeader(), FlagsToSet).get(Context));
-  for (unsigned I = 1, E = N->getNumOperands(); I != E; ++I)
-    Elts.push_back(N->getOperand(I));
+  Elts.append(N->op_begin() + 1, N->op_end());
 
   return DIType(MDNode::get(Context, Elts));
 }
@@ -810,6 +814,7 @@ DIBuilder::createForwardDecl(unsigned Tag, StringRef Name, DIDescriptor Scope,
          "createForwardDecl result should be a DIType");
   if (!UniqueIdentifier.empty())
     retainType(RetTy);
+  trackIfUnresolved(RetTy);
   return RetTy;
 }
 
@@ -838,6 +843,7 @@ DICompositeType DIBuilder::createReplaceableCompositeType(
          "createReplaceableForwardDecl result should be a DIType");
   if (!UniqueIdentifier.empty())
     retainType(RetTy);
+  trackIfUnresolved(RetTy);
   return RetTy;
 }
 
@@ -1028,6 +1034,7 @@ DISubprogram DIBuilder::createFunction(DIDescriptor Context, StringRef Name,
     // do not lose this mdnode.
     if (isDefinition)
       AllSubprograms.push_back(Node);
+    trackIfUnresolved(Node);
     return Node;
   });
 }
@@ -1083,6 +1090,7 @@ DISubprogram DIBuilder::createMethod(DIDescriptor Context, StringRef Name,
     AllSubprograms.push_back(Node);
   DISubprogram S(Node);
   assert(S.isSubprogram() && "createMethod should return a valid DISubprogram");
+  trackIfUnresolved(S);
   return S;
 }
 

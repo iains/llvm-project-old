@@ -6913,8 +6913,7 @@ ConstantFoldBITCASTofBUILD_VECTOR(SDNode *BV, EVT DstEltVT) {
 
   for (unsigned i = 0, e = BV->getNumOperands(); i != e; ++i) {
     if (BV->getOperand(i).getOpcode() == ISD::UNDEF) {
-      for (unsigned j = 0; j != NumOutputsPerInput; ++j)
-        Ops.push_back(DAG.getUNDEF(DstEltVT));
+      Ops.append(NumOutputsPerInput, DAG.getUNDEF(DstEltVT));
       continue;
     }
 
@@ -11750,23 +11749,17 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
       if (AllSame)
         return N0;
 
-      // If the splatted element is a constant, just build the vector out of
-      // constants directly.
+      // Canonicalize any other splat as a build_vector.
       const SDValue &Splatted = V->getOperand(SVN->getSplatIndex());
-      if (isa<ConstantSDNode>(Splatted) || isa<ConstantFPSDNode>(Splatted)) {
-        SmallVector<SDValue, 8> Ops;
-        for (unsigned i = 0; i != NumElts; ++i) {
-          Ops.push_back(Splatted);
-        }
-        SDValue NewBV = DAG.getNode(ISD::BUILD_VECTOR, SDLoc(N),
-          V->getValueType(0), Ops);
+      SmallVector<SDValue, 8> Ops(NumElts, Splatted);
+      SDValue NewBV = DAG.getNode(ISD::BUILD_VECTOR, SDLoc(N),
+                                  V->getValueType(0), Ops);
 
-        // We may have jumped through bitcasts, so the type of the
-        // BUILD_VECTOR may not match the type of the shuffle.
-        if (V->getValueType(0) != VT)
-           NewBV = DAG.getNode(ISD::BITCAST, SDLoc(N), VT, NewBV);
-        return NewBV;
-      }
+      // We may have jumped through bitcasts, so the type of the
+      // BUILD_VECTOR may not match the type of the shuffle.
+      if (V->getValueType(0) != VT)
+          NewBV = DAG.getNode(ISD::BITCAST, SDLoc(N), VT, NewBV);
+      return NewBV;
     }
   }
 

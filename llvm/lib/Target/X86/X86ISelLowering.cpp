@@ -6011,9 +6011,7 @@ LowerAsSplatVectorLoad(SDValue SrcOp, MVT VT, SDLoc dl, SelectionDAG &DAG) {
                              LD->getPointerInfo().getWithOffset(StartOffset),
                              false, false, false, 0);
 
-    SmallVector<int, 8> Mask;
-    for (unsigned i = 0; i != NumElems; ++i)
-      Mask.push_back(EltNo);
+    SmallVector<int, 8> Mask(NumElems, EltNo);
 
     return DAG.getVectorShuffle(NVT, dl, V1, DAG.getUNDEF(NVT), &Mask[0]);
   }
@@ -7083,9 +7081,7 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
   // elements, otherwise build the individual 128-bit pieces and use
   // shuffles to put them in place.
   if (VT.is256BitVector() || VT.is512BitVector()) {
-    SmallVector<SDValue, 64> V;
-    for (unsigned i = 0; i != NumElems; ++i)
-      V.push_back(Op.getOperand(i));
+    SmallVector<SDValue, 64> V(Op->op_begin(), Op->op_begin() + NumElems);
 
     // Check for a build vector of consecutive loads.
     if (SDValue LD = EltsFromConsecutiveLoads(VT, V, dl, DAG, false))
@@ -8480,10 +8476,15 @@ static SDValue lowerVectorShuffleAsInsertPS(SDValue Op, SDValue V1, SDValue V2,
 ///
 /// This specifically targets cases where we end up with alternating between
 /// the two inputs, and so can permute them into something that feeds a single
-/// UNPCK instruction.
+/// UNPCK instruction. Note that this routine only targets integer vectors
+/// because for floating point vectors we have a generalized SHUFPS lowering
+/// strategy that handles everything that doesn't *exactly* match an unpack,
+/// making this clever lowering unnecessary.
 static SDValue lowerVectorShuffleAsUnpack(MVT VT, SDLoc DL, SDValue V1,
                                           SDValue V2, ArrayRef<int> Mask,
                                           SelectionDAG &DAG) {
+  assert(!VT.isFloatingPoint() &&
+         "This routine only supports integer vectors.");
   assert(!isSingleInputShuffleMask(Mask) &&
          "This routine should only be used when blending two inputs.");
   assert(Mask.size() >= 2 && "Single element masks are invalid.");
@@ -8498,25 +8499,56 @@ static SDValue lowerVectorShuffleAsUnpack(MVT VT, SDLoc DL, SDValue V1,
 
   bool UnpackLo = NumLoInputs >= NumHiInputs;
 
-  SmallVector<int, 32> V1Mask(Mask.size(), -1);
-  SmallVector<int, 32> V2Mask(Mask.size(), -1);
-  for (int i = 0; i < Size; ++i) {
-    if (Mask[i] < 0)
-      continue;
+  auto TryUnpack = [&](MVT UnpackVT, int Scale) {
+    SmallVector<int, 32> V1Mask(Mask.size(), -1);
+    SmallVector<int, 32> V2Mask(Mask.size(), -1);
 
-    // We only handle the case where V1 feeds even mask slots and V2 feeds odd
-    // mask slots. We rely on canonicalization to ensure this is the case.
-    if ((i % 2 == 0) != (Mask[i] < Size))
-      return SDValue();
+    for (int i = 0; i < Size; ++i) {
+      if (Mask[i] < 0)
+        continue;
 
-    SmallVectorImpl<int> &VMask = (i % 2 == 0) ? V1Mask : V2Mask;
-    VMask[i / 2 + (UnpackLo ? 0 : Size / 2)] = Mask[i] % Size;
+      // Each element of the unpack contains Scale elements from this mask.
+      int UnpackIdx = i / Scale;
+
+      // We only handle the case where V1 feeds the first slots of the unpack.
+      // We rely on canonicalization to ensure this is the case.
+      if ((UnpackIdx % 2 == 0) != (Mask[i] < Size))
+        return SDValue();
+
+      // Setup the mask for this input. The indexing is tricky as we have to
+      // handle the unpack stride.
+      SmallVectorImpl<int> &VMask = (UnpackIdx % 2 == 0) ? V1Mask : V2Mask;
+      VMask[(UnpackIdx / 2) * Scale + i % Scale + (UnpackLo ? 0 : Size / 2)] =
+          Mask[i] % Size;
+    }
+
+    // Shuffle the inputs into place.
+    V1 = DAG.getVectorShuffle(VT, DL, V1, DAG.getUNDEF(VT), V1Mask);
+    V2 = DAG.getVectorShuffle(VT, DL, V2, DAG.getUNDEF(VT), V2Mask);
+
+    // Cast the inputs to the type we will use to unpack them.
+    V1 = DAG.getNode(ISD::BITCAST, DL, UnpackVT, V1);
+    V2 = DAG.getNode(ISD::BITCAST, DL, UnpackVT, V2);
+
+    // Unpack the inputs and cast the result back to the desired type.
+    return DAG.getNode(ISD::BITCAST, DL, VT,
+                       DAG.getNode(UnpackLo ? X86ISD::UNPCKL : X86ISD::UNPCKH,
+                                   DL, UnpackVT, V1, V2));
+  };
+
+  // We try each unpack from the largest to the smallest to try and find one
+  // that fits this mask.
+  int OrigNumElements = VT.getVectorNumElements();
+  int OrigScalarSize = VT.getScalarSizeInBits();
+  for (int ScalarSize = 64; ScalarSize >= OrigScalarSize; ScalarSize /= 2) {
+    int Scale = ScalarSize / OrigScalarSize;
+    int NumElements = OrigNumElements / Scale;
+    MVT UnpackVT = MVT::getVectorVT(MVT::getIntegerVT(ScalarSize), NumElements);
+    if (SDValue Unpack = TryUnpack(UnpackVT, Scale))
+      return Unpack;
   }
 
-  V1 = DAG.getVectorShuffle(VT, DL, V1, DAG.getUNDEF(VT), V1Mask);
-  V2 = DAG.getVectorShuffle(VT, DL, V2, DAG.getUNDEF(VT), V2Mask);
-  return DAG.getNode(UnpackLo ? X86ISD::UNPCKL : X86ISD::UNPCKH, DL, VT, V1,
-                     V2);
+  return SDValue();
 }
 
 /// \brief Handle lowering of 2-lane 64-bit floating point shuffles.
@@ -15536,9 +15568,7 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, SDLoc dl,
                        DAG.getConstant(0, Op.getValueType()));
 
   SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::i32);
-  SmallVector<SDValue, 4> Ops;
-  for (unsigned i = 0; i != NumOperands; ++i)
-    Ops.push_back(Op.getOperand(i));
+  SmallVector<SDValue, 4> Ops(Op->op_begin(), Op->op_begin() + NumOperands);
 
   SDValue New = DAG.getNode(Opcode, dl, VTs, Ops);
   DAG.ReplaceAllUsesWith(Op, New);
@@ -19776,9 +19806,7 @@ static SDValue LowerBITCAST(SDValue Op, const X86Subtarget *Subtarget,
                                  DAG.getIntPtrConstant(i)));
 
     // Explicitly mark the extra elements as Undef.
-    SDValue Undef = DAG.getUNDEF(SVT);
-    for (unsigned i = NumElts, e = NumElts * 2; i != e; ++i)
-      Elts.push_back(Undef);
+    Elts.append(NumElts, DAG.getUNDEF(SVT));
 
     EVT NewVT = EVT::getVectorVT(*DAG.getContext(), SVT, NumElts * 2);
     SDValue BV = DAG.getNode(ISD::BUILD_VECTOR, dl, NewVT, Elts);
@@ -24867,24 +24895,118 @@ static SDValue WidenMaskArithmetic(SDNode *N, SelectionDAG &DAG,
   }
 }
 
+static SDValue VectorZextCombine(SDNode *N, SelectionDAG &DAG,
+                                 TargetLowering::DAGCombinerInfo &DCI,
+                                 const X86Subtarget *Subtarget) {
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  SDLoc DL(N);
+
+  // A vector zext_in_reg may be represented as a shuffle,
+  // feeding into a bitcast (this represents anyext) feeding into
+  // an and with a mask.
+  // We'd like to try to combine that into a shuffle with zero
+  // plus a bitcast, removing the and.
+  if (N0.getOpcode() != ISD::BITCAST || 
+      N0.getOperand(0).getOpcode() != ISD::VECTOR_SHUFFLE)
+    return SDValue();
+
+  // The other side of the AND should be a splat of 2^C, where C
+  // is the number of bits in the source type.
+  if (N1.getOpcode() == ISD::BITCAST)
+    N1 = N1.getOperand(0);
+  if (N1.getOpcode() != ISD::BUILD_VECTOR)
+    return SDValue();
+  BuildVectorSDNode *Vector = cast<BuildVectorSDNode>(N1);
+
+  ShuffleVectorSDNode *Shuffle = cast<ShuffleVectorSDNode>(N0.getOperand(0));
+  EVT SrcType = Shuffle->getValueType(0);
+
+  // We expect a single-source shuffle
+  if (Shuffle->getOperand(1)->getOpcode() != ISD::UNDEF)
+    return SDValue();
+
+  unsigned SrcSize = SrcType.getScalarSizeInBits();
+
+  APInt SplatValue, SplatUndef;
+  unsigned SplatBitSize;
+  bool HasAnyUndefs;
+  if (!Vector->isConstantSplat(SplatValue, SplatUndef,
+                                SplatBitSize, HasAnyUndefs))
+    return SDValue();
+
+  unsigned ResSize = N1.getValueType().getScalarSizeInBits();
+  // Make sure the splat matches the mask we expect
+  if (SplatBitSize > ResSize || 
+      (SplatValue + 1).exactLogBase2() != (int)SrcSize)
+    return SDValue();
+
+  // Make sure the input and output size make sense
+  if (SrcSize >= ResSize || ResSize % SrcSize)
+    return SDValue();
+
+  // We expect a shuffle of the form <0, u, u, u, 1, u, u, u...>
+  // The number of u's between each two values depends on the ratio between
+  // the source and dest type.
+  unsigned ZextRatio = ResSize / SrcSize;
+  bool IsZext = true;
+  for (unsigned i = 0; i < SrcType.getVectorNumElements(); ++i) {
+    if (i % ZextRatio) {
+      if (Shuffle->getMaskElt(i) > 0) {
+        // Expected undef
+        IsZext = false;
+        break;
+      }
+    } else {
+      if (Shuffle->getMaskElt(i) != (int)(i / ZextRatio)) {
+        // Expected element number
+        IsZext = false;
+        break;
+      }
+    }
+  }
+
+  if (!IsZext)
+    return SDValue();
+
+  // Ok, perform the transformation - replace the shuffle with
+  // a shuffle of the form <0, k, k, k, 1, k, k, k> with zero
+  // (instead of undef) where the k elements come from the zero vector.
+  SmallVector<int, 8> Mask;
+  unsigned NumElems = SrcType.getVectorNumElements();
+  for (unsigned i = 0; i < NumElems; ++i)
+    if (i % ZextRatio)
+      Mask.push_back(NumElems);
+    else
+      Mask.push_back(i / ZextRatio);
+
+  SDValue NewShuffle = DAG.getVectorShuffle(Shuffle->getValueType(0), DL,
+    Shuffle->getOperand(0), DAG.getConstant(0, SrcType), Mask);
+  return DAG.getNode(ISD::BITCAST, DL,  N0.getValueType(), NewShuffle);
+}
+
 static SDValue PerformAndCombine(SDNode *N, SelectionDAG &DAG,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const X86Subtarget *Subtarget) {
-  EVT VT = N->getValueType(0);
   if (DCI.isBeforeLegalizeOps())
     return SDValue();
+
+  SDValue Zext = VectorZextCombine(N, DAG, DCI, Subtarget);
+  if (Zext.getNode())
+    return Zext;
 
   SDValue R = CMPEQCombine(N, DAG, DCI, Subtarget);
   if (R.getNode())
     return R;
 
+  EVT VT = N->getValueType(0);
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  SDLoc DL(N);
+
   // Create BEXTR instructions
   // BEXTR is ((X >> imm) & (2**size-1))
   if (VT == MVT::i32 || VT == MVT::i64) {
-    SDValue N0 = N->getOperand(0);
-    SDValue N1 = N->getOperand(1);
-    SDLoc DL(N);
-
     // Check for BEXTR.
     if ((Subtarget->hasBMI() || Subtarget->hasTBM()) &&
         (N0.getOpcode() == ISD::SRA || N0.getOpcode() == ISD::SRL)) {
@@ -24911,10 +25033,6 @@ static SDValue PerformAndCombine(SDNode *N, SelectionDAG &DAG,
   // 2) To match ANDN packed intrinsics
   if (VT != MVT::v2i64 && VT != MVT::v4i64)
     return SDValue();
-
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-  SDLoc DL(N);
 
   // Check LHS for vnot
   if (N0.getOpcode() == ISD::XOR &&
