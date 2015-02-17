@@ -53,7 +53,7 @@ private:
                   return 0;
                 else if (this->EmitState == NotEmitted) {
                   this->EmitState = Emitting;
-                  Handle = this->emit(B);
+                  Handle = this->emitToBaseLayer(B);
                   this->EmitState = Emitted;
                 }
                 return B.findSymbolIn(Handle, PName, ExportedSymbolsOnly)
@@ -78,6 +78,17 @@ private:
         BaseLayer.removeModuleSet(Handle);
     }
 
+    void emitAndFinalize(BaseLayerT &BaseLayer) {
+      assert(EmitState != Emitting &&
+             "Cannot emitAndFinalize while already emitting");
+      if (EmitState == NotEmitted) {
+        EmitState = Emitting;
+        Handle = emitToBaseLayer(BaseLayer);
+        EmitState = Emitted;
+      }
+      BaseLayer.emitAndFinalize(Handle);
+    }
+
     template <typename ModuleSetT>
     static std::unique_ptr<EmissionDeferredSet>
     create(BaseLayerT &B, ModuleSetT Ms,
@@ -85,7 +96,7 @@ private:
 
   protected:
     virtual bool provides(StringRef Name, bool ExportedSymbolsOnly) const = 0;
-    virtual BaseLayerHandleT emit(BaseLayerT &BaseLayer) = 0;
+    virtual BaseLayerHandleT emitToBaseLayer(BaseLayerT &BaseLayer) = 0;
 
   private:
     enum { NotEmitted, Emitting, Emitted } EmitState;
@@ -100,14 +111,15 @@ private:
         : Ms(std::move(Ms)), MM(std::move(MM)) {}
 
   protected:
-    BaseLayerHandleT emit(BaseLayerT &BaseLayer) override {
+
+    BaseLayerHandleT emitToBaseLayer(BaseLayerT &BaseLayer) override {
       // We don't need the mangled names set any more: Once we've emitted this
       // to the base layer we'll just look for symbols there.
       MangledNames.reset();
       return BaseLayer.addModuleSet(std::move(Ms), std::move(MM));
     }
 
-    bool provides(StringRef Name, bool ExportedSymbolsOnly) const override {
+    bool provides(StringRef Name, bool ExportedSymbolsOnly) const {
       // FIXME: We could clean all this up if we had a way to reliably demangle
       //        names: We could just demangle name and search, rather than
       //        mangling everything else.
@@ -243,6 +255,14 @@ public:
                          bool ExportedSymbolsOnly) {
     return (*H)->find(Name, ExportedSymbolsOnly, BaseLayer);
   }
+
+  /// @brief Immediately emit and finalize the moduleOB set represented by the
+  ///        given handle.
+  /// @param H Handle for module set to emit/finalize.
+  void emitAndFinalize(ModuleSetHandleT H) {
+    (*H)->emitAndFinalize(BaseLayer);
+  }
+
 };
 
 template <typename BaseLayerT>
