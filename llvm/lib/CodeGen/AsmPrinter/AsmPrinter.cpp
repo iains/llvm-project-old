@@ -1178,23 +1178,16 @@ void AsmPrinter::EmitJumpTableInfo() {
   // the appropriate section.
   const Function *F = MF->getFunction();
   const TargetLoweringObjectFile &TLOF = getObjFileLowering();
-  bool JTInDiffSection = false;
-  if (// In PIC mode, we need to emit the jump table to the same section as the
-      // function body itself, otherwise the label differences won't make sense.
-      // FIXME: Need a better predicate for this: what about custom entries?
-      MJTI->getEntryKind() == MachineJumpTableInfo::EK_LabelDifference32 ||
-      // We should also do if the section name is NULL or function is declared
-      // in discardable section
-      // FIXME: this isn't the right predicate, should be based on the MCSection
-      // for the function.
-      F->isWeakForLinker()) {
+  bool JTInDiffSection = !TLOF.shouldPutJumpTableInFunctionSection(
+      MJTI->getEntryKind() == MachineJumpTableInfo::EK_LabelDifference32,
+      *F);
+  if (!JTInDiffSection) {
     OutStreamer.SwitchSection(TLOF.SectionForGlobal(F, *Mang, TM));
   } else {
     // Otherwise, drop it in the readonly section.
     const MCSection *ReadOnlySection =
         TLOF.getSectionForJumpTable(*F, *Mang, TM);
     OutStreamer.SwitchSection(ReadOnlySection);
-    JTInDiffSection = true;
   }
 
   EmitAlignment(Log2_32(
@@ -2071,7 +2064,7 @@ void AsmPrinter::printOffset(int64_t Offset, raw_ostream &OS) const {
 
 /// GetTempSymbol - Return the MCSymbol corresponding to the assembler
 /// temporary label with the specified stem and unique ID.
-MCSymbol *AsmPrinter::GetTempSymbol(Twine Name, unsigned ID) const {
+MCSymbol *AsmPrinter::GetTempSymbol(const Twine &Name, unsigned ID) const {
   const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix()) +
                                       Name + Twine(ID));
@@ -2079,7 +2072,7 @@ MCSymbol *AsmPrinter::GetTempSymbol(Twine Name, unsigned ID) const {
 
 /// GetTempSymbol - Return an assembler temporary label with the specified
 /// stem.
-MCSymbol *AsmPrinter::GetTempSymbol(Twine Name) const {
+MCSymbol *AsmPrinter::GetTempSymbol(const Twine &Name) const {
   const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix())+
                                       Name);

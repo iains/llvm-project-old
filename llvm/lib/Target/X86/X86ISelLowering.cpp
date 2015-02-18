@@ -7888,40 +7888,39 @@ static SDValue lowerVectorShuffleAsByteShift(SDLoc DL, MVT VT, SDValue V1,
   // [  5, 6,  7, zz, zz, zz, zz, zz]
   // [ -1, 5,  6,  7, zz, zz, zz, zz]
   // [  1, 2, -1, -1, -1, -1, zz, zz]
-  auto MatchByteShift = [&](int Shift) -> SDValue {
-    bool MatchLeft = true, MatchRight = true;
-    for (int l = 0; l < NumElts; l += NumLaneElts) {
-      for (int i = 0; i < Shift; ++i)
-        MatchLeft &= Zeroable[l + i];
-      for (int i = NumLaneElts - Shift; i < NumLaneElts; ++i)
-        MatchRight &= Zeroable[l + i];
-    }
-    if (!(MatchLeft || MatchRight))
-      return SDValue();
 
-    bool MatchV1 = true, MatchV2 = true;
+  auto CheckZeros = [&](int Shift, bool LeftShift) {
+    for (int l = 0; l < NumElts; l += NumLaneElts)
+      for (int i = 0; i < Shift; ++i)
+        if (!Zeroable[l + i + (LeftShift ? 0 : (NumLaneElts - Shift))])
+          return false;
+
+    return true;
+  };
+
+  auto MatchByteShift = [&](int Shift, bool LeftShift, SDValue V) {
     for (int l = 0; l < NumElts; l += NumLaneElts) {
-      unsigned Pos = MatchLeft ? Shift + l : l;
-      unsigned Low = MatchLeft ? l : Shift + l;
+      unsigned Pos = LeftShift ? Shift + l : l;
+      unsigned Low = LeftShift ? l : Shift + l;
       unsigned Len = NumLaneElts - Shift;
-      MatchV1 &= isSequentialOrUndefInRange(Mask, Pos, Len, Low);
-      MatchV2 &= isSequentialOrUndefInRange(Mask, Pos, Len, Low + NumElts);
+      if (!isSequentialOrUndefInRange(Mask, Pos, Len,
+                                      Low + (V == V1 ? 0 : NumElts)))
+        return SDValue();
     }
-    if (!(MatchV1 || MatchV2))
-      return SDValue();
 
     int ByteShift = Shift * Scale;
-    unsigned Op = MatchRight ? X86ISD::VSRLDQ : X86ISD::VSHLDQ;
-    SDValue V = MatchV1 ? V1 : V2;
+    unsigned Op = LeftShift ? X86ISD::VSHLDQ : X86ISD::VSRLDQ;
     V = DAG.getNode(ISD::BITCAST, DL, ShiftVT, V);
-    V = DAG.getNode(Op, DL, ShiftVT, V,
-                    DAG.getConstant(ByteShift, MVT::i8));
+    V = DAG.getNode(Op, DL, ShiftVT, V, DAG.getConstant(ByteShift, MVT::i8));
     return DAG.getNode(ISD::BITCAST, DL, VT, V);
   };
 
   for (int Shift = 1; Shift < NumLaneElts; ++Shift)
-    if (SDValue S = MatchByteShift(Shift))
-      return S;
+    for (bool LeftShift : {true, false})
+      if (CheckZeros(Shift, LeftShift))
+        for (SDValue V : {V1, V2})
+          if (SDValue S = MatchByteShift(Shift, LeftShift, V))
+            return S;
 
   // no match
   return SDValue();
@@ -8910,6 +8909,10 @@ static SDValue lowerV4F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4f32, V1, V2);
   if (isShuffleEquivalent(V1, V2, Mask, 2, 6, 3, 7))
     return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4f32, V1, V2);
+  if (isShuffleEquivalent(V1, V2, Mask, 4, 0, 5, 1))
+    return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4f32, V2, V1);
+  if (isShuffleEquivalent(V1, V2, Mask, 6, 2, 7, 3))
+    return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4f32, V2, V1);
 
   // Otherwise fall back to a SHUFPS lowering strategy.
   return lowerVectorShuffleWithSHUFPS(DL, MVT::v4f32, Mask, V1, V2, DAG);
@@ -8995,6 +8998,10 @@ static SDValue lowerV4I32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4i32, V1, V2);
   if (isShuffleEquivalent(V1, V2, Mask, 2, 6, 3, 7))
     return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4i32, V1, V2);
+  if (isShuffleEquivalent(V1, V2, Mask, 4, 0, 5, 1))
+    return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4i32, V2, V1);
+  if (isShuffleEquivalent(V1, V2, Mask, 6, 2, 7, 3))
+    return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4i32, V2, V1);
 
   // Try to use byte rotation instructions.
   // Its more profitable for pre-SSSE3 to use shuffles/unpacks.
@@ -10720,6 +10727,10 @@ static SDValue lowerV4F64VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4f64, V1, V2);
   if (isShuffleEquivalent(V1, V2, Mask, 1, 5, 3, 7))
     return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4f64, V1, V2);
+  if (isShuffleEquivalent(V1, V2, Mask, 4, 0, 6, 2))
+    return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4f64, V2, V1);
+  if (isShuffleEquivalent(V1, V2, Mask, 5, 1, 7, 3))
+    return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4f64, V2, V1);
 
   // If we have a single input to the zero element, insert that into V1 if we
   // can do so cheaply.
@@ -10838,6 +10849,10 @@ static SDValue lowerV4I64VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4i64, V1, V2);
   if (isShuffleEquivalent(V1, V2, Mask, 1, 5, 3, 7))
     return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4i64, V1, V2);
+  if (isShuffleEquivalent(V1, V2, Mask, 4, 0, 6, 2))
+    return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4i64, V2, V1);
+  if (isShuffleEquivalent(V1, V2, Mask, 5, 1, 7, 3))
+    return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4i64, V2, V1);
 
   // Try to simplify this by merging 128-bit lanes to enable a lane-based
   // shuffle. However, if we have AVX2 and either inputs are already in place,
@@ -10899,6 +10914,10 @@ static SDValue lowerV8F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
       return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v8f32, V1, V2);
     if (isShuffleEquivalent(V1, V2, Mask, 2, 10, 3, 11, 6, 14, 7, 15))
       return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v8f32, V1, V2);
+    if (isShuffleEquivalent(V1, V2, Mask, 8, 0, 9, 1, 12, 4, 13, 5))
+      return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v8f32, V2, V1);
+    if (isShuffleEquivalent(V1, V2, Mask, 10, 2, 11, 3, 14, 6, 15, 7))
+      return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v8f32, V2, V1);
 
     // Otherwise, fall back to a SHUFPS sequence. Here it is important that we
     // have already handled any direct blends. We also need to squash the
@@ -10995,6 +11014,10 @@ static SDValue lowerV8I32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
       return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v8i32, V1, V2);
     if (isShuffleEquivalent(V1, V2, Mask, 2, 10, 3, 11, 6, 14, 7, 15))
       return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v8i32, V1, V2);
+    if (isShuffleEquivalent(V1, V2, Mask, 8, 0, 9, 1, 12, 4, 13, 5))
+      return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v8i32, V2, V1);
+    if (isShuffleEquivalent(V1, V2, Mask, 10, 2, 11, 3, 14, 6, 15, 7))
+      return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v8i32, V2, V1);
   }
 
   // Try to use bit shift instructions.
@@ -17572,22 +17595,26 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, const X86Subtarget *Subtarget
                                   Mask, Src0, Subtarget, DAG);
     }
     case INTR_TYPE_2OP_MASK: {
-      SDValue Mask = Op.getOperand(4);
+      SDValue Src1 = Op.getOperand(1);
+      SDValue Src2 = Op.getOperand(2);
       SDValue PassThru = Op.getOperand(3);
+      SDValue Mask = Op.getOperand(4);
+      // We specify 2 possible opcodes for intrinsics with rounding modes.
+      // First, we check if the intrinsic may have non-default rounding mode,
+      // (IntrData->Opc1 != 0), then we check the rounding mode operand.
       unsigned IntrWithRoundingModeOpcode = IntrData->Opc1;
       if (IntrWithRoundingModeOpcode != 0) {
-        unsigned Round = cast<ConstantSDNode>(Op.getOperand(5))->getZExtValue();
+        SDValue Rnd = Op.getOperand(5);
+        unsigned Round = cast<ConstantSDNode>(Rnd)->getZExtValue();
         if (Round != X86::STATIC_ROUNDING::CUR_DIRECTION) {
           return getVectorMaskingNode(DAG.getNode(IntrWithRoundingModeOpcode,
                                       dl, Op.getValueType(),
-                                      Op.getOperand(1), Op.getOperand(2),
-                                      Op.getOperand(3), Op.getOperand(5)),
+                                      Src1, Src2, Rnd),
                                       Mask, PassThru, Subtarget, DAG);
         }
       }
       return getVectorMaskingNode(DAG.getNode(IntrData->Opc0, dl, VT,
-                                              Op.getOperand(1),
-                                              Op.getOperand(2)),
+                                              Src1,Src2),
                                   Mask, PassThru, Subtarget, DAG);
     }
     case FMA_OP_MASK: {
@@ -17595,6 +17622,9 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, const X86Subtarget *Subtarget
       SDValue Src2 = Op.getOperand(2);
       SDValue Src3 = Op.getOperand(3);
       SDValue Mask = Op.getOperand(4);
+      // We specify 2 possible opcodes for intrinsics with rounding modes.
+      // First, we check if the intrinsic may have non-default rounding mode,
+      // (IntrData->Opc1 != 0), then we check the rounding mode operand.
       unsigned IntrWithRoundingModeOpcode = IntrData->Opc1;
       if (IntrWithRoundingModeOpcode != 0) {
         SDValue Rnd = Op.getOperand(5);
@@ -20562,6 +20592,10 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::ADDSUB:             return "X86ISD::ADDSUB";
   case X86ISD::RCP28:              return "X86ISD::RCP28";
   case X86ISD::RSQRT28:            return "X86ISD::RSQRT28";
+  case X86ISD::FADD_RND:           return "X86ISD::FADD_RND";
+  case X86ISD::FSUB_RND:           return "X86ISD::FSUB_RND";
+  case X86ISD::FMUL_RND:           return "X86ISD::FMUL_RND";
+  case X86ISD::FDIV_RND:           return "X86ISD::FDIV_RND";
   }
 }
 

@@ -1402,7 +1402,7 @@ defm V_INTERP_MOV_F32 : VINTRP_m <
 // VOP2 Instructions
 //===----------------------------------------------------------------------===//
 
-defm V_CNDMASK_B32_e64 : VOP3_m_nosrcmod <vop3<0x100>, (outs VGPR_32:$dst),
+defm V_CNDMASK_B32_e64 : VOP3_m_nomods <vop3<0x100>, (outs VGPR_32:$dst),
   (ins VSrc_32:$src0, VSrc_32:$src1, SSrc_64:$src2),
   "v_cndmask_b32_e64 $dst, $src0, $src1, $src2",
   [(set i32:$dst, (select i1:$src2, i32:$src1, i32:$src0))],
@@ -2948,9 +2948,9 @@ multiclass MUBUF_Load_Dword <ValueType vt, MUBUF offset, MUBUF offen, MUBUF idxe
 
   def : Pat <
     (vt (int_SI_buffer_load_dword v4i32:$rsrc, v2i32:$vaddr, i32:$soffset,
-                                  imm, 1, 1, imm:$glc, imm:$slc,
+                                  imm:$offset, 1, 1, imm:$glc, imm:$slc,
                                   imm:$tfe)),
-    (bothen $rsrc, $vaddr, $soffset, (as_i1imm $glc), (as_i1imm $slc),
+    (bothen $rsrc, $vaddr, $soffset, (as_i16imm $offset), (as_i1imm $glc), (as_i1imm $slc),
             (as_i1imm $tfe))
   >;
 }
