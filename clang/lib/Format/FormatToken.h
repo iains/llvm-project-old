@@ -48,6 +48,7 @@ enum TokenType {
   TT_InheritanceColon,
   TT_InlineASMColon,
   TT_JavaAnnotation,
+  TT_JsTypeColon,
   TT_LambdaArrow,
   TT_LambdaLSquare,
   TT_LeadingJavaAnnotation,
@@ -526,6 +527,7 @@ struct AdditionalKeywords {
 
     kw_finally = &IdentTable.get("finally");
     kw_function = &IdentTable.get("function");
+    kw_import = &IdentTable.get("import");
     kw_var = &IdentTable.get("var");
 
     kw_abstract = &IdentTable.get("abstract");
@@ -558,6 +560,7 @@ struct AdditionalKeywords {
   // JavaScript keywords.
   IdentifierInfo *kw_finally;
   IdentifierInfo *kw_function;
+  IdentifierInfo *kw_import;
   IdentifierInfo *kw_var;
 
   // Java keywords.

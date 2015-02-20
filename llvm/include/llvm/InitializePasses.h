@@ -239,6 +239,7 @@ void initializeRegionOnlyPrinterPass(PassRegistry&);
 void initializeRegionOnlyViewerPass(PassRegistry&);
 void initializeRegionPrinterPass(PassRegistry&);
 void initializeRegionViewerPass(PassRegistry&);
+void initializeRewriteStatepointsForGCPass(PassRegistry&);
 void initializeSCCPPass(PassRegistry&);
 void initializeSROAPass(PassRegistry&);
 void initializeSROA_DTPass(PassRegistry&);
@@ -293,6 +294,7 @@ void initializeRewriteSymbolsPass(PassRegistry&);
 void initializeWinEHPreparePass(PassRegistry&);
 void initializePlaceBackedgeSafepointsImplPass(PassRegistry&);
 void initializePlaceSafepointsPass(PassRegistry&);
+void initializeDwarfEHPreparePass(PassRegistry&);
 }
 
 #endif

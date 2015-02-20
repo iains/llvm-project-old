@@ -106,20 +106,6 @@ using namespace llvm::PatternMatch;
 STATISTIC(LoopsVectorized, "Number of loops vectorized");
 STATISTIC(LoopsAnalyzed, "Number of loops analyzed for vectorization");
 
-static cl::opt<unsigned, true>
-VectorizationFactor("force-vector-width", cl::Hidden,
-                    cl::desc("Sets the SIMD width. Zero is autoselect."),
-                    cl::location(VectorizerParams::VectorizationFactor));
-unsigned VectorizerParams::VectorizationFactor = 0;
-
-static cl::opt<unsigned, true>
-VectorizationInterleave("force-vector-interleave", cl::Hidden,
-                        cl::desc("Sets the vectorization interleave count. "
-                                 "Zero is autoselect."),
-                        cl::location(
-                            VectorizerParams::VectorizationInterleave));
-unsigned VectorizerParams::VectorizationInterleave = 0;
-
 static cl::opt<bool>
 EnableIfConversion("enable-if-conversion", cl::init(true), cl::Hidden,
                    cl::desc("Enable if-conversion during vectorization."));
@@ -149,13 +135,6 @@ static cl::opt<bool> EnableMemAccessVersioning(
 
 /// We don't unroll loops with a known constant trip count below this number.
 static const unsigned TinyTripCountUnrollThreshold = 128;
-
-/// When performing memory disambiguation checks at runtime do not make more
-/// than this number of comparisons.
-const unsigned VectorizerParams::RuntimeMemoryCheckThreshold = 8;
-
-/// Maximum simd width.
-const unsigned VectorizerParams::MaxVectorWidth = 64;
 
 static cl::opt<unsigned> ForceTargetNumScalarRegs(
     "force-target-num-scalar-regs", cl::init(0), cl::Hidden,
@@ -1074,7 +1053,8 @@ public:
   };
 
   LoopVectorizeHints(const Loop *L, bool DisableInterleaving)
-      : Width("vectorize.width", VectorizationFactor, HK_WIDTH),
+      : Width("vectorize.width", VectorizerParams::VectorizationFactor,
+              HK_WIDTH),
         Interleave("interleave.count", DisableInterleaving, HK_UNROLL),
         Force("vectorize.enable", FK_Undefined, HK_FORCE),
         TheLoop(L) {
@@ -1082,8 +1062,8 @@ public:
     getHintsFromMetadata();
 
     // force-vector-interleave overrides DisableInterleaving.
-    if (VectorizationInterleave.getNumOccurrences() > 0)
-      Interleave.Value = VectorizationInterleave;
+    if (VectorizerParams::isInterleaveForced())
+      Interleave.Value = VectorizerParams::VectorizationInterleave;
 
     DEBUG(if (DisableInterleaving && Interleave.Value == 1) dbgs()
           << "LV: Interleaving disabled by the pass manager\n");

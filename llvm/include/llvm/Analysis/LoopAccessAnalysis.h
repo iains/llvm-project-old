@@ -78,6 +78,8 @@ struct VectorizerParams {
   static unsigned VectorizationFactor;
   /// \brief Interleave factor as overridden by the user.
   static unsigned VectorizationInterleave;
+  /// \brief True if force-vector-interleave was specified by the user.
+  static bool isInterleaveForced();
 
   /// \\brief When performing memory disambiguation checks at runtime do not
   /// make more than this number of comparisons.

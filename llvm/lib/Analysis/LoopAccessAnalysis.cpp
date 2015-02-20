@@ -25,6 +25,31 @@ using namespace llvm;
 
 #define DEBUG_TYPE "loop-accesses"
 
+static cl::opt<unsigned, true>
+VectorizationFactor("force-vector-width", cl::Hidden,
+                    cl::desc("Sets the SIMD width. Zero is autoselect."),
+                    cl::location(VectorizerParams::VectorizationFactor));
+unsigned VectorizerParams::VectorizationFactor = 0;
+
+static cl::opt<unsigned, true>
+VectorizationInterleave("force-vector-interleave", cl::Hidden,
+                        cl::desc("Sets the vectorization interleave count. "
+                                 "Zero is autoselect."),
+                        cl::location(
+                            VectorizerParams::VectorizationInterleave));
+unsigned VectorizerParams::VectorizationInterleave = 0;
+
+/// When performing memory disambiguation checks at runtime do not make more
+/// than this number of comparisons.
+const unsigned VectorizerParams::RuntimeMemoryCheckThreshold = 8;
+
+/// Maximum SIMD width.
+const unsigned VectorizerParams::MaxVectorWidth = 64;
+
+bool VectorizerParams::isInterleaveForced() {
+  return ::VectorizationInterleave.getNumOccurrences() > 0;
+}
+
 void LoopAccessReport::emitAnalysis(const LoopAccessReport &Message,
                                     const Function *TheFunction,
                                     const Loop *TheLoop,
@@ -1169,7 +1194,7 @@ bool LoopAccessInfo::blockNeedsPredication(BasicBlock *BB, Loop *TheLoop,
 }
 
 void LoopAccessInfo::emitAnalysis(LoopAccessReport &Message) {
-  assert(!Report && "Multiple report generated");
+  assert(!Report && "Multiple reports generated");
   Report = Message;
 }
 

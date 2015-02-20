@@ -46,7 +46,6 @@ class MCCFIInstruction;
 class MCContext;
 class MCExpr;
 class MCInst;
-class MCInstrInfo;
 class MCSection;
 class MCStreamer;
 class MCSubtargetInfo;
@@ -69,7 +68,6 @@ public:
   ///
   const MCAsmInfo *MAI;
 
-  const MCInstrInfo *MII;
   /// This is the context for the output file that we are streaming. This owns
   /// all of the global MC-related objects for the generated translation unit.
   MCContext &OutContext;
@@ -475,7 +473,7 @@ public:
 
   /// Let the target do anything it needs to do before emitting inlineasm.
   /// \p StartInfo - the subtarget info before parsing inline asm
-  virtual void emitInlineAsmStart(const MCSubtargetInfo &StartInfo) const;
+  virtual void emitInlineAsmStart() const;
 
   /// Let the target do anything it needs to do after emitting inlineasm.
   /// This callback can be used restore the original mode in case the

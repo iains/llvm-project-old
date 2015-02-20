@@ -117,9 +117,11 @@ MICmnCommands::RegisterAll(void)
     bOk &= Register<CMICmdCmdListThreadGroups>();
     bOk &= Register<CMICmdCmdSource>();
     bOk &= Register<CMICmdCmdStackInfoDepth>();
+    bOk &= Register<CMICmdCmdStackInfoFrame>();
     bOk &= Register<CMICmdCmdStackListFrames>();
     bOk &= Register<CMICmdCmdStackListArguments>();
     bOk &= Register<CMICmdCmdStackListLocals>();
+    bOk &= Register<CMICmdCmdStackSelectFrame>();
     bOk &= Register<CMICmdCmdSupportListFeatures>();
     bOk &= Register<CMICmdCmdTargetSelect>();
     bOk &= Register<CMICmdCmdThreadInfo>();

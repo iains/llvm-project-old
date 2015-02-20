@@ -2,12 +2,21 @@
 Modularize Usage
 ================
 
-``modularize [<modularize-options>] <include-files-list>[,<include-files-list>]*
+``modularize [<modularize-options>] [<module-map>|<include-files-list>]*
 [<front-end-options>...]``
 
 ``<modularize-options>`` is a place-holder for options
 specific to modularize, which are described below in
 `Modularize Command Line Options`.
+
+``<module-map>`` specifies the path of a file name for an
+existing module map.  The module map must be well-formed in
+terms of syntax.  Modularize will extract the header file names
+from the map.  Only normal headers are checked, assuming headers
+marked "private", "textual", or "exclude" are not to be checked
+as a top-level include, assuming they either are included by
+other headers which are checked, or they are not suitable for
+modules.
 
 ``<include-files-list>`` specifies the path of a file name for a
 file containing the newline-separated list of headers to check
@@ -31,6 +40,10 @@ front-end arguments, which must follow the <include-files-list>.
 Note that by default, the underlying Clang front end assumes .h files
 contain C source, so you might need to specify the ``-x c++`` Clang option
 to tell Clang that the header contains C++ definitions.
+
+Note also that because modularize does not use the clang driver,
+you will likely need to pass in additional compiler front-end
+arguments to match those passed in by default by the driver.
 
 Modularize Command Line Options
 ===============================
@@ -57,3 +70,11 @@ Modularize Command Line Options
   check to only those headers explicitly listed in the header list.
   This is a work-around for avoiding error messages for private includes that
   purposefully get included inside blocks.
+
+.. option:: -no-coverage-check
+
+  Don't do the coverage check for a module map.
+
+.. option:: -coverage-check-only
+
+  Only do the coverage check for a module map.
