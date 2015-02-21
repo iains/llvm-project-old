@@ -182,11 +182,11 @@ static LibIgnore *libignore() {
 }
 
 void InitializeLibIgnore() {
-  const SuppressionContext &supp = *SuppressionContext::Get();
+  const SuppressionContext &supp = *Suppressions();
   const uptr n = supp.SuppressionCount();
   for (uptr i = 0; i < n; i++) {
     const Suppression *s = supp.SuppressionAt(i);
-    if (s->type == SuppressionLib)
+    if (0 == internal_strcmp(s->type, kSuppressionLib))
       libignore()->AddIgnoredLibrary(s->templ);
   }
   libignore()->OnLibraryLoaded(0);
@@ -1926,9 +1926,9 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // signal; and it looks too fragile to intercept all ways to reraise a signal.
   if (flags()->report_bugs && !sync && sig != SIGTERM && errno != 99) {
     VarSizeStackTrace stack;
-    // Add 1 to pc because return address is expected,
-    // OutputReport() will undo this.
-    ObtainCurrentStack(thr, pc + 1, &stack);
+    // StackTrace::GetNestInstructionPc(pc) is used because return address is
+    // expected, OutputReport() will undo this.
+    ObtainCurrentStack(thr, StackTrace::GetNextInstructionPc(pc), &stack);
     ThreadRegistryLock l(ctx->thread_registry);
     ScopedReport rep(ReportTypeErrnoInSignal);
     if (!IsFiredSuppression(ctx, rep, stack)) {

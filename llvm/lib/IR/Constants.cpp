@@ -2720,13 +2720,13 @@ APFloat ConstantDataSequential::getElementAsAPFloat(unsigned Elt) const {
   default:
     llvm_unreachable("Accessor can only be used when element is float/double!");
   case Type::FloatTyID: {
-      const float *FloatPrt = reinterpret_cast<const float *>(EltPtr);
-      return APFloat(*const_cast<float *>(FloatPrt));
-    }
+    auto EltVal = *reinterpret_cast<const uint32_t *>(EltPtr);
+    return APFloat(APFloat::IEEEsingle, APInt(32, EltVal));
+  }
   case Type::DoubleTyID: {
-      const double *DoublePtr = reinterpret_cast<const double *>(EltPtr);
-      return APFloat(*const_cast<double *>(DoublePtr));
-    }
+    auto EltVal = *reinterpret_cast<const uint64_t *>(EltPtr);
+    return APFloat(APFloat::IEEEdouble, APInt(64, EltVal));
+  }
   }
 }
 
