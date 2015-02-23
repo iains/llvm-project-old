@@ -19,6 +19,8 @@
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Mangler.h"
+#include "llvm/IR/Module.h"
+#include "llvm/ADT/StringMap.h"
 #include <list>
 
 namespace llvm {
