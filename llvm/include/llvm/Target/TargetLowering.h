@@ -959,12 +959,6 @@ public:
     return false;
   }
 
-  /// Returns the maximal possible offset which can be used for loads / stores
-  /// from the global.
-  virtual unsigned getMaximalGlobalOffset() const {
-    return 0;
-  }
-
   /// Returns true if a cast between SrcAS and DestAS is a noop.
   virtual bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
     return false;
@@ -1455,6 +1449,8 @@ public:
   virtual bool isTruncateFree(EVT /*VT1*/, EVT /*VT2*/) const {
     return false;
   }
+
+  virtual bool isProfitableToHoist(Instruction *I) const { return true; }
 
   /// Return true if any actual instruction that defines a value of type Ty1
   /// implicitly zero-extends the value to Ty2 in the result register.

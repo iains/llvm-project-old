@@ -665,6 +665,9 @@ public:
     return llvm::ConstantInt::get(CGM.Int32Ty, Sig);
   }
 
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return true;
+  }
 };
 
 }
@@ -1598,6 +1601,10 @@ public:
 
   unsigned getOpenMPSimdDefaultAlignment(QualType) const override {
     return HasAVX ? 32 : 16;
+  }
+
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return true;
   }
 };
 
@@ -3034,7 +3041,7 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
       return ABIArgInfo::getDirect();
   }
 
-  if (RT || Ty->isMemberPointerType()) {
+  if (RT || Ty->isAnyComplexType() || Ty->isMemberPointerType()) {
     // MS x64 ABI requirement: "Any argument that doesn't fit in 8 bytes, or is
     // not 1, 2, 4, or 8 bytes, must be passed by reference."
     if (Width > 64 || !llvm::isPowerOf2_64(Width))
@@ -3115,6 +3122,10 @@ public:
 
   unsigned getOpenMPSimdDefaultAlignment(QualType) const override {
     return 16; // Natural alignment for Altivec vectors.
+  }
+
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return true;
   }
 };
 
@@ -3328,6 +3339,10 @@ public:
   unsigned getOpenMPSimdDefaultAlignment(QualType) const override {
     return 16; // Natural alignment for Altivec and VSX vectors.
   }
+
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return true;
+  }
 };
 
 class PPC64TargetCodeGenInfo : public DefaultTargetCodeGenInfo {
@@ -3344,6 +3359,10 @@ public:
 
   unsigned getOpenMPSimdDefaultAlignment(QualType) const override {
     return 16; // Natural alignment for Altivec vectors.
+  }
+
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return true;
   }
 };
 
@@ -4461,6 +4480,12 @@ public:
                       llvm::AttributeSet::get(CGM.getLLVMContext(),
                                               llvm::AttributeSet::FunctionIndex,
                                               B));
+  }
+
+  bool hasSjLjLowering(CodeGen::CodeGenFunction &CGF) const override {
+    return false;
+    // FIXME: backend implementation too restricted, even on Darwin.
+    // return CGF.getTarget().getTriple().isOSDarwin();
   }
 };
 
