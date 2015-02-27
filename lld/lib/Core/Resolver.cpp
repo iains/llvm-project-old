@@ -31,12 +31,9 @@ bool Resolver::handleFile(const File &file) {
   bool undefAdded = false;
   for (const DefinedAtom *atom : file.defined())
     doDefinedAtom(*atom);
-  for (const UndefinedAtom *atom : file.undefined()) {
-    if (doUndefinedAtom(*atom)) {
+  for (const UndefinedAtom *atom : file.undefined())
+    if (doUndefinedAtom(*atom))
       undefAdded = true;
-      maybePreloadArchiveMember(atom->name());
-    }
-  }
   for (const SharedLibraryAtom *atom : file.sharedLibrary())
     doSharedLibraryAtom(*atom);
   for (const AbsoluteAtom *atom : file.absolute())
@@ -232,17 +229,6 @@ void Resolver::addAtoms(const std::vector<const DefinedAtom *> &newAtoms) {
     doDefinedAtom(*newAtom);
 }
 
-// Instantiate an archive file member if there's a file containing a
-// defined symbol for a given symbol name. Instantiation is done in a
-// different worker thread and has no visible side effect.
-void Resolver::maybePreloadArchiveMember(StringRef sym) {
-  auto it = _archiveMap.find(sym);
-  if (it == _archiveMap.end())
-    return;
-  ArchiveLibraryFile *archive = it->second;
-  archive->preload(_context.getTaskGroup(), sym);
-}
-
 // Returns true if at least one of N previous files has created an
 // undefined symbol.
 bool Resolver::undefinesAdded(int begin, int end) {
@@ -383,11 +369,16 @@ void Resolver::deadStripOptimize() {
 
   // Some type of references prevent referring atoms to be dead-striped.
   // Make a reverse map of such references before traversing the graph.
-  for (const Atom *atom : _atoms)
+  // While traversing the list of atoms, mark AbsoluteAtoms as live
+  // in order to avoid reclaim.
+  for (const Atom *atom : _atoms) {
     if (const DefinedAtom *defAtom = dyn_cast<DefinedAtom>(atom))
       for (const Reference *ref : *defAtom)
         if (isBackref(ref))
           _reverseRef[ref->target()].insert(atom);
+    if (const AbsoluteAtom *absAtom = dyn_cast<AbsoluteAtom>(atom))
+      markLive(absAtom);
+  }
 
   // By default, shared libraries are built with all globals as dead strip roots
   if (_context.globalsAreDeadStripRoots())

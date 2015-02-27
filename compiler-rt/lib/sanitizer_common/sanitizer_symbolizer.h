@@ -137,6 +137,53 @@ class Symbolizer {
   };
 };
 
+class ExternalSymbolizerInterface {
+ public:
+  // Can't declare pure virtual functions in sanitizer runtimes:
+  // __cxa_pure_virtual might be unavailable.
+  virtual const char *SendCommand(bool is_data, const char *module_name,
+                                  uptr module_offset) {
+    UNIMPLEMENTED();
+  }
+};
+
+// SymbolizerProcess encapsulates communication between the tool and
+// external symbolizer program, running in a different subprocess.
+// SymbolizerProcess may not be used from two threads simultaneously.
+class SymbolizerProcess {
+ public:
+  explicit SymbolizerProcess(const char *path);
+  const char *SendCommand(const char *command);
+
+ private:
+  bool Restart();
+  const char *SendCommandImpl(const char *command);
+  bool ReadFromSymbolizer(char *buffer, uptr max_length);
+  bool WriteToSymbolizer(const char *buffer, uptr length);
+  bool StartSymbolizerSubprocess();
+
+  virtual bool ReachedEndOfOutput(const char *buffer, uptr length) const {
+    UNIMPLEMENTED();
+  }
+
+  virtual void ExecuteWithDefaultArgs(const char *path_to_binary) const {
+    UNIMPLEMENTED();
+  }
+
+  const char *path_;
+  int input_fd_;
+  int output_fd_;
+
+  static const uptr kBufferSize = 16 * 1024;
+  char buffer_[kBufferSize];
+
+  static const uptr kMaxTimesRestarted = 5;
+  static const int kSymbolizerStartupTimeMillis = 10;
+  uptr times_restarted_;
+  bool failed_to_start_;
+  bool reported_invalid_path_;
+};
+
 }  // namespace __sanitizer
 
 #endif  // SANITIZER_SYMBOLIZER_H

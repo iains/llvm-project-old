@@ -14,15 +14,15 @@
 
 namespace llvm {
 
+class LinePrinter;
+
 class TypeDumper : public PDBSymDumper {
 public:
-  TypeDumper(bool Inline, bool ClassDefs);
+  TypeDumper(LinePrinter &P, bool Inline, bool ClassDefs);
 
   void start(const PDBSymbolExe &Exe, raw_ostream &OS, int Indent);
 
   void dump(const PDBSymbolTypeEnum &Symbol, raw_ostream &OS,
-            int Indent) override;
-  void dump(const PDBSymbolTypeFunctionSig &Symbol, raw_ostream &OS,
             int Indent) override;
   void dump(const PDBSymbolTypeTypedef &Symbol, raw_ostream &OS,
             int Indent) override;
@@ -30,6 +30,7 @@ public:
             int Indent) override;
 
 private:
+  LinePrinter &Printer;
   bool InlineDump;
   bool FullClassDefs;
 };

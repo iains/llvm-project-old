@@ -59,8 +59,8 @@ When generating LLVM IR for your functions, you will need to:
 You will need to identify roots (i.e. references to heap objects your collector 
 needs to know about) in your generated IR, so that LLVM can encode them into 
 your final stack maps.  Depending on the collector strategy chosen, this is 
-accomplished by using either the ''@llvm.gcroot'' intrinsics or an 
-''gc.statepoint'' relocation sequence. 
+accomplished by using either the ``@llvm.gcroot`` intrinsics or an 
+``gc.statepoint`` relocation sequence. 
 
 Don't forget to create a root for each intermediate value that is generated when
 evaluating an expression.  In ``h(f(), g())``, the result of ``f()`` could 
@@ -222,8 +222,24 @@ programs that use different garbage collection algorithms (or none at all).
 
 .. _gcroot:
 
-Identifying GC roots on the stack: ``llvm.gcroot``
---------------------------------------------------
+Identifying GC roots on the stack
+----------------------------------
+
+LLVM currently supports two different mechanisms for describing references in
+compiled code at safepoints.  ``llvm.gcroot`` is the older mechanism; 
+``gc.statepoint`` has been added more recently.  At the moment, you can choose 
+either implementation (on a per :ref:`GC strategy <plugin>` basis).  Longer 
+term, we will probably either migrate away from ``llvm.gcroot`` entirely, or 
+substantially merge their implementations. Note that most new development 
+work is focused on ``gc.statepoint``.  
+
+Using ``gc.statepoint``
+^^^^^^^^^^^^^^^^^^^^^^^^
+:doc:`This page <Statepoints>` contains detailed documentation for 
+``gc.statepoint``. 
+
+Using ``llvm.gcwrite``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: llvm
 
@@ -231,23 +247,26 @@ Identifying GC roots on the stack: ``llvm.gcroot``
 
 The ``llvm.gcroot`` intrinsic is used to inform LLVM that a stack variable
 references an object on the heap and is to be tracked for garbage collection.
-The exact impact on generated code is specified by a :ref:`compiler plugin
-<plugin>`.  All calls to ``llvm.gcroot`` **must** reside inside the first basic
-block.
-
-A compiler which uses mem2reg to raise imperative code using ``alloca`` into SSA
-form need only add a call to ``@llvm.gcroot`` for those variables which a
-pointers into the GC heap.
-
-It is also important to mark intermediate values with ``llvm.gcroot``.  For
-example, consider ``h(f(), g())``.  Beware leaking the result of ``f()`` in the
-case that ``g()`` triggers a collection.  Note, that stack variables must be
-initialized and marked with ``llvm.gcroot`` in function's prologue.
+The exact impact on generated code is specified by the Function's selected 
+:ref:`GC strategy <plugin>`.  All calls to ``llvm.gcroot`` **must** reside 
+inside the first basic block.
 
 The first argument **must** be a value referring to an alloca instruction or a
 bitcast of an alloca.  The second contains a pointer to metadata that should be
 associated with the pointer, and **must** be a constant or global value
 address.  If your target collector uses tags, use a null pointer for metadata.
+
+A compiler which performs manual SSA construction **must** ensure that SSA 
+values representing GC references are stored in to the alloca passed to the
+respective ``gcroot`` before every call site and reloaded after every call.  
+A compiler which uses mem2reg to raise imperative code using ``alloca`` into 
+SSA form need only add a call to ``@llvm.gcroot`` for those variables which 
+are pointers into the GC heap.  
+
+It is also important to mark intermediate values with ``llvm.gcroot``.  For
+example, consider ``h(f(), g())``.  Beware leaking the result of ``f()`` in the
+case that ``g()`` triggers a collection.  Note, that stack variables must be
+initialized and marked with ``llvm.gcroot`` in function's prologue.
 
 The ``%metadata`` argument can be used to avoid requiring heap objects to have
 'isa' pointers or tag bits. [Appel89_, Goldberg91_, Tolmach94_] If specified,
@@ -367,8 +386,10 @@ greater performance impact since pointer reads are more frequent than writes.
 
 .. _plugin:
 
-Built In Collectors
-====================
+.. _builtin-gc-strategies:
+
+Built In GC Strategies
+======================
 
 LLVM includes built in support for several varieties of garbage collectors.  
 
@@ -463,12 +484,12 @@ data structure, but there are only 20 lines of meaningful code.)
 The 'Erlang' and 'Ocaml' GCs
 -----------------------------
 
-LLVM ships with two example collectors which leverage the ''gcroot'' 
+LLVM ships with two example collectors which leverage the ``gcroot`` 
 mechanisms.  To our knowledge, these are not actually used by any language 
 runtime, but they do provide a reasonable starting point for someone interested 
-in writing an ''gcroot' compatible GC plugin.  In particular, these are the 
+in writing an ``gcroot`` compatible GC plugin.  In particular, these are the 
 only in tree examples of how to produce a custom binary stack map format using 
-a ''gcroot'' strategy.
+a ``gcroot`` strategy.
 
 As there names imply, the binary format produced is intended to model that 
 used by the Erlang and OCaml compilers respectively.  
@@ -482,7 +503,19 @@ The Statepoint Example GC
   F.setGC("statepoint-example");
 
 This GC provides an example of how one might use the infrastructure provided 
-by ''gc.statepoint''.  
+by ``gc.statepoint``. This example GC is compatible with the 
+:ref:`PlaceSafepoints` and :ref:`RewriteStatepointsForGC` utility passes 
+which simplify ``gc.statepoint`` sequence insertion. If you need to build a 
+custom GC strategy around the ``gc.statepoints`` mechanisms, it is recommended
+that you use this one as a starting point.
+
+This GC strategy does not support read or write barriers.  As a result, these 
+intrinsics are lowered to normal loads and stores.
+
+The stack map format generated by this GC strategy can be found in the 
+:ref:`stackmap-section` using a format documented :ref:`here 
+<statepoint-stackmap-format>`. This format is intended to be the standard 
+format supported by LLVM going forward.
 
 
 Custom GC Strategies

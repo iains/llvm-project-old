@@ -112,7 +112,7 @@ public:
     _undefinedAtoms._atoms.push_back(new (_alloc) COFFUndefinedAtom(*this, sym));
   }
 
-  AliasAtom *createAlias(StringRef name, const DefinedAtom *target);
+  AliasAtom *createAlias(StringRef name, const DefinedAtom *target, int cnt);
   void createAlternateNameAtoms();
   std::error_code parseDirectiveSection(
     StringRef directives, std::set<StringRef> *undefinedSymbols);
@@ -860,24 +860,24 @@ std::error_code FileCOFF::getSectionContents(StringRef sectionName,
   return std::error_code();
 }
 
-AliasAtom *FileCOFF::createAlias(StringRef name,
-                                 const DefinedAtom *target) {
+AliasAtom *
+FileCOFF::createAlias(StringRef name, const DefinedAtom *target, int cnt) {
   AliasAtom *alias = new (_alloc) AliasAtom(*this, name);
   alias->addReference(Reference::KindNamespace::all, Reference::KindArch::all,
                       Reference::kindLayoutAfter, 0, target, 0);
   alias->setMerge(DefinedAtom::mergeAsWeak);
   if (target->contentType() == DefinedAtom::typeCode)
     alias->setDeadStrip(DefinedAtom::deadStripNever);
-  alias->setOrdinal(target->ordinal() - 1);
+  alias->setOrdinal(target->ordinal() - cnt);
   return alias;
 }
 
 void FileCOFF::createAlternateNameAtoms() {
   std::vector<AliasAtom *> aliases;
   for (const DefinedAtom *atom : defined()) {
-    auto it = _ctx.alternateNames().find(atom->name());
-    if (it != _ctx.alternateNames().end())
-      aliases.push_back(createAlias(it->second, atom));
+    int cnt = 1;
+    for (StringRef alias : _ctx.getAlternateNames(atom->name()))
+      aliases.push_back(createAlias(alias, atom, cnt++));
   }
   for (AliasAtom *alias : aliases)
     _definedAtoms._atoms.push_back(alias);
@@ -913,9 +913,9 @@ FileCOFF::parseDirectiveSection(StringRef directives,
   stream.flush();
   // Print error message if error.
   if (parseFailed) {
-    auto msg = Twine("Failed to parse '") + directives + "'\n"
-    + "Reason: " + errorMessage;
-    return make_dynamic_error_code(msg);
+    return make_dynamic_error_code(
+      Twine("Failed to parse '") + directives + "'\n"
+      + "Reason: " + errorMessage);
   }
   if (!errorMessage.empty()) {
     llvm::errs() << "lld warning: " << errorMessage << "\n";
@@ -950,7 +950,7 @@ std::error_code FileCOFF::addRelocationReferenceToAtoms() {
   for (const auto &sec : _obj->sections()) {
     const coff_section *section = _obj->getCOFFSection(sec);
 
-    // Skip there's no atom for the section. Currently we do not create any
+    // Skip if there's no atom for the section. Currently we do not create any
     // atoms for some sections, such as "debug$S", and such sections need to
     // be skipped here too.
     if (_sectionAtoms.find(section) == _sectionAtoms.end())
@@ -1056,10 +1056,13 @@ StringRef FileCOFF::ArrayRefToString(ArrayRef<uint8_t> array) {
   if (array.empty())
     return "";
 
+  // This is equivalent to strnlen, but we don't use the function because
+  // it only exists in recent POSIX standards.
   size_t len = 0;
   size_t e = array.size();
   while (len < e && array[len] != '\0')
     ++len;
+
   std::string *contents =
       new (_alloc) std::string(reinterpret_cast<const char *>(&array[0]), len);
   return StringRef(*contents).trim();

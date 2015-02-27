@@ -11,29 +11,7 @@
 #define LLD_READER_WRITER_ELF_FILE_H
 
 #include "Atoms.h"
-#include "lld/Core/File.h"
-#include "lld/Core/Reference.h"
-#include "lld/ReaderWriter/ELFLinkingContext.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/Object/ELF.h"
-#include "llvm/Object/ObjectFile.h"
-#include "llvm/Support/Allocator.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/ELF.h"
-#include "llvm/Support/Endian.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/ErrorOr.h"
-#include "llvm/Support/MathExtras.h"
-#include "llvm/Support/Memory.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
 #include <map>
-#include <system_error>
 #include <unordered_map>
 
 namespace lld {
@@ -384,7 +362,7 @@ protected:
   /// sections. They may not reference local symbols for addresses in
   /// the group's sections, including section symbols.
   /// ABI Doc : https://mentorembedded.github.io/cxx-abi/abi/prop-72-comdat.html
-  /// Does the atom need to be redirected using a separate undefined atom ?
+  /// Does the atom need to be redirected using a separate undefined atom?
   bool redirectReferenceUsingUndefAtom(const Elf_Sym *sourceSymbol,
                                        const Elf_Sym *targetSymbol) const;
 
@@ -441,7 +419,7 @@ protected:
   /// \brief the cached options relevant while reading the ELF File
   bool _doStringsMerge;
 
-  /// \brief Is --wrap on ?
+  /// \brief Is --wrap on?
   bool _useWrap;
 
   /// \brief The LinkingContext.
@@ -1089,18 +1067,17 @@ void ELFFile<ELFT>::updateReferenceForMergeStringAccess(ELFReference<ELFT> *ref,
 
 template <class ELFT> void ELFFile<ELFT>::updateReferences() {
   for (auto &ri : _references) {
-    if (ri->kindNamespace() == lld::Reference::KindNamespace::ELF) {
-      const Elf_Sym *symbol = _objFile->getSymbol(ri->targetSymbolIndex());
-      const Elf_Shdr *shdr = _objFile->getSection(symbol);
+    if (ri->kindNamespace() != lld::Reference::KindNamespace::ELF)
+      continue;
+    const Elf_Sym *symbol = _objFile->getSymbol(ri->targetSymbolIndex());
+    const Elf_Shdr *shdr = _objFile->getSection(symbol);
 
-      // If the atom is not in mergeable string section, the target atom is
-      // simply that atom.
-      if (!isMergeableStringSection(shdr)) {
-        ri->setTarget(findAtom(findSymbolForReference(ri), symbol));
-        continue;
-      }
+    // If the atom is not in mergeable string section, the target atom is
+    // simply that atom.
+    if (isMergeableStringSection(shdr))
       updateReferenceForMergeStringAccess(ri, symbol, shdr);
-    }
+    else
+      ri->setTarget(findAtom(findSymbolForReference(ri), symbol));
   }
 }
 
@@ -1168,7 +1145,7 @@ void ELFFile<ELFT>::createEdge(ELFDefinedAtom<ELFT> *from,
   from->addReference(reference);
 }
 
-/// Does the atom need to be redirected using a separate undefined atom ?
+/// Does the atom need to be redirected using a separate undefined atom?
 template <class ELFT>
 bool ELFFile<ELFT>::redirectReferenceUsingUndefAtom(
     const Elf_Sym *sourceSymbol, const Elf_Sym *targetSymbol) const {

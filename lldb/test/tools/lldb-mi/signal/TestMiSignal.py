@@ -2,6 +2,10 @@
 Test that the lldb-mi handles signals properly.
 """
 
+# adjust path for lldbmi_testcase.py
+import sys, os.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import lldbmi_testcase
 from lldbtest import *
 import unittest2
@@ -83,9 +87,7 @@ class MiSignalTestCase(lldbmi_testcase.MiTestCaseBase):
         """Test that 'lldb-mi --interpreter' notifies after it was stopped on entry (remote)."""
 
         # Prepare debugserver
-        import os, sys
-        lldb_gdbserver_folder = os.path.abspath(os.path.join(os.getcwd(), "../../lldb-gdbserver"))
-        sys.path.append(lldb_gdbserver_folder)
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lldb-gdbserver")))
         import lldbgdbserverutils
         debugserver_exe = lldbgdbserverutils.get_debugserver_exe()
         if not debugserver_exe:
@@ -157,9 +159,7 @@ class MiSignalTestCase(lldbmi_testcase.MiTestCaseBase):
         """Test that 'lldb-mi --interpreter' notifies after it was stopped when segfault occurred (remote)."""
 
         # Prepare debugserver
-        import os, sys
-        lldb_gdbserver_folder = os.path.abspath(os.path.join(os.getcwd(), "../../lldb-gdbserver"))
-        sys.path.append(lldb_gdbserver_folder)
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lldb-gdbserver")))
         import lldbgdbserverutils
         debugserver_exe = lldbgdbserverutils.get_debugserver_exe()
         if not debugserver_exe:

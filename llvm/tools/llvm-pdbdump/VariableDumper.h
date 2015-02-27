@@ -15,9 +15,11 @@
 
 namespace llvm {
 
+class LinePrinter;
+
 class VariableDumper : public PDBSymDumper {
 public:
-  VariableDumper();
+  VariableDumper(LinePrinter &P);
 
   void start(const PDBSymbolData &Var, raw_ostream &OS, int Indent);
 
@@ -37,6 +39,10 @@ public:
 private:
   void dumpSymbolTypeAndName(const PDBSymbol &Type, StringRef Name,
                              raw_ostream &OS);
+  bool tryDumpFunctionPointer(const PDBSymbol &Type, StringRef Name,
+                              raw_ostream &OS);
+
+  LinePrinter &Printer;
 };
 }
 

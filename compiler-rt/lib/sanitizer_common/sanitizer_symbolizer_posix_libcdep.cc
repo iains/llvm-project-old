@@ -94,219 +94,233 @@ static const char *ExtractUptr(const char *str, const char *delims,
   return ret;
 }
 
-class ExternalSymbolizerInterface {
- public:
-  // Can't declare pure virtual functions in sanitizer runtimes:
-  // __cxa_pure_virtual might be unavailable.
-  virtual char *SendCommand(bool is_data, const char *module_name,
-                            uptr module_offset) {
-    UNIMPLEMENTED();
-  }
-};
+SymbolizerProcess::SymbolizerProcess(const char *path)
+    : path_(path),
+      input_fd_(kInvalidFd),
+      output_fd_(kInvalidFd),
+      times_restarted_(0),
+      failed_to_start_(false),
+      reported_invalid_path_(false) {
+  CHECK(path_);
+  CHECK_NE(path_[0], '\0');
+}
 
-// SymbolizerProcess encapsulates communication between the tool and
-// external symbolizer program, running in a different subprocess.
-// SymbolizerProcess may not be used from two threads simultaneously.
-class SymbolizerProcess : public ExternalSymbolizerInterface {
- public:
-  explicit SymbolizerProcess(const char *path)
-      : path_(path),
-        input_fd_(kInvalidFd),
-        output_fd_(kInvalidFd),
-        times_restarted_(0),
-        failed_to_start_(false),
-        reported_invalid_path_(false) {
-    CHECK(path_);
-    CHECK_NE(path_[0], '\0');
+const char *SymbolizerProcess::SendCommand(const char *command) {
+  for (; times_restarted_ < kMaxTimesRestarted; times_restarted_++) {
+    // Start or restart symbolizer if we failed to send command to it.
+    if (const char *res = SendCommandImpl(command))
+      return res;
+    Restart();
   }
-
-  char *SendCommand(bool is_data, const char *module_name, uptr module_offset) {
-    for (; times_restarted_ < kMaxTimesRestarted; times_restarted_++) {
-      // Start or restart symbolizer if we failed to send command to it.
-      if (char *res = SendCommandImpl(is_data, module_name, module_offset))
-        return res;
-      Restart();
-    }
-    if (!failed_to_start_) {
-      Report("WARNING: Failed to use and restart external symbolizer!\n");
-      failed_to_start_ = true;
-    }
-    return 0;
+  if (!failed_to_start_) {
+    Report("WARNING: Failed to use and restart external symbolizer!\n");
+    failed_to_start_ = true;
   }
+  return 0;
+}
 
- private:
-  bool Restart() {
-    if (input_fd_ != kInvalidFd)
-      internal_close(input_fd_);
-    if (output_fd_ != kInvalidFd)
-      internal_close(output_fd_);
-    return StartSymbolizerSubprocess();
-  }
+bool SymbolizerProcess::Restart() {
+  if (input_fd_ != kInvalidFd)
+    internal_close(input_fd_);
+  if (output_fd_ != kInvalidFd)
+    internal_close(output_fd_);
+  return StartSymbolizerSubprocess();
+}
 
-  char *SendCommandImpl(bool is_data, const char *module_name,
-                        uptr module_offset) {
-    if (input_fd_ == kInvalidFd || output_fd_ == kInvalidFd)
+const char *SymbolizerProcess::SendCommandImpl(const char *command) {
+  if (input_fd_ == kInvalidFd || output_fd_ == kInvalidFd)
       return 0;
-    CHECK(module_name);
-    if (!RenderInputCommand(buffer_, kBufferSize, is_data, module_name,
-                            module_offset))
+  if (!WriteToSymbolizer(command, internal_strlen(command)))
       return 0;
-    if (!writeToSymbolizer(buffer_, internal_strlen(buffer_)))
+  if (!ReadFromSymbolizer(buffer_, kBufferSize))
       return 0;
-    if (!readFromSymbolizer(buffer_, kBufferSize))
-      return 0;
-    return buffer_;
-  }
+  return buffer_;
+}
 
-  bool readFromSymbolizer(char *buffer, uptr max_length) {
-    if (max_length == 0)
-      return true;
-    uptr read_len = 0;
-    while (true) {
-      uptr just_read = internal_read(input_fd_, buffer + read_len,
-                                     max_length - read_len - 1);
-      // We can't read 0 bytes, as we don't expect external symbolizer to close
-      // its stdout.
-      if (just_read == 0 || just_read == (uptr)-1) {
-        Report("WARNING: Can't read from symbolizer at fd %d\n", input_fd_);
-        return false;
-      }
-      read_len += just_read;
-      if (ReachedEndOfOutput(buffer, read_len))
-        break;
-    }
-    buffer[read_len] = '\0';
+bool SymbolizerProcess::ReadFromSymbolizer(char *buffer, uptr max_length) {
+  if (max_length == 0)
     return true;
-  }
-
-  bool writeToSymbolizer(const char *buffer, uptr length) {
-    if (length == 0)
-      return true;
-    uptr write_len = internal_write(output_fd_, buffer, length);
-    if (write_len == 0 || write_len == (uptr)-1) {
-      Report("WARNING: Can't write to symbolizer at fd %d\n", output_fd_);
+  uptr read_len = 0;
+  while (true) {
+    uptr just_read = internal_read(input_fd_, buffer + read_len,
+                                   max_length - read_len - 1);
+    // We can't read 0 bytes, as we don't expect external symbolizer to close
+    // its stdout.
+    if (just_read == 0 || just_read == (uptr)-1) {
+      Report("WARNING: Can't read from symbolizer at fd %d\n", input_fd_);
       return false;
     }
+    read_len += just_read;
+    if (ReachedEndOfOutput(buffer, read_len))
+      break;
+  }
+  buffer[read_len] = '\0';
+  return true;
+}
+
+bool SymbolizerProcess::WriteToSymbolizer(const char *buffer, uptr length) {
+  if (length == 0)
     return true;
+  uptr write_len = internal_write(output_fd_, buffer, length);
+  if (write_len == 0 || write_len == (uptr)-1) {
+    Report("WARNING: Can't write to symbolizer at fd %d\n", output_fd_);
+    return false;
+  }
+  return true;
+}
+
+bool SymbolizerProcess::StartSymbolizerSubprocess() {
+  if (!FileExists(path_)) {
+    if (!reported_invalid_path_) {
+      Report("WARNING: invalid path to external symbolizer!\n");
+      reported_invalid_path_ = true;
+    }
+    return false;
   }
 
-  bool StartSymbolizerSubprocess() {
-    if (!FileExists(path_)) {
-      if (!reported_invalid_path_) {
-        Report("WARNING: invalid path to external symbolizer!\n");
-        reported_invalid_path_ = true;
+  int *infd = NULL;
+  int *outfd = NULL;
+  // The client program may close its stdin and/or stdout and/or stderr
+  // thus allowing socketpair to reuse file descriptors 0, 1 or 2.
+  // In this case the communication between the forked processes may be
+  // broken if either the parent or the child tries to close or duplicate
+  // these descriptors. The loop below produces two pairs of file
+  // descriptors, each greater than 2 (stderr).
+  int sock_pair[5][2];
+  for (int i = 0; i < 5; i++) {
+    if (pipe(sock_pair[i]) == -1) {
+      for (int j = 0; j < i; j++) {
+        internal_close(sock_pair[j][0]);
+        internal_close(sock_pair[j][1]);
       }
+      Report("WARNING: Can't create a socket pair to start "
+             "external symbolizer (errno: %d)\n", errno);
       return false;
-    }
-
-    int *infd = NULL;
-    int *outfd = NULL;
-    // The client program may close its stdin and/or stdout and/or stderr
-    // thus allowing socketpair to reuse file descriptors 0, 1 or 2.
-    // In this case the communication between the forked processes may be
-    // broken if either the parent or the child tries to close or duplicate
-    // these descriptors. The loop below produces two pairs of file
-    // descriptors, each greater than 2 (stderr).
-    int sock_pair[5][2];
-    for (int i = 0; i < 5; i++) {
-      if (pipe(sock_pair[i]) == -1) {
+    } else if (sock_pair[i][0] > 2 && sock_pair[i][1] > 2) {
+      if (infd == NULL) {
+        infd = sock_pair[i];
+      } else {
+        outfd = sock_pair[i];
         for (int j = 0; j < i; j++) {
+          if (sock_pair[j] == infd) continue;
           internal_close(sock_pair[j][0]);
           internal_close(sock_pair[j][1]);
         }
-        Report("WARNING: Can't create a socket pair to start "
-               "external symbolizer (errno: %d)\n", errno);
-        return false;
-      } else if (sock_pair[i][0] > 2 && sock_pair[i][1] > 2) {
-        if (infd == NULL) {
-          infd = sock_pair[i];
-        } else {
-          outfd = sock_pair[i];
-          for (int j = 0; j < i; j++) {
-            if (sock_pair[j] == infd) continue;
-            internal_close(sock_pair[j][0]);
-            internal_close(sock_pair[j][1]);
-          }
-          break;
-        }
+        break;
       }
     }
-    CHECK(infd);
-    CHECK(outfd);
+  }
+  CHECK(infd);
+  CHECK(outfd);
 
-    // Real fork() may call user callbacks registered with pthread_atfork().
-    int pid = internal_fork();
-    if (pid == -1) {
-      // Fork() failed.
-      internal_close(infd[0]);
-      internal_close(infd[1]);
-      internal_close(outfd[0]);
-      internal_close(outfd[1]);
-      Report("WARNING: failed to fork external symbolizer "
-             " (errno: %d)\n", errno);
-      return false;
-    } else if (pid == 0) {
-      // Child subprocess.
-      internal_close(STDOUT_FILENO);
-      internal_close(STDIN_FILENO);
-      internal_dup2(outfd[0], STDIN_FILENO);
-      internal_dup2(infd[1], STDOUT_FILENO);
-      internal_close(outfd[0]);
-      internal_close(outfd[1]);
-      internal_close(infd[0]);
-      internal_close(infd[1]);
-      for (int fd = sysconf(_SC_OPEN_MAX); fd > 2; fd--)
-        internal_close(fd);
-      ExecuteWithDefaultArgs(path_);
-      internal__exit(1);
-    }
-
-    // Continue execution in parent process.
-    internal_close(outfd[0]);
+  // Real fork() may call user callbacks registered with pthread_atfork().
+  int pid = internal_fork();
+  if (pid == -1) {
+    // Fork() failed.
+    internal_close(infd[0]);
     internal_close(infd[1]);
-    input_fd_ = infd[0];
-    output_fd_ = outfd[1];
+    internal_close(outfd[0]);
+    internal_close(outfd[1]);
+    Report("WARNING: failed to fork external symbolizer "
+           " (errno: %d)\n", errno);
+    return false;
+  } else if (pid == 0) {
+    // Child subprocess.
+    internal_close(STDOUT_FILENO);
+    internal_close(STDIN_FILENO);
+    internal_dup2(outfd[0], STDIN_FILENO);
+    internal_dup2(infd[1], STDOUT_FILENO);
+    internal_close(outfd[0]);
+    internal_close(outfd[1]);
+    internal_close(infd[0]);
+    internal_close(infd[1]);
+    for (int fd = sysconf(_SC_OPEN_MAX); fd > 2; fd--)
+      internal_close(fd);
+    ExecuteWithDefaultArgs(path_);
+    internal__exit(1);
+  }
 
-    // Check that symbolizer subprocess started successfully.
-    int pid_status;
-    SleepForMillis(kSymbolizerStartupTimeMillis);
-    int exited_pid = waitpid(pid, &pid_status, WNOHANG);
-    if (exited_pid != 0) {
-      // Either waitpid failed, or child has already exited.
-      Report("WARNING: external symbolizer didn't start up correctly!\n");
-      return false;
+  // Continue execution in parent process.
+  internal_close(outfd[0]);
+  internal_close(infd[1]);
+  input_fd_ = infd[0];
+  output_fd_ = outfd[1];
+
+  // Check that symbolizer subprocess started successfully.
+  int pid_status;
+  SleepForMillis(kSymbolizerStartupTimeMillis);
+  int exited_pid = waitpid(pid, &pid_status, WNOHANG);
+  if (exited_pid != 0) {
+    // Either waitpid failed, or child has already exited.
+    Report("WARNING: external symbolizer didn't start up correctly!\n");
+    return false;
+  }
+
+  return true;
+}
+
+
+// Parses one or more two-line strings in the following format:
+//   <function_name>
+//   <file_name>:<line_number>[:<column_number>]
+// Used by LLVMSymbolizer, Addr2LinePool and InternalSymbolizer, since all of
+// them use the same output format.
+static void ParseSymbolizePCOutput(const char *str, SymbolizedStack *res) {
+  bool top_frame = true;
+  SymbolizedStack *last = res;
+  while (true) {
+    char *function_name = 0;
+    str = ExtractToken(str, "\n", &function_name);
+    CHECK(function_name);
+    if (function_name[0] == '\0') {
+      // There are no more frames.
+      break;
+    }
+    SymbolizedStack *cur;
+    if (top_frame) {
+      cur = res;
+      top_frame = false;
+    } else {
+      cur = SymbolizedStack::New(res->info.address);
+      cur->info.FillAddressAndModuleInfo(res->info.address, res->info.module,
+                                         res->info.module_offset);
+      last->next = cur;
+      last = cur;
     }
 
-    return true;
+    AddressInfo *info = &cur->info;
+    info->function = function_name;
+    // Parse <file>:<line>:<column> buffer.
+    char *file_line_info = 0;
+    str = ExtractToken(str, "\n", &file_line_info);
+    CHECK(file_line_info);
+    const char *line_info = ExtractToken(file_line_info, ":", &info->file);
+    line_info = ExtractInt(line_info, ":", &info->line);
+    line_info = ExtractInt(line_info, "", &info->column);
+    InternalFree(file_line_info);
+
+    // Functions and filenames can be "??", in which case we write 0
+    // to address info to mark that names are unknown.
+    if (0 == internal_strcmp(info->function, "??")) {
+      InternalFree(info->function);
+      info->function = 0;
+    }
+    if (0 == internal_strcmp(info->file, "??")) {
+      InternalFree(info->file);
+      info->file = 0;
+    }
   }
+}
 
-  virtual bool RenderInputCommand(char *buffer, uptr max_length, bool is_data,
-                                  const char *module_name,
-                                  uptr module_offset) const {
-    UNIMPLEMENTED();
-  }
-
-  virtual bool ReachedEndOfOutput(const char *buffer, uptr length) const {
-    UNIMPLEMENTED();
-  }
-
-  virtual void ExecuteWithDefaultArgs(const char *path_to_binary) const {
-    UNIMPLEMENTED();
-  }
-
-  const char *path_;
-  int input_fd_;
-  int output_fd_;
-
-  static const uptr kBufferSize = 16 * 1024;
-  char buffer_[kBufferSize];
-
-  static const uptr kMaxTimesRestarted = 5;
-  static const int kSymbolizerStartupTimeMillis = 10;
-  uptr times_restarted_;
-  bool failed_to_start_;
-  bool reported_invalid_path_;
-};
+// Parses a two-line string in the following format:
+//   <symbol_name>
+//   <start_address> <size>
+// Used by LLVMSymbolizer and InternalSymbolizer.
+static void ParseSymbolizeDataOutput(const char *str, DataInfo *info) {
+  str = ExtractToken(str, "\n", &info->name);
+  str = ExtractUptr(str, " ", &info->start);
+  str = ExtractUptr(str, "\n", &info->size);
+}
 
 // For now we assume the following protocol:
 // For each request of the form
@@ -323,13 +337,6 @@ class LLVMSymbolizerProcess : public SymbolizerProcess {
   explicit LLVMSymbolizerProcess(const char *path) : SymbolizerProcess(path) {}
 
  private:
-  bool RenderInputCommand(char *buffer, uptr max_length, bool is_data,
-                          const char *module_name, uptr module_offset) const {
-    internal_snprintf(buffer, max_length, "%s\"%s\" 0x%zx\n",
-                      is_data ? "DATA " : "", module_name, module_offset);
-    return true;
-  }
-
   bool ReachedEndOfOutput(const char *buffer, uptr length) const {
     // Empty line marks the end of llvm-symbolizer output.
     return length >= 2 && buffer[length - 1] == '\n' &&
@@ -357,6 +364,25 @@ class LLVMSymbolizerProcess : public SymbolizerProcess {
   }
 };
 
+class LLVMSymbolizer : public ExternalSymbolizerInterface {
+ public:
+  explicit LLVMSymbolizer(const char *path, LowLevelAllocator *allocator)
+      : symbolizer_process_(new(*allocator) LLVMSymbolizerProcess(path)) {}
+
+  const char *SendCommand(bool is_data, const char *module_name,
+                          uptr module_offset) override {
+    CHECK(module_name);
+    internal_snprintf(buffer_, kBufferSize, "%s\"%s\" 0x%zx\n",
+                      is_data ? "DATA " : "", module_name, module_offset);
+    return symbolizer_process_->SendCommand(buffer_);
+  }
+
+ private:
+  LLVMSymbolizerProcess *symbolizer_process_;
+  static const uptr kBufferSize = 16 * 1024;
+  char buffer_[kBufferSize];
+};
+
 class Addr2LineProcess : public SymbolizerProcess {
  public:
   Addr2LineProcess(const char *path, const char *module_name)
@@ -365,15 +391,6 @@ class Addr2LineProcess : public SymbolizerProcess {
   const char *module_name() const { return module_name_; }
 
  private:
-  bool RenderInputCommand(char *buffer, uptr max_length, bool is_data,
-                          const char *module_name, uptr module_offset) const {
-    if (is_data)
-      return false;
-    CHECK_EQ(0, internal_strcmp(module_name, module_name_));
-    internal_snprintf(buffer, max_length, "0x%zx\n", module_offset);
-    return true;
-  }
-
   bool ReachedEndOfOutput(const char *buffer, uptr length) const {
     // Output should consist of two lines.
     int num_lines = 0;
@@ -400,7 +417,8 @@ class Addr2LinePool : public ExternalSymbolizerInterface {
       : addr2line_path_(addr2line_path), allocator_(allocator),
         addr2line_pool_(16) {}
 
-  char *SendCommand(bool is_data, const char *module_name, uptr module_offset) {
+  const char *SendCommand(bool is_data, const char *module_name,
+                          uptr module_offset) override {
     if (is_data)
       return 0;
     Addr2LineProcess *addr2line = 0;
@@ -416,10 +434,14 @@ class Addr2LinePool : public ExternalSymbolizerInterface {
           new(*allocator_) Addr2LineProcess(addr2line_path_, module_name);
       addr2line_pool_.push_back(addr2line);
     }
-    return addr2line->SendCommand(is_data, module_name, module_offset);
+    CHECK_EQ(0, internal_strcmp(module_name, addr2line->module_name()));
+    char buffer_[kBufferSize];
+    internal_snprintf(buffer_, kBufferSize, "0x%zx\n", module_offset);
+    return addr2line->SendCommand(buffer_);
   }
 
  private:
+  static const uptr kBufferSize = 32;
   const char *addr2line_path_;
   LowLevelAllocator *allocator_;
   InternalMmapVector<Addr2LineProcess*> addr2line_pool_;
@@ -537,49 +559,7 @@ class POSIXSymbolizer : public Symbolizer {
       return res;
     }
 
-    bool top_frame = true;
-    SymbolizedStack *last = res;
-    while (true) {
-      char *function_name = 0;
-      str = ExtractToken(str, "\n", &function_name);
-      CHECK(function_name);
-      if (function_name[0] == '\0') {
-        // There are no more frames.
-        break;
-      }
-      SymbolizedStack *cur;
-      if (top_frame) {
-        cur = res;
-        top_frame = false;
-      } else {
-        cur = SymbolizedStack::New(addr);
-        cur->info.FillAddressAndModuleInfo(addr, module_name, module_offset);
-        last->next = cur;
-        last = cur;
-      }
-
-      AddressInfo *info = &cur->info;
-      info->function = function_name;
-      // Parse <file>:<line>:<column> buffer.
-      char *file_line_info = 0;
-      str = ExtractToken(str, "\n", &file_line_info);
-      CHECK(file_line_info);
-      const char *line_info = ExtractToken(file_line_info, ":", &info->file);
-      line_info = ExtractInt(line_info, ":", &info->line);
-      line_info = ExtractInt(line_info, "", &info->column);
-      InternalFree(file_line_info);
-
-      // Functions and filenames can be "??", in which case we write 0
-      // to address info to mark that names are unknown.
-      if (0 == internal_strcmp(info->function, "??")) {
-        InternalFree(info->function);
-        info->function = 0;
-      }
-      if (0 == internal_strcmp(info->file, "??")) {
-        InternalFree(info->file);
-        info->file = 0;
-      }
-    }
+    ParseSymbolizePCOutput(str, res);
     return res;
   }
 
@@ -602,9 +582,7 @@ class POSIXSymbolizer : public Symbolizer {
     const char *str = SendCommand(true, module_name, module_offset);
     if (str == 0)
       return true;
-    str = ExtractToken(str, "\n", &info->name);
-    str = ExtractUptr(str, " ", &info->start);
-    str = ExtractUptr(str, "\n", &info->size);
+    ParseSymbolizeDataOutput(str, info);
     info->start += module->base_address();
     return true;
   }
@@ -652,7 +630,8 @@ class POSIXSymbolizer : public Symbolizer {
   }
 
  private:
-  char *SendCommand(bool is_data, const char *module_name, uptr module_offset) {
+  const char *SendCommand(bool is_data, const char *module_name,
+                          uptr module_offset) {
     mu_.CheckLocked();
     // First, try to use internal symbolizer.
     if (internal_symbolizer_) {
@@ -745,7 +724,7 @@ Symbolizer *Symbolizer::PlatformInit() {
           path_to_external = FindPathToBinary("llvm-symbolizer");
         if (path_to_external) {
           external_symbolizer = new(symbolizer_allocator_)
-              LLVMSymbolizerProcess(path_to_external);
+              LLVMSymbolizer(path_to_external, &symbolizer_allocator_);
         } else if (common_flags()->allow_addr2line) {
           // If llvm-symbolizer is not found, try to use addr2line.
           if (const char *addr2line_path = FindPathToBinary("addr2line")) {

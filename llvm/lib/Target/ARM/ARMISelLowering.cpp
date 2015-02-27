@@ -618,7 +618,7 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FP_EXTEND,  MVT::f64, Custom);
   }
 
-  computeRegisterProperties();
+  computeRegisterProperties(Subtarget->getRegisterInfo());
 
   // ARM does not have floating-point extending loads.
   for (MVT VT : MVT::fp_valuetypes()) {
@@ -967,13 +967,14 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
 // of the difficulty prior to coalescing of modeling operand register classes
 // due to the common occurrence of cross class copies and subregister insertions
 // and extractions.
-std::pair<const TargetRegisterClass*, uint8_t>
-ARMTargetLowering::findRepresentativeClass(MVT VT) const{
+std::pair<const TargetRegisterClass *, uint8_t>
+ARMTargetLowering::findRepresentativeClass(const TargetRegisterInfo *TRI,
+                                           MVT VT) const {
   const TargetRegisterClass *RRC = nullptr;
   uint8_t Cost = 1;
   switch (VT.SimpleTy) {
   default:
-    return TargetLowering::findRepresentativeClass(VT);
+    return TargetLowering::findRepresentativeClass(TRI, VT);
   // Use DPR as representative register class for all floating point
   // and vector types. Since there are 32 SPR registers and 32 DPR registers so
   // the cost is 1 for both f32 and f64.
@@ -10628,7 +10629,8 @@ ARMTargetLowering::getSingleConstraintMatchWeight(
 
 typedef std::pair<unsigned, const TargetRegisterClass*> RCPair;
 RCPair
-ARMTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
+ARMTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                                                const std::string &Constraint,
                                                 MVT VT) const {
   if (Constraint.size() == 1) {
     // GCC ARM Constraint Letters
@@ -10674,7 +10676,7 @@ ARMTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
   if (StringRef("{cc}").equals_lower(Constraint))
     return std::make_pair(unsigned(ARM::CPSR), &ARM::CCRRegClass);
 
-  return TargetLowering::getRegForInlineAsmConstraint(Constraint, VT);
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }
 
 /// LowerAsmOperandForConstraint - Lower the specified operand into the Ops
