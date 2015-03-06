@@ -123,6 +123,18 @@ public:
                           // mask (ex: x86 blends).
   };
 
+  /// Enum that specifies what a AtomicRMWInst is expanded to, if at all. Exists
+  /// because different targets have different levels of support for these
+  /// atomic RMW instructions, and also have different options w.r.t. what they should
+  /// expand to.
+  enum class AtomicRMWExpansionKind {
+    None,      // Don't expand the instruction.
+    LLSC,      // Expand the instruction into loadlinked/storeconditional; used
+               // by ARM/AArch64. Implies `hasLoadLinkedStoreConditional`
+               // returns true.
+    CmpXChg,   // Expand the instruction into cmpxchg; used by at least X86.
+  };
+
   static ISD::NodeType getExtendForContent(BooleanContent Content) {
     switch (Content) {
     case UndefinedBooleanContent:
@@ -1064,10 +1076,11 @@ public:
   /// (through emitLoadLinked()).
   virtual bool shouldExpandAtomicLoadInIR(LoadInst *LI) const { return false; }
 
-  /// Returns true if the given AtomicRMW should be expanded by the
-  /// IR-level AtomicExpand pass into a loop using LoadLinked/StoreConditional.
-  virtual bool shouldExpandAtomicRMWInIR(AtomicRMWInst *RMWI) const {
-    return false;
+  /// Returns how the IR-level AtomicExpand pass should expand the given
+  /// AtomicRMW, if at all. Default is to never expand.
+  virtual AtomicRMWExpansionKind
+  shouldExpandAtomicRMWInIR(AtomicRMWInst *) const {
+    return AtomicRMWExpansionKind::None;
   }
 
   /// On some platforms, an AtomicRMW that never actually modifies the value
@@ -2664,6 +2677,8 @@ public:
   /// is created but not inserted into any basic blocks, and this method is
   /// called to expand it into a sequence of instructions, potentially also
   /// creating new basic blocks and control flow.
+  /// As long as the returned basic block is different (i.e., we created a new
+  /// one), the custom inserter is free to modify the rest of \p MBB.
   virtual MachineBasicBlock *
     EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const;
 

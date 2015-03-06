@@ -16,6 +16,7 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace misc {
 
 void UseOverride::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(methodDecl(isOverride()).bind("method"), this);
@@ -57,6 +58,9 @@ static StringRef GetText(const Token &Tok, const SourceManager &Sources) {
 }
 
 void UseOverride::check(const MatchFinder::MatchResult &Result) {
+  if (!Result.Context->getLangOpts().CPlusPlus11)
+    return;
+
   const FunctionDecl *Method = Result.Nodes.getStmtAs<FunctionDecl>("method");
   const SourceManager &Sources = *Result.SourceManager;
 
@@ -78,11 +82,26 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
   if (!OnlyVirtualSpecified && KeywordCount == 1)
     return; // Nothing to do.
 
-  DiagnosticBuilder Diag = diag(
-      Method->getLocation(),
-      OnlyVirtualSpecified
-          ? "Prefer using 'override' or (rarely) 'final' instead of 'virtual'"
-          : "Annotate this function with 'override' or (rarely) 'final'");
+  std::string Message;
+
+  if (OnlyVirtualSpecified) {
+    Message =
+        "prefer using 'override' or (rarely) 'final' instead of 'virtual'";
+  } else if (KeywordCount == 0) {
+    Message = "annotate this function with 'override' or (rarely) 'final'";
+  } else {
+    StringRef Redundant =
+        HasVirtual ? (HasOverride && HasFinal ? "'virtual' and 'override' are"
+                                              : "'virtual' is")
+                   : "'override' is";
+    StringRef Correct = HasFinal ? "'final'" : "'override'";
+
+    Message =
+        (llvm::Twine(Redundant) +
+         " redundant since the function is already declared " + Correct).str();
+  }
+
+  DiagnosticBuilder Diag = diag(Method->getLocation(), Message);
 
   CharSourceRange FileRange = Lexer::makeFileCharRange(
       CharSourceRange::getTokenRange(Method->getSourceRange()), Sources,
@@ -146,7 +165,7 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
         CharSourceRange::getTokenRange(OverrideLoc, OverrideLoc));
   }
 
-  if (Method->isVirtualAsWritten()) {
+  if (HasVirtual) {
     for (Token Tok : Tokens) {
       if (Tok.is(tok::kw_virtual)) {
         Diag << FixItHint::CreateRemoval(CharSourceRange::getTokenRange(
@@ -157,5 +176,6 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
   }
 }
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang

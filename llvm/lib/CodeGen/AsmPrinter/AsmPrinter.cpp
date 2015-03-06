@@ -109,6 +109,8 @@ AsmPrinter::AsmPrinter(TargetMachine &tm, std::unique_ptr<MCStreamer> Streamer)
   LI = nullptr;
   MF = nullptr;
   CurrentFnSym = CurrentFnSymForSize = nullptr;
+  CurrentFnBegin = nullptr;
+  CurrentFnEnd = nullptr;
   GCMetadataPrinters = nullptr;
   VerboseAsm = OutStreamer.isVerboseAsm();
 }
@@ -554,6 +556,17 @@ void AsmPrinter::EmitFunctionHeader() {
     OutStreamer.EmitLabel(DeadBlockSyms[i]);
   }
 
+  if (CurrentFnBegin) {
+    if (MAI->useAssignmentForEHBegin()) {
+      MCSymbol *CurPos = OutContext.CreateTempSymbol();
+      OutStreamer.EmitLabel(CurPos);
+      OutStreamer.EmitAssignment(CurrentFnBegin,
+                                 MCSymbolRefExpr::Create(CurPos, OutContext));
+    } else {
+      OutStreamer.EmitLabel(CurrentFnBegin);
+    }
+  }
+
   // Emit pre-function debug and/or EH information.
   for (const HandlerInfo &HI : Handlers) {
     NamedRegionTimer T(HI.TimerName, HI.TimerGroupName, TimePassesIsEnabled);
@@ -867,16 +880,20 @@ void AsmPrinter::EmitFunctionBody() {
   // Emit target-specific gunk after the function body.
   EmitFunctionBodyEnd();
 
+  if (!MMI->getLandingPads().empty() || MMI->hasDebugInfo() ||
+      MAI->hasDotTypeDotSizeDirective()) {
+    // Create a symbol for the end of function.
+    CurrentFnEnd = createTempSymbol("func_end", getFunctionNumber());
+    OutStreamer.EmitLabel(CurrentFnEnd);
+  }
+
   // If the target wants a .size directive for the size of the function, emit
   // it.
   if (MAI->hasDotTypeDotSizeDirective()) {
-    // Create a symbol for the end of function, so we can get the size as
-    // difference between the function label and the temp label.
-    MCSymbol *FnEndLabel = OutContext.CreateTempSymbol();
-    OutStreamer.EmitLabel(FnEndLabel);
-
+    // We can get the size as difference between the function label and the
+    // temp label.
     const MCExpr *SizeExp =
-      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(FnEndLabel, OutContext),
+      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(CurrentFnEnd, OutContext),
                               MCSymbolRefExpr::Create(CurrentFnSymForSize,
                                                       OutContext),
                               OutContext);
@@ -997,59 +1014,6 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitVisibility(Name, V, false);
   }
 
-  // Get information about jump-instruction tables to print.
-  JumpInstrTableInfo *JITI = getAnalysisIfAvailable<JumpInstrTableInfo>();
-
-  if (JITI && !JITI->getTables().empty()) {
-    // Since we're at the module level we can't use a function specific
-    // MCSubtargetInfo - instead create one with the module defaults.
-    std::unique_ptr<MCSubtargetInfo> STI(TM.getTarget().createMCSubtargetInfo(
-        TM.getTargetTriple(), TM.getTargetCPU(), TM.getTargetFeatureString()));
-    unsigned Arch = Triple(getTargetTriple()).getArch();
-    bool IsThumb = (Arch == Triple::thumb || Arch == Triple::thumbeb);
-    const TargetInstrInfo *TII = TM.getSubtargetImpl()->getInstrInfo();
-    MCInst TrapInst;
-    TII->getTrap(TrapInst);
-    unsigned LogAlignment = llvm::Log2_64(JITI->entryByteAlignment());
-
-    // Emit the right section for these functions.
-    OutStreamer.SwitchSection(OutContext.getObjectFileInfo()->getTextSection());
-    for (const auto &KV : JITI->getTables()) {
-      uint64_t Count = 0;
-      for (const auto &FunPair : KV.second) {
-        // Emit the function labels to make this be a function entry point.
-        MCSymbol *FunSym =
-          OutContext.GetOrCreateSymbol(FunPair.second->getName());
-        EmitAlignment(LogAlignment);
-        if (IsThumb)
-          OutStreamer.EmitThumbFunc(FunSym);
-        if (MAI->hasDotTypeDotSizeDirective())
-          OutStreamer.EmitSymbolAttribute(FunSym, MCSA_ELF_TypeFunction);
-        OutStreamer.EmitLabel(FunSym);
-
-        // Emit the jump instruction to transfer control to the original
-        // function.
-        MCInst JumpToFun;
-        MCSymbol *TargetSymbol =
-          OutContext.GetOrCreateSymbol(FunPair.first->getName());
-        const MCSymbolRefExpr *TargetSymRef =
-          MCSymbolRefExpr::Create(TargetSymbol, MCSymbolRefExpr::VK_PLT,
-                                  OutContext);
-        TII->getUnconditionalBranch(JumpToFun, TargetSymRef);
-        OutStreamer.EmitInstruction(JumpToFun, *STI);
-        ++Count;
-      }
-
-      // Emit enough padding instructions to fill up to the next power of two.
-      uint64_t Remaining = NextPowerOf2(Count) - Count;
-      for (uint64_t C = 0; C < Remaining; ++C) {
-        EmitAlignment(LogAlignment);
-        OutStreamer.EmitInstruction(TrapInst, *STI);
-      }
-
-    }
-  }
-
   // Emit module flags.
   SmallVector<Module::ModuleFlagEntry, 8> ModuleFlags;
   M.getModuleFlagsMetadata(ModuleFlags);
@@ -1157,6 +1121,14 @@ void AsmPrinter::SetupMachineFunction(MachineFunction &MF) {
   // Get the function symbol.
   CurrentFnSym = getSymbol(MF.getFunction());
   CurrentFnSymForSize = CurrentFnSym;
+  CurrentFnBegin = nullptr;
+  bool NeedsLocalForSize = MAI->needsLocalForSize();
+  if (!MMI->getLandingPads().empty() || MMI->hasDebugInfo() ||
+      NeedsLocalForSize) {
+    CurrentFnBegin = createTempSymbol("func_begin", getFunctionNumber());
+    if (NeedsLocalForSize)
+      CurrentFnSymForSize = CurrentFnBegin;
+  }
 
   if (isVerbose())
     LI = &getAnalysis<MachineLoopInfo>();
@@ -2112,8 +2084,14 @@ static void handleIndirectSymViaGOTPCRel(AsmPrinter &AP, const MCExpr **ME,
   //
   //    gotpcrelcst := <offset from @foo base> + <cst>
   //
+  // If gotpcrelcst is positive it means that we can safely fold the pc rel
+  // displacement into the GOTPCREL. We can also can have an extra offset <cst>
+  // if the target knows how to encode it.
+  //
   int64_t GOTPCRelCst = Offset + MV.getConstant();
   if (GOTPCRelCst < 0)
+    return;
+  if (!AP.getObjFileLowering().supportGOTPCRelWithOffset() && GOTPCRelCst != 0)
     return;
 
   // Emit the GOT PC relative to replace the got equivalent global, i.e.:
@@ -2137,8 +2115,8 @@ static void handleIndirectSymViaGOTPCRel(AsmPrinter &AP, const MCExpr **ME,
   unsigned NumUses = Result.second;
   const GlobalValue *FinalGV = dyn_cast<GlobalValue>(GV->getOperand(0));
   const MCSymbol *FinalSym = AP.getSymbol(FinalGV);
-  *ME = AP.getObjFileLowering().getIndirectSymViaGOTPCRel(FinalSym,
-                                                          GOTPCRelCst);
+  *ME = AP.getObjFileLowering().getIndirectSymViaGOTPCRel(
+      FinalSym, MV, Offset, AP.MMI, AP.OutStreamer);
 
   // Update GOT equivalent usage information
   --NumUses;
@@ -2273,6 +2251,9 @@ MCSymbol *AsmPrinter::GetTempSymbol(const Twine &Name) const {
                                       Name);
 }
 
+MCSymbol *AsmPrinter::createTempSymbol(const Twine &Name, unsigned ID) const {
+  return OutContext.createTempSymbol(Name + Twine(ID));
+}
 
 MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BlockAddress *BA) const {
   return MMI->getAddrLabelSymbol(BA->getBasicBlock());

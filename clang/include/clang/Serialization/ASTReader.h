@@ -776,12 +776,6 @@ private:
   /// local extern "C" declarations.
   SmallVector<uint64_t, 16> LocallyScopedExternCDecls;
 
-  /// \brief The IDs of all dynamic class declarations in the chain.
-  ///
-  /// Sema tracks these because it checks for the key functions being defined
-  /// at the end of the TU, in which case it directs CodeGen to emit the VTable.
-  SmallVector<uint64_t, 16> DynamicClasses;
-
   /// \brief The IDs of all potentially unused typedef names in the chain.
   ///
   /// Sema tracks these to emit warnings.
@@ -971,13 +965,13 @@ private:
   /// \brief The list of redeclaration chains that still need to be 
   /// reconstructed.
   ///
-  /// Each element is the global declaration ID of the first declaration in
-  /// the chain. Elements in this vector should be unique; use 
+  /// Each element is the canonical declaration of the chain.
+  /// Elements in this vector should be unique; use 
   /// PendingDeclChainsKnown to ensure uniqueness.
-  SmallVector<serialization::DeclID, 16> PendingDeclChains;
+  SmallVector<Decl *, 16> PendingDeclChains;
 
   /// \brief Keeps track of the elements added to PendingDeclChains.
-  llvm::SmallSet<serialization::DeclID, 16> PendingDeclChainsKnown;
+  llvm::SmallSet<Decl *, 16> PendingDeclChainsKnown;
 
   /// \brief The list of canonical declarations whose redeclaration chains
   /// need to be marked as incomplete once we're done deserializing things.
@@ -1037,26 +1031,6 @@ private:
   /// that canonical declaration.
   MergedDeclsMap MergedDecls;
   
-  typedef llvm::DenseMap<serialization::GlobalDeclID, 
-                         SmallVector<serialization::DeclID, 2> >
-    StoredMergedDeclsMap;
-  
-  /// \brief A mapping from canonical declaration IDs to the set of additional
-  /// declaration IDs that have been merged with that canonical declaration.
-  ///
-  /// This is the deserialized representation of the entries in MergedDecls.
-  /// When we query entries in MergedDecls, they will be augmented with entries
-  /// from StoredMergedDecls.
-  StoredMergedDeclsMap StoredMergedDecls;
-  
-  /// \brief Combine the stored merged declarations for the given canonical
-  /// declaration into the set of merged declarations.
-  ///
-  /// \returns An iterator into MergedDecls that corresponds to the position of
-  /// the given canonical declaration.
-  MergedDeclsMap::iterator
-  combineStoredMergedDecls(Decl *Canon, serialization::GlobalDeclID CanonID);
-
   /// \brief A mapping from DeclContexts to the semantic DeclContext that we
   /// are treating as the definition of the entity. This is used, for instance,
   /// when merging implicit instantiations of class templates across modules.
@@ -1194,7 +1168,7 @@ private:
   RecordLocation DeclCursorForID(serialization::DeclID ID,
                                  unsigned &RawLocation);
   void loadDeclUpdateRecords(serialization::DeclID ID, Decl *D);
-  void loadPendingDeclChain(serialization::GlobalDeclID ID);
+  void loadPendingDeclChain(Decl *D);
   void loadObjCCategories(serialization::GlobalDeclID ID, ObjCInterfaceDecl *D,
                           unsigned PreviousGeneration = 0);
 
@@ -1817,8 +1791,6 @@ public:
                          SmallVectorImpl<CXXConstructorDecl *> &Decls) override;
 
   void ReadExtVectorDecls(SmallVectorImpl<TypedefNameDecl *> &Decls) override;
-
-  void ReadDynamicClasses(SmallVectorImpl<CXXRecordDecl *> &Decls) override;
 
   void ReadUnusedLocalTypedefNameCandidates(
       llvm::SmallSetVector<const TypedefNameDecl *, 4> &Decls) override;

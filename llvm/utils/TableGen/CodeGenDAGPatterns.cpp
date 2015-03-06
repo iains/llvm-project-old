@@ -484,6 +484,34 @@ bool EEVT::TypeSet::EnforceSmallerThan(EEVT::TypeSet &Other, TreePattern &TP) {
 
 /// EnforceVectorEltTypeIs - 'this' is now constrainted to be a vector type
 /// whose element is specified by VTOperand.
+bool EEVT::TypeSet::EnforceVectorEltTypeIs(MVT::SimpleValueType VT,
+                                           TreePattern &TP) {
+  bool MadeChange = false;
+
+  MadeChange |= EnforceVector(TP);
+
+  TypeSet InputSet(*this);
+
+  // Filter out all the types which don't have the right element type.
+  for (unsigned i = 0; i != TypeVec.size(); ++i) {
+    assert(isVector(TypeVec[i]) && "EnforceVector didn't work");
+    if (MVT(TypeVec[i]).getVectorElementType().SimpleTy != VT) {
+      TypeVec.erase(TypeVec.begin()+i--);
+      MadeChange = true;
+    }
+  }
+
+  if (TypeVec.empty()) {  // FIXME: Really want an SMLoc here!
+    TP.error("Type inference contradiction found, forcing '" +
+             InputSet.getName() + "' to have a vector element");
+    return false;
+  }
+
+  return MadeChange;
+}
+
+/// EnforceVectorEltTypeIs - 'this' is now constrainted to be a vector type
+/// whose element is specified by VTOperand.
 bool EEVT::TypeSet::EnforceVectorEltTypeIs(EEVT::TypeSet &VTOperand,
                                            TreePattern &TP) {
   if (TP.hasError())
@@ -601,6 +629,64 @@ bool EEVT::TypeSet::EnforceVectorSubVectorTypeIs(EEVT::TypeSet &VTOperand,
     if (TypeVec.empty()) {  // FIXME: Really want an SMLoc here!
       TP.error("Type inference contradiction found, forcing '" +
                InputSet.getName() + "' to have more vector elements than '" +
+               VTOperand.getName() + "'");
+      return false;
+    }
+  }
+
+  return MadeChange;
+}
+
+/// EnforceVectorSameNumElts - 'this' is now constrainted to
+/// be a vector with same num elements as VTOperand.
+bool EEVT::TypeSet::EnforceVectorSameNumElts(EEVT::TypeSet &VTOperand,
+                                             TreePattern &TP) {
+  if (TP.hasError())
+    return false;
+
+  // "This" must be a vector and "VTOperand" must be a vector.
+  bool MadeChange = false;
+  MadeChange |= EnforceVector(TP);
+  MadeChange |= VTOperand.EnforceVector(TP);
+
+  // If we know one of the vector types, it forces the other type to agree.
+  if (isConcrete()) {
+    MVT IVT = getConcrete();
+    unsigned NumElems = IVT.getVectorNumElements();
+
+    // Only keep types that have same elements as VTOperand.
+    TypeSet InputSet(VTOperand);
+
+    for (unsigned i = 0; i != VTOperand.TypeVec.size(); ++i) {
+      assert(isVector(VTOperand.TypeVec[i]) && "EnforceVector didn't work");
+      if (MVT(VTOperand.TypeVec[i]).getVectorNumElements() != NumElems) {
+        VTOperand.TypeVec.erase(VTOperand.TypeVec.begin()+i--);
+        MadeChange = true;
+      }
+    }
+    if (VTOperand.TypeVec.empty()) {  // FIXME: Really want an SMLoc here!
+      TP.error("Type inference contradiction found, forcing '" +
+               InputSet.getName() + "' to have same number elements as '" +
+               getName() + "'");
+      return false;
+    }
+  } else if (VTOperand.isConcrete()) {
+    MVT IVT = VTOperand.getConcrete();
+    unsigned NumElems = IVT.getVectorNumElements();
+
+    // Only keep types that have same elements as 'this'.
+    TypeSet InputSet(*this);
+
+    for (unsigned i = 0; i != TypeVec.size(); ++i) {
+      assert(isVector(TypeVec[i]) && "EnforceVector didn't work");
+      if (MVT(TypeVec[i]).getVectorNumElements() != NumElems) {
+        TypeVec.erase(TypeVec.begin()+i--);
+        MadeChange = true;
+      }
+    }
+    if (TypeVec.empty()) {  // FIXME: Really want an SMLoc here!
+      TP.error("Type inference contradiction found, forcing '" +
+               InputSet.getName() + "' to have same number elements than '" +
                VTOperand.getName() + "'");
       return false;
     }
@@ -839,6 +925,19 @@ SDTypeConstraint::SDTypeConstraint(Record *R) {
     ConstraintType = SDTCisSubVecOfVec;
     x.SDTCisSubVecOfVec_Info.OtherOperandNum =
       R->getValueAsInt("OtherOpNum");
+  } else if (R->isSubClassOf("SDTCVecEltisVT")) {
+    ConstraintType = SDTCVecEltisVT;
+    x.SDTCVecEltisVT_Info.VT = getValueType(R->getValueAsDef("VT"));
+    if (MVT(x.SDTCVecEltisVT_Info.VT).isVector())
+      PrintFatalError(R->getLoc(), "Cannot use vector type as SDTCVecEltisVT");
+    if (!MVT(x.SDTCVecEltisVT_Info.VT).isInteger() &&
+        !MVT(x.SDTCVecEltisVT_Info.VT).isFloatingPoint())
+      PrintFatalError(R->getLoc(), "Must use integer or floating point type "
+                                   "as SDTCVecEltisVT");
+  } else if (R->isSubClassOf("SDTCisSameNumEltsAs")) {
+    ConstraintType = SDTCisSameNumEltsAs;
+    x.SDTCisSameNumEltsAs_Info.OtherOperandNum =
+      R->getValueAsInt("OtherOperandNum");
   } else {
     errs() << "Unrecognized SDTypeConstraint '" << R->getName() << "'!\n";
     exit(1);
@@ -901,8 +1000,8 @@ bool SDTypeConstraint::ApplyTypeConstraint(TreePatternNode *N,
     unsigned OResNo = 0;
     TreePatternNode *OtherNode =
       getOperandNum(x.SDTCisSameAs_Info.OtherOperandNum, N, NodeInfo, OResNo);
-    return NodeToApply->UpdateNodeType(OResNo, OtherNode->getExtType(ResNo),TP)|
-           OtherNode->UpdateNodeType(ResNo,NodeToApply->getExtType(OResNo),TP);
+    return NodeToApply->UpdateNodeType(ResNo, OtherNode->getExtType(OResNo),TP)|
+           OtherNode->UpdateNodeType(OResNo,NodeToApply->getExtType(ResNo),TP);
   }
   case SDTCisVTSmallerThanOp: {
     // The NodeToApply must be a leaf node that is a VT.  OtherOperandNum must
@@ -955,6 +1054,18 @@ bool SDTypeConstraint::ApplyTypeConstraint(TreePatternNode *N,
     // right subvector type.
     return BigVecOperand->getExtType(VResNo).
       EnforceVectorSubVectorTypeIs(NodeToApply->getExtType(ResNo), TP);
+  }
+  case SDTCVecEltisVT: {
+    return NodeToApply->getExtType(ResNo).
+      EnforceVectorEltTypeIs(x.SDTCVecEltisVT_Info.VT, TP);
+  }
+  case SDTCisSameNumEltsAs: {
+    unsigned OResNo = 0;
+    TreePatternNode *OtherNode =
+      getOperandNum(x.SDTCisSameNumEltsAs_Info.OtherOperandNum,
+                    N, NodeInfo, OResNo);
+    return OtherNode->getExtType(OResNo).
+      EnforceVectorSameNumElts(NodeToApply->getExtType(ResNo), TP);
   }
   }
   llvm_unreachable("Invalid ConstraintType!");
@@ -1113,8 +1224,6 @@ static unsigned GetNumNodeResults(Record *Operator, CodeGenDAGPatterns &CDP) {
 
     // FIXME: Should allow access to all the results here.
     unsigned NumDefsToAdd = InstInfo.Operands.NumDefs ? 1 : 0;
-    if (InstInfo.hasTwoExplicitDefs)
-      ++NumDefsToAdd;
 
     // Add on one implicit def if it has a resolvable type.
     if (InstInfo.HasOneImplicitDefWithKnownVT(CDP.getTargetInfo()) !=MVT::Other)
@@ -1611,20 +1720,11 @@ bool TreePatternNode::ApplyTypeConstraints(TreePattern &TP, bool NotRegisters) {
     assert(getNumTypes() == 0 && "Set doesn't produce a value");
     assert(getNumChildren() >= 2 && "Missing RHS of a set?");
     unsigned NC = getNumChildren();
-    unsigned NumOfSrcs = NC-1;
 
-    // destination
     TreePatternNode *SetVal = getChild(NC-1);
     bool MadeChange = SetVal->ApplyTypeConstraints(TP, NotRegisters);
 
-    // second explicit destination
-    if (TP.getRecord()->getValueAsBit("hasTwoExplicitDefs")) {
-      TreePatternNode *Set2Val = getChild(NC-2);
-      MadeChange = Set2Val->ApplyTypeConstraints(TP, NotRegisters);
-      NumOfSrcs --;
-    }
-    
-    for (unsigned i = 0; i < NumOfSrcs; ++i) {
+    for (unsigned i = 0; i < NC-1; ++i) {
       TreePatternNode *Child = getChild(i);
       MadeChange |= Child->ApplyTypeConstraints(TP, NotRegisters);
 
@@ -2867,7 +2967,7 @@ const DAGInstruction &CodeGenDAGPatterns::parseInstructionPattern(
 
     // Check that all of the results occur first in the list.
     std::vector<Record*> Results;
-    SmallVector<TreePatternNode *, 2> ResNode;
+    TreePatternNode *Res0Node = nullptr;
     for (unsigned i = 0; i != NumResults; ++i) {
       if (i == CGI.Operands.size())
         I->error("'" + InstResults.begin()->first +
@@ -2879,7 +2979,8 @@ const DAGInstruction &CodeGenDAGPatterns::parseInstructionPattern(
       if (!RNode)
         I->error("Operand $" + OpName + " does not exist in operand list!");
 
-      ResNode.push_back(RNode);
+      if (i == 0)
+        Res0Node = RNode;
       Record *R = cast<DefInit>(RNode->getLeafValue())->getDef();
       if (!R)
         I->error("Operand $" + OpName + " should be a set destination: all "
@@ -2956,7 +3057,7 @@ const DAGInstruction &CodeGenDAGPatterns::parseInstructionPattern(
                           GetNumNodeResults(I->getRecord(), *this));
     // Copy fully inferred output node type to instruction result pattern.
     for (unsigned i = 0; i != NumResults; ++i)
-      ResultPattern->setType(i, ResNode[i]->getExtType(0));
+      ResultPattern->setType(i, Res0Node->getExtType(i));
 
     // Create and insert the instruction.
     // FIXME: InstImpResults should not be part of DAGInstruction.

@@ -161,17 +161,16 @@ class MallocChecker : public Checker<check::DeadSymbols,
 {
 public:
   MallocChecker()
-      : II_alloca(nullptr), II_alloca_builtin(nullptr), II_malloc(nullptr),
-        II_free(nullptr), II_realloc(nullptr), II_calloc(nullptr),
-        II_valloc(nullptr), II_reallocf(nullptr), II_strndup(nullptr),
-        II_strdup(nullptr), II_kmalloc(nullptr), II_if_nameindex(nullptr),
+      : II_alloca(nullptr), II_malloc(nullptr), II_free(nullptr), 
+        II_realloc(nullptr), II_calloc(nullptr), II_valloc(nullptr),
+        II_reallocf(nullptr), II_strndup(nullptr), II_strdup(nullptr), 
+        II_kmalloc(nullptr), II_if_nameindex(nullptr),
         II_if_freenameindex(nullptr) {}
 
   /// In pessimistic mode, the checker assumes that it does not know which
   /// functions might free the memory.
   enum CheckKind {
-    CK_MallocPessimistic,
-    CK_MallocOptimistic,
+    CK_MallocChecker,
     CK_NewDeleteChecker,
     CK_NewDeleteLeaksChecker,
     CK_MismatchedDeallocatorChecker,
@@ -183,6 +182,8 @@ public:
     MOK_Free,
     MOK_Any
   };
+
+  DefaultBool IsOptimistic;
 
   DefaultBool ChecksEnabled[CK_NumCheckKinds];
   CheckName CheckNames[CK_NumCheckKinds];
@@ -222,9 +223,9 @@ private:
   mutable std::unique_ptr<BugType> BT_FreeAlloca[CK_NumCheckKinds];
   mutable std::unique_ptr<BugType> BT_MismatchedDealloc;
   mutable std::unique_ptr<BugType> BT_OffsetFree[CK_NumCheckKinds];
-  mutable IdentifierInfo *II_alloca, *II_alloca_builtin, *II_malloc, *II_free,
-                         *II_realloc, *II_calloc, *II_valloc, *II_reallocf,
-                         *II_strndup, *II_strdup, *II_kmalloc, *II_if_nameindex,
+  mutable IdentifierInfo *II_alloca, *II_malloc, *II_free, *II_realloc,
+                         *II_calloc, *II_valloc, *II_reallocf, *II_strndup,
+                         *II_strdup, *II_kmalloc, *II_if_nameindex,
                          *II_if_freenameindex;
   mutable Optional<uint64_t> KernelZeroFlagVal;
 
@@ -508,7 +509,6 @@ void MallocChecker::initIdentifierInfo(ASTContext &Ctx) const {
   if (II_malloc)
     return;
   II_alloca = &Ctx.Idents.get("alloca");
-  II_alloca_builtin = &Ctx.Idents.get("__builtin_alloca");
   II_malloc = &Ctx.Idents.get("malloc");
   II_free = &Ctx.Idents.get("free");
   II_realloc = &Ctx.Idents.get("realloc");
@@ -577,7 +577,7 @@ bool MallocChecker::isCMemFunction(const FunctionDecl *FD,
     }
 
     if (Family == AF_Alloca && CheckAlloc) {
-      if (FunI == II_alloca || FunI == II_alloca_builtin)
+      if (FunI == II_alloca)
         return true;
     }
   }
@@ -585,7 +585,7 @@ bool MallocChecker::isCMemFunction(const FunctionDecl *FD,
   if (Family != AF_Malloc)
     return false;
 
-  if (ChecksEnabled[CK_MallocOptimistic] && FD->hasAttrs()) {
+  if (IsOptimistic && FD->hasAttrs()) {
     for (const auto *I : FD->specific_attrs<OwnershipAttr>()) {
       OwnershipAttr::OwnershipKind OwnKind = I->getOwnKind();
       if(OwnKind == OwnershipAttr::Takes || OwnKind == OwnershipAttr::Holds) {
@@ -763,7 +763,7 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
       State = MallocUpdateRefState(C, CE, State);
     } else if (FunI == II_strndup) {
       State = MallocUpdateRefState(C, CE, State);
-    } else if (FunI == II_alloca || FunI == II_alloca_builtin) {
+    } else if (FunI == II_alloca) {
       State = MallocMemAux(C, CE, CE->getArg(0), UndefinedVal(), State,
                            AF_Alloca);
     } else if (isStandardNewDelete(FD, C.getASTContext())) {
@@ -792,8 +792,7 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
     }
   }
 
-  if (ChecksEnabled[CK_MallocOptimistic] ||
-      ChecksEnabled[CK_MismatchedDeallocatorChecker]) {
+  if (IsOptimistic || ChecksEnabled[CK_MismatchedDeallocatorChecker]) {
     // Check all the attributes, if there are any.
     // There can be multiple of these attributes.
     if (FD->hasAttrs())
@@ -1248,7 +1247,8 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
   
   const MemSpaceRegion *MS = R->getMemorySpace();
   
-  // Parameters, locals, statics and globals shouldn't be freed.
+  // Parameters, locals, statics, globals, and memory returned by 
+  // __builtin_alloca() shouldn't be freed.
   if (!(isa<UnknownSpaceRegion>(MS) || isa<HeapSpaceRegion>(MS))) {
     // FIXME: at the time this code was written, malloc() regions were
     // represented by conjured symbols, which are all in UnknownSpaceRegion.
@@ -1257,8 +1257,12 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
     // Of course, free() can work on memory allocated outside the current
     // function, so UnknownSpaceRegion is always a possibility.
     // False negatives are better than false positives.
-    
-    ReportBadFree(C, ArgVal, ArgExpr->getSourceRange(), ParentExpr);
+
+    if (isa<AllocaRegion>(R))
+      ReportFreeAlloca(C, ArgVal, ArgExpr->getSourceRange());
+    else
+      ReportBadFree(C, ArgVal, ArgExpr->getSourceRange(), ParentExpr);
+
     return nullptr;
   }
 
@@ -1358,8 +1362,7 @@ MallocChecker::getCheckIfTracked(MallocChecker::CheckKind CK,
   case AF_IfNameIndex:
   case AF_Alloca: {
     // C checkers.
-    if (CK == CK_MallocOptimistic ||
-        CK == CK_MallocPessimistic) {
+    if (CK == CK_MallocChecker) {
       return CK;
     }
     return Optional<MallocChecker::CheckKind>();
@@ -1512,8 +1515,7 @@ void MallocChecker::ReportBadFree(CheckerContext &C, SVal ArgVal,
                                   SourceRange Range, 
                                   const Expr *DeallocExpr) const {
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                   CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                    CK_NewDeleteChecker),
                                      C, DeallocExpr);
   if (!CheckKind.hasValue())
@@ -1555,8 +1557,7 @@ void MallocChecker::ReportBadFree(CheckerContext &C, SVal ArgVal,
 void MallocChecker::ReportFreeAlloca(CheckerContext &C, SVal ArgVal, 
                                      SourceRange Range) const {
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                               CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                CK_MismatchedDeallocatorChecker),
                                      AF_Alloca);
   if (!CheckKind.hasValue())
@@ -1635,8 +1636,7 @@ void MallocChecker::ReportOffsetFree(CheckerContext &C, SVal ArgVal,
                                      const Expr *AllocExpr) const {
 
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                   CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                    CK_NewDeleteChecker),
                                      C, AllocExpr);
   if (!CheckKind.hasValue())
@@ -1688,8 +1688,7 @@ void MallocChecker::ReportOffsetFree(CheckerContext &C, SVal ArgVal,
 void MallocChecker::ReportUseAfterFree(CheckerContext &C, SourceRange Range,
                                        SymbolRef Sym) const {
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                   CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                    CK_NewDeleteChecker),
                                      C, Sym);
   if (!CheckKind.hasValue())
@@ -1714,8 +1713,7 @@ void MallocChecker::ReportDoubleFree(CheckerContext &C, SourceRange Range,
                                      bool Released, SymbolRef Sym, 
                                      SymbolRef PrevSym) const {
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                   CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                    CK_NewDeleteChecker),
                                      C, Sym);
   if (!CheckKind.hasValue())
@@ -1930,11 +1928,15 @@ MallocChecker::getAllocationSite(const ExplodedNode *N, SymbolRef Sym,
 void MallocChecker::reportLeak(SymbolRef Sym, ExplodedNode *N,
                                CheckerContext &C) const {
 
-  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                   CK_MallocPessimistic,
+  auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                    CK_NewDeleteLeaksChecker),
                                      C, Sym);
   if (!CheckKind.hasValue())
+    return;
+
+  const RefState *RS = C.getState()->get<RegionState>(Sym);
+  assert(RS);
+  if (RS->getAllocationFamily() == AF_Alloca)
     return;
 
   assert(N);
@@ -2054,8 +2056,7 @@ void MallocChecker::checkPreCall(const CallEvent &Call,
       return;
 
     ASTContext &Ctx = C.getASTContext();
-    if ((ChecksEnabled[CK_MallocOptimistic] ||
-         ChecksEnabled[CK_MallocPessimistic]) &&
+    if (ChecksEnabled[CK_MallocChecker] &&
         (isCMemFunction(FD, Ctx, AF_Malloc, MemoryOperationKind::MOK_Free) ||
          isCMemFunction(FD, Ctx, AF_IfNameIndex,
                         MemoryOperationKind::MOK_Free)))
@@ -2547,8 +2548,7 @@ void MallocChecker::printState(raw_ostream &Out, ProgramStateRef State,
     for (RegionStateTy::iterator I = RS.begin(), E = RS.end(); I != E; ++I) {
       const RefState *RefS = State->get<RegionState>(I.getKey());
       AllocationFamily Family = RefS->getAllocationFamily();
-      auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocOptimistic,
-                                                       CK_MallocPessimistic,
+      auto CheckKind = getCheckIfTracked(MakeVecFromCK(CK_MallocChecker,
                                                        CK_NewDeleteChecker),
                                          Family);
       I.getKey()->dumpToStream(Out);
@@ -2564,6 +2564,8 @@ void MallocChecker::printState(raw_ostream &Out, ProgramStateRef State,
 void ento::registerNewDeleteLeaksChecker(CheckerManager &mgr) {
   registerCStringCheckerBasic(mgr);
   MallocChecker *checker = mgr.registerChecker<MallocChecker>();
+  checker->IsOptimistic = mgr.getAnalyzerOptions().getBooleanOption(
+      "Optimistic", false, checker);
   checker->ChecksEnabled[MallocChecker::CK_NewDeleteLeaksChecker] = true;
   checker->CheckNames[MallocChecker::CK_NewDeleteLeaksChecker] =
       mgr.getCurrentCheckName();
@@ -2577,11 +2579,12 @@ void ento::registerNewDeleteLeaksChecker(CheckerManager &mgr) {
   void ento::register##name(CheckerManager &mgr) {                             \
     registerCStringCheckerBasic(mgr);                                          \
     MallocChecker *checker = mgr.registerChecker<MallocChecker>();             \
+    checker->IsOptimistic = mgr.getAnalyzerOptions().getBooleanOption(         \
+        "Optimistic", false, checker);                                         \
     checker->ChecksEnabled[MallocChecker::CK_##name] = true;                   \
     checker->CheckNames[MallocChecker::CK_##name] = mgr.getCurrentCheckName(); \
   }
 
-REGISTER_CHECKER(MallocPessimistic)
-REGISTER_CHECKER(MallocOptimistic)
+REGISTER_CHECKER(MallocChecker)
 REGISTER_CHECKER(NewDeleteChecker)
 REGISTER_CHECKER(MismatchedDeallocatorChecker)

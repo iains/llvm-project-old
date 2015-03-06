@@ -119,16 +119,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "Atoms.h"
-#include "lld/Core/Endian.h"
 #include "lld/Core/Error.h"
 #include "lld/Core/File.h"
 #include "lld/Core/SharedLibraryAtom.h"
 #include "lld/ReaderWriter/PECOFFLinkingContext.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -141,6 +142,7 @@
 using namespace lld;
 using namespace lld::pecoff;
 using namespace llvm;
+using namespace llvm::support::endian;
 
 #define DEBUG_TYPE "ReaderImportHeader"
 

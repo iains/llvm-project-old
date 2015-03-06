@@ -84,10 +84,10 @@ public:
   };
 
   typedef bool (*ParseDirectives)(int, const char **, PECOFFLinkingContext &,
-                                  raw_ostream &, std::set<StringRef> *);
+                                  raw_ostream &);
 
   /// \brief Casting support
-  static inline bool classof(const LinkingContext *info) { return true; }
+  static bool classof(const LinkingContext *info) { return true; }
 
   Writer &writer() const override;
   bool validateImpl(raw_ostream &diagnostics) override;

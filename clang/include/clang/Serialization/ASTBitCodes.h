@@ -425,8 +425,7 @@ namespace clang {
       /// \brief Record code for the array of VTable uses.
       VTABLE_USES = 19,
 
-      /// \brief Record code for the array of dynamic classes.
-      DYNAMIC_CLASSES = 20,
+      // ID 20 used to be for a list of dynamic classes.
 
       /// \brief Record code for referenced selector pool.
       REFERENCED_SELECTOR_POOL = 21,
@@ -516,8 +515,7 @@ namespace clang {
       /// imported by the AST file.
       IMPORTED_MODULES = 43,
       
-      /// \brief Record code for the set of merged declarations in an AST file.
-      MERGED_DECLARATIONS = 44,
+      // ID 40 used to be a table of merged canonical declarations.
       
       /// \brief Record code for the array of redeclaration chains.
       ///

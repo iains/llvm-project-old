@@ -22,7 +22,6 @@
 #include "Atoms.h"
 #include "WriterImportLibrary.h"
 #include "lld/Core/DefinedAtom.h"
-#include "lld/Core/Endian.h"
 #include "lld/Core/File.h"
 #include "lld/Core/Writer.h"
 #include "lld/ReaderWriter/AtomLayout.h"
@@ -43,6 +42,8 @@
 #include <vector>
 
 #define DEBUG_TYPE "WriterPECOFF"
+
+using namespace llvm::support::endian;
 
 using llvm::COFF::DataDirectoryIndex;
 using llvm::object::coff_runtime_function_x64;
@@ -601,8 +602,9 @@ void AtomChunk::applyRelocationsARM(uint8_t *Buffer,
                                     std::vector<uint64_t> &SectionRVA,
                                     uint64_t ImageBase) {
   Buffer = Buffer + _fileOffset;
-  for (const auto *Layout : _atomLayouts) {
-    const DefinedAtom *Atom = cast<DefinedAtom>(Layout->_atom);
+  parallel_for_each(_atomLayouts.begin(), _atomLayouts.end(),
+                    [&](const AtomLayout *layout) {
+    const DefinedAtom *Atom = cast<DefinedAtom>(layout->_atom);
     for (const Reference *R : *Atom) {
       if (R->kindNamespace() != Reference::KindNamespace::COFF)
         continue;
@@ -613,7 +615,7 @@ void AtomChunk::applyRelocationsARM(uint8_t *Buffer,
                           Target->permissions() == DefinedAtom::permRWX;
 
       const auto AtomOffset = R->offsetInAtom();
-      const auto FileOffset = Layout->_fileOffset;
+      const auto FileOffset = layout->_fileOffset;
       const auto TargetAddr = AtomRVA[R->target()] | (AssumeTHUMBCode ? 1 : 0);
       auto RelocSite16 =
           reinterpret_cast<ulittle16_t *>(Buffer + FileOffset + AtomOffset);
@@ -644,7 +646,7 @@ void AtomChunk::applyRelocationsARM(uint8_t *Buffer,
         break;
       }
     }
-  }
+  });
 }
 
 void AtomChunk::applyRelocationsX86(uint8_t *buffer,
@@ -652,7 +654,8 @@ void AtomChunk::applyRelocationsX86(uint8_t *buffer,
                                     std::vector<uint64_t> &sectionRva,
                                     uint64_t imageBaseAddress) {
   buffer += _fileOffset;
-  for (const auto *layout : _atomLayouts) {
+  parallel_for_each(_atomLayouts.begin(), _atomLayouts.end(),
+                    [&](const AtomLayout *layout) {
     const DefinedAtom *atom = cast<DefinedAtom>(layout->_atom);
     for (const Reference *ref : *atom) {
       // Skip if this reference is not for COFF relocation.
@@ -701,7 +704,7 @@ void AtomChunk::applyRelocationsX86(uint8_t *buffer,
         llvm::report_fatal_error("Unsupported relocation kind");
       }
     }
-  }
+  });
 }
 
 void AtomChunk::applyRelocationsX64(uint8_t *buffer,
@@ -709,7 +712,8 @@ void AtomChunk::applyRelocationsX64(uint8_t *buffer,
                                     std::vector<uint64_t> &sectionRva,
                                     uint64_t imageBase) {
   buffer += _fileOffset;
-  for (const auto *layout : _atomLayouts) {
+  parallel_for_each(_atomLayouts.begin(), _atomLayouts.end(),
+                    [&](const AtomLayout *layout) {
     const DefinedAtom *atom = cast<DefinedAtom>(layout->_atom);
     for (const Reference *ref : *atom) {
       if (ref->kindNamespace() != Reference::KindNamespace::COFF)
@@ -761,7 +765,7 @@ void AtomChunk::applyRelocationsX64(uint8_t *buffer,
         llvm::report_fatal_error("Unsupported relocation kind");
       }
     }
-  }
+  });
 }
 
 /// Print atom VAs. Used only for debugging.

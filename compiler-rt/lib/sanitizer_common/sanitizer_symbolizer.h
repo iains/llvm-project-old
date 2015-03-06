@@ -43,8 +43,7 @@ struct AddressInfo {
   AddressInfo();
   // Deletes all strings and resets all fields.
   void Clear();
-  void FillAddressAndModuleInfo(uptr addr, const char *mod_name,
-                                uptr mod_offset);
+  void FillModuleInfo(const char *mod_name, uptr mod_offset);
 };
 
 // Linked list of symbolized frames (each frame is described by AddressInfo).
@@ -91,6 +90,13 @@ class Symbolizer {
                                            uptr *module_address) {
     return false;
   }
+  const char *GetModuleNameForPc(uptr pc) {
+    const char *module_name = 0;
+    uptr unused;
+    if (GetModuleNameAndOffsetForPC(pc, &module_name, &unused))
+      return module_name;
+    return nullptr;
+  }
   virtual bool CanReturnFileLineInfo() {
     return false;
   }
@@ -135,53 +141,6 @@ class Symbolizer {
    private:
     const Symbolizer *sym_;
   };
-};
-
-class ExternalSymbolizerInterface {
- public:
-  // Can't declare pure virtual functions in sanitizer runtimes:
-  // __cxa_pure_virtual might be unavailable.
-  virtual const char *SendCommand(bool is_data, const char *module_name,
-                                  uptr module_offset) {
-    UNIMPLEMENTED();
-  }
-};
-
-// SymbolizerProcess encapsulates communication between the tool and
-// external symbolizer program, running in a different subprocess.
-// SymbolizerProcess may not be used from two threads simultaneously.
-class SymbolizerProcess {
- public:
-  explicit SymbolizerProcess(const char *path);
-  const char *SendCommand(const char *command);
-
- private:
-  bool Restart();
-  const char *SendCommandImpl(const char *command);
-  bool ReadFromSymbolizer(char *buffer, uptr max_length);
-  bool WriteToSymbolizer(const char *buffer, uptr length);
-  bool StartSymbolizerSubprocess();
-
-  virtual bool ReachedEndOfOutput(const char *buffer, uptr length) const {
-    UNIMPLEMENTED();
-  }
-
-  virtual void ExecuteWithDefaultArgs(const char *path_to_binary) const {
-    UNIMPLEMENTED();
-  }
-
-  const char *path_;
-  int input_fd_;
-  int output_fd_;
-
-  static const uptr kBufferSize = 16 * 1024;
-  char buffer_[kBufferSize];
-
-  static const uptr kMaxTimesRestarted = 5;
-  static const int kSymbolizerStartupTimeMillis = 10;
-  uptr times_restarted_;
-  bool failed_to_start_;
-  bool reported_invalid_path_;
 };
 
 }  // namespace __sanitizer

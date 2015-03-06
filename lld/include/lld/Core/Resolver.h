@@ -18,6 +18,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lld {
@@ -29,8 +31,8 @@ class LinkingContext;
 /// and producing a merged graph.
 class Resolver {
 public:
-  Resolver(LinkingContext &context)
-      : _context(context), _symbolTable(context), _result(new MergedFile()),
+  Resolver(LinkingContext &ctx)
+      : _ctx(ctx), _symbolTable(ctx), _result(new MergedFile()),
         _fileIndex(0) {}
 
   // InputFiles::Handler methods
@@ -41,13 +43,13 @@ public:
 
   // Handle files, this adds atoms from the current file thats
   // being processed by the resolver
-  bool handleFile(const File &);
+  bool handleFile(File &);
 
   // Handle an archive library file.
-  bool handleArchiveFile(const File &);
+  bool handleArchiveFile(File &);
 
   // Handle a shared library file.
-  void handleSharedLibrary(const File &);
+  void handleSharedLibrary(File &);
 
   /// @brief do work of merging and resolving and return list
   bool resolve();
@@ -64,14 +66,14 @@ private:
   void maybeAddSectionGroupOrGnuLinkOnce(const DefinedAtom &atom);
 
   /// \brief The main function that iterates over the files to resolve
-  void makePreloadArchiveMap();
+  void updatePreloadArchiveMap();
   bool resolveUndefines();
   void updateReferences();
   void deadStripOptimize();
   bool checkUndefines();
   void removeCoalescedAwayAtoms();
   void checkDylibSymbolCollisions();
-  void forEachUndefines(bool searchForOverrides, UndefCallback callback);
+  void forEachUndefines(File &file, bool searchForOverrides, UndefCallback callback);
 
   void markLive(const Atom *atom);
   void addAtoms(const std::vector<const DefinedAtom *>&);
@@ -83,14 +85,14 @@ private:
     void addAtoms(std::vector<const Atom*>& atoms);
   };
 
-  LinkingContext &_context;
+  LinkingContext &_ctx;
   SymbolTable _symbolTable;
   std::vector<const Atom *>     _atoms;
   std::set<const Atom *>        _deadStripRoots;
   llvm::DenseSet<const Atom *>  _liveAtoms;
   llvm::DenseSet<const Atom *>  _deadAtoms;
   std::unique_ptr<MergedFile>   _result;
-  llvm::DenseMap<const Atom *, llvm::DenseSet<const Atom *>> _reverseRef;
+  std::unordered_multimap<const Atom *, const Atom *> _reverseRef;
 
   // --start-group and --end-group
   std::vector<File *> _files;
@@ -99,6 +101,17 @@ private:
 
   // Preloading
   std::map<StringRef, ArchiveLibraryFile *> _archiveMap;
+  std::unordered_set<ArchiveLibraryFile *> _archiveSeen;
+
+  // List of undefined symbols.
+  std::vector<StringRef> _undefines;
+
+  // Start position in _undefines for each archive/shared library file.
+  // Symbols from index 0 to the start position are already searched before.
+  // Searching them again would never succeed. When we look for undefined
+  // symbols from an archive/shared library file, start from its start
+  // position to save time.
+  std::map<File *, size_t> _undefineIndex;
 };
 
 } // namespace lld

@@ -346,11 +346,10 @@ namespace {
     /// Push BV onto BlockValueStack unless it's already in there.
     /// Returns true on success.
     bool pushBlockValue(const std::pair<BasicBlock *, Value *> &BV) {
-      if (BlockValueSet.count(BV))
+      if (!BlockValueSet.insert(BV).second)
         return false;  // It's already in the stack.
 
       BlockValueStack.push(BV);
-      BlockValueSet.insert(BV);
       return true;
     }
 
@@ -1118,8 +1117,7 @@ bool LazyValueInfo::runOnFunction(Function &F) {
       getAnalysisIfAvailable<DominatorTreeWrapperPass>();
   DT = DTWP ? &DTWP->getDomTree() : nullptr;
 
-  DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
-  DL = DLP ? &DLP->getDataLayout() : nullptr;
+  DL = &F.getParent()->getDataLayout();
 
   TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 

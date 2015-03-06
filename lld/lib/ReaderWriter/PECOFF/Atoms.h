@@ -145,11 +145,12 @@ private:
 class COFFDefinedFileAtom : public COFFBaseDefinedAtom {
 public:
   COFFDefinedFileAtom(const File &file, StringRef name, StringRef sectionName,
-                      Scope scope, ContentType contentType,
-                      ContentPermissions perms, uint64_t ordinal)
+                      uint64_t sectionSize, Scope scope,
+                      ContentType contentType, ContentPermissions perms,
+                      uint64_t ordinal)
       : COFFBaseDefinedAtom(file, name, Kind::File), _sectionName(sectionName),
-        _scope(scope), _contentType(contentType), _permissions(perms),
-        _ordinal(ordinal), _alignment(0) {}
+        _sectionSize(sectionSize), _scope(scope), _contentType(contentType),
+        _permissions(perms), _ordinal(ordinal), _alignment(0) {}
 
   static bool classof(const COFFBaseDefinedAtom *atom) {
     return atom->getKind() == Kind::File;
@@ -158,6 +159,7 @@ public:
   void setAlignment(Alignment val) { _alignment = val; }
   SectionChoice sectionChoice() const override { return sectionCustomRequired; }
   StringRef customSectionName() const override { return _sectionName; }
+  uint64_t sectionSize() const override { return _sectionSize; }
   Scope scope() const override { return _scope; }
   ContentType contentType() const override { return _contentType; }
   ContentPermissions permissions() const override { return _permissions; }
@@ -173,6 +175,7 @@ public:
 
 private:
   StringRef _sectionName;
+  uint64_t _sectionSize;
   Scope _scope;
   ContentType _contentType;
   ContentPermissions _permissions;
@@ -185,11 +188,11 @@ private:
 class COFFDefinedAtom : public COFFDefinedFileAtom {
 public:
   COFFDefinedAtom(const File &file, StringRef name, StringRef sectionName,
-                  Scope scope, ContentType type, bool isComdat,
-                  ContentPermissions perms, Merge merge, ArrayRef<uint8_t> data,
-                  uint64_t ordinal)
-      : COFFDefinedFileAtom(file, name, sectionName, scope, type, perms,
-                            ordinal),
+                  uint64_t sectionSize, Scope scope, ContentType type,
+                  bool isComdat, ContentPermissions perms, Merge merge,
+                  ArrayRef<uint8_t> data, uint64_t ordinal)
+      : COFFDefinedFileAtom(file, name, sectionName, sectionSize,
+                            scope, type, perms, ordinal),
         _isComdat(isComdat), _merge(merge), _dataref(data) {}
 
   Merge merge() const override { return _merge; }
@@ -213,8 +216,8 @@ public:
   COFFBSSAtom(const File &file, StringRef name, Scope scope,
               ContentPermissions perms, Merge merge, uint32_t size,
               uint64_t ordinal)
-      : COFFDefinedFileAtom(file, name, ".bss", scope, typeZeroFill, perms,
-                            ordinal),
+      : COFFDefinedFileAtom(file, name, ".bss", 0, scope, typeZeroFill,
+                            perms, ordinal),
         _merge(merge), _size(size) {}
 
   Merge merge() const override { return _merge; }
@@ -349,23 +352,6 @@ void addLayoutEdge(T *a, U *b, uint32_t which) {
                                Reference::KindNamespace::all);
   ref->setTarget(b);
   a->addReference(std::unique_ptr<COFFReference>(ref));
-}
-
-template <typename T, typename U> void connectWithLayoutEdge(T *a, U *b) {
-  addLayoutEdge(a, b, lld::Reference::kindLayoutAfter);
-  addLayoutEdge(b, a, lld::Reference::kindLayoutBefore);
-}
-
-/// Connect atoms with layout-before/after edges. It prevents atoms
-/// from being GC'ed (aka dead-stripped) if there is a reference to
-/// one of the atoms in the same layout-before chain. In such case we
-/// want to emit all the atoms appeared in the same chain, because the
-/// "live" atom may reference other atoms in the same chain.
-template <typename T> void connectAtomsWithLayoutEdge(std::vector<T *> &atoms) {
-  if (atoms.size() < 2)
-    return;
-  for (auto it = atoms.begin(), e = atoms.end(); it + 1 != e; ++it)
-    connectWithLayoutEdge(*it, *(it + 1));
 }
 
 } // namespace pecoff

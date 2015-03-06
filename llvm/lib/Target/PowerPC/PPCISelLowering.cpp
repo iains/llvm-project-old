@@ -574,15 +574,24 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
       addRegisterClass(MVT::v4f32, &PPC::VSRCRegClass);
       addRegisterClass(MVT::v2f64, &PPC::VSRCRegClass);
 
-      // VSX v2i64 only supports non-arithmetic operations.
-      setOperationAction(ISD::ADD, MVT::v2i64, Expand);
-      setOperationAction(ISD::SUB, MVT::v2i64, Expand);
+      if (Subtarget.hasP8Altivec()) {
+        setOperationAction(ISD::SHL, MVT::v2i64, Legal);
+        setOperationAction(ISD::SRA, MVT::v2i64, Legal);
+        setOperationAction(ISD::SRL, MVT::v2i64, Legal);
 
-      setOperationAction(ISD::SHL, MVT::v2i64, Expand);
-      setOperationAction(ISD::SRA, MVT::v2i64, Expand);
-      setOperationAction(ISD::SRL, MVT::v2i64, Expand);
+        setOperationAction(ISD::SETCC, MVT::v2i64, Legal);
+      }
+      else {
+        setOperationAction(ISD::SHL, MVT::v2i64, Expand);
+        setOperationAction(ISD::SRA, MVT::v2i64, Expand);
+        setOperationAction(ISD::SRL, MVT::v2i64, Expand);
 
-      setOperationAction(ISD::SETCC, MVT::v2i64, Custom);
+        setOperationAction(ISD::SETCC, MVT::v2i64, Custom);
+
+        // VSX v2i64 only supports non-arithmetic operations.
+        setOperationAction(ISD::ADD, MVT::v2i64, Expand);
+        setOperationAction(ISD::SUB, MVT::v2i64, Expand);
+      }
 
       setOperationAction(ISD::LOAD, MVT::v2i64, Promote);
       AddPromotedToType (ISD::LOAD, MVT::v2i64, MVT::v2f64);
@@ -892,6 +901,13 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     MaxStoresPerMemcpyOptSize = 8;
     MaxStoresPerMemmove = 32;
     MaxStoresPerMemmoveOptSize = 8;
+  } else if (Subtarget.getDarwinDirective() == PPC::DIR_A2) {
+    // The A2 also benefits from (very) aggressive inlining of memcpy and
+    // friends. The overhead of a the function call, even when warm, can be
+    // over one hundred cycles.
+    MaxStoresPerMemset = 128;
+    MaxStoresPerMemcpy = 128;
+    MaxStoresPerMemmove = 128;
   }
 }
 
@@ -2436,27 +2452,16 @@ bool llvm::CC_PPC32_SVR4_Custom_AlignFPArgRegs(unsigned &ValNo, MVT &ValVT,
   return false;
 }
 
-/// GetFPR - Get the set of FP registers that should be allocated for arguments,
+/// FPR - The set of FP registers that should be allocated for arguments,
 /// on Darwin.
-static const MCPhysReg *GetFPR() {
-  static const MCPhysReg FPR[] = {
-    PPC::F1, PPC::F2, PPC::F3, PPC::F4, PPC::F5, PPC::F6, PPC::F7,
-    PPC::F8, PPC::F9, PPC::F10, PPC::F11, PPC::F12, PPC::F13
-  };
+static const MCPhysReg FPR[] = {PPC::F1,  PPC::F2,  PPC::F3, PPC::F4, PPC::F5,
+                                PPC::F6,  PPC::F7,  PPC::F8, PPC::F9, PPC::F10,
+                                PPC::F11, PPC::F12, PPC::F13};
 
-  return FPR;
-}
-
-/// GetQFPR - Get the set of QPX registers that should be allocated for
-/// arguments.
-static const MCPhysReg *GetQFPR() {
-  static const MCPhysReg QFPR[] = {
-    PPC::QF1, PPC::QF2, PPC::QF3, PPC::QF4, PPC::QF5, PPC::QF6, PPC::QF7,
-    PPC::QF8, PPC::QF9, PPC::QF10, PPC::QF11, PPC::QF12, PPC::QF13
-  };
-
-  return QFPR;
-}
+/// QFPR - The set of QPX registers that should be allocated for arguments.
+static const MCPhysReg QFPR[] = {
+    PPC::QF1, PPC::QF2, PPC::QF3,  PPC::QF4,  PPC::QF5,  PPC::QF6, PPC::QF7,
+    PPC::QF8, PPC::QF9, PPC::QF10, PPC::QF11, PPC::QF12, PPC::QF13};
 
 /// CalculateStackSlotSize - Calculates the size reserved for this argument on
 /// the stack.
@@ -2880,9 +2885,6 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
     PPC::X3, PPC::X4, PPC::X5, PPC::X6,
     PPC::X7, PPC::X8, PPC::X9, PPC::X10,
   };
-
-  static const MCPhysReg *FPR = GetFPR();
-
   static const MCPhysReg VR[] = {
     PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
     PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
@@ -2891,8 +2893,6 @@ PPCTargetLowering::LowerFormalArguments_64SVR4(
     PPC::VSH2, PPC::VSH3, PPC::VSH4, PPC::VSH5, PPC::VSH6, PPC::VSH7, PPC::VSH8,
     PPC::VSH9, PPC::VSH10, PPC::VSH11, PPC::VSH12, PPC::VSH13
   };
-
-  static const MCPhysReg *QFPR = GetQFPR();
 
   const unsigned Num_GPR_Regs = array_lengthof(GPR);
   const unsigned Num_FPR_Regs = 13;
@@ -3291,9 +3291,6 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
     PPC::X3, PPC::X4, PPC::X5, PPC::X6,
     PPC::X7, PPC::X8, PPC::X9, PPC::X10,
   };
-
-  static const MCPhysReg *FPR = GetFPR();
-
   static const MCPhysReg VR[] = {
     PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
     PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
@@ -4582,8 +4579,6 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
     PPC::X3, PPC::X4, PPC::X5, PPC::X6,
     PPC::X7, PPC::X8, PPC::X9, PPC::X10,
   };
-  static const MCPhysReg *FPR = GetFPR();
-
   static const MCPhysReg VR[] = {
     PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
     PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
@@ -4592,8 +4587,6 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
     PPC::VSH2, PPC::VSH3, PPC::VSH4, PPC::VSH5, PPC::VSH6, PPC::VSH7, PPC::VSH8,
     PPC::VSH9, PPC::VSH10, PPC::VSH11, PPC::VSH12, PPC::VSH13
   };
-
-  static const MCPhysReg *QFPR = GetQFPR();
 
   const unsigned NumGPRs = array_lengthof(GPR);
   const unsigned NumFPRs = 13;
@@ -5280,8 +5273,6 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
     PPC::X3, PPC::X4, PPC::X5, PPC::X6,
     PPC::X7, PPC::X8, PPC::X9, PPC::X10,
   };
-  static const MCPhysReg *FPR = GetFPR();
-
   static const MCPhysReg VR[] = {
     PPC::V2, PPC::V3, PPC::V4, PPC::V5, PPC::V6, PPC::V7, PPC::V8,
     PPC::V9, PPC::V10, PPC::V11, PPC::V12, PPC::V13
@@ -6418,7 +6409,7 @@ static SDValue BuildSplatI(int Val, unsigned SplatSize, EVT VT,
                              SelectionDAG &DAG, SDLoc dl) {
   assert(Val >= -16 && Val <= 15 && "vsplti is out of range!");
 
-  static const EVT VTys[] = { // canonical VT to use for each size.
+  static const MVT VTys[] = { // canonical VT to use for each size.
     MVT::v16i8, MVT::v8i16, MVT::Other, MVT::v4i32
   };
 
@@ -7045,7 +7036,7 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
 /// altivec comparison.  If it is, return true and fill in Opc/isDot with
 /// information about the intrinsic.
 static bool getAltivecCompareInfo(SDValue Intrin, int &CompareOpc,
-                                  bool &isDot) {
+                                  bool &isDot, const PPCSubtarget &Subtarget) {
   unsigned IntrinsicID =
     cast<ConstantSDNode>(Intrin.getOperand(0))->getZExtValue();
   CompareOpc = -1;
@@ -7058,29 +7049,83 @@ static bool getAltivecCompareInfo(SDValue Intrin, int &CompareOpc,
   case Intrinsic::ppc_altivec_vcmpequb_p: CompareOpc =   6; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpequh_p: CompareOpc =  70; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpequw_p: CompareOpc = 134; isDot = 1; break;
+  case Intrinsic::ppc_altivec_vcmpequd_p: 
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 199; 
+      isDot = 1; 
+    }
+    else 
+      return false;
+
+    break;
   case Intrinsic::ppc_altivec_vcmpgefp_p: CompareOpc = 454; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtfp_p: CompareOpc = 710; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtsb_p: CompareOpc = 774; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtsh_p: CompareOpc = 838; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtsw_p: CompareOpc = 902; isDot = 1; break;
+  case Intrinsic::ppc_altivec_vcmpgtsd_p: 
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 967; 
+      isDot = 1; 
+    }
+    else 
+      return false;
+
+    break;
   case Intrinsic::ppc_altivec_vcmpgtub_p: CompareOpc = 518; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtuh_p: CompareOpc = 582; isDot = 1; break;
   case Intrinsic::ppc_altivec_vcmpgtuw_p: CompareOpc = 646; isDot = 1; break;
+  case Intrinsic::ppc_altivec_vcmpgtud_p: 
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 711; 
+      isDot = 1; 
+    }
+    else 
+      return false;
 
+    break;
+      
     // Normal Comparisons.
   case Intrinsic::ppc_altivec_vcmpbfp:    CompareOpc = 966; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpeqfp:   CompareOpc = 198; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpequb:   CompareOpc =   6; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpequh:   CompareOpc =  70; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpequw:   CompareOpc = 134; isDot = 0; break;
+  case Intrinsic::ppc_altivec_vcmpequd:
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 199; 
+      isDot = 0; 
+    }
+    else
+      return false;
+
+    break;
   case Intrinsic::ppc_altivec_vcmpgefp:   CompareOpc = 454; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtfp:   CompareOpc = 710; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtsb:   CompareOpc = 774; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtsh:   CompareOpc = 838; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtsw:   CompareOpc = 902; isDot = 0; break;
+  case Intrinsic::ppc_altivec_vcmpgtsd:   
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 967; 
+      isDot = 0; 
+    }
+    else
+      return false;
+
+    break;
   case Intrinsic::ppc_altivec_vcmpgtub:   CompareOpc = 518; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtuh:   CompareOpc = 582; isDot = 0; break;
   case Intrinsic::ppc_altivec_vcmpgtuw:   CompareOpc = 646; isDot = 0; break;
+  case Intrinsic::ppc_altivec_vcmpgtud:   
+    if (Subtarget.hasP8Altivec()) {
+      CompareOpc = 711; 
+      isDot = 0; 
+    }
+    else
+      return false;
+
+    break;
   }
   return true;
 }
@@ -7094,7 +7139,7 @@ SDValue PPCTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   SDLoc dl(Op);
   int CompareOpc;
   bool isDot;
-  if (!getAltivecCompareInfo(Op, CompareOpc, isDot))
+  if (!getAltivecCompareInfo(Op, CompareOpc, isDot, Subtarget))
     return SDValue();    // Don't custom lower most intrinsics.
 
   // If this is a non-dot comparison, make the VCMP node and we are done.
@@ -10184,7 +10229,7 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
 
     if (LHS.getOpcode() == ISD::INTRINSIC_WO_CHAIN &&
         isa<ConstantSDNode>(RHS) && (CC == ISD::SETEQ || CC == ISD::SETNE) &&
-        getAltivecCompareInfo(LHS, CompareOpc, isDot)) {
+        getAltivecCompareInfo(LHS, CompareOpc, isDot, Subtarget)) {
       assert(isDot && "Can't compare against a vector result!");
 
       // If this is a comparison against something other than 0/1, then we know
@@ -10297,14 +10342,17 @@ void PPCTargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
     case Intrinsic::ppc_altivec_vcmpequb_p:
     case Intrinsic::ppc_altivec_vcmpequh_p:
     case Intrinsic::ppc_altivec_vcmpequw_p:
+    case Intrinsic::ppc_altivec_vcmpequd_p:
     case Intrinsic::ppc_altivec_vcmpgefp_p:
     case Intrinsic::ppc_altivec_vcmpgtfp_p:
     case Intrinsic::ppc_altivec_vcmpgtsb_p:
     case Intrinsic::ppc_altivec_vcmpgtsh_p:
     case Intrinsic::ppc_altivec_vcmpgtsw_p:
+    case Intrinsic::ppc_altivec_vcmpgtsd_p:
     case Intrinsic::ppc_altivec_vcmpgtub_p:
     case Intrinsic::ppc_altivec_vcmpgtuh_p:
     case Intrinsic::ppc_altivec_vcmpgtuw_p:
+    case Intrinsic::ppc_altivec_vcmpgtud_p:
       KnownZero = ~1U;  // All bits but the low one are known to be zero.
       break;
     }
@@ -10914,11 +10962,27 @@ EVT PPCTargetLowering::getOptimalMemOpType(uint64_t Size,
                                            bool IsMemset, bool ZeroMemset,
                                            bool MemcpyStrSrc,
                                            MachineFunction &MF) const {
+  const Function *F = MF.getFunction();
+  // When expanding a memset, require at least two QPX instructions to cover
+  // the cost of loading the value to be stored from the constant pool.
+  if (Subtarget.hasQPX() && Size >= 32 && (!IsMemset || Size >= 64) &&
+     (!SrcAlign || SrcAlign >= 32) && (!DstAlign || DstAlign >= 32) &&
+      !F->hasFnAttribute(Attribute::NoImplicitFloat)) {
+    return MVT::v4f64;
+  }
+
+  // We should use Altivec/VSX loads and stores when available. For unaligned
+  // addresses, unaligned VSX loads are only fast starting with the P8.
+  if (Subtarget.hasAltivec() && Size >= 16 &&
+      (((!SrcAlign || SrcAlign >= 16) && (!DstAlign || DstAlign >= 16)) ||
+       ((IsMemset && Subtarget.hasVSX()) || Subtarget.hasP8Vector())))
+    return MVT::v4i32;
+
   if (Subtarget.isPPC64()) {
     return MVT::i64;
-  } else {
-    return MVT::i32;
   }
+
+  return MVT::i32;
 }
 
 /// \brief Returns true if it is beneficial to convert a load of a constant
