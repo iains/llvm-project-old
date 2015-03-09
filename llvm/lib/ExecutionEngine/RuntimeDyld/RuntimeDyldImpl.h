@@ -36,6 +36,14 @@ using namespace llvm::object;
 
 namespace llvm {
 
+  // Helper for extensive error checking in debug builds.
+inline std::error_code Check(std::error_code Err) {
+  if (Err) {
+    report_fatal_error(Err.message());
+  }
+  return Err;
+}
+
 class Twine;
 
 /// SectionEntry - represents a section emitted into memory by the dynamic

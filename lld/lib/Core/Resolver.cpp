@@ -54,8 +54,8 @@ void Resolver::forEachUndefines(File &file, bool searchForOverrides,
       StringRef undefName = _undefines[i];
       if (undefName.empty())
         continue;
-      if (_symbolTable.isDefined(undefName) ||
-          _symbolTable.isCoalescedAway(_symbolTable.findByName(undefName))) {
+      const Atom *atom = _symbolTable.findByName(undefName);
+      if (!isa<UndefinedAtom>(atom) || _symbolTable.isCoalescedAway(atom)) {
         // The symbol was resolved by some other file. Cache the result.
         _undefines[i] = "";
         continue;
@@ -125,7 +125,7 @@ bool Resolver::doUndefinedAtom(const UndefinedAtom &atom) {
   // If the undefined symbol has an alternative name, try to resolve the
   // symbol with the name to give it a second chance. This feature is used
   // for COFF "weak external" symbol.
-  if (!_symbolTable.isDefined(atom.name())) {
+  if (newUndefAdded || !_symbolTable.isDefined(atom.name())) {
     if (const UndefinedAtom *fallbackAtom = atom.fallback()) {
       doUndefinedAtom(*fallbackAtom);
       _symbolTable.addReplacement(&atom, fallbackAtom);
@@ -181,12 +181,6 @@ void Resolver::doDefinedAtom(const DefinedAtom &atom) {
                     << ", name="
                     << atom.name()
                     << "\n");
-
-  // Verify on zero-size atoms are pinned to start or end of section.
-  if (atom.sectionPosition() == DefinedAtom::sectionPositionStart ||
-      atom.sectionPosition() == DefinedAtom::sectionPositionEnd) {
-    assert(atom.size() == 0);
-  }
 
   // add to list of known atoms
   _atoms.push_back(&atom);
@@ -388,7 +382,7 @@ void Resolver::markLive(const Atom *atom) {
 static bool isBackref(const Reference *ref) {
   if (ref->kindNamespace() != lld::Reference::KindNamespace::all)
     return false;
-  return (ref->kindValue() == lld::Reference::kindLayoutBefore ||
+  return (ref->kindValue() == lld::Reference::kindLayoutAfter ||
           ref->kindValue() == lld::Reference::kindGroupChild);
 }
 

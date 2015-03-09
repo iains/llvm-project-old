@@ -74,13 +74,8 @@ class FileCOFF : public File {
 private:
   typedef std::vector<llvm::object::COFFSymbolRef> SymbolVectorT;
   typedef std::map<const coff_section *, SymbolVectorT> SectionToSymbolsT;
-  typedef std::map<const StringRef, Atom *> SymbolNameToAtomT;
-  typedef std::map<const coff_section *, std::vector<COFFDefinedFileAtom *>>
-  SectionToAtomsT;
 
 public:
-  typedef const std::map<std::string, std::string> StringMap;
-
   FileCOFF(std::unique_ptr<MemoryBuffer> mb, PECOFFLinkingContext &ctx)
     : File(mb->getBufferIdentifier(), kindObject), _mb(std::move(mb)),
       _compatibleWithSEH(false), _ordinal(1),
@@ -198,7 +193,7 @@ private:
   std::map<const coff_section *, DefinedAtom::Merge> _merge;
 
   // COMDAT associative sections
-  std::map<const coff_section *, std::set<const coff_section *>> _association;
+  std::multimap<const coff_section *, const coff_section *> _association;
 
   // A sorted map to find an atom from a section and an offset within
   // the section.
@@ -380,8 +375,10 @@ void FileCOFF::beforeLink() {
 
   // Add /INCLUDE'ed symbols to the file as if they existed in the
   // file as undefined symbols.
-  for (StringRef sym : undefSyms)
+  for (StringRef sym : undefSyms) {
     addUndefinedSymbol(sym);
+    _ctx.addDeadStripRoot(sym);
+  }
 
   // One can define alias symbols using /alternatename:<sym>=<sym> option.
   // The mapping for /alternatename is in the context object. This helper
@@ -392,10 +389,6 @@ void FileCOFF::beforeLink() {
   // SEH. Disable SEH if the file being read is not compatible.
   if (!isCompatibleWithSEH())
     _ctx.setSafeSEH(false);
-
-  if (_ctx.deadStrip())
-    for (const UndefinedAtom *undef : undefined())
-      _ctx.addDeadStripRoot(undef->name());
 }
 
 /// Iterate over the symbol table to retrieve all symbols.
@@ -628,7 +621,7 @@ std::error_code FileCOFF::cacheSectionAttributes() {
       if (std::error_code ec =
               _obj->getSection(aux->getNumber(sym.isBigObj()), parent))
         return ec;
-      _association[parent].insert(sec);
+      _association.insert(std::make_pair(parent, sec));
     }
   }
 
@@ -754,14 +747,14 @@ std::error_code FileCOFF::AtomizeDefinedSymbols(
     if (atoms.size() > 0)
       atoms[0]->setAlignment(getAlignment(section));
 
-    // Connect atoms with layout-before edges. It prevents atoms
+    // Connect atoms with layout-after edges. It prevents atoms
     // from being GC'ed if there is a reference to one of the atoms
-    // in the same layout-before chain. In such case we want to emit
+    // in the same layout-after chain. In such case we want to emit
     // all the atoms appeared in the same chain, because the "live"
     // atom may reference other atoms in the same chain.
     if (atoms.size() >= 2)
       for (auto it = atoms.begin(), e = atoms.end(); it + 1 != e; ++it)
-        addLayoutEdge(*(it + 1), *it, lld::Reference::kindLayoutBefore);
+        addLayoutEdge(*it, *(it + 1), lld::Reference::kindLayoutAfter);
 
     for (COFFDefinedFileAtom *atom : atoms) {
       _sectionAtoms[section].push_back(atom);
@@ -779,15 +772,10 @@ std::error_code FileCOFF::AtomizeDefinedSymbols(
   // associate list, so that Resolver takes care of them.
   for (auto i : _association) {
     const coff_section *parent = i.first;
-    const std::set<const coff_section *> &childSections = i.second;
-    assert(_sectionAtoms[parent].size() > 0);
-
-    COFFDefinedFileAtom *p = _sectionAtoms[parent][0];
-    for (const coff_section *sec : childSections) {
-      if (_sectionAtoms.count(sec)) {
-        assert(_sectionAtoms[sec].size() > 0);
-        p->addAssociate(_sectionAtoms[sec][0]);
-      }
+    const coff_section *child = i.second;
+    if (_sectionAtoms.count(child)) {
+      COFFDefinedFileAtom *p = _sectionAtoms[parent][0];
+      p->addAssociate(_sectionAtoms[child][0]);
     }
   }
 

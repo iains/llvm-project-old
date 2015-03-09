@@ -40,7 +40,7 @@ class TargetLibraryInfoImpl {
 
   unsigned char AvailableArray[(LibFunc::NumLibFuncs+3)/4];
   llvm::DenseMap<unsigned, std::string> CustomNames;
-  static const char* StandardNames[LibFunc::NumLibFuncs];
+  static const char *const StandardNames[LibFunc::NumLibFuncs];
 
   enum AvailabilityState {
     StandardName = 3, // (memset to all ones)
@@ -133,7 +133,7 @@ public:
     return Impl->getLibFunc(funcName, F);
   }
 
-  /// \brief Tests wether a library function is available.
+  /// \brief Tests whether a library function is available.
   bool has(LibFunc::Func F) const {
     return Impl->getState(F) != TargetLibraryInfoImpl::Unavailable;
   }
