@@ -2158,6 +2158,7 @@ void ASTDeclReader::mergeTemplatePattern(RedeclarableTemplateDecl *D,
         DClass->IsCompleteDefinition = false;
       } else {
         ExistingClass->DefinitionData = DClass->DefinitionData;
+        Reader.PendingDefinitions.insert(DClass);
       }
     }
     DClass->DefinitionData = ExistingClass->DefinitionData;
@@ -2797,6 +2798,10 @@ Decl *ASTDeclReader::getMostRecentDecl(Decl *D) {
 #include "clang/AST/DeclNodes.inc"
   }
   llvm_unreachable("unknown decl kind");
+}
+
+Decl *ASTReader::getMostRecentExistingDecl(Decl *D) {
+  return ASTDeclReader::getMostRecentDecl(D->getCanonicalDecl());
 }
 
 template<typename DeclT>
