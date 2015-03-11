@@ -14,6 +14,7 @@
 #include "lld/Driver/Driver.h"
 #include "lld/ReaderWriter/PECOFFLinkingContext.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Casting.h"
@@ -38,11 +39,9 @@
 
 #define DEBUG_TYPE "ReaderCOFF"
 
-using lld::pecoff::COFFAbsoluteAtom;
 using lld::pecoff::COFFBSSAtom;
 using lld::pecoff::COFFDefinedAtom;
 using lld::pecoff::COFFDefinedFileAtom;
-using lld::pecoff::COFFReference;
 using lld::pecoff::COFFUndefinedAtom;
 using llvm::object::coff_aux_section_definition;
 using llvm::object::coff_aux_weak_external;
@@ -440,8 +439,8 @@ void FileCOFF::createAbsoluteAtoms(const SymbolVectorT &symbols,
   for (llvm::object::COFFSymbolRef sym : symbols) {
     if (sym.getSectionNumber() != llvm::COFF::IMAGE_SYM_ABSOLUTE)
       continue;
-    auto *atom = new (_alloc) COFFAbsoluteAtom(*this, _symbolName[sym],
-                                               getScope(sym), sym.getValue());
+    auto *atom = new (_alloc) SimpleAbsoluteAtom(*this, _symbolName[sym],
+                                                 getScope(sym), sym.getValue());
 
     result.push_back(atom);
     _symbolAtom[sym] = atom;
@@ -834,8 +833,9 @@ std::error_code FileCOFF::addRelocationReference(
   uint32_t offsetInAtom;
   if (std::error_code ec = findAtomAt(section, itemAddress, atom, offsetInAtom))
     return ec;
-  atom->addReference(std::unique_ptr<COFFReference>(
-      new COFFReference(targetAtom, offsetInAtom, rel->Type, _referenceArch)));
+  atom->addReference(llvm::make_unique<SimpleReference>(
+      Reference::KindNamespace::COFF, _referenceArch, rel->Type, offsetInAtom,
+      targetAtom, 0));
   return std::error_code();
 }
 
@@ -1003,8 +1003,9 @@ std::error_code FileCOFF::maybeCreateSXDataAtoms() {
       llvm_unreachable("unsupported machine type");
     }
 
-    atom->addReference(std::unique_ptr<COFFReference>(new COFFReference(
-        handlerFunc, offsetInAtom, rtype, _referenceArch)));
+    atom->addReference(llvm::make_unique<SimpleReference>(
+      Reference::KindNamespace::COFF, _referenceArch, rtype, offsetInAtom,
+      handlerFunc, 0));
   }
 
   _definedAtoms._atoms.push_back(atom);

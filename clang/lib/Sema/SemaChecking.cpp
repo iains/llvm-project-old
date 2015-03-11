@@ -882,9 +882,6 @@ bool Sema::CheckX86BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   case X86::BI__builtin_ia32_vextractf128_ps256:
   case X86::BI__builtin_ia32_vextractf128_si256:
   case X86::BI__builtin_ia32_extract128i256: i = 1, l = 0, u = 1; break;
-  case X86::BI__builtin_ia32_vinsertf128_pd256:
-  case X86::BI__builtin_ia32_vinsertf128_ps256:
-  case X86::BI__builtin_ia32_vinsertf128_si256:
   case X86::BI__builtin_ia32_insert128i256: i = 2, l = 0; u = 1; break;
   case X86::BI__builtin_ia32_sha1rnds4: i = 2, l = 0; u = 3; break;
   case X86::BI__builtin_ia32_vpermil2pd:
@@ -8187,8 +8184,8 @@ static bool isSetterLikeSelector(Selector sel) {
   return !isLowercase(str.front());
 }
 
-Optional<int> GetNSMutableArrayArgumentIndex(Sema &S, ObjCMessageExpr *Message) {
-
+static Optional<int> GetNSMutableArrayArgumentIndex(Sema &S,
+                                                    ObjCMessageExpr *Message) {
   if (S.NSMutableArrayPointer.isNull()) {
     IdentifierInfo *NSMutableArrayId =
       S.NSAPIObj->getNSClassId(NSAPI::ClassId_NSMutableArray);
