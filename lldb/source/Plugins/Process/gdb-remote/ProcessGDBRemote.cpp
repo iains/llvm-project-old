@@ -939,16 +939,17 @@ ProcessGDBRemote::DoLaunch (Module *exe_module, ProcessLaunchInfo &launch_info)
 
             if (m_gdb_comm.SendPacketAndWaitForResponse("?", 1, m_last_stop_packet, false) == GDBRemoteCommunication::PacketResult::Success)
             {
-                if (!m_target.GetArchitecture().IsValid()) 
+                const ArchSpec &process_arch = m_gdb_comm.GetProcessArchitecture();
+
+                if (process_arch.IsValid())
                 {
-                    if (m_gdb_comm.GetProcessArchitecture().IsValid())
-                    {
-                        m_target.SetArchitecture(m_gdb_comm.GetProcessArchitecture());
-                    }
-                    else
-                    {
-                        m_target.SetArchitecture(m_gdb_comm.GetHostArchitecture());
-                    }
+                    m_target.MergeArchitecture(process_arch);
+                }
+                else
+                {
+                    const ArchSpec &host_arch = m_gdb_comm.GetHostArchitecture();
+                    if (host_arch.IsValid())
+                        m_target.MergeArchitecture(host_arch);
                 }
 
                 SetPrivateState (SetThreadStopInfo (m_last_stop_packet));
@@ -1091,7 +1092,7 @@ ProcessGDBRemote::DidLaunchOrAttach (ArchSpec& process_arch)
 
         if (process_arch.IsValid())
         {
-            ArchSpec &target_arch = GetTarget().GetArchitecture();
+            const ArchSpec &target_arch = GetTarget().GetArchitecture();
             if (target_arch.IsValid())
             {
                 if (log)
@@ -1121,20 +1122,23 @@ ProcessGDBRemote::DidLaunchOrAttach (ArchSpec& process_arch)
                 {
                     // Fill in what is missing in the triple
                     const llvm::Triple &remote_triple = process_arch.GetTriple();
-                    llvm::Triple &target_triple = target_arch.GetTriple();
-                    if (target_triple.getVendorName().size() == 0)
+                    llvm::Triple new_target_triple = target_arch.GetTriple();
+                    if (new_target_triple.getVendorName().size() == 0)
                     {
-                        target_triple.setVendor (remote_triple.getVendor());
+                        new_target_triple.setVendor (remote_triple.getVendor());
 
-                        if (target_triple.getOSName().size() == 0)
+                        if (new_target_triple.getOSName().size() == 0)
                         {
-                            target_triple.setOS (remote_triple.getOS());
+                            new_target_triple.setOS (remote_triple.getOS());
 
-                            if (target_triple.getEnvironmentName().size() == 0)
-                                target_triple.setEnvironment (remote_triple.getEnvironment());
+                            if (new_target_triple.getEnvironmentName().size() == 0)
+                                new_target_triple.setEnvironment (remote_triple.getEnvironment());
                         }
-                    }
 
+                        ArchSpec new_target_arch = target_arch;
+                        new_target_arch.SetTriple(new_target_triple);
+                        GetTarget().SetArchitecture(new_target_arch);
+                    }
                 }
 
                 if (log)

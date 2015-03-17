@@ -315,7 +315,7 @@ std::error_code GnuLdDriver::evalLinkerScript(ELFLinkingContext &ctx,
     }
   }
   // Transfer ownership of the script to the linking context
-  ctx.addLinkerScript(std::move(parser));
+  ctx.linkerScriptSema().addLinkerScript(std::move(parser));
   return std::error_code();
 }
 
@@ -659,7 +659,8 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
     }
 
     case OPT_INPUT:
-    case OPT_l: {
+    case OPT_l:
+    case OPT_T: {
       bool dashL = (arg->getOption().getID() == OPT_l);
       StringRef path = arg->getValue();
 
@@ -732,6 +733,9 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
   // Validate the combination of options used.
   if (!ctx->validate(diag))
     return false;
+
+  // Perform linker script semantic actions
+  ctx->linkerScriptSema().perform();
 
   context.swap(ctx);
   return true;

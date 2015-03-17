@@ -1,4 +1,5 @@
 ; RUN: opt -S -lowerbitsets < %s | FileCheck %s
+; RUN: opt -S -lowerbitsets -mtriple=x86_64-apple-macosx10.8.0 < %s | FileCheck -check-prefix=CHECK-DARWIN %s
 ; RUN: opt -S -O3 < %s | FileCheck -check-prefix=CHECK-NODISCARD %s
 
 target datalayout = "e-p:32:32"
@@ -37,13 +38,27 @@ target datalayout = "e-p:32:32"
 
 !llvm.bitsets = !{ !0, !1, !2, !3, !4, !5, !6, !7 }
 
-; CHECK: @a = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 0)
-; CHECK: @b = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 2)
-; CHECK: @c = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 4)
-; CHECK: @d = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 6)
+; CHECK: @a = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 0)
+; CHECK: @b = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 2)
+; CHECK: @c = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 4)
+; CHECK: @d = alias getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 6)
 
-; CHECK: @bits = private alias getelementptr inbounds ([68 x i8]* [[BA]], i32 0, i32 0)
-; CHECK: @bits1 = private alias getelementptr inbounds ([68 x i8]* [[BA]], i32 0, i32 0)
+; CHECK-DARWIN: @aptr = constant i32* getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G:@[^ ]*]], i32 0, i32 0)
+@aptr = constant i32* @a
+
+; CHECK-DARWIN: @bptr = constant [63 x i32]* getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 2)
+@bptr = constant [63 x i32]* @b
+
+; CHECK-DARWIN: @cptr = constant i32* getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 4)
+@cptr = constant i32* @c
+
+; CHECK-DARWIN: @dptr = constant [2 x i32]* getelementptr inbounds ({ i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }, { i32, [0 x i8], [63 x i32], [4 x i8], i32, [0 x i8], [2 x i32] }* [[G]], i32 0, i32 6)
+@dptr = constant [2 x i32]* @d
+
+; CHECK-DARWIN: [[G]] = private constant
+
+; CHECK: @bits = private alias getelementptr inbounds ([68 x i8], [68 x i8]* [[BA]], i32 0, i32 0)
+; CHECK: @bits1 = private alias getelementptr inbounds ([68 x i8], [68 x i8]* [[BA]], i32 0, i32 0)
 
 declare i1 @llvm.bitset.test(i8* %ptr, metadata %bitset) nounwind readnone
 

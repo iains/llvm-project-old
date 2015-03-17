@@ -57,8 +57,11 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_32:
   case R_MIPS_GPREL32:
   case R_MIPS_PC32:
-  case LLD_R_MIPS_32_HI16:
     return {4, 0xffffffff, 0, false};
+  case LLD_R_MIPS_32_HI16:
+    return {4, 0xffff0000, 0, false};
+  case LLD_R_MIPS_64_HI16:
+    return {8, 0xffffffffffff0000ull, 0, false};
   case R_MIPS_26:
   case LLD_R_MIPS_GLOBAL_26:
     return {4, 0x3ffffff, 2, false};
@@ -66,6 +69,9 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_LO16:
   case R_MIPS_GPREL16:
   case R_MIPS_GOT16:
+  case R_MIPS_GOT_DISP:
+  case R_MIPS_GOT_PAGE:
+  case R_MIPS_GOT_OFST:
   case R_MIPS_TLS_DTPREL_HI16:
   case R_MIPS_TLS_DTPREL_LO16:
   case R_MIPS_TLS_TPREL_HI16:
@@ -115,6 +121,10 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_TLS_TPREL32:
     // Ignore runtime relocations.
     return {4, 0x0, 0, false};
+  case R_MIPS_TLS_DTPMOD64:
+  case R_MIPS_TLS_DTPREL64:
+  case R_MIPS_TLS_TPREL64:
+    return {8, 0x0, 0, false};
   case LLD_R_MIPS_GLOBAL_GOT:
   case LLD_R_MIPS_STO_PLT:
     // Do nothing.
@@ -185,9 +195,16 @@ static uint32_t relocLo16(uint64_t P, uint64_t S, int64_t AHL, bool isGPDisp,
 
 /// \brief R_MIPS_GOT16, R_MIPS_CALL16, R_MICROMIPS_GOT16, R_MICROMIPS_CALL16
 /// rel16 G (verify)
-static uint32_t relocGOT(uint64_t S, uint64_t GP) {
-  int32_t G = (int32_t)(S - GP);
+static uint64_t relocGOT(uint64_t S, uint64_t GP) {
+  int64_t G = (int64_t)(S - GP);
   return G;
+}
+
+/// R_MIPS_GOT_OFST
+/// rel16 offset of (S+A) from the page pointer (verify)
+static uint32_t relocGOTOfst(uint64_t S, int64_t A) {
+  uint64_t page = (S + A + 0x8000) & ~0xffff;
+  return S + A - page;
 }
 
 /// \brief R_MIPS_GPREL16
@@ -241,9 +258,9 @@ static uint32_t relocPc23(uint64_t P, uint64_t S, int64_t A) {
   return result >> 2;
 }
 
-/// \brief LLD_R_MIPS_32_HI16
-static uint32_t reloc32hi16(uint64_t S, int64_t A) {
-  return (S + A + 0x8000) & 0xffff0000;
+/// \brief LLD_R_MIPS_32_HI16, LLD_R_MIPS_64_HI16
+static uint64_t relocMaskLow16(uint64_t S, int64_t A) {
+  return S + A + 0x8000;
 }
 
 static std::error_code adjustJumpOpCode(uint64_t &ins, uint64_t tgt,
@@ -318,7 +335,6 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
   case R_MICROMIPS_26_S1:
     return reloc26loc(relAddr, tgtAddr, ref.addend(), isCrossJump ? 2 : 1);
   case R_MIPS_HI16:
-    return relocHi16(relAddr, tgtAddr, ref.addend(), isGP);
   case R_MICROMIPS_HI16:
     return relocHi16(relAddr, tgtAddr, ref.addend(), isGP);
   case R_MIPS_LO16:
@@ -327,10 +343,19 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
     return relocLo16(relAddr, tgtAddr, ref.addend(), isGP, true);
   case R_MIPS_GOT16:
   case R_MIPS_CALL16:
-    return relocGOT(tgtAddr, gpAddr);
+  case R_MIPS_GOT_DISP:
+  case R_MIPS_GOT_PAGE:
   case R_MICROMIPS_GOT16:
   case R_MICROMIPS_CALL16:
+  case R_MIPS_TLS_GD:
+  case R_MIPS_TLS_LDM:
+  case R_MIPS_TLS_GOTTPREL:
+  case R_MICROMIPS_TLS_GD:
+  case R_MICROMIPS_TLS_LDM:
+  case R_MICROMIPS_TLS_GOTTPREL:
     return relocGOT(tgtAddr, gpAddr);
+  case R_MIPS_GOT_OFST:
+    return relocGOTOfst(tgtAddr, ref.addend());
   case R_MICROMIPS_PC7_S1:
     return relocPc7(relAddr, tgtAddr, ref.addend());
   case R_MICROMIPS_PC10_S1:
@@ -339,13 +364,6 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
     return relocPc16(relAddr, tgtAddr, ref.addend());
   case R_MICROMIPS_PC23_S2:
     return relocPc23(relAddr, tgtAddr, ref.addend());
-  case R_MIPS_TLS_GD:
-  case R_MIPS_TLS_LDM:
-  case R_MIPS_TLS_GOTTPREL:
-  case R_MICROMIPS_TLS_GD:
-  case R_MICROMIPS_TLS_LDM:
-  case R_MICROMIPS_TLS_GOTTPREL:
-    return relocGOT(tgtAddr, gpAddr);
   case R_MIPS_TLS_DTPREL_HI16:
   case R_MIPS_TLS_TPREL_HI16:
   case R_MICROMIPS_TLS_DTPREL_HI16:
@@ -371,6 +389,9 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
   case R_MIPS_TLS_DTPMOD32:
   case R_MIPS_TLS_DTPREL32:
   case R_MIPS_TLS_TPREL32:
+  case R_MIPS_TLS_DTPMOD64:
+  case R_MIPS_TLS_DTPREL64:
+  case R_MIPS_TLS_TPREL64:
     // Ignore runtime relocations.
     return 0;
   case R_MIPS_PC32:
@@ -378,7 +399,8 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
   case LLD_R_MIPS_GLOBAL_GOT:
     // Do nothing.
   case LLD_R_MIPS_32_HI16:
-    return reloc32hi16(tgtAddr, ref.addend());
+  case LLD_R_MIPS_64_HI16:
+    return relocMaskLow16(tgtAddr, ref.addend());
   case LLD_R_MIPS_GLOBAL_26:
     return reloc26ext(tgtAddr, ref.addend(), 2);
   case LLD_R_MICROMIPS_GLOBAL_26_S1:

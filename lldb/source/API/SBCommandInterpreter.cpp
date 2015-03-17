@@ -619,7 +619,7 @@ LLDBSWIGPythonCallThreadPlan (void *implementor,
                               Event *event_sp,
                               bool &got_error);
 
-extern "C" uint32_t
+extern "C" size_t
 LLDBSwigPython_CalculateNumChildren (void *implementor);
 
 extern "C" void *
@@ -792,6 +792,28 @@ SBCommand::GetHelp ()
     if (IsValid ())
         return m_opaque_sp->GetHelp ();
     return NULL;
+}
+
+const char*
+SBCommand::GetHelpLong ()
+{
+    if (IsValid ())
+        return m_opaque_sp->GetHelpLong ();
+    return NULL;
+}
+
+void
+SBCommand::SetHelp (const char* help)
+{
+    if (IsValid())
+        m_opaque_sp->SetHelp(help);
+}
+
+void
+SBCommand::SetHelpLong (const char* help)
+{
+    if (IsValid())
+        m_opaque_sp->SetHelpLong(help);
 }
 
 lldb::SBCommand

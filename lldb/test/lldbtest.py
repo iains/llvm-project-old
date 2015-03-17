@@ -562,8 +562,10 @@ def expectedFailureCompiler(compiler, compiler_version=None, bugnumber=None):
         return compiler in self.getCompiler() and self.expectedCompilerVersion(compiler_version)
     if bugnumber: return expectedFailure(fn, bugnumber)
 
-def expectedFailureClang(bugnumber=None):
-    if bugnumber: return expectedFailureCompiler('clang', None, bugnumber)
+# to XFAIL a specific clang versions, try this
+# @expectedFailureClang('bugnumber', ['<=', '3.4'])
+def expectedFailureClang(bugnumber=None, compiler_version=None):
+    if bugnumber: return expectedFailureCompiler('clang', compiler_version, bugnumber)
 
 def expectedFailureGcc(bugnumber=None, compiler_version=None):
     if bugnumber: return expectedFailureCompiler('gcc', compiler_version, bugnumber)
@@ -774,6 +776,21 @@ def skipIfi386(func):
         self = args[0]
         if "i386" == self.getArchitecture():
             self.skipTest("skipping because i386 is not a supported architecture")
+        else:
+            func(*args, **kwargs)
+    return wrapper
+
+def skipIfTargetAndroid(func):
+    """Decorate the item to skip tests that should be skipped when the target is Android."""
+    if isinstance(func, type) and issubclass(func, unittest2.TestCase):
+        raise Exception("@skipIfTargetAndroid can only be used to decorate a test method")
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from unittest2 import case
+        self = args[0]
+        triple = self.dbg.GetSelectedPlatform().GetTriple()
+        if re.match(".*-.*-.*-android", triple):
+            self.skipTest("skip on Android target")
         else:
             func(*args, **kwargs)
     return wrapper
@@ -1492,7 +1509,7 @@ class Base(unittest2.TestCase):
                  'FRAMEWORK_INCLUDES' : "-F%s" % self.lib_dir,
                  'LD_EXTRAS' : "%s -Wl,-rpath,%s -dynamiclib" % (dsym, self.lib_dir),
                 }
-        elif sys.platform.startswith('freebsd') or sys.platform.startswith("linux") or os.environ.get('LLDB_BUILD_TYPE') == 'Makefile':
+        elif sys.platform.startswith('freebsd') or sys.platform.startswith("linux") or sys.platform.startswith("win") or os.environ.get('LLDB_BUILD_TYPE') == 'Makefile':
             d = {'DYLIB_CXX_SOURCES' : sources,
                  'DYLIB_NAME' : lib_name,
                  'CFLAGS_EXTRAS' : "%s -I%s -fPIC" % (stdflag, os.path.join(os.environ["LLDB_SRC"], "include")),

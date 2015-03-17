@@ -47,7 +47,7 @@ ELFLinkingContext::ELFLinkingContext(
       _mergeRODataToTextSegment(true), _demangle(true),
       _stripSymbols(false), _alignSegments(true), _collectStats(false),
       _outputMagic(OutputMagic::DEFAULT), _initFunction("_init"),
-      _finiFunction("_fini"), _sysrootPath("") {}
+      _finiFunction("_fini"), _sysrootPath(""), _linkerScriptSema() {}
 
 void ELFLinkingContext::addPasses(PassManager &pm) {
   pm.add(llvm::make_unique<elf::OrderPass>());
@@ -145,10 +145,10 @@ ErrorOr<StringRef> ELFLinkingContext::searchLibrary(StringRef libName) const {
     if (llvm::sys::fs::exists(path.str()))
       return StringRef(*new (_allocator) std::string(path.str()));
   }
-  if (!llvm::sys::fs::exists(libName))
-    return make_error_code(llvm::errc::no_such_file_or_directory);
+  if (hasColonPrefix && llvm::sys::fs::exists(libName.drop_front()))
+      return libName.drop_front();
 
-  return libName;
+  return make_error_code(llvm::errc::no_such_file_or_directory);
 }
 
 ErrorOr<StringRef> ELFLinkingContext::searchFile(StringRef fileName,
@@ -186,6 +186,12 @@ void ELFLinkingContext::createInternalFiles(
   }
   files.push_back(std::move(file));
   LinkingContext::createInternalFiles(files);
+}
+
+void ELFLinkingContext::finalizeInputFiles() {
+  // Add virtual archive that resolves undefined symbols.
+  if (_resolver)
+    getNodes().push_back(llvm::make_unique<FileNode>(std::move(_resolver)));
 }
 
 std::unique_ptr<File> ELFLinkingContext::createUndefinedSymbolFile() const {
@@ -243,6 +249,11 @@ std::string ELFLinkingContext::demangle(StringRef symbolName) const {
 #endif
 
   return symbolName;
+}
+
+void ELFLinkingContext::setUndefinesResolver(std::unique_ptr<File> resolver) {
+  assert(isa<ArchiveLibraryFile>(resolver.get()) && "Wrong resolver type");
+  _resolver = std::move(resolver);
 }
 
 } // end namespace lld

@@ -16,7 +16,9 @@
 #include "lld/Core/Parallel.h"
 #include "lld/Core/SharedLibraryFile.h"
 #include "lld/ReaderWriter/ELFLinkingContext.h"
+#include "lld/Core/Simple.h"
 #include "lld/Core/Writer.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Path.h"
 
@@ -27,6 +29,61 @@ using namespace llvm::object;
 
 template <class ELFT> class OutputELFWriter;
 template <class ELFT> class TargetLayout;
+
+namespace {
+
+template<class ELFT>
+class SymbolFile : public RuntimeFile<ELFT> {
+public:
+  SymbolFile(ELFLinkingContext &context)
+      : RuntimeFile<ELFT>(context, "Dynamic absolute symbols"),
+        _atomsAdded(false) {}
+
+  Atom *addAbsoluteAtom(StringRef symbolName) override {
+    auto *a = RuntimeFile<ELFT>::addAbsoluteAtom(symbolName);
+    if (a) _atomsAdded = true;
+    return a;
+  }
+
+  Atom *addUndefinedAtom(StringRef) override {
+    llvm_unreachable("Cannot add undefined atoms to resolve undefined symbols");
+  }
+
+  bool hasAtoms() const { return _atomsAdded; }
+
+private:
+  bool _atomsAdded;
+};
+
+template<class ELFT>
+class DynamicSymbolFile : public SimpleArchiveLibraryFile {
+  typedef std::function<void(StringRef, RuntimeFile<ELFT> &)> Resolver;
+public:
+  DynamicSymbolFile(ELFLinkingContext &context, Resolver resolver)
+      : SimpleArchiveLibraryFile("Dynamically added runtime symbols"),
+        _context(context), _resolver(resolver) {}
+
+  File *find(StringRef sym, bool dataSymbolOnly) override {
+    if (!_file)
+      _file.reset(new (_alloc) SymbolFile<ELFT>(_context));
+
+    assert(!_file->hasAtoms() && "The file shouldn't have atoms yet");
+    _resolver(sym, *_file);
+    // If atoms were added - release the file to the caller.
+    return _file->hasAtoms() ? _file.release() : nullptr;
+  }
+
+private:
+  ELFLinkingContext &_context;
+  Resolver _resolver;
+
+  // The allocator should go before bump pointers because of
+  // reversed destruction order.
+  llvm::BumpPtrAllocator _alloc;
+  unique_bump_ptr<SymbolFile<ELFT>> _file;
+};
+
+} // end anon namespace
 
 //===----------------------------------------------------------------------===//
 //  OutputELFWriter Class
@@ -42,7 +99,7 @@ public:
   typedef Elf_Sym_Impl<ELFT> Elf_Sym;
   typedef Elf_Dyn_Impl<ELFT> Elf_Dyn;
 
-  OutputELFWriter(const ELFLinkingContext &context, TargetLayout<ELFT> &layout);
+  OutputELFWriter(ELFLinkingContext &context, TargetLayout<ELFT> &layout);
 
 protected:
   // build the sections that need to be created
@@ -84,13 +141,13 @@ protected:
   virtual void assignSectionsWithNoSegments();
 
   // Add default atoms that need to be present in the output file
-  virtual void addDefaultAtoms() = 0;
+  virtual void addDefaultAtoms();
 
   // Add any runtime files and their atoms to the output
   bool createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 
   // Finalize the default atom values
-  virtual void finalizeDefaultAtomValues() = 0;
+  virtual void finalizeDefaultAtomValues();
 
   // This is called by the write section to apply relocations
   uint64_t addressOfAtom(const Atom *atom) override {
@@ -121,9 +178,13 @@ protected:
     return false;
   }
 
+  /// \brief Process undefined symbols that left after resolution step.
+  virtual void processUndefinedSymbol(StringRef symName,
+                                      RuntimeFile<ELFT> &file) const {}
+
   llvm::BumpPtrAllocator _alloc;
 
-  const ELFLinkingContext &_context;
+  ELFLinkingContext &_context;
   TargetHandler<ELFT> &_targetHandler;
 
   typedef llvm::DenseMap<const Atom *, uint64_t> AtomToAddress;
@@ -144,6 +205,7 @@ protected:
   unique_bump_ptr<HashSection<ELFT>> _hashTable;
   llvm::StringSet<> _soNeeded;
   /// @}
+  std::unique_ptr<RuntimeFile<ELFT>> _scriptFile;
 
 private:
   static StringRef maybeGetSOName(Node *node);
@@ -153,10 +215,11 @@ private:
 //  OutputELFWriter
 //===----------------------------------------------------------------------===//
 template <class ELFT>
-OutputELFWriter<ELFT>::OutputELFWriter(const ELFLinkingContext &context,
+OutputELFWriter<ELFT>::OutputELFWriter(ELFLinkingContext &context,
                                        TargetLayout<ELFT> &layout)
     : _context(context), _targetHandler(context.getTargetHandler<ELFT>()),
-      _layout(layout) {}
+      _layout(layout),
+      _scriptFile(new RuntimeFile<ELFT>(context, "Linker script runtime")) {}
 
 template <class ELFT>
 void OutputELFWriter<ELFT>::buildChunks(const File &file) {
@@ -302,10 +365,39 @@ void OutputELFWriter<ELFT>::assignSectionsWithNoSegments() {
         _shdrtab->updateSection(section);
 }
 
+template <class ELFT> void OutputELFWriter<ELFT>::addDefaultAtoms() {
+  const llvm::StringSet<> &symbols =
+      _context.linkerScriptSema().getScriptDefinedSymbols();
+  for (auto &sym : symbols)
+    _scriptFile->addAbsoluteAtom(sym.getKey());
+}
+
 template <class ELFT>
 bool OutputELFWriter<ELFT>::createImplicitFiles(
-    std::vector<std::unique_ptr<File>> &) {
+    std::vector<std::unique_ptr<File>> &result) {
+  // Add the virtual archive to resolve undefined symbols.
+  // The file will be added later in the linking context.
+  auto callback = [this](StringRef sym, RuntimeFile<ELFT> &file) {
+    processUndefinedSymbol(sym, file);
+  };
+  auto &ctx = const_cast<ELFLinkingContext &>(_context);
+  ctx.setUndefinesResolver(
+      llvm::make_unique<DynamicSymbolFile<ELFT>>(ctx, std::move(callback)));
+  // Add script defined symbols
+  result.push_back(std::move(_scriptFile));
   return true;
+}
+
+template <class ELFT>
+void OutputELFWriter<ELFT>::finalizeDefaultAtomValues() {
+  const llvm::StringSet<> &symbols =
+      _context.linkerScriptSema().getScriptDefinedSymbols();
+  for (auto &sym : symbols) {
+    uint64_t res =
+        _context.linkerScriptSema().getLinkerScriptExprValue(sym.getKey());
+    auto a = _layout.findAbsoluteAtom(sym.getKey());
+    (*a)->_virtualAddr = res;
+  }
 }
 
 template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
@@ -494,8 +586,10 @@ std::error_code OutputELFWriter<ELFT>::writeOutput(const File &file,
   _elfHeader->write(this, _layout, *buffer);
   _programHeader->write(this, _layout, *buffer);
 
-  for (auto section : _layout.sections())
-    section->write(this, _layout, *buffer);
+  auto sections = _layout.sections();
+  parallel_for_each(
+      sections.begin(), sections.end(),
+      [&](Chunk<ELFT> *section) { section->write(this, _layout, *buffer); });
   writeTask.end();
 
   ScopedTask commitTask(getDefaultDomain(), "ELF Writer commit to disk");

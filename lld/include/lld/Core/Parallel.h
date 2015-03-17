@@ -16,8 +16,9 @@
 #include "llvm/Support/MathExtras.h"
 
 #ifdef _MSC_VER
-// Exceptions are disabled so this isn't defined, but concrt assumes it is.
-static void *__uncaught_exception() { return nullptr; }
+// concrt.h depends on eh.h for __uncaught_exception declaration
+// even if we disable exceptions.
+#include <eh.h>
 #endif
 
 #include <algorithm>
@@ -294,7 +295,12 @@ void parallel_for_each(Iterator begin, Iterator end, Func func) {
 #else
 template <class Iterator, class Func>
 void parallel_for_each(Iterator begin, Iterator end, Func func) {
-  // TODO: Make this parallel.
+  TaskGroup tg;
+  ptrdiff_t taskSize = 1024;
+  while (taskSize <= std::distance(begin, end)) {
+    tg.spawn([=, &func] { std::for_each(begin, begin + taskSize, func); });
+    begin += taskSize;
+  }
   std::for_each(begin, end, func);
 }
 #endif

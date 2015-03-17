@@ -7,18 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-//++
-// File:        MICmnLLDBDebuggerHandleEvents.cpp
-//
-// Overview:    CMICmnLLDBDebuggerHandleEvents implementation.
-//
-// Environment: Compilers:  Visual C++ 12.
-//                          gcc (Ubuntu/Linaro 4.8.1-10ubuntu9) 4.8.1
-//              Libraries:  See MIReadmetxt.
-//
-// Copyright:   None.
-//--
-
 // Third party headers:
 #include "lldb/API/SBAddress.h"
 #include "lldb/API/SBEvent.h"
@@ -800,6 +788,8 @@ CMICmnLLDBDebuggerHandleEvents::HandleEventSBCommandInterpreter(const lldb::SBEv
 bool
 CMICmnLLDBDebuggerHandleEvents::HandleProcessEventBroadcastBitStateChanged(const lldb::SBEvent &vEvent)
 {
+    if (lldb::SBProcess::GetRestartedFromEvent (vEvent))
+        return true;
     bool bOk = ChkForStateChanges();
     bOk = bOk && GetProcessStdout();
     bOk = bOk && GetProcessStderr();

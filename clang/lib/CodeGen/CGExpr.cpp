@@ -316,13 +316,16 @@ createReferenceTemporary(CodeGenFunction &CGF,
         GV->setAlignment(
             CGF.getContext().getTypeAlignInChars(M->getType()).getQuantity());
         // FIXME: Should we put the new global into a COMDAT?
-        return GV;
+        return llvm::ConstantExpr::getBitCast(
+            GV, CGF.ConvertTypeForMem(Inner->getType())->getPointerTo());
       }
     return CGF.CreateMemTemp(Inner->getType(), "ref.tmp");
 
   case SD_Thread:
   case SD_Static:
-    return CGF.CGM.GetAddrOfGlobalTemporary(M, Inner);
+    return llvm::ConstantExpr::getBitCast(
+        CGF.CGM.GetAddrOfGlobalTemporary(M, Inner),
+        CGF.ConvertTypeForMem(Inner->getType())->getPointerTo());
 
   case SD_Dynamic:
     llvm_unreachable("temporary can't have dynamic storage duration");
@@ -3031,6 +3034,9 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
       EmitTypeCheck(TCK_DowncastReference, E->getExprLoc(),
                     Derived, E->getType());
 
+    if (SanOpts.has(SanitizerKind::CFIDerivedCast))
+      EmitVTablePtrCheckForCast(E->getType(), Derived, /*MayBeNull=*/false);
+
     return MakeAddrLValue(Derived, E->getType());
   }
   case CK_LValueBitCast: {
@@ -3040,6 +3046,10 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
     LValue LV = EmitLValue(E->getSubExpr());
     llvm::Value *V = Builder.CreateBitCast(LV.getAddress(),
                                            ConvertType(CE->getTypeAsWritten()));
+
+    if (SanOpts.has(SanitizerKind::CFIUnrelatedCast))
+      EmitVTablePtrCheckForCast(E->getType(), V, /*MayBeNull=*/false);
+
     return MakeAddrLValue(V, E->getType());
   }
   case CK_ObjCObjectLValueCast: {

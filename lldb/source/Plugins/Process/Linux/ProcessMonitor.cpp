@@ -24,6 +24,7 @@
 #include "lldb/Core/RegisterValue.h"
 #include "lldb/Core/Scalar.h"
 #include "lldb/Host/Host.h"
+#include "lldb/Host/HostNativeThread.h"
 #include "lldb/Host/HostThread.h"
 #include "lldb/Host/ThreadLauncher.h"
 #include "lldb/Target/Thread.h"
@@ -36,12 +37,10 @@
 #include "ProcessLinux.h"
 #include "Plugins/Process/POSIX/ProcessPOSIXLog.h"
 #include "ProcessMonitor.h"
+#include "Procfs.h"
 
 // System includes - They have to be included after framework includes because they define some
 // macros which collide with variable names in other modules
-#ifndef __ANDROID__
-#include <sys/procfs.h>
-#endif
 #include <sys/personality.h>
 #include <sys/ptrace.h>
 #include <sys/socket.h>
@@ -93,6 +92,8 @@
     syscall(SYS_tgkill, static_cast<::pid_t>(pid), static_cast<::pid_t>(tid), sig)
 
 using namespace lldb_private;
+
+static Operation* EXIT_OPERATION = nullptr;
 
 // FIXME: this code is host-dependent with respect to types and
 // endianness and needs to be fixed.  For example, lldb::addr_t is
@@ -2335,7 +2336,7 @@ ProcessMonitor::StopMonitoringChildProcess()
 {
     if (m_monitor_thread.IsJoinable())
     {
-        m_monitor_thread.Cancel();
+        ::pthread_kill(m_monitor_thread.GetNativeThread().GetSystemHandle(), SIGUSR1);
         m_monitor_thread.Join(nullptr);
     }
 }
@@ -2359,6 +2360,6 @@ ProcessMonitor::StopOpThread()
     if (!m_operation_thread.IsJoinable())
         return;
 
-    m_operation_thread.Cancel();
+    DoOperation(EXIT_OPERATION);
     m_operation_thread.Join(nullptr);
 }

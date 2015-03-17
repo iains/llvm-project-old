@@ -185,9 +185,9 @@ class ELFObjectWriter : public MCObjectWriter {
     }
 
   public:
-    ELFObjectWriter(MCELFObjectTargetWriter *MOTW, raw_ostream &_OS,
+    ELFObjectWriter(MCELFObjectTargetWriter *MOTW, raw_ostream &OS,
                     bool IsLittleEndian)
-        : MCObjectWriter(_OS, IsLittleEndian), FWriter(IsLittleEndian),
+        : MCObjectWriter(OS, IsLittleEndian), FWriter(IsLittleEndian),
           TargetObjectWriter(MOTW), NeedsGOT(false) {}
 
     virtual ~ELFObjectWriter();
@@ -1348,7 +1348,8 @@ static int cmpRel(const ELFRelocationEntry *AP, const ELFRelocationEntry *BP) {
     return B.Offset - A.Offset;
   if (B.Type != A.Type)
     return A.Type - B.Type;
-  llvm_unreachable("ELFRelocs might be unstable!");
+  //llvm_unreachable("ELFRelocs might be unstable!");
+  return 0;
 }
 
 static void sortRelocs(const MCAssembler &Asm,

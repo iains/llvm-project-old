@@ -2777,11 +2777,23 @@ bool LLParser::ParseValID(ValID &ID, PerFunctionState *PFS) {
     unsigned Opc = Lex.getUIntVal();
     SmallVector<Constant*, 16> Elts;
     bool InBounds = false;
+    Type *Ty;
     Lex.Lex();
+
     if (Opc == Instruction::GetElementPtr)
       InBounds = EatIfPresent(lltok::kw_inbounds);
-    if (ParseToken(lltok::lparen, "expected '(' in constantexpr") ||
-        ParseGlobalValueVector(Elts) ||
+
+    if (ParseToken(lltok::lparen, "expected '(' in constantexpr"))
+      return true;
+
+    LocTy ExplicitTypeLoc = Lex.getLoc();
+    if (Opc == Instruction::GetElementPtr) {
+      if (ParseType(Ty) ||
+          ParseToken(lltok::comma, "expected comma after getelementptr's type"))
+        return true;
+    }
+
+    if (ParseGlobalValueVector(Elts) ||
         ParseToken(lltok::rparen, "expected ')' in constantexpr"))
       return true;
 
@@ -2792,6 +2804,10 @@ bool LLParser::ParseValID(ValID &ID, PerFunctionState *PFS) {
 
       Type *BaseType = Elts[0]->getType();
       auto *BasePointerType = cast<PointerType>(BaseType->getScalarType());
+      if (Ty != BasePointerType->getElementType())
+        return Error(
+            ExplicitTypeLoc,
+            "explicit pointee type doesn't match operand's pointee type");
 
       ArrayRef<Constant *> Indices(Elts.begin() + 1, Elts.end());
       for (Constant *Val : Indices) {
@@ -3518,7 +3534,7 @@ bool LLParser::ParseMDCompileUnit(MDNode *&Result, bool IsDistinct) {
 bool LLParser::ParseMDSubprogram(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   OPTIONAL(scope, MDField, );                                                  \
-  REQUIRED(name, MDStringField, );                                             \
+  OPTIONAL(name, MDStringField, );                                             \
   OPTIONAL(linkageName, MDStringField, );                                      \
   OPTIONAL(file, MDField, );                                                   \
   OPTIONAL(line, LineField, );                                                 \
@@ -3633,7 +3649,7 @@ bool LLParser::ParseMDTemplateValueParameter(MDNode *&Result, bool IsDistinct) {
 bool LLParser::ParseMDGlobalVariable(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   OPTIONAL(scope, MDField, );                                                  \
-  REQUIRED(name, MDStringField, );                                             \
+  OPTIONAL(name, MDStringField, );                                             \
   OPTIONAL(linkageName, MDStringField, );                                      \
   OPTIONAL(file, MDField, );                                                   \
   OPTIONAL(line, LineField, );                                                 \
@@ -3719,7 +3735,7 @@ bool LLParser::ParseMDExpression(MDNode *&Result, bool IsDistinct) {
 ///                       getter: "getFoo", attributes: 7, type: !2)
 bool LLParser::ParseMDObjCProperty(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
-  REQUIRED(name, MDStringField, );                                             \
+  OPTIONAL(name, MDStringField, );                                             \
   OPTIONAL(file, MDField, );                                                   \
   OPTIONAL(line, LineField, );                                                 \
   OPTIONAL(setter, MDStringField, );                                           \
@@ -5505,7 +5521,7 @@ int LLParser::ParseGetElementPtr(Instruction *&Inst, PerFunctionState &PFS) {
 
   if (!GetElementPtrInst::getIndexedType(BaseType, Indices))
     return Error(Loc, "invalid getelementptr indices");
-  Inst = GetElementPtrInst::Create(Ptr, Indices);
+  Inst = GetElementPtrInst::Create(Ty, Ptr, Indices);
   if (InBounds)
     cast<GetElementPtrInst>(Inst)->setIsInBounds(true);
   return AteExtraComma ? InstExtraComma : InstNormal;
