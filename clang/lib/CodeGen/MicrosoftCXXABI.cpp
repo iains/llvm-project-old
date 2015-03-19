@@ -45,7 +45,7 @@ public:
       : CGCXXABI(CGM), BaseClassDescriptorType(nullptr),
         ClassHierarchyDescriptorType(nullptr),
         CompleteObjectLocatorType(nullptr), CatchableTypeType(nullptr),
-        ThrowInfoType(nullptr) {}
+        ThrowInfoType(nullptr), HandlerMapEntryType(nullptr) {}
 
   bool HasThisReturn(GlobalDecl GD) const override;
   bool hasMostDerivedReturn(GlobalDecl GD) const override;
@@ -83,7 +83,9 @@ public:
   llvm::GlobalVariable *getMSCompleteObjectLocator(const CXXRecordDecl *RD,
                                                    const VPtrInfo *Info);
 
-  llvm::Constant *getAddrOfRTTIDescriptor(QualType Ty, bool ForEH) override;
+  llvm::Constant *getAddrOfRTTIDescriptor(QualType Ty) override;
+  llvm::Constant *
+  getAddrOfCXXHandlerMapEntry(QualType Ty, QualType CatchHandlerType) override;
 
   bool shouldTypeidBeNullChecked(bool IsDeref, QualType SrcRecordTy) override;
   void EmitBadTypeidCall(CodeGenFunction &CGF) override;
@@ -571,6 +573,18 @@ public:
 
   void emitCXXStructor(const CXXMethodDecl *MD, StructorType Type) override;
 
+  llvm::StructType *getHandlerMapEntryType() {
+    if (!HandlerMapEntryType) {
+      llvm::Type *FieldTypes[] = {
+        CGM.IntTy,                           // Flags
+        getImageRelativeType(CGM.Int8PtrTy), // TypeDescriptor
+      };
+      HandlerMapEntryType = llvm::StructType::create(
+          CGM.getLLVMContext(), FieldTypes, "eh.HandlerMapEntry");
+    }
+    return HandlerMapEntryType;
+  }
+
   llvm::StructType *getCatchableTypeType() {
     if (CatchableTypeType)
       return CatchableTypeType;
@@ -684,6 +698,7 @@ private:
   llvm::StructType *CatchableTypeType;
   llvm::DenseMap<uint32_t, llvm::StructType *> CatchableTypeArrayTypeMap;
   llvm::StructType *ThrowInfoType;
+  llvm::StructType *HandlerMapEntryType;
 };
 
 }
@@ -1472,102 +1487,97 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
 #endif
   }
 
-  for (size_t J = 0, F = VFPtrs.size(); J != F; ++J) {
-    if (VFPtrs[J]->FullOffsetInMDC != VPtrOffset)
-      continue;
-    SmallString<256> VFTableName;
-    mangleVFTableName(getMangleContext(), RD, VFPtrs[J], VFTableName);
-    StringRef VTableName = VFTableName;
+  VPtrInfo *const *VFPtrI =
+      std::find_if(VFPtrs.begin(), VFPtrs.end(), [&](VPtrInfo *VPI) {
+        return VPI->FullOffsetInMDC == VPtrOffset;
+      });
+  if (VFPtrI == VFPtrs.end()) {
+    VFTablesMap[ID] = nullptr;
+    return nullptr;
+  }
+  VPtrInfo *VFPtr = *VFPtrI;
 
-    uint64_t NumVTableSlots =
-        VTContext.getVFTableLayout(RD, VFPtrs[J]->FullOffsetInMDC)
-            .getNumVTableComponents();
-    llvm::GlobalValue::LinkageTypes VTableLinkage =
-        llvm::GlobalValue::ExternalLinkage;
-    llvm::ArrayType *VTableType =
-        llvm::ArrayType::get(CGM.Int8PtrTy, NumVTableSlots);
-    if (getContext().getLangOpts().RTTIData) {
-      VTableLinkage = llvm::GlobalValue::PrivateLinkage;
-      VTableName = "";
-    }
+  SmallString<256> VFTableName;
+  mangleVFTableName(getMangleContext(), RD, VFPtr, VFTableName);
 
-    VTable = CGM.getModule().getNamedGlobal(VFTableName);
-    if (!VTable) {
-      // Create a backing variable for the contents of VTable.  The VTable may
-      // or may not include space for a pointer to RTTI data.
-      llvm::GlobalValue *VFTable = VTable = new llvm::GlobalVariable(
-          CGM.getModule(), VTableType, /*isConstant=*/true, VTableLinkage,
-          /*Initializer=*/nullptr, VTableName);
-      VTable->setUnnamedAddr(true);
+  llvm::GlobalValue::LinkageTypes VFTableLinkage = CGM.getVTableLinkage(RD);
+  bool VFTableComesFromAnotherTU =
+      llvm::GlobalValue::isAvailableExternallyLinkage(VFTableLinkage) ||
+      llvm::GlobalValue::isExternalLinkage(VFTableLinkage);
+  bool VTableAliasIsRequred =
+      !VFTableComesFromAnotherTU && getContext().getLangOpts().RTTIData;
 
-      // Only insert a pointer into the VFTable for RTTI data if we are not
-      // importing it.  We never reference the RTTI data directly so there is no
-      // need to make room for it.
-      if (getContext().getLangOpts().RTTIData &&
-          !RD->hasAttr<DLLImportAttr>()) {
-        llvm::Value *GEPIndices[] = {llvm::ConstantInt::get(CGM.IntTy, 0),
-                                     llvm::ConstantInt::get(CGM.IntTy, 1)};
-        // Create a GEP which points just after the first entry in the VFTable,
-        // this should be the location of the first virtual method.
-        llvm::Constant *VTableGEP =
-            llvm::ConstantExpr::getInBoundsGetElementPtr(VTable, GEPIndices);
-        // The symbol for the VFTable is an alias to the GEP.  It is
-        // transparent, to other modules, what the nature of this symbol is; all
-        // that matters is that the alias be the address of the first virtual
-        // method.
-        VFTable = llvm::GlobalAlias::create(
-            cast<llvm::SequentialType>(VTableGEP->getType())->getElementType(),
-            /*AddressSpace=*/0, llvm::GlobalValue::ExternalLinkage,
-            VFTableName.str(), VTableGEP, &CGM.getModule());
-      } else {
-        // We don't need a GlobalAlias to be a symbol for the VTable if we won't
-        // be referencing any RTTI data.  The GlobalVariable will end up being
-        // an appropriate definition of the VFTable.
-        VTable->setName(VFTableName.str());
-      }
-
-      VFTable->setUnnamedAddr(true);
-      if (RD->hasAttr<DLLImportAttr>())
-        VFTable->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
-      else if (RD->hasAttr<DLLExportAttr>())
-        VFTable->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
-
-      llvm::GlobalValue::LinkageTypes VFTableLinkage = CGM.getVTableLinkage(RD);
-      if (VFTable != VTable) {
-        if (llvm::GlobalValue::isAvailableExternallyLinkage(VFTableLinkage)) {
-          // AvailableExternally implies that we grabbed the data from another
-          // executable.  No need to stick the alias in a Comdat.
-        } else if (llvm::GlobalValue::isInternalLinkage(VFTableLinkage) ||
-                   llvm::GlobalValue::isWeakODRLinkage(VFTableLinkage) ||
-                   llvm::GlobalValue::isLinkOnceODRLinkage(VFTableLinkage)) {
-          // The alias is going to be dropped into a Comdat, no need to make it
-          // weak.
-          if (!llvm::GlobalValue::isInternalLinkage(VFTableLinkage))
-            VFTableLinkage = llvm::GlobalValue::ExternalLinkage;
-          llvm::Comdat *C =
-              CGM.getModule().getOrInsertComdat(VFTable->getName());
-          // We must indicate which VFTable is larger to support linking between
-          // translation units which do and do not have RTTI data.  The largest
-          // VFTable contains the RTTI data; translation units which reference
-          // the smaller VFTable always reference it relative to the first
-          // virtual method.
-          C->setSelectionKind(llvm::Comdat::Largest);
-          VTable->setComdat(C);
-        } else {
-          llvm_unreachable("unexpected linkage for vftable!");
-        }
-      } else {
-        if (llvm::GlobalValue::isWeakForLinker(VFTableLinkage))
-          VTable->setComdat(
-              CGM.getModule().getOrInsertComdat(VTable->getName()));
-      }
-      VFTable->setLinkage(VFTableLinkage);
-      CGM.setGlobalVisibility(VFTable, RD);
-      VFTablesMap[ID] = VFTable;
-    }
-    break;
+  if (llvm::GlobalValue *VFTable =
+          CGM.getModule().getNamedGlobal(VFTableName)) {
+    VFTablesMap[ID] = VFTable;
+    return VTableAliasIsRequred
+               ? cast<llvm::GlobalVariable>(
+                     cast<llvm::GlobalAlias>(VFTable)->getBaseObject())
+               : cast<llvm::GlobalVariable>(VFTable);
   }
 
+  uint64_t NumVTableSlots =
+      VTContext.getVFTableLayout(RD, VFPtr->FullOffsetInMDC)
+          .getNumVTableComponents();
+  llvm::GlobalValue::LinkageTypes VTableLinkage =
+      VTableAliasIsRequred ? llvm::GlobalValue::PrivateLinkage : VFTableLinkage;
+
+  StringRef VTableName = VTableAliasIsRequred ? StringRef() : VFTableName.str();
+
+  llvm::ArrayType *VTableType =
+      llvm::ArrayType::get(CGM.Int8PtrTy, NumVTableSlots);
+
+  // Create a backing variable for the contents of VTable.  The VTable may
+  // or may not include space for a pointer to RTTI data.
+  llvm::GlobalValue *VFTable;
+  VTable = new llvm::GlobalVariable(CGM.getModule(), VTableType,
+                                    /*isConstant=*/true, VTableLinkage,
+                                    /*Initializer=*/nullptr, VTableName);
+  VTable->setUnnamedAddr(true);
+
+  llvm::Comdat *C = nullptr;
+  if (!VFTableComesFromAnotherTU &&
+      (llvm::GlobalValue::isWeakForLinker(VFTableLinkage) ||
+       (llvm::GlobalValue::isLocalLinkage(VFTableLinkage) &&
+        VTableAliasIsRequred)))
+    C = CGM.getModule().getOrInsertComdat(VFTableName.str());
+
+  // Only insert a pointer into the VFTable for RTTI data if we are not
+  // importing it.  We never reference the RTTI data directly so there is no
+  // need to make room for it.
+  if (VTableAliasIsRequred) {
+    llvm::Value *GEPIndices[] = {llvm::ConstantInt::get(CGM.IntTy, 0),
+                                 llvm::ConstantInt::get(CGM.IntTy, 1)};
+    // Create a GEP which points just after the first entry in the VFTable,
+    // this should be the location of the first virtual method.
+    llvm::Constant *VTableGEP =
+        llvm::ConstantExpr::getInBoundsGetElementPtr(VTable, GEPIndices);
+    if (llvm::GlobalValue::isWeakForLinker(VFTableLinkage)) {
+      VFTableLinkage = llvm::GlobalValue::ExternalLinkage;
+      if (C)
+        C->setSelectionKind(llvm::Comdat::Largest);
+    }
+    VFTable = llvm::GlobalAlias::create(
+        cast<llvm::SequentialType>(VTableGEP->getType())->getElementType(),
+        /*AddressSpace=*/0, VFTableLinkage, VFTableName.str(), VTableGEP,
+        &CGM.getModule());
+    VFTable->setUnnamedAddr(true);
+  } else {
+    // We don't need a GlobalAlias to be a symbol for the VTable if we won't
+    // be referencing any RTTI data.
+    // The GlobalVariable will end up being an appropriate definition of the
+    // VFTable.
+    VFTable = VTable;
+  }
+  if (C)
+    VTable->setComdat(C);
+
+  if (RD->hasAttr<DLLImportAttr>())
+    VFTable->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+  else if (RD->hasAttr<DLLExportAttr>())
+    VFTable->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+
+  VFTablesMap[ID] = VFTable;
   return VTable;
 }
 
@@ -1796,9 +1806,6 @@ void MicrosoftCXXABI::emitVBTableDefinition(const VPtrInfo &VBT,
     llvm::ArrayType::get(CGM.IntTy, Offsets.size());
   llvm::Constant *Init = llvm::ConstantArray::get(VBTableType, Offsets);
   GV->setInitializer(Init);
-
-  // Set the right visibility.
-  CGM.setGlobalVisibility(GV, RD);
 }
 
 llvm::Value *MicrosoftCXXABI::performThisAdjustment(CodeGenFunction &CGF,
@@ -3094,8 +3101,7 @@ MSRTTIBuilder::getBaseClassDescriptor(const MSRTTIClass &Class) {
   // Initialize the BaseClassDescriptor.
   llvm::Constant *Fields[] = {
       ABI.getImageRelativeConstant(
-          ABI.getAddrOfRTTIDescriptor(Context.getTypeDeclType(Class.RD),
-                                      /*ForEH=*/false)),
+          ABI.getAddrOfRTTIDescriptor(Context.getTypeDeclType(Class.RD))),
       llvm::ConstantInt::get(CGM.IntTy, Class.NumBases),
       llvm::ConstantInt::get(CGM.IntTy, Class.OffsetInVBase),
       llvm::ConstantInt::get(CGM.IntTy, VBPtrOffset),
@@ -3186,23 +3192,56 @@ static QualType decomposeTypeForEH(ASTContext &Context, QualType T,
   return T;
 }
 
+llvm::Constant *
+MicrosoftCXXABI::getAddrOfCXXHandlerMapEntry(QualType Type,
+                                             QualType CatchHandlerType) {
+  // TypeDescriptors for exceptions never have qualified pointer types,
+  // qualifiers are stored seperately in order to support qualification
+  // conversions.
+  bool IsConst, IsVolatile;
+  Type = decomposeTypeForEH(getContext(), Type, IsConst, IsVolatile);
+
+  bool IsReference = CatchHandlerType->isReferenceType();
+
+  SmallString<256> MangledName;
+  {
+    llvm::raw_svector_ostream Out(MangledName);
+    getMangleContext().mangleCXXHandlerMapEntry(Type, IsConst, IsVolatile,
+                                                IsReference, Out);
+  }
+
+  if (llvm::GlobalVariable *GV = CGM.getModule().getNamedGlobal(MangledName))
+    return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
+
+  uint32_t Flags = 0;
+  if (IsConst)
+    Flags |= 1;
+  if (IsVolatile)
+    Flags |= 2;
+  if (IsReference)
+    Flags |= 8;
+
+  llvm::Constant *Fields[] = {
+      llvm::ConstantInt::get(CGM.IntTy, Flags),                // Flags
+      getImageRelativeConstant(getAddrOfRTTIDescriptor(Type)), // TypeDescriptor
+  };
+  llvm::StructType *HandlerMapEntryType = getHandlerMapEntryType();
+  auto *Var = new llvm::GlobalVariable(
+      CGM.getModule(), HandlerMapEntryType, /*Constant=*/true,
+      llvm::GlobalValue::PrivateLinkage,
+      llvm::ConstantStruct::get(HandlerMapEntryType, Fields),
+      StringRef(MangledName));
+  Var->setUnnamedAddr(true);
+  Var->setSection("llvm.metadata");
+  return Var;
+}
+
 /// \brief Gets a TypeDescriptor.  Returns a llvm::Constant * rather than a
 /// llvm::GlobalVariable * because different type descriptors have different
 /// types, and need to be abstracted.  They are abstracting by casting the
 /// address to an Int8PtrTy.
-llvm::Constant *MicrosoftCXXABI::getAddrOfRTTIDescriptor(QualType Type,
-                                                         bool ForEH) {
-  // TypeDescriptors for exceptions never has qualified pointer types,
-  // qualifiers are stored seperately in order to support qualification
-  // conversions.
-  if (ForEH) {
-    // FIXME: This is only a 50% solution, we need to actually do something with
-    // these qualifiers.
-    bool IsConst, IsVolatile;
-    Type = decomposeTypeForEH(getContext(), Type, IsConst, IsVolatile);
-  }
-
-  SmallString<256> MangledName, TypeInfoString;
+llvm::Constant *MicrosoftCXXABI::getAddrOfRTTIDescriptor(QualType Type) {
+  SmallString<256> MangledName;
   {
     llvm::raw_svector_ostream Out(MangledName);
     getMangleContext().mangleCXXRTTI(Type, Out);
@@ -3213,6 +3252,7 @@ llvm::Constant *MicrosoftCXXABI::getAddrOfRTTIDescriptor(QualType Type,
     return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
 
   // Compute the fields for the TypeDescriptor.
+  SmallString<256> TypeInfoString;
   {
     llvm::raw_svector_ostream Out(TypeInfoString);
     getMangleContext().mangleCXXRTTIName(Type, Out);
@@ -3309,6 +3349,8 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
   QualType RecordTy = getContext().getRecordType(RD);
   llvm::Function *ThunkFn = llvm::Function::Create(
       ThunkTy, getLinkageForRTTI(RecordTy), ThunkName.str(), &CGM.getModule());
+  ThunkFn->setCallingConv(static_cast<llvm::CallingConv::ID>(
+      FnInfo.getEffectiveCallingConvention()));
   bool IsCopy = CT == Ctor_CopyingClosure;
 
   // Start codegen.
@@ -3361,8 +3403,11 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
 
   // Add the rest of the default arguments.
   std::vector<Stmt *> ArgVec;
-  for (unsigned I = IsCopy ? 1 : 0, E = CD->getNumParams(); I != E; ++I)
-    ArgVec.push_back(getContext().getDefaultArgExprForConstructor(CD, I));
+  for (unsigned I = IsCopy ? 1 : 0, E = CD->getNumParams(); I != E; ++I) {
+    Stmt *DefaultArg = getContext().getDefaultArgExprForConstructor(CD, I);
+    assert(DefaultArg && "sema forgot to instantiate default args");
+    ArgVec.push_back(DefaultArg);
+  }
 
   CodeGenFunction::RunCleanupsScope Cleanups(CGF);
 
@@ -3417,8 +3462,7 @@ llvm::Constant *MicrosoftCXXABI::getCatchableType(QualType T,
 
   // The TypeDescriptor is used by the runtime to determine if a catch handler
   // is appropriate for the exception object.
-  llvm::Constant *TD =
-      getImageRelativeConstant(getAddrOfRTTIDescriptor(T, /*ForEH=*/true));
+  llvm::Constant *TD = getImageRelativeConstant(getAddrOfRTTIDescriptor(T));
 
   // The runtime is responsible for calling the copy constructor if the
   // exception is caught by value.

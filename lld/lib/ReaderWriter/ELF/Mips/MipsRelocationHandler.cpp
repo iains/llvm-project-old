@@ -65,6 +65,8 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_26:
   case LLD_R_MIPS_GLOBAL_26:
     return {4, 0x3ffffff, 2, false};
+  case R_MIPS_PC21_S2:
+    return {4, 0x1fffff, 2, false};
   case R_MIPS_HI16:
   case R_MIPS_LO16:
   case R_MIPS_GPREL16:
@@ -134,12 +136,6 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   }
 }
 
-template <size_t BITS, class T> inline T signExtend(T val) {
-  if (val & (T(1) << (BITS - 1)))
-    val |= T(-1) << BITS;
-  return val;
-}
-
 /// \brief R_MIPS_32
 /// local/external: word32 S + A (truncate)
 static uint32_t reloc32(uint64_t S, int64_t A) { return S + A; }
@@ -168,7 +164,8 @@ static uint32_t reloc26loc(uint64_t P, uint64_t S, int32_t A, uint32_t shift) {
 /// \brief LLD_R_MIPS_GLOBAL_26, LLD_R_MICROMIPS_GLOBAL_26_S1
 /// external: (sign-extend(A) + S) >> 2
 static uint32_t reloc26ext(uint64_t S, int32_t A, uint32_t shift) {
-  uint32_t result = shift == 1 ? signExtend<27>(A) : signExtend<28>(A);
+  int32_t result =
+      shift == 1 ? llvm::SignExtend32<27>(A) : llvm::SignExtend32<28>(A);
   return (result + S) >> shift;
 }
 
@@ -212,7 +209,7 @@ static uint32_t relocGOTOfst(uint64_t S, int64_t A) {
 /// external: sign-extend(A) + S - GP
 static uint32_t relocGPRel16(uint64_t S, int64_t A, uint64_t GP) {
   // We added GP0 to addendum for a local symbol during a Relocation pass.
-  int32_t result = signExtend<16>(A) + S - GP;
+  int32_t result = llvm::SignExtend32<16>(A) + S - GP;
   return result;
 }
 
@@ -224,30 +221,38 @@ static uint32_t relocGPRel32(uint64_t S, int64_t A, uint64_t GP) {
   return result;
 }
 
+/// \brief R_MIPS_PC21_S2
+static uint32_t relocPc21(uint64_t P, uint64_t S, int64_t A) {
+  A = llvm::SignExtend32<23>(A);
+  // FIXME (simon): Check that S + A has 4-byte alignment
+  int32_t result = S + A - P;
+  return result >> 2;
+}
+
 /// \brief R_MICROMIPS_PC7_S1
 static uint32_t relocPc7(uint64_t P, uint64_t S, int64_t A) {
-  A = signExtend<8>(A);
+  A = llvm::SignExtend32<8>(A);
   int32_t result = S + A - P;
   return result >> 1;
 }
 
 /// \brief R_MICROMIPS_PC10_S1
 static uint32_t relocPc10(uint64_t P, uint64_t S, int64_t A) {
-  A = signExtend<11>(A);
+  A = llvm::SignExtend32<11>(A);
   int32_t result = S + A - P;
   return result >> 1;
 }
 
 /// \brief R_MICROMIPS_PC16_S1
 static uint32_t relocPc16(uint64_t P, uint64_t S, int64_t A) {
-  A = signExtend<17>(A);
+  A = llvm::SignExtend32<17>(A);
   int32_t result = S + A - P;
   return result >> 1;
 }
 
 /// \brief R_MICROMIPS_PC23_S2
 static uint32_t relocPc23(uint64_t P, uint64_t S, int64_t A) {
-  A = signExtend<25>(A);
+  A = llvm::SignExtend32<25>(A);
   int32_t result = S + A - P;
 
   // Check addiupc 16MB range.
@@ -356,6 +361,8 @@ static ErrorOr<uint64_t> calculateRelocation(const Reference &ref,
     return relocGOT(tgtAddr, gpAddr);
   case R_MIPS_GOT_OFST:
     return relocGOTOfst(tgtAddr, ref.addend());
+  case R_MIPS_PC21_S2:
+    return relocPc21(relAddr, tgtAddr, ref.addend());
   case R_MICROMIPS_PC7_S1:
     return relocPc7(relAddr, tgtAddr, ref.addend());
   case R_MICROMIPS_PC10_S1:

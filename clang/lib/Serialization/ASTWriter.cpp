@@ -867,6 +867,7 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(MODULE_NAME);
   RECORD(MODULE_MAP_FILE);
   RECORD(IMPORTS);
+  RECORD(KNOWN_MODULE_FILES);
   RECORD(LANGUAGE_OPTIONS);
   RECORD(TARGET_OPTIONS);
   RECORD(ORIGINAL_FILE);
@@ -1222,20 +1223,28 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
     serialization::ModuleManager &Mgr = Chain->getModuleManager();
     Record.clear();
 
-    for (ModuleManager::ModuleIterator M = Mgr.begin(), MEnd = Mgr.end();
-         M != MEnd; ++M) {
+    for (auto *M : Mgr) {
       // Skip modules that weren't directly imported.
-      if (!(*M)->isDirectlyImported())
+      if (!M->isDirectlyImported())
         continue;
 
-      Record.push_back((unsigned)(*M)->Kind); // FIXME: Stable encoding
-      AddSourceLocation((*M)->ImportLoc, Record);
-      Record.push_back((*M)->File->getSize());
-      Record.push_back((*M)->File->getModificationTime());
-      Record.push_back((*M)->Signature);
-      AddPath((*M)->FileName, Record);
+      Record.push_back((unsigned)M->Kind); // FIXME: Stable encoding
+      AddSourceLocation(M->ImportLoc, Record);
+      Record.push_back(M->File->getSize());
+      Record.push_back(M->File->getModificationTime());
+      Record.push_back(M->Signature);
+      AddPath(M->FileName, Record);
     }
     Stream.EmitRecord(IMPORTS, Record);
+
+    // Also emit a list of known module files that were not imported,
+    // but are made available by this module.
+    // FIXME: Should we also include a signature here?
+    Record.clear();
+    for (auto *E : Mgr.getAdditionalKnownModuleFiles())
+      AddPath(E->getName(), Record);
+    if (!Record.empty())
+      Stream.EmitRecord(KNOWN_MODULE_FILES, Record);
   }
 
   // Language options.
@@ -1758,7 +1767,7 @@ void ASTWriter::WriteHeaderSearch(const HeaderSearch &HS) {
   Record.push_back(NumHeaderSearchEntries);
   Record.push_back(TableData.size());
   TableData.append(GeneratorTrait.strings_begin(),GeneratorTrait.strings_end());
-  Stream.EmitRecordWithBlob(TableAbbrev, Record, TableData.str());
+  Stream.EmitRecordWithBlob(TableAbbrev, Record, TableData);
   
   // Free all of the strings we had to duplicate.
   for (unsigned I = 0, N = SavedStrings.size(); I != N; ++I)
@@ -2218,7 +2227,7 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
 
   Record.push_back(MACRO_TABLE);
   Record.push_back(BucketOffset);
-  Stream.EmitRecordWithBlob(MacroTableAbbrev, Record, MacroTable.str());
+  Stream.EmitRecordWithBlob(MacroTableAbbrev, Record, MacroTable);
   Record.clear();
 
   // Write the offsets table for macro IDs.
@@ -3052,7 +3061,7 @@ void ASTWriter::WriteSelectors(Sema &SemaRef) {
     Record.push_back(METHOD_POOL);
     Record.push_back(BucketOffset);
     Record.push_back(NumTableEntries);
-    Stream.EmitRecordWithBlob(MethodPoolAbbrev, Record, MethodPool.str());
+    Stream.EmitRecordWithBlob(MethodPoolAbbrev, Record, MethodPool);
 
     // Create a blob abbreviation for the selector table offsets.
     Abbrev = new BitCodeAbbrev();
@@ -3508,7 +3517,7 @@ void ASTWriter::WriteIdentifierTable(Preprocessor &PP,
     RecordData Record;
     Record.push_back(IDENTIFIER_TABLE);
     Record.push_back(BucketOffset);
-    Stream.EmitRecordWithBlob(IDTableAbbrev, Record, IdentifierTable.str());
+    Stream.EmitRecordWithBlob(IDTableAbbrev, Record, IdentifierTable);
   }
 
   // Write the offsets table for identifier IDs.
@@ -3826,7 +3835,7 @@ uint64_t ASTWriter::WriteDeclContextVisibleBlock(ASTContext &Context,
   Record.push_back(DECL_CONTEXT_VISIBLE);
   Record.push_back(BucketOffset);
   Stream.EmitRecordWithBlob(DeclContextVisibleLookupAbbrev, Record,
-                            LookupTable.str());
+                            LookupTable);
   ++NumVisibleDeclContexts;
   return Offset;
 }
@@ -3851,7 +3860,7 @@ void ASTWriter::WriteDeclContextVisibleUpdate(const DeclContext *DC) {
   Record.push_back(UPDATE_VISIBLE);
   Record.push_back(getDeclID(cast<Decl>(DC)));
   Record.push_back(BucketOffset);
-  Stream.EmitRecordWithBlob(UpdateVisibleAbbrev, Record, LookupTable.str());
+  Stream.EmitRecordWithBlob(UpdateVisibleAbbrev, Record, LookupTable);
 }
 
 /// \brief Write an FP_PRAGMA_OPTIONS block for the given FPOptions.
@@ -5655,6 +5664,8 @@ void ASTWriter::ReaderInitialized(ASTReader *Reader) {
 
   Chain = Reader;
 
+  // Note, this will get called multiple times, once one the reader starts up
+  // and again each time it's done reading a PCH or module.
   FirstDeclID = NUM_PREDEF_DECL_IDS + Chain->getTotalNumDecls();
   FirstTypeID = NUM_PREDEF_TYPE_IDS + Chain->getTotalNumTypes();
   FirstIdentID = NUM_PREDEF_IDENT_IDS + Chain->getTotalNumIdentifiers();

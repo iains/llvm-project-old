@@ -783,6 +783,7 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
     setAttributeItem(THUMB_ISA_use, AllowThumb32, false);
     break;
 
+  case ARM::ARMV6K:
   case ARM::ARMV6Z:
   case ARM::ARMV6ZK:
     setAttributeItem(ARM_ISA_use, Allowed, false);
@@ -1373,11 +1374,18 @@ MCTargetStreamer *createARMNullTargetStreamer(MCStreamer &S) {
   return new ARMTargetStreamer(S);
 }
 
+MCTargetStreamer *createARMObjectTargetStreamer(MCStreamer &S,
+                                                const MCSubtargetInfo &STI) {
+  Triple TT(STI.getTargetTriple());
+  if (TT.getObjectFormat() == Triple::ELF)
+    return new ARMTargetELFStreamer(S);
+  return new ARMTargetStreamer(S);
+}
+
 MCELFStreamer *createARMELFStreamer(MCContext &Context, MCAsmBackend &TAB,
                                     raw_ostream &OS, MCCodeEmitter *Emitter,
                                     bool RelaxAll, bool IsThumb) {
     ARMELFStreamer *S = new ARMELFStreamer(Context, TAB, OS, Emitter, IsThumb);
-    new ARMTargetELFStreamer(*S);
     // FIXME: This should eventually end up somewhere else where more
     // intelligent flag decisions can be made. For now we are just maintaining
     // the status quo for ARM and setting EF_ARM_EABI_VER5 as the default.

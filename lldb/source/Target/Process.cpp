@@ -10,9 +10,6 @@
 #include "lldb/lldb-python.h"
 
 #include "lldb/Target/Process.h"
-
-#include "lldb/lldb-private-log.h"
-
 #include "lldb/Breakpoint/StoppointCallbackContext.h"
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Core/Event.h"
@@ -54,6 +51,7 @@
 #include "lldb/Target/ThreadPlan.h"
 #include "lldb/Target/ThreadPlanBase.h"
 #include "lldb/Target/UnixSignals.h"
+#include "lldb/Utility/NameMatches.h"
 #include "Plugins/Process/Utility/InferiorCallPOSIX.h"
 
 using namespace lldb;
@@ -704,7 +702,7 @@ Process::Process(Target &target, Listener &listener) :
 Process::Process(Target &target, Listener &listener, const UnixSignalsSP &unix_signals_sp) :
     ProcessProperties (this),
     UserID (LLDB_INVALID_PROCESS_ID),
-    Broadcaster (&(target.GetDebugger()), "lldb.process"),
+    Broadcaster (&(target.GetDebugger()), Process::GetStaticBroadcasterClass().AsCString()),
     m_target (target),
     m_public_state (eStateUnloaded),
     m_private_state (eStateUnloaded),

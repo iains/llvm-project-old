@@ -367,6 +367,16 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.setInlining(Args.hasArg(OPT_fno_inline_functions) ?
                      CodeGenOptions::OnlyAlwaysInlining : Opts.getInlining());
 
+  if (Arg *A = Args.getLastArg(OPT_fveclib)) {
+    StringRef Name = A->getValue();
+    if (Name == "Accelerate")
+      Opts.setVecLib(CodeGenOptions::Accelerate);
+    else if (Name == "none")
+      Opts.setVecLib(CodeGenOptions::NoLibrary);
+    else
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
+  }
+
   if (Args.hasArg(OPT_gline_tables_only)) {
     Opts.setDebugInfo(CodeGenOptions::DebugLineTablesOnly);
   } else if (Args.hasArg(OPT_g_Flag) || Args.hasArg(OPT_gdwarf_2) ||
@@ -2027,7 +2037,7 @@ std::string CompilerInvocation::getModuleHash() const {
     llvm::sys::path::append(systemVersionFile, "SystemVersion.plist");
 
     llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> buffer =
-        llvm::MemoryBuffer::getFile(systemVersionFile.str());
+        llvm::MemoryBuffer::getFile(systemVersionFile);
     if (buffer) {
       code = hash_combine(code, buffer.get()->getBuffer());
 

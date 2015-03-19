@@ -12,8 +12,6 @@
 #include "lldb/Core/Log.h"
 #include "lldb/Core/RegisterValue.h"
 
-#include "lldb/lldb-private-log.h"
-
 #include "lldb/Host/common/NativeProcessProtocol.h"
 #include "lldb/Host/common/NativeThreadProtocol.h"
 
@@ -301,6 +299,24 @@ Error
 NativeRegisterContext::ClearAllHardwareWatchpoints ()
 {
     return Error ("not implemented");
+}
+
+Error
+NativeRegisterContext::IsWatchpointHit (uint8_t wp_index)
+{
+    return Error ("not implemented");
+}
+
+Error
+NativeRegisterContext::IsWatchpointVacant (uint32_t wp_index)
+{
+    return Error ("not implemented");
+}
+
+lldb::addr_t
+NativeRegisterContext::GetWatchpointAddress (uint32_t wp_index)
+{
+    return LLDB_INVALID_ADDRESS;
 }
 
 bool

@@ -63,6 +63,9 @@ static cl::opt<std::string> DSYMFile("dsym",
 static cl::opt<bool> FullLeadingAddr("full-leading-addr",
                                      cl::desc("Print full leading address"));
 
+static cl::opt<bool> NoLeadingAddr("no-leading-addr",
+                                   cl::desc("Print no leading address"));
+
 static cl::opt<bool>
     PrintImmHex("print-imm-hex",
                 cl::desc("Use hex format for immediate values"));
@@ -115,6 +118,15 @@ cl::opt<bool>
     llvm::NonVerbose("non-verbose",
                      cl::desc("Print the info for Mach-O objects in "
                               "non-verbose or numeric form (requires -macho)"));
+
+cl::opt<std::string> llvm::DisSymName(
+    "dis-symname",
+    cl::desc("disassemble just this symbol's instructions (requires -macho"));
+
+static cl::opt<bool> NoSymbolicOperands(
+    "no-symbolic-operands",
+    cl::desc("do not symbolic operands when disassembling (requires -macho)"));
+
 
 static cl::list<std::string>
     ArchFlags("arch", cl::desc("architecture(s) from a Mach-O file to dump"),
@@ -193,7 +205,7 @@ static bool compareDiceTableEntries(const DiceTableEntry &i,
   return j.first >= i.first && j.first < i.first + Length;
 }
 
-static uint64_t DumpDataInCode(const char *bytes, uint64_t Length,
+static uint64_t DumpDataInCode(const uint8_t *bytes, uint64_t Length,
                                unsigned short Kind) {
   uint32_t Value, Size = 1;
 
@@ -202,19 +214,19 @@ static uint64_t DumpDataInCode(const char *bytes, uint64_t Length,
   case MachO::DICE_KIND_DATA:
     if (Length >= 4) {
       if (!NoShowRawInsn)
-        DumpBytes(StringRef(bytes, 4));
+        DumpBytes(ArrayRef<uint8_t>(bytes, 4));
       Value = bytes[3] << 24 | bytes[2] << 16 | bytes[1] << 8 | bytes[0];
       outs() << "\t.long " << Value;
       Size = 4;
     } else if (Length >= 2) {
       if (!NoShowRawInsn)
-        DumpBytes(StringRef(bytes, 2));
+        DumpBytes(ArrayRef<uint8_t>(bytes, 2));
       Value = bytes[1] << 8 | bytes[0];
       outs() << "\t.short " << Value;
       Size = 2;
     } else {
       if (!NoShowRawInsn)
-        DumpBytes(StringRef(bytes, 2));
+        DumpBytes(ArrayRef<uint8_t>(bytes, 2));
       Value = bytes[0];
       outs() << "\t.byte " << Value;
       Size = 1;
@@ -226,14 +238,14 @@ static uint64_t DumpDataInCode(const char *bytes, uint64_t Length,
     break;
   case MachO::DICE_KIND_JUMP_TABLE8:
     if (!NoShowRawInsn)
-      DumpBytes(StringRef(bytes, 1));
+      DumpBytes(ArrayRef<uint8_t>(bytes, 1));
     Value = bytes[0];
     outs() << "\t.byte " << format("%3u", Value) << "\t@ KIND_JUMP_TABLE8\n";
     Size = 1;
     break;
   case MachO::DICE_KIND_JUMP_TABLE16:
     if (!NoShowRawInsn)
-      DumpBytes(StringRef(bytes, 2));
+      DumpBytes(ArrayRef<uint8_t>(bytes, 2));
     Value = bytes[1] << 8 | bytes[0];
     outs() << "\t.short " << format("%5u", Value & 0xffff)
            << "\t@ KIND_JUMP_TABLE16\n";
@@ -242,7 +254,7 @@ static uint64_t DumpDataInCode(const char *bytes, uint64_t Length,
   case MachO::DICE_KIND_JUMP_TABLE32:
   case MachO::DICE_KIND_ABS_JUMP_TABLE32:
     if (!NoShowRawInsn)
-      DumpBytes(StringRef(bytes, 4));
+      DumpBytes(ArrayRef<uint8_t>(bytes, 4));
     Value = bytes[3] << 24 | bytes[2] << 16 | bytes[1] << 8 | bytes[0];
     outs() << "\t.long " << Value;
     if (Kind == MachO::DICE_KIND_JUMP_TABLE32)
@@ -1068,20 +1080,20 @@ static void DumpSectionContents(StringRef Filename, MachOObjectFile *O,
             outs() << "zerofill section and has no contents in the file\n";
             break;
           case MachO::S_CSTRING_LITERALS:
-            DumpCstringSection(O, sect, sect_size, sect_addr, verbose);
+            DumpCstringSection(O, sect, sect_size, sect_addr, !NoLeadingAddr);
             break;
           case MachO::S_4BYTE_LITERALS:
-            DumpLiteral4Section(O, sect, sect_size, sect_addr, verbose);
+            DumpLiteral4Section(O, sect, sect_size, sect_addr, !NoLeadingAddr);
             break;
           case MachO::S_8BYTE_LITERALS:
-            DumpLiteral8Section(O, sect, sect_size, sect_addr, verbose);
+            DumpLiteral8Section(O, sect, sect_size, sect_addr, !NoLeadingAddr);
             break;
           case MachO::S_16BYTE_LITERALS:
-            DumpLiteral16Section(O, sect, sect_size, sect_addr, verbose);
-            break;
+	    DumpLiteral16Section(O, sect, sect_size, sect_addr, !NoLeadingAddr);
+	    break;
           case MachO::S_LITERAL_POINTERS:
             DumpLiteralPointerSection(O, Section, sect, sect_size, sect_addr,
-                                      verbose);
+                                      !NoLeadingAddr);
             break;
           case MachO::S_MOD_INIT_FUNC_POINTERS:
           case MachO::S_MOD_TERM_FUNC_POINTERS:
@@ -3181,6 +3193,7 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
     // Create a map of symbol addresses to symbol names for use by
     // the SymbolizerSymbolLookUp() routine.
     SymbolAddressMap AddrMap;
+    bool DisSymNameFound = false;
     for (const SymbolRef &Symbol : MachOOF->symbols()) {
       SymbolRef::Type ST;
       Symbol.getType(ST);
@@ -3191,10 +3204,16 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
         StringRef SymName;
         Symbol.getName(SymName);
         AddrMap[Address] = SymName;
+        if (!DisSymName.empty() && DisSymName == SymName)
+          DisSymNameFound = true;
       }
     }
+    if (!DisSymName.empty() && DisSymNameFound == false) {
+      outs() << "Can't find -dis-symname: " << DisSymName << "\n";
+      return;
+    }
     // Set up the block of info used by the Symbolizer call backs.
-    SymbolizerInfo.verbose = true;
+    SymbolizerInfo.verbose = !NoSymbolicOperands;
     SymbolizerInfo.O = MachOOF;
     SymbolizerInfo.S = Sections[SectIdx];
     SymbolizerInfo.AddrMap = &AddrMap;
@@ -3207,7 +3226,7 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
     SymbolizerInfo.adrp_addr = 0;
     SymbolizerInfo.adrp_inst = 0;
     // Same for the ThumbSymbolizer
-    ThumbSymbolizerInfo.verbose = true;
+    ThumbSymbolizerInfo.verbose = !NoSymbolicOperands;
     ThumbSymbolizerInfo.O = MachOOF;
     ThumbSymbolizerInfo.S = Sections[SectIdx];
     ThumbSymbolizerInfo.AddrMap = &AddrMap;
@@ -3233,6 +3252,10 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
       // Make sure the symbol is defined in this section.
       bool containsSym = Sections[SectIdx].containsSymbol(Symbols[SymIdx]);
       if (!containsSym)
+        continue;
+
+      // If we are only disassembling one symbol see if this is that symbol.
+      if (!DisSymName.empty() && DisSymName != SymName)
         continue;
 
       // Start at the address of the symbol relative to the section's address.
@@ -3275,13 +3298,15 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
         MCInst Inst;
 
         uint64_t PC = SectAddress + Index;
-        if (FullLeadingAddr) {
-          if (MachOOF->is64Bit())
-            outs() << format("%016" PRIx64, PC);
-          else
-            outs() << format("%08" PRIx64, PC);
-        } else {
-          outs() << format("%8" PRIx64 ":", PC);
+        if (!NoLeadingAddr) {
+          if (FullLeadingAddr) {
+            if (MachOOF->is64Bit())
+              outs() << format("%016" PRIx64, PC);
+            else
+              outs() << format("%08" PRIx64, PC);
+          } else {
+            outs() << format("%8" PRIx64 ":", PC);
+          }
         }
         if (!NoShowRawInsn)
           outs() << "\t";
@@ -3298,9 +3323,7 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
           DTI->second.getLength(Length);
           uint16_t Kind;
           DTI->second.getKind(Kind);
-          Size = DumpDataInCode(reinterpret_cast<const char *>(Bytes.data()) +
-                                    Index,
-                                Length, Kind);
+          Size = DumpDataInCode(Bytes.data() + Index, Length, Kind);
           if ((Kind == MachO::DICE_KIND_JUMP_TABLE8) &&
               (PC == (DTI->first + Length - 1)) && (Length & 1))
             Size++;
@@ -3319,8 +3342,7 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
                                            DebugOut, Annotations);
         if (gotInst) {
           if (!NoShowRawInsn) {
-            DumpBytes(StringRef(
-                reinterpret_cast<const char *>(Bytes.data()) + Index, Size));
+            DumpBytes(ArrayRef<uint8_t>(Bytes.data() + Index, Size));
           }
           formatted_raw_ostream FormattedOS(outs());
           Annotations.flush();
@@ -3373,19 +3395,19 @@ static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF,
         uint64_t PC = SectAddress + Index;
         if (DisAsm->getInstruction(Inst, InstSize, Bytes.slice(Index), PC,
                                    DebugOut, nulls())) {
-          if (FullLeadingAddr) {
-            if (MachOOF->is64Bit())
-              outs() << format("%016" PRIx64, PC);
-            else
-              outs() << format("%08" PRIx64, PC);
-          } else {
-            outs() << format("%8" PRIx64 ":", PC);
+          if (!NoLeadingAddr) {
+            if (FullLeadingAddr) {
+              if (MachOOF->is64Bit())
+                outs() << format("%016" PRIx64, PC);
+              else
+                outs() << format("%08" PRIx64, PC);
+            } else {
+              outs() << format("%8" PRIx64 ":", PC);
+            }
           }
           if (!NoShowRawInsn) {
             outs() << "\t";
-            DumpBytes(
-                StringRef(reinterpret_cast<const char *>(Bytes.data()) + Index,
-                          InstSize));
+            DumpBytes(ArrayRef<uint8_t>(Bytes.data() + Index, InstSize));
           }
           IP->printInst(&Inst, outs(), "");
           outs() << "\n";
