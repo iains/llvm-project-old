@@ -225,7 +225,7 @@ private:
   /// The ID numbers for identifiers are consecutive (in order of
   /// discovery), starting at 1. An ID of zero refers to a NULL
   /// IdentifierInfo.
-  llvm::DenseMap<const IdentifierInfo *, serialization::IdentID> IdentifierIDs;
+  llvm::MapVector<const IdentifierInfo *, serialization::IdentID> IdentifierIDs;
 
   /// \brief The first ID number we can use for our own macros.
   serialization::MacroID FirstMacroID;
@@ -321,7 +321,7 @@ private:
   };
 
   typedef SmallVector<DeclUpdate, 1> UpdateRecord;
-  typedef llvm::DenseMap<const Decl *, UpdateRecord> DeclUpdateMap;
+  typedef llvm::MapVector<const Decl *, UpdateRecord> DeclUpdateMap;
   /// \brief Mapping from declarations that came from a chained PCH to the
   /// record containing modifications to them.
   DeclUpdateMap DeclUpdates;
@@ -415,7 +415,7 @@ private:
   unsigned NumVisibleDeclContexts;
 
   /// \brief The offset of each CXXBaseSpecifier set within the AST.
-  SmallVector<uint32_t, 4> CXXBaseSpecifiersOffsets;
+  SmallVector<uint32_t, 16> CXXBaseSpecifiersOffsets;
 
   /// \brief The first ID number we can use for our own base specifiers.
   serialization::CXXBaseSpecifiersID FirstCXXBaseSpecifiersID;
@@ -442,6 +442,33 @@ private:
   /// \brief Queue of C++ base specifiers to be written to the AST file,
   /// in the order they should be written.
   SmallVector<QueuedCXXBaseSpecifiers, 2> CXXBaseSpecifiersToWrite;
+
+  /// \brief The offset of each CXXCtorInitializer list within the AST.
+  SmallVector<uint32_t, 16> CXXCtorInitializersOffsets;
+
+  /// \brief The first ID number we can use for our own ctor initializers.
+  serialization::CXXCtorInitializersID FirstCXXCtorInitializersID;
+
+  /// \brief The ctor initializers ID that will be assigned to the next new
+  /// list of C++ ctor initializers.
+  serialization::CXXCtorInitializersID NextCXXCtorInitializersID;
+
+  /// \brief A set of C++ ctor initializers that is queued to be written
+  /// into the AST file.
+  struct QueuedCXXCtorInitializers {
+    QueuedCXXCtorInitializers() : ID() {}
+
+    QueuedCXXCtorInitializers(serialization::CXXCtorInitializersID ID,
+                              ArrayRef<CXXCtorInitializer*> Inits)
+        : ID(ID), Inits(Inits) {}
+
+    serialization::CXXCtorInitializersID ID;
+    ArrayRef<CXXCtorInitializer*> Inits;
+  };
+
+  /// \brief Queue of C++ ctor initializers to be written to the AST file,
+  /// in the order they should be written.
+  SmallVector<QueuedCXXCtorInitializers, 2> CXXCtorInitializersToWrite;
 
   /// \brief A mapping from each known submodule to its ID number, which will
   /// be a positive integer.
@@ -471,6 +498,7 @@ private:
   void WritePragmaDiagnosticMappings(const DiagnosticsEngine &Diag,
                                      bool isModule);
   void WriteCXXBaseSpecifiersOffsets();
+  void WriteCXXCtorInitializersOffsets();
 
   unsigned TypeExtQualAbbrev;
   unsigned TypeFunctionProtoAbbrev;
@@ -675,6 +703,11 @@ public:
   void AddCXXBaseSpecifier(const CXXBaseSpecifier &Base,
                            RecordDataImpl &Record);
 
+  /// \brief Emit the ID for a CXXCtorInitializer array and register the array
+  /// for later serialization.
+  void AddCXXCtorInitializersRef(ArrayRef<CXXCtorInitializer *> Inits,
+                                 RecordDataImpl &Record);
+
   /// \brief Emit a CXXCtorInitializer array.
   void AddCXXCtorInitializers(
                              const CXXCtorInitializer * const *CtorInitializers,
@@ -746,6 +779,18 @@ public:
   /// \brief Flush all of the C++ base specifier sets that have been added
   /// via \c AddCXXBaseSpecifiersRef().
   void FlushCXXBaseSpecifiers();
+
+  /// \brief Flush all of the C++ constructor initializer lists that have been
+  /// added via \c AddCXXCtorInitializersRef().
+  void FlushCXXCtorInitializers();
+
+  /// \brief Flush all pending records that are tacked onto the end of
+  /// decl and decl update records.
+  void FlushPendingAfterDecl() {
+    FlushStmts();
+    FlushCXXBaseSpecifiers();
+    FlushCXXCtorInitializers();
+  }
 
   /// \brief Record an ID for the given switch-case statement.
   unsigned RecordSwitchCaseID(SwitchCase *S);

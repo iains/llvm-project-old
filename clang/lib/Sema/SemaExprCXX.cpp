@@ -2168,15 +2168,6 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
       }
     }
   }
-  
-  // If the function is sized operator delete and has not already been
-  // declared, and weak definitions have been disabled, do not declare
-  // it implicitly. Instead, let deallocation function lookup pick up
-  // unsized delete.
-  // FIXME: We should remove this guard once backward compatibility is
-  // no longer an issue
-  if (NumParams == 2 && !getLangOpts().DefineSizedDeallocation)
-    return;
 
   FunctionProtoType::ExtProtoInfo EPI;
 
@@ -5780,10 +5771,9 @@ ExprResult Sema::BuildCXXMemberCallExpr(Expr *E, NamedDecl *FoundDecl,
   if (Exp.isInvalid())
     return true;
 
-  MemberExpr *ME =
-      new (Context) MemberExpr(Exp.get(), /*IsArrow=*/false, Method,
-                               SourceLocation(), Context.BoundMemberTy,
-                               VK_RValue, OK_Ordinary);
+  MemberExpr *ME = new (Context) MemberExpr(
+      Exp.get(), /*IsArrow=*/false, SourceLocation(), Method, SourceLocation(),
+      Context.BoundMemberTy, VK_RValue, OK_Ordinary);
   if (HadMultipleCandidates)
     ME->setHadMultipleCandidates(true);
   MarkMemberReferenced(ME);

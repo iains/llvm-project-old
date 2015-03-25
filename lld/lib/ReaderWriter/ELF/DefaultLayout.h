@@ -139,10 +139,10 @@ public:
 
   class AdditionalSegmentHashKey {
   public:
-    int64_t operator() (int64_t segmentType, int64_t segmentFlag) const {
+    int64_t operator()(const AdditionalSegmentKey &k) const {
       // k.first = SegmentName
       // k.second = SegmentFlags
-      return llvm::hash_combine(segmentType, segmentFlag);
+      return llvm::hash_combine(k.first, k.second);
     }
   };
 
@@ -154,7 +154,8 @@ public:
 
   typedef std::unordered_map<SectionKey, AtomSection<ELFT> *, SectionKeyHash,
                              SectionKeyEq> SectionMapT;
-  typedef std::map<AdditionalSegmentKey, Segment<ELFT> *> AdditionalSegmentMapT;
+  typedef std::unordered_map<AdditionalSegmentKey, Segment<ELFT> *,
+                             AdditionalSegmentHashKey> AdditionalSegmentMapT;
   typedef std::unordered_map<SegmentKey, Segment<ELFT> *, SegmentHashKey>
   SegmentMapT;
 
@@ -281,8 +282,8 @@ public:
   /// table are processed at startup.
   RelocationTable<ELFT> *getDynamicRelocationTable() {
     if (!_dynamicRelocationTable) {
-      _dynamicRelocationTable.reset(new (_allocator) RelocationTable<ELFT>(
-          _context, _context.isRelaOutputFormat() ? ".rela.dyn" : ".rel.dyn",
+      _dynamicRelocationTable = std::move(createRelocationTable(
+          _context.isRelaOutputFormat() ? ".rela.dyn" : ".rel.dyn",
           ORDER_DYNAMIC_RELOCS));
       addSection(_dynamicRelocationTable.get());
     }
@@ -292,8 +293,8 @@ public:
   /// \brief Get or create the PLT relocation table. Referenced by DT_JMPREL.
   RelocationTable<ELFT> *getPLTRelocationTable() {
     if (!_pltRelocationTable) {
-      _pltRelocationTable.reset(new (_allocator) RelocationTable<ELFT>(
-          _context, _context.isRelaOutputFormat() ? ".rela.plt" : ".rel.plt",
+      _pltRelocationTable = std::move(createRelocationTable(
+          _context.isRelaOutputFormat() ? ".rela.plt" : ".rel.plt",
           ORDER_DYNAMIC_PLT_RELOCS));
       addSection(_pltRelocationTable.get());
     }
@@ -315,12 +316,31 @@ public:
     return _copiedDynSymNames.count(sla->name());
   }
 
+  /// \brief Handle SORT_BY_PRIORITY.
+  void sortOutputSectionByPriority(StringRef outputSectionName,
+                                   StringRef prefix);
+
 protected:
+  /// \brief TargetLayouts may use these functions to reorder the input sections
+  /// in a order defined by their ABI.
+  virtual void finalizeOutputSectionLayout() {}
+
   /// \brief Allocate a new section.
   virtual AtomSection<ELFT> *createSection(
       StringRef name, int32_t contentType,
       DefinedAtom::ContentPermissions contentPermissions,
       SectionOrder sectionOrder);
+
+  /// \brief Create a new relocation table.
+  virtual unique_bump_ptr<RelocationTable<ELFT>>
+  createRelocationTable(StringRef name, int32_t order) {
+    return unique_bump_ptr<RelocationTable<ELFT>>(
+        new (_allocator) RelocationTable<ELFT>(_context, name, order));
+  }
+
+private:
+  /// Helper function that returns the priority value from an input section.
+  uint32_t getPriorityFromSectionName(StringRef sectionName) const;
 
 protected:
   llvm::BumpPtrAllocator _allocator;
@@ -656,13 +676,56 @@ template <class ELFT> void DefaultLayout<ELFT>::createOutputSections() {
   }
 }
 
+template <class ELFT>
+uint32_t
+DefaultLayout<ELFT>::getPriorityFromSectionName(StringRef sectionName) const {
+  StringRef priority = sectionName.drop_front().rsplit('.').second;
+  uint32_t prio;
+  if (priority.getAsInteger(10, prio))
+    return std::numeric_limits<uint32_t>::max();
+  return prio;
+}
+
+template <class ELFT>
+void DefaultLayout<ELFT>::sortOutputSectionByPriority(
+    StringRef outputSectionName, StringRef prefix) {
+  OutputSection<ELFT> *outputSection = findOutputSection(outputSectionName);
+  if (!outputSection)
+    return;
+
+  auto sections = outputSection->sections();
+
+  std::sort(sections.begin(), sections.end(),
+            [&](Chunk<ELFT> *lhs, Chunk<ELFT> *rhs) {
+              Section<ELFT> *lhsSection = dyn_cast<Section<ELFT>>(lhs);
+              Section<ELFT> *rhsSection = dyn_cast<Section<ELFT>>(rhs);
+              if (!lhsSection || !rhsSection)
+                return false;
+              StringRef lhsSectionName = lhsSection->inputSectionName();
+              StringRef rhsSectionName = rhsSection->inputSectionName();
+
+              if (!prefix.empty()) {
+                if (!lhsSectionName.startswith(prefix) ||
+                    !rhsSectionName.startswith(prefix))
+                  return false;
+              }
+              return getPriorityFromSectionName(lhsSectionName) <
+                     getPriorityFromSectionName(rhsSectionName);
+            });
+}
+
 template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
   ScopedTask task(getDefaultDomain(), "assignSectionsToSegments");
   ELFLinkingContext::OutputMagic outputMagic = _context.getOutputMagic();
   // sort the sections by their order as defined by the layout
   sortInputSections();
+
   // Create output sections.
   createOutputSections();
+
+  // Finalize output section layout.
+  finalizeOutputSectionLayout();
+
   // Set the ordinal after sorting the sections
   int ordinal = 1;
   for (auto osi : _outputSections) {

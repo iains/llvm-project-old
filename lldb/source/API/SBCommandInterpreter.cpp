@@ -20,6 +20,7 @@
 #include "lldb/API/SBBroadcaster.h"
 #include "lldb/API/SBCommandReturnObject.h"
 #include "lldb/API/SBCommandInterpreter.h"
+#include "lldb/API/SBEvent.h"
 #include "lldb/API/SBExecutionContext.h"
 #include "lldb/API/SBProcess.h"
 #include "lldb/API/SBTarget.h"
@@ -446,6 +447,21 @@ SBCommandInterpreter::GetDebugger ()
     return sb_debugger;
 }
 
+bool
+SBCommandInterpreter::GetPromptOnQuit()
+{
+    if (m_opaque_ptr)
+        return m_opaque_ptr->GetPromptOnQuit();
+    return false;
+}
+
+void
+SBCommandInterpreter::SetPromptOnQuit (bool b)
+{
+    if (m_opaque_ptr)
+        m_opaque_ptr->SetPromptOnQuit(b);
+}
+
 CommandInterpreter *
 SBCommandInterpreter::get ()
 {
@@ -545,6 +561,12 @@ const char *
 SBCommandInterpreter::GetArgumentDescriptionAsCString (const lldb::CommandArgumentType arg_type)
 {
     return CommandObject::GetArgumentDescriptionAsCString (arg_type);
+}
+
+bool
+SBCommandInterpreter::EventIsCommandInterpreterEvent (const lldb::SBEvent &event)
+{
+    return event.GetBroadcasterClass() == SBCommandInterpreter::GetBroadcasterClass();
 }
 
 bool
@@ -843,4 +865,3 @@ SBCommand::AddCommand (const char* name, lldb::SBCommandPluginInterface *impl, c
         return lldb::SBCommand(new_command_sp);
     return lldb::SBCommand();
 }
-

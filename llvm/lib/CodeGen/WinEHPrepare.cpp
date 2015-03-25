@@ -16,8 +16,8 @@
 
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Analysis/LibCallSemantics.h"
 #include "llvm/IR/Function.h"
@@ -29,6 +29,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -401,8 +402,7 @@ bool WinEHPrepare::prepareExceptionHandlers(
     // Look for evidence that this landingpad has already been processed.
     bool LPadHasActionList = false;
     BasicBlock *LPadBB = LPad->getParent();
-    for (Instruction &Inst : LPadBB->getInstList()) {
-      // FIXME: Make this an intrinsic.
+    for (Instruction &Inst : *LPadBB) {
       if (auto *IntrinCall = dyn_cast<IntrinsicInst>(&Inst)) {
         if (IntrinCall->getIntrinsicID() == Intrinsic::eh_actions) {
           LPadHasActionList = true;
@@ -469,10 +469,10 @@ bool WinEHPrepare::prepareExceptionHandlers(
 
     // Add a call to describe the actions for this landing pad.
     std::vector<Value *> ActionArgs;
-    ActionArgs.push_back(NewLPad);
     for (ActionHandler *Action : Actions) {
+      // Action codes from docs are: 0 cleanup, 1 catch.
       if (auto *CatchAction = dyn_cast<CatchHandler>(Action)) {
-        ActionArgs.push_back(ConstantInt::get(Int32Type, 0));
+        ActionArgs.push_back(ConstantInt::get(Int32Type, 1));
         ActionArgs.push_back(CatchAction->getSelector());
         Value *EHObj = const_cast<Value *>(CatchAction->getExceptionVar());
         if (EHObj)
@@ -480,11 +480,9 @@ bool WinEHPrepare::prepareExceptionHandlers(
         else
           ActionArgs.push_back(ConstantPointerNull::get(Int8PtrType));
       } else {
-        ActionArgs.push_back(ConstantInt::get(Int32Type, 1));
+        ActionArgs.push_back(ConstantInt::get(Int32Type, 0));
       }
-      Constant *HandlerPtr = ConstantExpr::getBitCast(
-          Action->getHandlerBlockOrFunc(), Int8PtrType);
-      ActionArgs.push_back(HandlerPtr);
+      ActionArgs.push_back(Action->getHandlerBlockOrFunc());
     }
     CallInst *Recover =
         CallInst::Create(ActionIntrin, ActionArgs, "recover", NewLPadBB);
@@ -694,8 +692,26 @@ bool WinEHPrepare::outlineHandler(ActionHandler *Action, Function *SrcFn,
   SmallVector<ReturnInst *, 8> Returns;
   ClonedCodeInfo OutlinedFunctionInfo;
 
+  // If the start block contains PHI nodes, we need to map them.
+  BasicBlock::iterator II = StartBB->begin();
+  while (auto *PN = dyn_cast<PHINode>(II)) {
+    bool Mapped = false;
+    // Look for PHI values that we have already mapped (such as the selector).
+    for (Value *Val : PN->incoming_values()) {
+      if (VMap.count(Val)) {
+        VMap[PN] = VMap[Val];
+        Mapped = true;
+      }
+    }
+    // If we didn't find a match for this value, map it as an undef.
+    if (!Mapped) {
+      VMap[PN] = UndefValue::get(PN->getType());
+    }
+    ++II;
+  }
+
   // Skip over PHIs and, if applicable, landingpad instructions.
-  BasicBlock::iterator II = StartBB->getFirstInsertionPt();
+  II = StartBB->getFirstInsertionPt();
 
   CloneAndPruneIntoFromInst(Handler, SrcFn, II, VMap,
                             /*ModuleLevelChanges=*/false, Returns, "",

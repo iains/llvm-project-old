@@ -233,11 +233,15 @@ bool
 CMICmnLLDBDebugger::InitSBDebugger(void)
 {
     m_lldbDebugger = lldb::SBDebugger::Create(false);
-    if (m_lldbDebugger.IsValid())
-        return MIstatus::success;
+    if (!m_lldbDebugger.IsValid())
+    {
+        SetErrorDescription(MIRSRC(IDS_LLDBDEBUGGER_ERR_INVALIDDEBUGGER));
+        return MIstatus::failure;
+    }
 
-    SetErrorDescription(MIRSRC(IDS_LLDBDEBUGGER_ERR_INVALIDDEBUGGER));
-    return MIstatus::failure;
+    m_lldbDebugger.GetCommandInterpreter().SetPromptOnQuit(false);
+
+    return MIstatus::success;
 }
 
 //++ ------------------------------------------------------------------------------------
@@ -296,7 +300,7 @@ CMICmnLLDBDebugger::InitSBListener(void)
     eventMask = lldb::SBCommandInterpreter::eBroadcastBitQuitCommandReceived | lldb::SBCommandInterpreter::eBroadcastBitThreadShouldExit |
                 lldb::SBCommandInterpreter::eBroadcastBitAsynchronousOutputData |
                 lldb::SBCommandInterpreter::eBroadcastBitAsynchronousErrorData;
-    bOk = bOk && RegisterForEvent(strDbgId, CMIUtilString(lldb::SBCommandInterpreter::GetBroadcasterClass()), eventMask);
+    bOk = bOk && RegisterForEvent(strDbgId, m_lldbDebugger.GetCommandInterpreter().GetBroadcaster(), eventMask);
 
     return bOk;
 }

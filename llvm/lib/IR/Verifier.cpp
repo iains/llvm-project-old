@@ -87,9 +87,10 @@ struct VerifierSupport {
 
   /// \brief Track the brokenness of the module while recursively visiting.
   bool Broken;
+  bool EverBroken;
 
   explicit VerifierSupport(raw_ostream &OS)
-      : OS(OS), M(nullptr), Broken(false) {}
+      : OS(OS), M(nullptr), Broken(false), EverBroken(false) {}
 
 private:
   void Write(const Value *V) {
@@ -107,6 +108,13 @@ private:
     if (!MD)
       return;
     MD->print(OS, M);
+    OS << '\n';
+  }
+
+  void Write(const NamedMDNode *NMD) {
+    if (!NMD)
+      return;
+    NMD->print(OS);
     OS << '\n';
   }
 
@@ -137,7 +145,7 @@ public:
   /// something is not correct.
   void CheckFailed(const Twine &Message) {
     OS << Message << '\n';
-    Broken = true;
+    EverBroken = Broken = true;
   }
 
   /// \brief A check failed (with values to print).
@@ -260,6 +268,9 @@ public:
     visitModuleFlags(M);
     visitModuleIdents(M);
 
+    // Verify debug info last.
+    verifyDebugInfo();
+
     return !Broken;
   }
 
@@ -358,18 +369,8 @@ private:
   void VerifyConstantExprBitcastType(const ConstantExpr *CE);
   void VerifyStatepoint(ImmutableCallSite CS);
   void verifyFrameRecoverIndices();
-};
-class DebugInfoVerifier : public VerifierSupport {
-public:
-  explicit DebugInfoVerifier(raw_ostream &OS = dbgs()) : VerifierSupport(OS) {}
 
-  bool verify(const Module &M) {
-    this->M = &M;
-    verifyDebugInfo();
-    return !Broken;
-  }
-
-private:
+  // Module-level debug info verification...
   void verifyDebugInfo();
   void processInstructions(DebugInfoFinder &Finder);
   void processCallInst(DebugInfoFinder &Finder, const CallInst &CI);
@@ -567,6 +568,10 @@ void Verifier::visitNamedMDNode(const NamedMDNode &NMD) {
     MDNode *MD = NMD.getOperand(i);
     if (!MD)
       continue;
+
+    if (NMD.getName() == "llvm.dbg.cu") {
+      Assert(isa<MDCompileUnit>(MD), "invalid compile unit", &NMD, MD);
+    }
 
     visitMDNode(*MD);
   }
@@ -2562,6 +2567,11 @@ void Verifier::visitInstruction(Instruction &I) {
            &I);
   }
 
+  if (MDNode *N = I.getDebugLoc().getAsMDNode()) {
+    Assert(isa<MDLocation>(N), "invalid !dbg metadata attachment", &I, N);
+    visitMDNode(*N);
+  }
+
   InstsInThisBlock.insert(&I);
 }
 
@@ -3031,8 +3041,10 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
          DII.getRawExpression());
 }
 
-void DebugInfoVerifier::verifyDebugInfo() {
-  if (!VerifyDebugInfo)
+void Verifier::verifyDebugInfo() {
+  // Run the debug info verifier only if the regular verifier succeeds, since
+  // sometimes checks that have already failed will cause crashes here.
+  if (EverBroken || !VerifyDebugInfo)
     return;
 
   DebugInfoFinder Finder;
@@ -3059,7 +3071,7 @@ void DebugInfoVerifier::verifyDebugInfo() {
   }
 }
 
-void DebugInfoVerifier::processInstructions(DebugInfoFinder &Finder) {
+void Verifier::processInstructions(DebugInfoFinder &Finder) {
   for (const Function &F : *M)
     for (auto I = inst_begin(&F), E = inst_end(&F); I != E; ++I) {
       if (MDNode *MD = I->getMetadata(LLVMContext::MD_dbg))
@@ -3069,8 +3081,7 @@ void DebugInfoVerifier::processInstructions(DebugInfoFinder &Finder) {
     }
 }
 
-void DebugInfoVerifier::processCallInst(DebugInfoFinder &Finder,
-                                        const CallInst &CI) {
+void Verifier::processCallInst(DebugInfoFinder &Finder, const CallInst &CI) {
   if (Function *F = CI.getCalledFunction())
     if (Intrinsic::ID ID = (Intrinsic::ID)F->getIntrinsicID())
       switch (ID) {
@@ -3112,13 +3123,7 @@ bool llvm::verifyModule(const Module &M, raw_ostream *OS) {
 
   // Note that this function's return value is inverted from what you would
   // expect of a function called "verify".
-  if (!V.verify(M) || Broken)
-    return true;
-
-  // Run the debug info verifier only if the regular verifier succeeds, since
-  // sometimes checks that have already failed will cause crashes here.
-  DebugInfoVerifier DIV(OS ? *OS : NullStr);
-  return !DIV.verify(M);
+  return !V.verify(M) || Broken;
 }
 
 namespace {
@@ -3154,46 +3159,13 @@ struct VerifierLegacyPass : public FunctionPass {
     AU.setPreservesAll();
   }
 };
-struct DebugInfoVerifierLegacyPass : public ModulePass {
-  static char ID;
-
-  DebugInfoVerifier V;
-  bool FatalErrors;
-
-  DebugInfoVerifierLegacyPass() : ModulePass(ID), FatalErrors(true) {
-    initializeDebugInfoVerifierLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-  explicit DebugInfoVerifierLegacyPass(bool FatalErrors)
-      : ModulePass(ID), V(dbgs()), FatalErrors(FatalErrors) {
-    initializeDebugInfoVerifierLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
-
-  bool runOnModule(Module &M) override {
-    if (!V.verify(M) && FatalErrors)
-      report_fatal_error("Broken debug info found, compilation aborted!");
-
-    return false;
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
-  }
-};
 }
 
 char VerifierLegacyPass::ID = 0;
 INITIALIZE_PASS(VerifierLegacyPass, "verify", "Module Verifier", false, false)
 
-char DebugInfoVerifierLegacyPass::ID = 0;
-INITIALIZE_PASS(DebugInfoVerifierLegacyPass, "verify-di", "Debug Info Verifier",
-                false, false)
-
 FunctionPass *llvm::createVerifierPass(bool FatalErrors) {
   return new VerifierLegacyPass(FatalErrors);
-}
-
-ModulePass *llvm::createDebugInfoVerifierPass(bool FatalErrors) {
-  return new DebugInfoVerifierLegacyPass(FatalErrors);
 }
 
 PreservedAnalyses VerifierPass::run(Module &M) {

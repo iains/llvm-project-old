@@ -1160,12 +1160,17 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
   Stream.EmitRecordWithBlob(MetadataAbbrevCode, Record,
                             getClangFullRepositoryVersion());
 
-  // Signature
-  Record.clear();
-  Record.push_back(getSignature());
-  Stream.EmitRecord(SIGNATURE, Record);
-
   if (WritingModule) {
+    // For implicit modules we output a signature that we can use to ensure
+    // duplicate module builds don't collide in the cache as their output order
+    // is non-deterministic.
+    // FIXME: Remove this when output is deterministic.
+    if (Context.getLangOpts().ImplicitModules) {
+      Record.clear();
+      Record.push_back(getSignature());
+      Stream.EmitRecord(SIGNATURE, Record);
+    }
+
     // Module name
     BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
     Abbrev->Add(BitCodeAbbrevOp(MODULE_NAME));
@@ -2694,6 +2699,29 @@ void ASTWriter::WritePragmaDiagnosticMappings(const DiagnosticsEngine &Diag,
     Stream.EmitRecord(DIAG_PRAGMA_MAPPINGS, Record);
 }
 
+void ASTWriter::WriteCXXCtorInitializersOffsets() {
+  if (CXXCtorInitializersOffsets.empty())
+    return;
+
+  RecordData Record;
+
+  // Create a blob abbreviation for the C++ ctor initializer offsets.
+  using namespace llvm;
+
+  BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
+  Abbrev->Add(BitCodeAbbrevOp(CXX_CTOR_INITIALIZERS_OFFSETS));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32)); // size
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
+  unsigned CtorInitializersOffsetAbbrev = Stream.EmitAbbrev(Abbrev);
+
+  // Write the base specifier offsets table.
+  Record.clear();
+  Record.push_back(CXX_CTOR_INITIALIZERS_OFFSETS);
+  Record.push_back(CXXCtorInitializersOffsets.size());
+  Stream.EmitRecordWithBlob(CtorInitializersOffsetAbbrev, Record,
+                            data(CXXCtorInitializersOffsets));
+}
+
 void ASTWriter::WriteCXXBaseSpecifiersOffsets() {
   if (CXXBaseSpecifiersOffsets.empty())
     return;
@@ -3484,14 +3512,12 @@ void ASTWriter::WriteIdentifierTable(Preprocessor &PP,
     // Create the on-disk hash table representation. We only store offsets
     // for identifiers that appear here for the first time.
     IdentifierOffsets.resize(NextIdentID - FirstIdentID);
-    for (llvm::DenseMap<const IdentifierInfo *, IdentID>::iterator
-           ID = IdentifierIDs.begin(), IDEnd = IdentifierIDs.end();
-         ID != IDEnd; ++ID) {
-      assert(ID->first && "NULL identifier in identifier table");
-      if (!Chain || !ID->first->isFromAST() || 
-          ID->first->hasChangedSinceDeserialization())
-        Generator.insert(const_cast<IdentifierInfo *>(ID->first), ID->second,
-                         Trait);
+    for (auto IdentIDPair : IdentifierIDs) {
+      IdentifierInfo *II = const_cast<IdentifierInfo *>(IdentIDPair.first);
+      IdentID ID = IdentIDPair.second;
+      assert(II && "NULL identifier in identifier table");
+      if (!Chain || !II->isFromAST() || II->hasChangedSinceDeserialization())
+        Generator.insert(II, ID, Trait);
     }
 
     // Create the on-disk hash table in a buffer.
@@ -3731,7 +3757,9 @@ void ASTWriter::AddUpdatedDeclContext(const DeclContext *DC) {
 uint32_t
 ASTWriter::GenerateNameLookupTable(const DeclContext *DC,
                                    llvm::SmallVectorImpl<char> &LookupTable) {
-  assert(!DC->LookupPtr.getInt() && "must call buildLookups first");
+  assert(!DC->HasLazyLocalLexicalLookups &&
+         !DC->HasLazyExternalLexicalLookups &&
+         "must call buildLookups first");
 
   llvm::OnDiskChainedHashTableGenerator<ASTDeclContextNameLookupTrait>
       Generator;
@@ -4152,7 +4180,8 @@ ASTWriter::ASTWriter(llvm::BitstreamWriter &Stream)
       FirstSelectorID(NUM_PREDEF_SELECTOR_IDS), NextSelectorID(FirstSelectorID),
       CollectedStmts(&StmtsToEmit), NumStatements(0), NumMacros(0),
       NumLexicalDeclContexts(0), NumVisibleDeclContexts(0),
-      NextCXXBaseSpecifiersID(1), TypeExtQualAbbrev(0),
+      NextCXXBaseSpecifiersID(1), NextCXXCtorInitializersID(1),
+      TypeExtQualAbbrev(0),
       TypeFunctionProtoAbbrev(0), DeclParmVarAbbrev(0),
       DeclContextLexicalAbbrev(0), DeclContextVisibleLookupAbbrev(0),
       UpdateVisibleAbbrev(0), DeclRecordAbbrev(0), DeclTypedefAbbrev(0),
@@ -4557,6 +4586,7 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   if (!DeclUpdatesOffsetsRecord.empty())
     Stream.EmitRecord(DECL_UPDATE_OFFSETS, DeclUpdatesOffsetsRecord);
   WriteCXXBaseSpecifiersOffsets();
+  WriteCXXCtorInitializersOffsets();
   WriteFileDeclIDsMap();
   WriteSourceManagerBlock(Context.getSourceManager(), PP);
 
@@ -4816,11 +4846,7 @@ void ASTWriter::WriteDeclUpdatesBlocks(RecordDataImpl &OffsetsRecord) {
 
     Stream.EmitRecord(DECL_UPDATES, Record);
 
-    // Flush any statements that were written as part of this update record.
-    FlushStmts();
-
-    // Flush C++ base specifiers, if there are any.
-    FlushCXXBaseSpecifiers();
+    FlushPendingAfterDecl();
   }
 }
 
@@ -4932,8 +4958,16 @@ void ASTWriter::AddCXXTemporary(const CXXTemporary *Temp, RecordDataImpl &Record
   AddDeclRef(Temp->getDestructor(), Record);
 }
 
+void ASTWriter::AddCXXCtorInitializersRef(ArrayRef<CXXCtorInitializer *> Inits,
+                                          RecordDataImpl &Record) {
+  assert(!Inits.empty() && "Empty ctor initializer sets are not recorded");
+  CXXCtorInitializersToWrite.push_back(
+      QueuedCXXCtorInitializers(NextCXXCtorInitializersID, Inits));
+  Record.push_back(NextCXXCtorInitializersID++);
+}
+
 void ASTWriter::AddCXXBaseSpecifiersRef(CXXBaseSpecifier const *Bases,
-                                      CXXBaseSpecifier const *BasesEnd,
+                                        CXXBaseSpecifier const *BasesEnd,
                                         RecordDataImpl &Record) {
   assert(Bases != BasesEnd && "Empty base-specifier sets are not recorded");
   CXXBaseSpecifiersToWrite.push_back(
@@ -5494,7 +5528,8 @@ void ASTWriter::AddCXXBaseSpecifier(const CXXBaseSpecifier &Base,
 
 void ASTWriter::FlushCXXBaseSpecifiers() {
   RecordData Record;
-  for (unsigned I = 0, N = CXXBaseSpecifiersToWrite.size(); I != N; ++I) {
+  unsigned N = CXXBaseSpecifiersToWrite.size();
+  for (unsigned I = 0; I != N; ++I) {
     Record.clear();
     
     // Record the offset of this base-specifier set.
@@ -5518,6 +5553,8 @@ void ASTWriter::FlushCXXBaseSpecifiers() {
     FlushStmts();
   }
 
+  assert(N == CXXBaseSpecifiersToWrite.size() &&
+         "added more base specifiers while writing base specifiers");
   CXXBaseSpecifiersToWrite.clear();
 }
 
@@ -5557,6 +5594,36 @@ void ASTWriter::AddCXXCtorInitializers(
         AddDeclRef(Init->getArrayIndex(i), Record);
     }
   }
+}
+
+void ASTWriter::FlushCXXCtorInitializers() {
+  RecordData Record;
+
+  unsigned N = CXXCtorInitializersToWrite.size();
+  (void)N; // Silence unused warning in non-assert builds.
+  for (auto &Init : CXXCtorInitializersToWrite) {
+    Record.clear();
+
+    // Record the offset of this mem-initializer list.
+    unsigned Index = Init.ID - 1;
+    if (Index == CXXCtorInitializersOffsets.size())
+      CXXCtorInitializersOffsets.push_back(Stream.GetCurrentBitNo());
+    else {
+      if (Index > CXXCtorInitializersOffsets.size())
+        CXXCtorInitializersOffsets.resize(Index + 1);
+      CXXCtorInitializersOffsets[Index] = Stream.GetCurrentBitNo();
+    }
+
+    AddCXXCtorInitializers(Init.Inits.data(), Init.Inits.size(), Record);
+    Stream.EmitRecord(serialization::DECL_CXX_CTOR_INITIALIZERS, Record);
+
+    // Flush any expressions that were written as part of the initializers.
+    FlushStmts();
+  }
+
+  assert(N == CXXCtorInitializersToWrite.size() &&
+         "added more ctor initializers while writing ctor initializers");
+  CXXCtorInitializersToWrite.clear();
 }
 
 void ASTWriter::AddCXXDefinitionData(const CXXRecordDecl *D, RecordDataImpl &Record) {
@@ -5804,37 +5871,36 @@ void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
 }
 
 void ASTWriter::ResolvedExceptionSpec(const FunctionDecl *FD) {
-  assert(!WritingAST && "Already writing the AST!");
-  FD = FD->getCanonicalDecl();
-  if (!FD->isFromASTFile())
-    return; // Not a function declared in PCH and defined outside.
-
-  DeclUpdates[FD].push_back(UPD_CXX_RESOLVED_EXCEPTION_SPEC);
+  assert(!DoneWritingDeclsAndTypes && "Already done writing updates!");
+  if (!Chain) return;
+  Chain->forEachFormerlyCanonicalImportedDecl(FD, [&](const Decl *D) {
+    // If we don't already know the exception specification for this redecl
+    // chain, add an update record for it.
+    if (isUnresolvedExceptionSpec(cast<FunctionDecl>(D)
+                                      ->getType()
+                                      ->castAs<FunctionProtoType>()
+                                      ->getExceptionSpecType()))
+      DeclUpdates[D].push_back(UPD_CXX_RESOLVED_EXCEPTION_SPEC);
+  });
 }
 
 void ASTWriter::DeducedReturnType(const FunctionDecl *FD, QualType ReturnType) {
   assert(!WritingAST && "Already writing the AST!");
-  FD = FD->getCanonicalDecl();
-  if (!FD->isFromASTFile())
-    return; // Not a function declared in PCH and defined outside.
-
-  DeclUpdates[FD].push_back(DeclUpdate(UPD_CXX_DEDUCED_RETURN_TYPE, ReturnType));
+  if (!Chain) return;
+  Chain->forEachFormerlyCanonicalImportedDecl(FD, [&](const Decl *D) {
+    DeclUpdates[D].push_back(
+        DeclUpdate(UPD_CXX_DEDUCED_RETURN_TYPE, ReturnType));
+  });
 }
 
 void ASTWriter::ResolvedOperatorDelete(const CXXDestructorDecl *DD,
                                        const FunctionDecl *Delete) {
   assert(!WritingAST && "Already writing the AST!");
   assert(Delete && "Not given an operator delete");
-  for (auto *D : DD->redecls()) {
-    if (D->isFromASTFile()) {
-      // We added an operator delete that some imported destructor didn't
-      // know about. Add an update record to let importers of us and that
-      // declaration know about it.
-      DeclUpdates[DD].push_back(
-          DeclUpdate(UPD_CXX_RESOLVED_DTOR_DELETE, Delete));
-      return;
-    }
-  }
+  if (!Chain) return;
+  Chain->forEachFormerlyCanonicalImportedDecl(DD, [&](const Decl *D) {
+    DeclUpdates[D].push_back(DeclUpdate(UPD_CXX_RESOLVED_DTOR_DELETE, Delete));
+  });
 }
 
 void ASTWriter::CompletedImplicitDefinition(const FunctionDecl *D) {
@@ -5851,8 +5917,7 @@ void ASTWriter::FunctionDefinitionInstantiated(const FunctionDecl *D) {
   if (!D->isFromASTFile())
     return;
 
-  DeclUpdates[D].push_back(
-      DeclUpdate(UPD_CXX_ADDED_FUNCTION_DEFINITION));
+  DeclUpdates[D].push_back(DeclUpdate(UPD_CXX_ADDED_FUNCTION_DEFINITION));
 }
 
 void ASTWriter::StaticDataMemberInstantiated(const VarDecl *D) {
