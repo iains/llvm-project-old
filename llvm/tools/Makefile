@@ -21,7 +21,12 @@ endif
 
 # Build LLDB if present. Note LLDB must be built last as it depends on
 # the wider LLVM infrastructure (including Clang).
-OPTIONAL_DIRS := lldb
+ifneq ($(SKIP_LLD),1)
+  OPTIONAL_PARALLEL_DIRS += lld
+endif
+ifneq ($(SKIP_LLDB),1)
+  OPTIONAL_DIRS := lldb
+endif
 
 # NOTE: The tools are organized into five groups of four consisting of one
 # large and three small executables. This is done to minimize memory load
