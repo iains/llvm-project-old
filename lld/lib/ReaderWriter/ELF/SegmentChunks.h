@@ -38,8 +38,6 @@ class SegmentSlice {
 public:
   typedef typename std::vector<Chunk<ELFT> *>::iterator SectionIter;
 
-  SegmentSlice() { }
-
   /// Set the start of the slice.
   void setStart(int32_t s) { _startSection = s; }
 
@@ -49,12 +47,10 @@ public:
 
   // Return the fileOffset of the slice
   uint64_t fileOffset() const { return _offset; }
-
   void setFileOffset(uint64_t offset) { _offset = offset; }
 
   // Return the size of the slice
   uint64_t fileSize() const { return _fsize; }
-
   void setFileSize(uint64_t filesz) { _fsize = filesz; }
 
   // Return the start of the slice
@@ -100,7 +96,7 @@ public:
   typedef typename std::vector<SegmentSlice<ELFT> *>::iterator SliceIter;
   typedef typename std::vector<Chunk<ELFT> *>::iterator SectionIter;
 
-  Segment(const ELFLinkingContext &context, StringRef name,
+  Segment(const ELFLinkingContext &ctx, StringRef name,
           const Layout::SegmentType type);
 
   /// \brief the Order of segments that appear in the output file
@@ -154,7 +150,6 @@ public:
   }
 
   /// Finalize the segment before assigning File Offsets / Virtual addresses
-  void doPreFlight() {}
 
   /// Finalize the segment, before we want to write the segment header
   /// information
@@ -209,31 +204,24 @@ public:
     }
   }
 
-  int pageSize() const { return this->_context.getPageSize(); }
+  int pageSize() const { return this->_ctx.getPageSize(); }
 
   int rawflags() const { return _atomflags; }
 
   int64_t atomflags() const {
     switch (_atomflags) {
-
     case DefinedAtom::permUnknown:
       return permUnknown;
-
     case DefinedAtom::permRWX:
       return permRWX;
-
     case DefinedAtom::permR_X:
       return permRX;
-
     case DefinedAtom::permR__:
       return permR;
-
     case DefinedAtom::permRW_L:
       return permRWL;
-
     case DefinedAtom::permRW_:
       return permRW;
-
     case DefinedAtom::perm___:
     default:
       return permNonAccess;
@@ -286,10 +274,9 @@ public:
   int getContentType() const override {
     return Chunk<ELFT>::ContentType::Unknown;
   }
+
   void write(ELFWriter *, TargetLayout<ELFT> &,
              llvm::FileOutputBuffer &) override {}
-  void doPreFlight() override {}
-  void finalize() override {}
 
   std::error_code evalExpr(uint64_t &curPos) {
     return _linkerScriptSema.evalExpr(_expr, curPos);
@@ -304,8 +291,8 @@ private:
 /// The segment doesn't contain any slice
 template <class ELFT> class ProgramHeaderSegment : public Segment<ELFT> {
 public:
-  ProgramHeaderSegment(const ELFLinkingContext &context)
-      : Segment<ELFT>(context, "PHDR", llvm::ELF::PT_PHDR) {
+  ProgramHeaderSegment(const ELFLinkingContext &ctx)
+      : Segment<ELFT>(ctx, "PHDR", llvm::ELF::PT_PHDR) {
     this->_alignment = 8;
     this->_flags = (llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_EXECINSTR);
   }
@@ -322,17 +309,16 @@ public:
     this->_fsize = this->_sections.back()->fileSize();
     this->_msize = this->_sections.back()->memSize();
   }
-
 };
 
 template <class ELFT>
-Segment<ELFT>::Segment(const ELFLinkingContext &context, StringRef name,
+Segment<ELFT>::Segment(const ELFLinkingContext &ctx, StringRef name,
                        const Layout::SegmentType type)
-    : Chunk<ELFT>(name, Chunk<ELFT>::Kind::ELFSegment, context),
-      _segmentType(type), _flags(0), _atomflags(0) {
+    : Chunk<ELFT>(name, Chunk<ELFT>::Kind::ELFSegment, ctx), _segmentType(type),
+      _flags(0), _atomflags(0) {
   this->_alignment = 0;
   this->_fsize = 0;
-  _outputMagic = context.getOutputMagic();
+  _outputMagic = ctx.getOutputMagic();
 }
 
 // This function actually is used, but not in all instantiations of Segment.
@@ -419,8 +405,8 @@ void Segment<ELFT>::assignFileOffsets(uint64_t startOffset) {
   uint64_t fileOffset = startOffset;
   uint64_t curSliceFileOffset = fileOffset;
   bool isDataPageAlignedForNMagic = false;
-  bool alignSegments = this->_context.alignSegments();
-  uint64_t p_align = this->_context.getPageSize();
+  bool alignSegments = this->_ctx.alignSegments();
+  uint64_t p_align = this->_ctx.getPageSize();
   uint64_t lastVirtualAddress = 0;
 
   this->setFileOffset(startOffset);
@@ -455,7 +441,7 @@ void Segment<ELFT>::assignFileOffsets(uint64_t startOffset) {
         }
       } else if (!isDataPageAlignedForNMagic && needAlign(section)) {
         fileOffset =
-            llvm::RoundUpToAlignment(fileOffset, this->_context.getPageSize());
+            llvm::RoundUpToAlignment(fileOffset, this->_ctx.getPageSize());
         isDataPageAlignedForNMagic = true;
       }
       if (isFirstSection) {
@@ -493,7 +479,7 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
   uint64_t startAddr = addr;
   SegmentSlice<ELFT> *slice = nullptr;
   uint64_t tlsStartAddr = 0;
-  bool alignSegments = this->_context.alignSegments();
+  bool alignSegments = this->_ctx.alignSegments();
   StringRef prevOutputSectionName = StringRef();
 
   for (auto si = _sections.begin(); si != _sections.end(); ++si) {
@@ -508,12 +494,12 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
         // Align to a page only if the output is not
         // OutputMagic::NMAGIC/OutputMagic::OMAGIC
         startAddr =
-            llvm::RoundUpToAlignment(startAddr, this->_context.getPageSize());
+            llvm::RoundUpToAlignment(startAddr, this->_ctx.getPageSize());
       else if (!isDataPageAlignedForNMagic && needAlign(*si)) {
         // If the linker outputmagic is set to OutputMagic::NMAGIC, align the
         // Data to a page boundary.
         startAddr =
-            llvm::RoundUpToAlignment(startAddr, this->_context.getPageSize());
+            llvm::RoundUpToAlignment(startAddr, this->_ctx.getPageSize());
         isDataPageAlignedForNMagic = true;
       }
       // align the startOffset to the section alignment
@@ -549,8 +535,7 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
         // If the linker outputmagic is set to OutputMagic::NMAGIC, align the
         // Data
         // to a page boundary
-        curAddr =
-            llvm::RoundUpToAlignment(curAddr, this->_context.getPageSize());
+        curAddr = llvm::RoundUpToAlignment(curAddr, this->_ctx.getPageSize());
         isDataPageAlignedForNMagic = true;
       }
       uint64_t newAddr = llvm::RoundUpToAlignment(curAddr, (*si)->alignment());
@@ -577,8 +562,7 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
       // a separate segment, so that memory is not used up while running.
       // Dont create a slice, if the new section falls in the same output
       // section as the previous section.
-      if (autoCreateSlice &&
-          ((newAddr - curAddr) > this->_context.getPageSize()) &&
+      if (autoCreateSlice && ((newAddr - curAddr) > this->_ctx.getPageSize()) &&
           (_outputMagic != ELFLinkingContext::OutputMagic::NMAGIC &&
            _outputMagic != ELFLinkingContext::OutputMagic::OMAGIC)) {
         auto sliceIter =

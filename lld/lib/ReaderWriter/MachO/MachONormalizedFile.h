@@ -108,13 +108,13 @@ LLVM_YAML_STRONG_TYPEDEF(uint32_t, SectionAttr)
 /// can support either kind.
 struct Section {
   Section() : type(llvm::MachO::S_REGULAR),
-              attributes(0), alignment(0), address(0) { }
+              attributes(0), alignment(1), address(0) { }
 
   StringRef       segmentName;
   StringRef       sectionName;
   SectionType     type;
   SectionAttr     attributes;
-  uint32_t        alignment;
+  uint16_t        alignment;
   Hex64           address;
   ArrayRef<uint8_t> content;
   Relocations     relocations;

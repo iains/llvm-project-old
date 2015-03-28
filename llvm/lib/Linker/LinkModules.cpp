@@ -1560,6 +1560,13 @@ bool ModuleLinker::run() {
     MapValue(GV, ValueMap, RF_None, &TypeMap, &ValMaterializer);
   }
 
+  // Strip replaced subprograms before mapping any metadata -- so that we're
+  // not changing metadata from the source module (note that
+  // linkGlobalValueBody() eventually calls RemapInstruction() and therefore
+  // MapMetadata()) -- but after linking global value protocols -- so that
+  // OverridingFunctions has been built.
+  stripReplacedSubprograms();
+
   // Link in the function bodies that are defined in the source module into
   // DstM.
   for (Function &SF : *SrcM) {
@@ -1581,9 +1588,6 @@ bool ModuleLinker::run() {
       continue;
     linkGlobalValueBody(Src);
   }
-
-  // Strip replaced subprograms before linking together compile units.
-  stripReplacedSubprograms();
 
   // Remap all of the named MDNodes in Src into the DstM module. We do this
   // after linking GlobalValues so that MDNodes that reference GlobalValues

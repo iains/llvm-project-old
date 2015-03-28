@@ -5571,8 +5571,7 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
       return getOnesVector(VT, Subtarget->hasInt256(), DAG, dl);
   }
 
-  SDValue Broadcast = LowerVectorBroadcast(Op, Subtarget, DAG);
-  if (Broadcast.getNode())
+  if (SDValue Broadcast = LowerVectorBroadcast(Op, Subtarget, DAG))
     return Broadcast;
 
   unsigned EVTBits = ExtVT.getSizeInBits();
@@ -5747,24 +5746,20 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
   }
 
   // If element VT is < 32 bits, convert it to inserts into a zero vector.
-  if (EVTBits == 8 && NumElems == 16) {
-    SDValue V = LowerBuildVectorv16i8(Op, NonZeros,NumNonZero,NumZero, DAG,
-                                        Subtarget, *this);
-    if (V.getNode()) return V;
-  }
+  if (EVTBits == 8 && NumElems == 16)
+    if (SDValue V = LowerBuildVectorv16i8(Op, NonZeros,NumNonZero,NumZero, DAG,
+                                        Subtarget, *this))
+      return V;
 
-  if (EVTBits == 16 && NumElems == 8) {
-    SDValue V = LowerBuildVectorv8i16(Op, NonZeros,NumNonZero,NumZero, DAG,
-                                      Subtarget, *this);
-    if (V.getNode()) return V;
-  }
+  if (EVTBits == 16 && NumElems == 8)
+    if (SDValue V = LowerBuildVectorv8i16(Op, NonZeros,NumNonZero,NumZero, DAG,
+                                      Subtarget, *this))
+      return V;
 
   // If element VT is == 32 bits and has 4 elems, try to generate an INSERTPS
-  if (EVTBits == 32 && NumElems == 4) {
-    SDValue V = LowerBuildVectorv4x32(Op, DAG, Subtarget, *this);
-    if (V.getNode())
+  if (EVTBits == 32 && NumElems == 4)
+    if (SDValue V = LowerBuildVectorv4x32(Op, DAG, Subtarget, *this))
       return V;
-  }
 
   // If element VT is == 32 bits, turn it into a number of shuffles.
   SmallVector<SDValue, 8> V(NumElems);
@@ -5812,13 +5807,11 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
       V[i] = Op.getOperand(i);
 
     // Check for elements which are consecutive loads.
-    SDValue LD = EltsFromConsecutiveLoads(VT, V, dl, DAG, false);
-    if (LD.getNode())
+    if (SDValue LD = EltsFromConsecutiveLoads(VT, V, dl, DAG, false))
       return LD;
 
     // Check for a build vector from mostly shuffle plus few inserting.
-    SDValue Sh = buildFromShuffleMostly(Op, DAG);
-    if (Sh.getNode())
+    if (SDValue Sh = buildFromShuffleMostly(Op, DAG))
       return Sh;
 
     // For SSE 4.1, use insertps to put the high elements into the low element.
@@ -6996,8 +6989,8 @@ static SDValue lowerVectorShuffleAsBroadcast(SDLoc DL, MVT VT, SDValue V,
                                             "a sorted mask where the broadcast "
                                             "comes from V1.");
 
-  // Go up the chain of (vector) values to try and find a scalar load that
-  // we can combine with the broadcast.
+  // Go up the chain of (vector) values to find a scalar load that we can
+  // combine with the broadcast.
   for (;;) {
     switch (V.getOpcode()) {
     case ISD::CONCAT_VECTORS: {
@@ -7034,12 +7027,12 @@ static SDValue lowerVectorShuffleAsBroadcast(SDLoc DL, MVT VT, SDValue V,
       (V.getOpcode() == ISD::SCALAR_TO_VECTOR && BroadcastIdx == 0)) {
     V = V.getOperand(BroadcastIdx);
 
-    // If the scalar isn't a load we can't broadcast from it in AVX1, only with
-    // AVX2.
+    // If the scalar isn't a load, we can't broadcast from it in AVX1.
+    // Only AVX2 has register broadcasts.
     if (!Subtarget->hasAVX2() && !isShuffleFoldableLoad(V))
       return SDValue();
   } else if (BroadcastIdx != 0 || !Subtarget->hasAVX2()) {
-    // We can't broadcast from a vector register w/o AVX2, and we can only
+    // We can't broadcast from a vector register without AVX2, and we can only
     // broadcast from the zero-element of a vector register.
     return SDValue();
   }
@@ -10551,6 +10544,20 @@ SDValue X86TargetLowering::LowerINSERT_VECTOR_ELT(SDValue Op,
   // If the vector is wider than 128 bits, extract the 128-bit subvector, insert
   // into that, and then insert the subvector back into the result.
   if (VT.is256BitVector() || VT.is512BitVector()) {
+    // With a 256-bit vector, we can insert into the zero element efficiently
+    // using a blend if we have AVX or AVX2 and the right data type.
+    if (VT.is256BitVector() && IdxVal == 0) {
+      // TODO: It is worthwhile to cast integer to floating point and back
+      // and incur a domain crossing penalty if that's what we'll end up
+      // doing anyway after extracting to a 128-bit vector.
+      if ((Subtarget->hasAVX() && (EltVT == MVT::f64 || EltVT == MVT::f32)) ||
+          (Subtarget->hasAVX2() && EltVT == MVT::i32)) {
+        SDValue N1Vec = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, N1);
+        N2 = DAG.getIntPtrConstant(1);
+        return DAG.getNode(X86ISD::BLENDI, dl, VT, N0, N1Vec, N2);
+      }
+    }
+    
     // Get the desired 128-bit vector chunk.
     SDValue V = Extract128BitVector(N0, IdxVal, DAG, dl);
 

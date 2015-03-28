@@ -20,9 +20,9 @@ class HexagonLinkingContext;
 template <class HexagonELFType>
 class SDataSection : public AtomSection<HexagonELFType> {
 public:
-  SDataSection(const HexagonLinkingContext &context)
+  SDataSection(const HexagonLinkingContext &ctx)
       : AtomSection<HexagonELFType>(
-            context, ".sdata", DefinedAtom::typeDataFast, 0,
+            ctx, ".sdata", DefinedAtom::typeDataFast, 0,
             HexagonTargetLayout<HexagonELFType>::ORDER_SDATA) {
     this->_type = SHT_PROGBITS;
     this->_flags = SHF_ALLOC | SHF_WRITE;
@@ -30,15 +30,15 @@ public:
   }
 
   /// \brief Finalize the section contents before writing
-  virtual void doPreFlight();
+  void doPreFlight() override;
 
   /// \brief Does this section have an output segment.
-  virtual bool hasOutputSegment() { return true; }
+  bool hasOutputSegment() const override { return true; }
 
-  const lld::AtomLayout *appendAtom(const Atom *atom) {
+  const lld::AtomLayout *appendAtom(const Atom *atom) override {
     const DefinedAtom *definedAtom = cast<DefinedAtom>(atom);
     DefinedAtom::Alignment atomAlign = definedAtom->alignment();
-    uint64_t alignment = 1u << atomAlign.powerOf2;
+    uint64_t alignment = atomAlign.value;
     this->_atoms.push_back(new (this->_alloc) lld::AtomLayout(atom, 0, 0));
     // Set the section alignment to the largest alignment
     // std::max doesn't support uint64_t
@@ -57,8 +57,8 @@ void SDataSection<HexagonELFType>::doPreFlight() {
                                                 const lld::AtomLayout * B) {
     const DefinedAtom *definedAtomA = cast<DefinedAtom>(A->_atom);
     const DefinedAtom *definedAtomB = cast<DefinedAtom>(B->_atom);
-    int64_t alignmentA = 1 << definedAtomA->alignment().powerOf2;
-    int64_t alignmentB = 1 << definedAtomB->alignment().powerOf2;
+    int64_t alignmentA = definedAtomA->alignment().value;
+    int64_t alignmentB = definedAtomB->alignment().value;
     if (alignmentA == alignmentB) {
       if (definedAtomA->merge() == DefinedAtom::mergeAsTentative)
         return false;

@@ -24,14 +24,9 @@ class HexagonELFDefinedAtom : public ELFDefinedAtom<ELFT> {
   typedef llvm::object::Elf_Shdr_Impl<ELFT> Elf_Shdr;
 
 public:
-  HexagonELFDefinedAtom(const HexagonELFFile<ELFT> &file, StringRef symbolName,
-                        StringRef sectionName, const Elf_Sym *symbol,
-                        const Elf_Shdr *section, ArrayRef<uint8_t> contentData,
-                        unsigned int referenceStart, unsigned int referenceEnd,
-                        std::vector<ELFReference<ELFT> *> &referenceList)
-      : ELFDefinedAtom<ELFT>(file, symbolName, sectionName, symbol, section,
-                             contentData, referenceStart, referenceEnd,
-                             referenceList) {}
+  template<typename... T>
+  HexagonELFDefinedAtom(T&&... args)
+      : ELFDefinedAtom<ELFT>(std::forward<T>(args)...) {}
 
   virtual DefinedAtom::ContentType contentType() const {
     if (this->_contentType != DefinedAtom::typeUnknown)
@@ -98,8 +93,8 @@ public:
 
   virtual DefinedAtom::Alignment alignment() const {
     if (isSmallCommonSymbol())
-      return DefinedAtom::Alignment(llvm::Log2_64(this->_symbol->st_value));
-    return ELFCommonAtom<ELFT>::alignment();
+      return DefinedAtom::Alignment(this->_symbol->st_value);
+    return 1;
   }
 
   virtual DefinedAtom::ContentPermissions permissions() const {
@@ -156,12 +151,6 @@ public:
     return new (this->_readerStorage)
         HexagonELFCommonAtom<ELFT>(*this, symName, sym);
   }
-};
-
-template <class ELFT> class HexagonDynamicFile : public DynamicFile<ELFT> {
-public:
-  HexagonDynamicFile(const HexagonLinkingContext &context, StringRef name)
-      : DynamicFile<ELFT>(context, name) {}
 };
 
 } // elf

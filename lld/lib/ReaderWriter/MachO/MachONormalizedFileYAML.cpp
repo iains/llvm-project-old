@@ -276,7 +276,7 @@ struct MappingTraits<Section> {
     io.mapRequired("section",         sect.sectionName);
     io.mapRequired("type",            sect.type);
     io.mapOptional("attributes",      sect.attributes);
-    io.mapOptional("alignment",       sect.alignment, 0U);
+    io.mapOptional("alignment",       sect.alignment, (uint16_t)1);
     io.mapRequired("address",         sect.address);
     if (sect.type == llvm::MachO::S_ZEROFILL) {
       // S_ZEROFILL sections use "size:" instead of "content:"
@@ -799,4 +799,3 @@ std::error_code writeYaml(const NormalizedFile &file, raw_ostream &out) {
 } // namespace normalized
 } // namespace mach_o
 } // namespace lld
-

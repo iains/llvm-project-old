@@ -18,23 +18,21 @@ using namespace llvm::ELF;
 
 using llvm::makeArrayRef;
 
-HexagonTargetHandler::HexagonTargetHandler(HexagonLinkingContext &context)
-    : _hexagonLinkingContext(context),
-      _hexagonRuntimeFile(new HexagonRuntimeFile<HexagonELFType>(context)),
-      _hexagonTargetLayout(new HexagonTargetLayout<HexagonELFType>(context)),
-      _hexagonRelocationHandler(new HexagonTargetRelocationHandler(
-          *_hexagonTargetLayout.get())) {}
+HexagonTargetHandler::HexagonTargetHandler(HexagonLinkingContext &ctx)
+    : _ctx(ctx),
+      _hexagonRuntimeFile(new HexagonRuntimeFile<HexagonELFType>(ctx)),
+      _hexagonTargetLayout(new HexagonTargetLayout<HexagonELFType>(ctx)),
+      _hexagonRelocationHandler(
+          new HexagonTargetRelocationHandler(*_hexagonTargetLayout.get())) {}
 
 std::unique_ptr<Writer> HexagonTargetHandler::getWriter() {
-  switch (_hexagonLinkingContext.getOutputELFType()) {
+  switch (_ctx.getOutputELFType()) {
   case llvm::ELF::ET_EXEC:
-    return std::unique_ptr<Writer>(
-        new elf::HexagonExecutableWriter<HexagonELFType>(
-            _hexagonLinkingContext, *_hexagonTargetLayout.get()));
+    return llvm::make_unique<HexagonExecutableWriter<HexagonELFType>>(
+        _ctx, *_hexagonTargetLayout.get());
   case llvm::ELF::ET_DYN:
-    return std::unique_ptr<Writer>(
-        new elf::HexagonDynamicLibraryWriter<HexagonELFType>(
-            _hexagonLinkingContext, *_hexagonTargetLayout.get()));
+    return llvm::make_unique<HexagonDynamicLibraryWriter<HexagonELFType>>(
+        _ctx, *_hexagonTargetLayout.get());
   case llvm::ELF::ET_REL:
     llvm_unreachable("TODO: support -r mode");
   default:
@@ -77,7 +75,7 @@ public:
     return makeArrayRef(hexagonGotAtomContent);
   }
 
-  Alignment alignment() const override { return Alignment(2); }
+  Alignment alignment() const override { return 4; }
 };
 
 class HexagonGOTPLTAtom : public GOTAtom {
@@ -88,7 +86,7 @@ public:
     return makeArrayRef(hexagonGotPltAtomContent);
   }
 
-  Alignment alignment() const override { return Alignment(2); }
+  Alignment alignment() const override { return 4; }
 };
 
 class HexagonGOTPLT0Atom : public GOTAtom {
@@ -99,7 +97,7 @@ public:
     return makeArrayRef(hexagonGotPlt0AtomContent);
   }
 
-  Alignment alignment() const override { return Alignment(3); }
+  Alignment alignment() const override { return 8; }
 };
 
 class HexagonPLT0Atom : public PLT0Atom {

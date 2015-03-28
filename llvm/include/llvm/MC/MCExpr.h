@@ -61,8 +61,7 @@ protected:
   bool EvaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
                                  const MCAsmLayout *Layout,
                                  const MCFixup *Fixup,
-                                 const SectionAddrMap *Addrs, bool InSet,
-                                 bool ForceVarExpansion) const;
+                                 const SectionAddrMap *Addrs, bool InSet) const;
 
 public:
   /// @name Accessors
@@ -110,10 +109,8 @@ public:
   /// neither a nor b are variables.
   ///
   /// This is a more aggressive variant of EvaluateAsRelocatable. The intended
-  /// use is for when relocations are not available, like the symbol value in
-  /// the symbol table.
-  bool EvaluateAsValue(MCValue &Res, const MCAsmLayout *Layout,
-                       const MCFixup *Fixup) const;
+  /// use is for when relocations are not available, like the .size directive.
+  bool evaluateAsValue(MCValue &Res, const MCAsmLayout &Layout) const;
 
   /// FindAssociatedSection - Find the "associated section" for this expression,
   /// which is currently defined as the absolute section for constants, or

@@ -33,9 +33,9 @@ public:
   void e_type(uint16_t type)           { _eh.e_type = type; }
   void e_machine(uint16_t machine)     { _eh.e_machine = machine; }
   void e_version(uint32_t version)     { _eh.e_version = version; }
-  void e_entry(int64_t entry)         { _eh.e_entry = entry; }
-  void e_phoff(int64_t phoff)         { _eh.e_phoff = phoff; }
-  void e_shoff(int64_t shoff)         { _eh.e_shoff = shoff; }
+  void e_entry(int64_t entry)          { _eh.e_entry = entry; }
+  void e_phoff(int64_t phoff)          { _eh.e_phoff = phoff; }
+  void e_shoff(int64_t shoff)          { _eh.e_shoff = shoff; }
   void e_flags(uint32_t flags)         { _eh.e_flags = flags; }
   void e_ehsize(uint16_t ehsize)       { _eh.e_ehsize = ehsize; }
   void e_phentsize(uint16_t phentsize) { _eh.e_phentsize = phentsize; }
@@ -43,28 +43,28 @@ public:
   void e_shentsize(uint16_t shentsize) { _eh.e_shentsize = shentsize; }
   void e_shnum(uint16_t shnum)         { _eh.e_shnum = shnum; }
   void e_shstrndx(uint16_t shstrndx)   { _eh.e_shstrndx = shstrndx; }
-  uint64_t fileSize() const { return sizeof(Elf_Ehdr); }
+  uint64_t fileSize() const override { return sizeof(Elf_Ehdr); }
 
   static bool classof(const Chunk<ELFT> *c) {
     return c->Kind() == Chunk<ELFT>::Kind::ELFHeader;
   }
 
-  int getContentType() const { return Chunk<ELFT>::ContentType::Header; }
+  int getContentType() const override {
+    return Chunk<ELFT>::ContentType::Header;
+  }
 
   void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
-             llvm::FileOutputBuffer &buffer);
+             llvm::FileOutputBuffer &buffer) override;
 
-  virtual void doPreFlight() {}
-
-  void finalize() {
+  void finalize() override {
     _eh.e_ident[llvm::ELF::EI_CLASS] =
         (ELFT::Is64Bits) ? llvm::ELF::ELFCLASS64 : llvm::ELF::ELFCLASS32;
     _eh.e_ident[llvm::ELF::EI_DATA] =
         (ELFT::TargetEndianness == llvm::support::little)
             ? llvm::ELF::ELFDATA2LSB
             : llvm::ELF::ELFDATA2MSB;
-    _eh.e_type = this->_context.getOutputELFType();
-    _eh.e_machine = this->_context.getOutputMachine();
+    _eh.e_type = this->_ctx.getOutputELFType();
+    _eh.e_machine = this->_ctx.getOutputMachine();
   }
 
 private:
@@ -72,8 +72,8 @@ private:
 };
 
 template <class ELFT>
-ELFHeader<ELFT>::ELFHeader(const ELFLinkingContext &context)
-    : Chunk<ELFT>("elfhdr", Chunk<ELFT>::Kind::ELFHeader, context) {
+ELFHeader<ELFT>::ELFHeader(const ELFLinkingContext &ctx)
+    : Chunk<ELFT>("elfhdr", Chunk<ELFT>::Kind::ELFHeader, ctx) {
   this->_alignment = ELFT::Is64Bits ? 8 : 4;
   this->_fsize = sizeof(Elf_Ehdr);
   this->_msize = sizeof(Elf_Ehdr);
@@ -103,29 +103,8 @@ public:
   typedef typename std::vector<Elf_Phdr *>::iterator PhIterT;
   typedef typename std::reverse_iterator<PhIterT> ReversePhIterT;
 
-  /// \brief Find a program header entry, given the type of entry that
-  /// we are looking for
-  class FindPhdr {
-  public:
-    FindPhdr(uint64_t type, uint64_t flags, uint64_t flagsClear)
-             : _type(type)
-             , _flags(flags)
-             , _flagsClear(flagsClear) {
-    }
-
-    bool operator()(const llvm::object::Elf_Phdr_Impl<ELFT> *j) const {
-      return ((j->p_type == _type) &&
-              ((j->p_flags & _flags) == _flags) &&
-              (!(j->p_flags & _flagsClear)));
-    }
-  private:
-    uint64_t _type;
-    uint64_t _flags;
-    uint64_t _flagsClear;
-  };
-
-  ProgramHeader(const ELFLinkingContext &context)
-      : Chunk<ELFT>("elfphdr", Chunk<ELFT>::Kind::ProgramHeader, context) {
+  ProgramHeader(const ELFLinkingContext &ctx)
+      : Chunk<ELFT>("elfphdr", Chunk<ELFT>::Kind::ProgramHeader, ctx) {
     this->_alignment = ELFT::Is64Bits ? 8 : 4;
     resetProgramHeaders();
   }
@@ -134,45 +113,27 @@ public:
 
   void resetProgramHeaders() { _phi = _ph.begin(); }
 
-  uint64_t fileSize() const { return sizeof(Elf_Phdr) * _ph.size(); }
+  uint64_t fileSize() const override { return sizeof(Elf_Phdr) * _ph.size(); }
 
   static bool classof(const Chunk<ELFT> *c) {
     return c->Kind() == Chunk<ELFT>::Kind::ProgramHeader;
   }
 
   void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
-             llvm::FileOutputBuffer &buffer);
+             llvm::FileOutputBuffer &buffer) override;
 
-  /// \brief find a program header entry in the list of program headers
-  ReversePhIterT
-  findProgramHeader(uint64_t type, uint64_t flags, uint64_t flagClear) {
-    return std::find_if(_ph.rbegin(), _ph.rend(),
-                        FindPhdr(type, flags, flagClear));
-  }
-
-  PhIterT begin() {
-    return _ph.begin();
-  }
-
-  PhIterT end() {
-    return _ph.end();
-  }
-
+  PhIterT begin() { return _ph.begin(); }
+  PhIterT end() { return _ph.end(); }
   ReversePhIterT rbegin() { return _ph.rbegin(); }
-
   ReversePhIterT rend() { return _ph.rend(); }
-
-  virtual void doPreFlight() {}
-
-  void finalize() {}
 
   int64_t entsize() { return sizeof(Elf_Phdr); }
 
-  int64_t numHeaders() {
-    return _ph.size();
-  }
+  int64_t numHeaders() { return _ph.size();  }
 
-  int getContentType() const { return Chunk<ELFT>::ContentType::Header; }
+  int getContentType() const override {
+    return Chunk<ELFT>::ContentType::Header;
+  }
 
 private:
   Elf_Phdr *allocateProgramHeader(bool &allocatedNew) {
@@ -197,7 +158,7 @@ private:
 template <class ELFT>
 bool ProgramHeader<ELFT>::addSegment(Segment<ELFT> *segment) {
   bool allocatedNew = false;
-  ELFLinkingContext::OutputMagic outputMagic = this->_context.getOutputMagic();
+  ELFLinkingContext::OutputMagic outputMagic = this->_ctx.getOutputMagic();
   // For segments that are not a loadable segment, we
   // just pick the values directly from the segment as there
   // wouldnt be any slices within that
@@ -279,17 +240,17 @@ public:
   }
 
   void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
-             llvm::FileOutputBuffer &buffer);
+             llvm::FileOutputBuffer &buffer) override;
 
-  virtual void doPreFlight() {}
-
-  void finalize() {}
-
-  uint64_t fileSize() const { return sizeof(Elf_Shdr) * _sectionInfo.size(); }
+  uint64_t fileSize() const override {
+    return sizeof(Elf_Shdr) * _sectionInfo.size();
+  }
 
   uint64_t entsize() { return sizeof(Elf_Shdr); }
 
-  int getContentType() const { return Chunk<ELFT>::ContentType::Header; }
+  int getContentType() const override {
+    return Chunk<ELFT>::ContentType::Header;
+  }
 
   uint64_t numHeaders() { return _sectionInfo.size(); }
 
@@ -300,9 +261,8 @@ private:
 };
 
 template <class ELFT>
-SectionHeader<ELFT>::SectionHeader(const ELFLinkingContext &context,
-                                   int32_t order)
-    : Chunk<ELFT>("shdr", Chunk<ELFT>::Kind::SectionHeader, context) {
+SectionHeader<ELFT>::SectionHeader(const ELFLinkingContext &ctx, int32_t order)
+    : Chunk<ELFT>("shdr", Chunk<ELFT>::Kind::SectionHeader, ctx) {
   this->_fsize = 0;
   this->_alignment = 8;
   this->setOrder(order);

@@ -290,22 +290,22 @@ public:
 
   Alignment alignment() const override {
     if (!_symbol)
-      return Alignment(0);
+      return 1;
 
     // Obtain proper value of st_value field.
-    const auto symValue = getSymbolValue(_symbol);
+    const auto symValue = getSymbolValue();
 
     // Unallocated common symbols specify their alignment constraints in
     // st_value.
     if ((_symbol->getType() == llvm::ELF::STT_COMMON) ||
         _symbol->st_shndx == llvm::ELF::SHN_COMMON) {
-      return Alignment(llvm::Log2_64(symValue));
+      return symValue;
     }
     if (_section->sh_addralign == 0) {
       // sh_addralign of 0 means no alignment
-      return Alignment(0, symValue);
+      return Alignment(1, symValue);
     }
-    return Alignment(llvm::Log2_64(_section->sh_addralign),
+    return Alignment(_section->sh_addralign,
                      symValue % _section->sh_addralign);
   }
 
@@ -429,8 +429,8 @@ public:
 protected:
   /// Returns correct st_value for the symbol depending on the architecture.
   /// For most architectures it's just a regular st_value with no changes.
-  virtual uint64_t getSymbolValue(const Elf_Sym *symbol) const {
-    return symbol->st_value;
+  virtual uint64_t getSymbolValue() const {
+    return _symbol->st_value;
   }
 
 protected:
@@ -485,7 +485,7 @@ public:
   ContentType contentType() const override { return typeConstant; }
 
   Alignment alignment() const override {
-    return Alignment(llvm::Log2_64(_section->sh_addralign));
+    return Alignment(_section->sh_addralign);
   }
 
   SectionChoice sectionChoice() const override { return sectionCustomRequired; }
@@ -561,9 +561,7 @@ public:
 
   ContentType contentType() const override { return typeZeroFill; }
 
-  Alignment alignment() const override {
-    return Alignment(llvm::Log2_64(_symbol->st_value));
-  }
+  Alignment alignment() const override { return Alignment(_symbol->st_value); }
 
   SectionChoice sectionChoice() const override { return sectionBasedOnContent; }
 
@@ -658,35 +656,33 @@ public:
   SimpleELFDefinedAtom(const File &f) : SimpleDefinedAtom(f) {}
 
   void addReferenceELF(Reference::KindArch arch, Reference::KindValue kindValue,
-                       uint64_t off, const Atom *target,
-                       Reference::Addend addend) {
-    this->addReference(Reference::KindNamespace::ELF, arch, kindValue, off,
-                       target, addend);
+                       uint64_t off, const Atom *t, Reference::Addend a) {
+    addReference(Reference::KindNamespace::ELF, arch, kindValue, off, t, a);
   }
 
   void addReferenceELF_Hexagon(Reference::KindValue relocType, uint64_t off,
                                const Atom *t, Reference::Addend a) {
-    this->addReferenceELF(Reference::KindArch::Hexagon, relocType, off, t, a);
+    addReferenceELF(Reference::KindArch::Hexagon, relocType, off, t, a);
   }
 
   void addReferenceELF_x86_64(Reference::KindValue relocType, uint64_t off,
                               const Atom *t, Reference::Addend a) {
-    this->addReferenceELF(Reference::KindArch::x86_64, relocType, off, t, a);
+    addReferenceELF(Reference::KindArch::x86_64, relocType, off, t, a);
   }
 
   void addReferenceELF_Mips(Reference::KindValue relocType, uint64_t off,
                             const Atom *t, Reference::Addend a) {
-    this->addReferenceELF(Reference::KindArch::Mips, relocType, off, t, a);
+    addReferenceELF(Reference::KindArch::Mips, relocType, off, t, a);
   }
 
   void addReferenceELF_AArch64(Reference::KindValue relocType, uint64_t off,
                                const Atom *t, Reference::Addend a) {
-    this->addReferenceELF(Reference::KindArch::AArch64, relocType, off, t, a);
+    addReferenceELF(Reference::KindArch::AArch64, relocType, off, t, a);
   }
 
   void addReferenceELF_ARM(Reference::KindValue relocType, uint64_t off,
                            const Atom *t, Reference::Addend a) {
-    this->addReferenceELF(Reference::KindArch::ARM, relocType, off, t, a);
+    addReferenceELF(Reference::KindArch::ARM, relocType, off, t, a);
   }
 };
 
@@ -710,10 +706,7 @@ public:
 
   ArrayRef<uint8_t> rawContent() const override { return ArrayRef<uint8_t>(); }
 
-  Alignment alignment() const override {
-    // The alignment should be 8 byte aligned
-    return Alignment(3);
-  }
+  Alignment alignment() const override { return 8; }
 
   StringRef name() const override { return _name; }
 
@@ -740,10 +733,7 @@ public:
 
   ContentPermissions permissions() const override { return permRW_; }
 
-  Alignment alignment() const override {
-    // The alignment should be 8 byte aligned
-    return Alignment(3);
-  }
+  Alignment alignment() const override { return 8; }
 
 #ifndef NDEBUG
   StringRef name() const override { return _name; }
@@ -772,9 +762,7 @@ public:
 
   ContentPermissions permissions() const override { return permR_X; }
 
-  Alignment alignment() const override {
-    return Alignment(4); // 16
-  }
+  Alignment alignment() const override { return 16; }
 
 #ifndef NDEBUG
   StringRef name() const override { return _name; }
@@ -793,9 +781,9 @@ public:
   }
 };
 
-class GLOBAL_OFFSET_TABLEAtom : public SimpleELFDefinedAtom {
+class GlobalOffsetTableAtom : public SimpleELFDefinedAtom {
 public:
-  GLOBAL_OFFSET_TABLEAtom(const File &f) : SimpleELFDefinedAtom(f) {}
+  GlobalOffsetTableAtom(const File &f) : SimpleELFDefinedAtom(f) {}
 
   StringRef name() const override { return "_GLOBAL_OFFSET_TABLE_"; }
 
@@ -811,17 +799,14 @@ public:
 
   ContentPermissions permissions() const override { return permRW_; }
 
-  Alignment alignment() const override {
-    // Needs 8 byte alignment
-    return Alignment(3);
-  }
+  Alignment alignment() const override { return 8; }
 
   ArrayRef<uint8_t> rawContent() const override { return ArrayRef<uint8_t>(); }
 };
 
-class DYNAMICAtom : public SimpleELFDefinedAtom {
+class DynamicAtom : public SimpleELFDefinedAtom {
 public:
-  DYNAMICAtom(const File &f) : SimpleELFDefinedAtom(f) {}
+  DynamicAtom(const File &f) : SimpleELFDefinedAtom(f) {}
 
   StringRef name() const override { return "_DYNAMIC"; }
 
@@ -839,7 +824,7 @@ public:
 
   ContentPermissions permissions() const override { return permRW_; }
 
-  Alignment alignment() const override { return Alignment(0); }
+  Alignment alignment() const override { return 1; }
 
   ArrayRef<uint8_t> rawContent() const override { return ArrayRef<uint8_t>(); }
 };

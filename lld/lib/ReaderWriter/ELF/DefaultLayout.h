@@ -159,19 +159,12 @@ public:
   typedef std::unordered_map<SegmentKey, Segment<ELFT> *, SegmentHashKey>
   SegmentMapT;
 
-  /// \brief find a absolute atom pair given a absolute atom name
-  struct FindByName {
-    const std::string _name;
-    FindByName(StringRef name) : _name(name) {}
-    bool operator()(const lld::AtomLayout *j) { return j->_atom->name() == _name; }
-  };
-
   typedef typename std::vector<lld::AtomLayout *>::iterator AbsoluteAtomIterT;
 
   typedef llvm::DenseSet<const Atom *> AtomSetT;
 
-  DefaultLayout(ELFLinkingContext &context)
-      : _context(context), _linkerScriptSema(context.linkerScriptSema()) {}
+  DefaultLayout(ELFLinkingContext &ctx)
+      : _ctx(ctx), _linkerScriptSema(ctx.linkerScriptSema()) {}
 
   /// \brief Return the section order for a input section
   SectionOrder getSectionOrder(StringRef name, int32_t contentType,
@@ -212,8 +205,9 @@ public:
 
   /// \brief find a absolute atom given a name
   AbsoluteAtomIterT findAbsoluteAtom(StringRef name) {
-    return std::find_if(_absoluteAtoms.begin(), _absoluteAtoms.end(),
-                        FindByName(name));
+    return std::find_if(
+        _absoluteAtoms.begin(), _absoluteAtoms.end(),
+        [=](const AtomLayout *a) { return a->_atom->name() == name; });
   }
 
   // Output sections with the same name into a OutputSection
@@ -283,7 +277,7 @@ public:
   RelocationTable<ELFT> *getDynamicRelocationTable() {
     if (!_dynamicRelocationTable) {
       _dynamicRelocationTable = std::move(createRelocationTable(
-          _context.isRelaOutputFormat() ? ".rela.dyn" : ".rel.dyn",
+          _ctx.isRelaOutputFormat() ? ".rela.dyn" : ".rel.dyn",
           ORDER_DYNAMIC_RELOCS));
       addSection(_dynamicRelocationTable.get());
     }
@@ -294,7 +288,7 @@ public:
   RelocationTable<ELFT> *getPLTRelocationTable() {
     if (!_pltRelocationTable) {
       _pltRelocationTable = std::move(createRelocationTable(
-          _context.isRelaOutputFormat() ? ".rela.plt" : ".rel.plt",
+          _ctx.isRelaOutputFormat() ? ".rela.plt" : ".rel.plt",
           ORDER_DYNAMIC_PLT_RELOCS));
       addSection(_pltRelocationTable.get());
     }
@@ -335,7 +329,7 @@ protected:
   virtual unique_bump_ptr<RelocationTable<ELFT>>
   createRelocationTable(StringRef name, int32_t order) {
     return unique_bump_ptr<RelocationTable<ELFT>>(
-        new (_allocator) RelocationTable<ELFT>(_context, name, order));
+        new (_allocator) RelocationTable<ELFT>(_ctx, name, order));
   }
 
 private:
@@ -358,7 +352,7 @@ protected:
   std::vector<lld::AtomLayout *> _absoluteAtoms;
   AtomSetT _referencedDynAtoms;
   llvm::StringSet<> _copiedDynSymNames;
-  ELFLinkingContext &_context;
+  ELFLinkingContext &_ctx;
   script::Sema &_linkerScriptSema;
 };
 
@@ -570,7 +564,7 @@ template <class ELFT>
 AtomSection<ELFT> *DefaultLayout<ELFT>::createSection(
     StringRef sectionName, int32_t contentType,
     DefinedAtom::ContentPermissions permissions, SectionOrder sectionOrder) {
-  return new (_allocator) AtomSection<ELFT>(_context, sectionName, contentType,
+  return new (_allocator) AtomSection<ELFT>(_ctx, sectionName, contentType,
                                             permissions, sectionOrder);
 }
 
@@ -617,10 +611,10 @@ DefaultLayout<ELFT>::addAtom(const Atom *atom) {
     // Add runtime relocations to the .rela section.
     for (const auto &reloc : *definedAtom) {
       bool isLocalReloc = true;
-      if (_context.isDynamicRelocation(*reloc)) {
+      if (_ctx.isDynamicRelocation(*reloc)) {
         getDynamicRelocationTable()->addRelocation(*definedAtom, *reloc);
         isLocalReloc = false;
-      } else if (_context.isPLTRelocation(*reloc)) {
+      } else if (_ctx.isPLTRelocation(*reloc)) {
         getPLTRelocationTable()->addRelocation(*definedAtom, *reloc);
         isLocalReloc = false;
       }
@@ -632,24 +626,22 @@ DefaultLayout<ELFT>::addAtom(const Atom *atom) {
       if (isa<UndefinedAtom>(reloc->target()) && isLocalReloc)
         continue;
 
-      if (_context.isCopyRelocation(*reloc)) {
+      if (_ctx.isCopyRelocation(*reloc)) {
         _copiedDynSymNames.insert(definedAtom->name());
         continue;
       }
 
       _referencedDynAtoms.insert(reloc->target());
     }
-
     return section->appendAtom(atom);
-  } else if (const AbsoluteAtom *absoluteAtom = dyn_cast<AbsoluteAtom>(atom)) {
-    // Absolute atoms are not part of any section, they are global for the whole
-    // link
-    _absoluteAtoms.push_back(new (_allocator)
-        lld::AtomLayout(absoluteAtom, 0, absoluteAtom->value()));
-    return _absoluteAtoms.back();
-  } else {
-    llvm_unreachable("Only absolute / defined atoms can be added here");
   }
+
+  const AbsoluteAtom *absoluteAtom = cast<AbsoluteAtom>(atom);
+  // Absolute atoms are not part of any section, they are global for the whole
+  // link
+  _absoluteAtoms.push_back(
+      new (_allocator) lld::AtomLayout(absoluteAtom, 0, absoluteAtom->value()));
+  return _absoluteAtoms.back();
 }
 
 /// Output sections with the same name into a OutputSection
@@ -716,7 +708,7 @@ void DefaultLayout<ELFT>::sortOutputSectionByPriority(
 
 template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
   ScopedTask task(getDefaultDomain(), "assignSectionsToSegments");
-  ELFLinkingContext::OutputMagic outputMagic = _context.getOutputMagic();
+  ELFLinkingContext::OutputMagic outputMagic = _ctx.getOutputMagic();
   // sort the sections by their order as defined by the layout
   sortInputSections();
 
@@ -752,7 +744,7 @@ template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
 
         int64_t lookupSectionFlag = osi->flags();
         if ((!(lookupSectionFlag & llvm::ELF::SHF_WRITE)) &&
-            (_context.mergeRODataToTextSegment()))
+            (_ctx.mergeRODataToTextSegment()))
           lookupSectionFlag &= ~llvm::ELF::SHF_EXECINSTR;
 
         // Merge string sections into Data segment itself
@@ -774,8 +766,8 @@ template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
           if (!additionalSegmentInsert.second) {
             segment = additionalSegmentInsert.first->second;
           } else {
-            segment = new (_allocator)
-                Segment<ELFT>(_context, segmentName, segmentType);
+            segment =
+                new (_allocator) Segment<ELFT>(_ctx, segmentName, segmentType);
             additionalSegmentInsert.first->second = segment;
             _segments.push_back(segment);
           }
@@ -802,7 +794,7 @@ template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
           segment = segmentInsert.first->second;
         } else {
           segment = new (_allocator)
-              Segment<ELFT>(_context, "PT_LOAD", llvm::ELF::PT_LOAD);
+              Segment<ELFT>(_ctx, "PT_LOAD", llvm::ELF::PT_LOAD);
           segmentInsert.first->second = segment;
           _segments.push_back(segment);
         }
@@ -815,9 +807,8 @@ template <class ELFT> void DefaultLayout<ELFT>::assignSectionsToSegments() {
       }
     }
   }
-  if (_context.isDynamic() && !_context.isDynamicLibrary()) {
-    Segment<ELFT> *segment =
-        new (_allocator) ProgramHeaderSegment<ELFT>(_context);
+  if (_ctx.isDynamic() && !_ctx.isDynamicLibrary()) {
+    Segment<ELFT> *segment = new (_allocator) ProgramHeaderSegment<ELFT>(_ctx);
     _segments.push_back(segment);
     segment->append(_elfHeader);
     segment->append(_programHeader);
@@ -832,7 +823,7 @@ DefaultLayout<ELFT>::assignVirtualAddress() {
 
   std::sort(_segments.begin(), _segments.end(), Segment<ELFT>::compareSegments);
 
-  uint64_t baseAddress = _context.getBaseAddress();
+  uint64_t baseAddress = _ctx.getBaseAddress();
 
   // HACK: This is a super dirty hack. The elf header and program header are
   // not part of a section, but we need them to be loaded at the base address
@@ -1039,7 +1030,7 @@ void DefaultLayout<ELFT>::addExtraChunksToSegment(Segment<ELFT> *segment,
       _linkerScriptSema.getExprs({archivePath, memberPath, sectionName});
   for (auto expr : exprs) {
     auto expChunk =
-        new (this->_allocator) ExpressionChunk<ELFT>(this->_context, expr);
+        new (this->_allocator) ExpressionChunk<ELFT>(this->_ctx, expr);
     segment->append(expChunk);
   }
 }

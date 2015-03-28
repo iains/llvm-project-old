@@ -377,6 +377,9 @@ template <> struct ScalarEnumerationTraits<lld::DefinedAtom::CodeModel> {
     io.enumCase(value, "mips-micro-pic", lld::DefinedAtom::codeMipsMicroPIC);
     io.enumCase(value, "mips-16", lld::DefinedAtom::codeMips16);
     io.enumCase(value, "arm-thumb", lld::DefinedAtom::codeARMThumb);
+    io.enumCase(value, "arm-a", lld::DefinedAtom::codeARM_a);
+    io.enumCase(value, "arm-d", lld::DefinedAtom::codeARM_d);
+    io.enumCase(value, "arm-t", lld::DefinedAtom::codeARM_t);
   }
 };
 
@@ -478,15 +481,15 @@ struct ScalarEnumerationTraits<lld::SharedLibraryAtom::Type> {
 
 /// This is a custom formatter for lld::DefinedAtom::Alignment.  Values look
 /// like:
-///     2^3          # 8-byte aligned
-///     7 mod 2^4    # 16-byte aligned plus 7 bytes
+///     8           # 8-byte aligned
+///     7 mod 16    # 16-byte aligned plus 7 bytes
 template <> struct ScalarTraits<lld::DefinedAtom::Alignment> {
   static void output(const lld::DefinedAtom::Alignment &value, void *ctxt,
                      raw_ostream &out) {
     if (value.modulus == 0) {
-      out << llvm::format("2^%d", value.powerOf2);
+      out << llvm::format("%d", value.value);
     } else {
-      out << llvm::format("%d mod 2^%d", value.modulus, value.powerOf2);
+      out << llvm::format("%d mod %d", value.modulus, value.value);
     }
   }
 
@@ -505,16 +508,12 @@ template <> struct ScalarTraits<lld::DefinedAtom::Alignment> {
       scalar = scalar.drop_front(modStart + 3);
       scalar = scalar.ltrim();
     }
-    if (!scalar.startswith("2^")) {
-      return "malformed alignment";
-    }
-    StringRef powerStr = scalar.drop_front(2);
     unsigned int power;
-    if (powerStr.getAsInteger(0, power)) {
+    if (scalar.getAsInteger(0, power)) {
       return "malformed alignment power";
     }
-    value.powerOf2 = power;
-    if (value.modulus > (1 << value.powerOf2)) {
+    value.value = power;
+    if (value.modulus >= power) {
       return "malformed alignment, modulus too large for power";
     }
     return StringRef(); // returning empty string means success
@@ -795,7 +794,7 @@ template <> struct MappingTraits<const lld::DefinedAtom *> {
   public:
     NormalizedAtom(IO &io)
         : _file(fileFromContext(io)), _name(), _refName(), _contentType(),
-          _alignment(0), _content(), _references(), _isGroupChild(false) {
+          _alignment(1), _content(), _references(), _isGroupChild(false) {
       static uint32_t ordinalCounter = 1;
       _ordinal = ordinalCounter++;
     }
@@ -941,7 +940,7 @@ template <> struct MappingTraits<const lld::DefinedAtom *> {
                                          DefinedAtom::interposeNo);
     io.mapOptional("merge",            keys->_merge, DefinedAtom::mergeNo);
     io.mapOptional("alignment",        keys->_alignment,
-                                         DefinedAtom::Alignment(0));
+                                         DefinedAtom::Alignment(1));
     io.mapOptional("section-choice",   keys->_sectionChoice,
                                          DefinedAtom::sectionBasedOnContent);
     io.mapOptional("section-name",     keys->_sectionName, StringRef());

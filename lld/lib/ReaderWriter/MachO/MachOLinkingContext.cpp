@@ -731,19 +731,16 @@ ArchHandler &MachOLinkingContext::archHandler() const {
 
 
 void MachOLinkingContext::addSectionAlignment(StringRef seg, StringRef sect,
-                                                               uint8_t align2) {
-  SectionAlign entry;
-  entry.segmentName = seg;
-  entry.sectionName = sect;
-  entry.align2 = align2;
+                                              uint16_t align) {
+  SectionAlign entry = { seg, sect, align };
   _sectAligns.push_back(entry);
 }
 
 bool MachOLinkingContext::sectionAligned(StringRef seg, StringRef sect,
-                                                        uint8_t &align2) const {
+                                         uint16_t &align) const {
   for (const SectionAlign &entry : _sectAligns) {
     if (seg.equals(entry.segmentName) && sect.equals(entry.sectionName)) {
-      align2 = entry.align2;
+      align = entry.align;
       return true;
     }
   }

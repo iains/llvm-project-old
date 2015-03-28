@@ -18,7 +18,7 @@ namespace elf {
 template <class ELFT>
 class X86DynamicLibraryWriter : public DynamicLibraryWriter<ELFT> {
 public:
-  X86DynamicLibraryWriter(X86LinkingContext &context,
+  X86DynamicLibraryWriter(X86LinkingContext &ctx,
                           X86TargetLayout<ELFT> &layout);
 
 protected:
@@ -41,22 +41,22 @@ private:
   };
 
   std::unique_ptr<GOTFile> _gotFile;
-  X86LinkingContext &_context;
+  X86LinkingContext &_ctx;
   X86TargetLayout<ELFT> &_x86Layout;
 };
 
 template <class ELFT>
 X86DynamicLibraryWriter<ELFT>::X86DynamicLibraryWriter(
-    X86LinkingContext &context, X86TargetLayout<ELFT> &layout)
-    : DynamicLibraryWriter<ELFT>(context, layout),
-      _gotFile(new GOTFile(context)), _context(context), _x86Layout(layout) {}
+    X86LinkingContext &ctx, X86TargetLayout<ELFT> &layout)
+    : DynamicLibraryWriter<ELFT>(ctx, layout), _gotFile(new GOTFile(ctx)),
+      _ctx(ctx), _x86Layout(layout) {}
 
 template <class ELFT>
 bool X86DynamicLibraryWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   DynamicLibraryWriter<ELFT>::createImplicitFiles(result);
-  _gotFile->addAtom(*new (_gotFile->_alloc) GLOBAL_OFFSET_TABLEAtom(*_gotFile));
-  _gotFile->addAtom(*new (_gotFile->_alloc) DYNAMICAtom(*_gotFile));
+  _gotFile->addAtom(*new (_gotFile->_alloc) GlobalOffsetTableAtom(*_gotFile));
+  _gotFile->addAtom(*new (_gotFile->_alloc) DynamicAtom(*_gotFile));
   result.push_back(std::move(_gotFile));
   return true;
 }

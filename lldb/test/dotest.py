@@ -125,19 +125,8 @@ just_do_lldbmi_test = False
 # By default, benchmarks tests are not run.
 just_do_benchmarks_test = False
 
-# By default, both dsym and dwarf tests are performed.
-# Use @dsym_test or @dwarf_test decorators, defined in lldbtest.py, to mark a test
-# as a dsym or dwarf test.  Use '-N dsym' or '-N dwarf' to exclude dsym or dwarf
-# tests from running.
-dont_do_dsym_test = "linux" in sys.platform or "freebsd" in sys.platform
+dont_do_dsym_test = False
 dont_do_dwarf_test = False
-
-# Don't do debugserver tests on everything except OS X.
-# Something for Windows here?
-dont_do_debugserver_test = "linux" in sys.platform or "freebsd" in sys.platform
-
-# Don't do lldb-server (llgs) tests on anything except Linux.
-dont_do_llgs_test = not ("linux" in sys.platform)
 
 # The blacklist is optional (-b blacklistFile) and allows a central place to skip
 # testclass's and/or testclass.testmethod's.
@@ -1019,9 +1008,13 @@ def setupSysPath():
     
     if lldbHere:
         os.environ["LLDB_HERE"] = lldbHere
-        os.environ["LLDB_LIB_DIR"] = os.path.split(lldbHere)[0]
+        lldbLibDir = os.path.split(lldbHere)[0]  # confusingly, this is the "bin" directory
+        os.environ["LLDB_LIB_DIR"] = lldbLibDir
+        lldbImpLibDir = os.path.join(lldbLibDir, '..', 'lib') if sys.platform.startswith('win32') else lldbLibDir
+        os.environ["LLDB_IMPLIB_DIR"] = lldbImpLibDir
         if not noHeaders:
             print "LLDB library dir:", os.environ["LLDB_LIB_DIR"]
+            print "LLDB import library dir:", os.environ["LLDB_IMPLIB_DIR"]
             os.system('%s -v' % lldbHere)
 
     if not lldbExec:
@@ -1358,6 +1351,22 @@ if lldb_platform_name:
 else:
     lldb.remote_platform = None
     lldb.remote_platform_working_dir = None
+
+target_platform = lldb.DBG.GetSelectedPlatform().GetTriple().split('-')[2]
+
+# By default, both dsym and dwarf tests are performed.
+# Use @dsym_test or @dwarf_test decorators, defined in lldbtest.py, to mark a test
+# as a dsym or dwarf test.  Use '-N dsym' or '-N dwarf' to exclude dsym or dwarf
+# tests from running.
+dont_do_dsym_test = dont_do_dsym_test or "linux" in target_platform or "freebsd" in target_platform
+
+# Don't do debugserver tests on everything except OS X.
+# Something for Windows here?
+dont_do_debugserver_test = "linux" in target_platform or "freebsd" in target_platform
+
+# Don't do lldb-server (llgs) tests on anything except Linux.
+dont_do_llgs_test = not ("linux" in target_platform)
+
 # Put the blacklist in the lldb namespace, to be used by lldb.TestBase.
 lldb.blacklist = blacklist
 

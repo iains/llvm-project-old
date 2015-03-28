@@ -6686,6 +6686,46 @@ ScalarEvolution::isLoopBackedgeGuardedByCond(const Loop *L,
                     LoopContinuePredicate->getSuccessor(0) != L->getHeader()))
     return true;
 
+  // If the loop is not reachable from the entry block, we risk running into an
+  // infinite loop as we walk up into the dom tree.  These loops do not matter
+  // anyway, so we just return a conservative answer when we see them.
+  if (!DT->isReachableFromEntry(L->getHeader()))
+    return false;
+
+  for (DomTreeNode *DTN = (*DT)[Latch], *HeaderDTN = (*DT)[L->getHeader()];
+       DTN != HeaderDTN;
+       DTN = DTN->getIDom()) {
+
+    assert(DTN && "should reach the loop header before reaching the root!");
+
+    BasicBlock *BB = DTN->getBlock();
+    BasicBlock *PBB = BB->getSinglePredecessor();
+    if (!PBB)
+      continue;
+
+    BranchInst *ContinuePredicate = dyn_cast<BranchInst>(PBB->getTerminator());
+    if (!ContinuePredicate || !ContinuePredicate->isConditional())
+      continue;
+
+    Value *Condition = ContinuePredicate->getCondition();
+
+    // If we have an edge `E` within the loop body that dominates the only
+    // latch, the condition guarding `E` also guards the backedge.  This
+    // reasoning works only for loops with a single latch.
+
+    BasicBlockEdge DominatingEdge(PBB, BB);
+    if (DominatingEdge.isSingleEdge()) {
+      // We're constructively (and conservatively) enumerating edges within the
+      // loop body that dominate the latch.  The dominator tree better agree
+      // with us on this:
+      assert(DT->dominates(DominatingEdge, Latch) && "should be!");
+
+      if (isImpliedCond(Pred, LHS, RHS, Condition,
+                        BB != ContinuePredicate->getSuccessor(0)))
+        return true;
+    }
+  }
+
   // Check conditions due to any @llvm.assume intrinsics.
   for (auto &AssumeVH : AC->assumptions()) {
     if (!AssumeVH)
@@ -6793,15 +6833,6 @@ bool ScalarEvolution::isImpliedCond(ICmpInst::Predicate Pred,
   ICmpInst *ICI = dyn_cast<ICmpInst>(FoundCondValue);
   if (!ICI) return false;
 
-  // Bail if the ICmp's operands' types are wider than the needed type
-  // before attempting to call getSCEV on them. This avoids infinite
-  // recursion, since the analysis of widening casts can require loop
-  // exit condition information for overflow checking, which would
-  // lead back here.
-  if (getTypeSizeInBits(LHS->getType()) <
-      getTypeSizeInBits(ICI->getOperand(0)->getType()))
-    return false;
-
   // Now that we found a conditional branch that dominates the loop or controls
   // the loop latch. Check to see if it is the comparison we are looking for.
   ICmpInst::Predicate FoundPred;
@@ -6813,9 +6844,17 @@ bool ScalarEvolution::isImpliedCond(ICmpInst::Predicate Pred,
   const SCEV *FoundLHS = getSCEV(ICI->getOperand(0));
   const SCEV *FoundRHS = getSCEV(ICI->getOperand(1));
 
-  // Balance the types. The case where FoundLHS' type is wider than
-  // LHS' type is checked for above.
-  if (getTypeSizeInBits(LHS->getType()) >
+  // Balance the types.
+  if (getTypeSizeInBits(LHS->getType()) <
+      getTypeSizeInBits(FoundLHS->getType())) {
+    if (CmpInst::isSigned(Pred)) {
+      LHS = getSignExtendExpr(LHS, FoundLHS->getType());
+      RHS = getSignExtendExpr(RHS, FoundLHS->getType());
+    } else {
+      LHS = getZeroExtendExpr(LHS, FoundLHS->getType());
+      RHS = getZeroExtendExpr(RHS, FoundLHS->getType());
+    }
+  } else if (getTypeSizeInBits(LHS->getType()) >
       getTypeSizeInBits(FoundLHS->getType())) {
     if (CmpInst::isSigned(FoundPred)) {
       FoundLHS = getSignExtendExpr(FoundLHS, LHS->getType());

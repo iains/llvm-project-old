@@ -15,20 +15,25 @@
 #include "ARMRelocationHandler.h"
 #include "DefaultTargetHandler.h"
 #include "TargetLayout.h"
-
-#include "lld/Core/Simple.h"
 #include "llvm/ADT/Optional.h"
-#include <map>
 
 namespace lld {
 namespace elf {
-typedef llvm::object::ELFType<llvm::support::little, 2, false> ARMELFType;
 class ARMLinkingContext;
 
 template <class ELFT> class ARMTargetLayout : public TargetLayout<ELFT> {
 public:
-  ARMTargetLayout(ARMLinkingContext &context)
-      : TargetLayout<ELFT>(context) {}
+  ARMTargetLayout(ARMLinkingContext &ctx) : TargetLayout<ELFT>(ctx) {}
+
+  uint64_t getGOTSymAddr() {
+    if (!_gotSymAddr.hasValue()) {
+      auto gotAtomIter = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
+      _gotSymAddr = (gotAtomIter != this->absoluteAtoms().end())
+                        ? (*gotAtomIter)->_virtualAddr
+                        : 0;
+    }
+    return *_gotSymAddr;
+  }
 
   uint64_t getTPOffset() {
     if (_tpOff.hasValue())
@@ -47,13 +52,17 @@ private:
   // TCB block size of the TLS.
   enum { TCB_SIZE = 0x8 };
 
+private:
+  // Cached value of the GOT origin symbol address.
+  llvm::Optional<uint64_t> _gotSymAddr;
+
   // Cached value of the TLS offset from the $tp pointer.
   llvm::Optional<uint64_t> _tpOff;
 };
 
 class ARMTargetHandler final : public DefaultTargetHandler<ARMELFType> {
 public:
-  ARMTargetHandler(ARMLinkingContext &context);
+  ARMTargetHandler(ARMLinkingContext &ctx);
 
   ARMTargetLayout<ARMELFType> &getTargetLayout() override {
     return *(_armTargetLayout.get());
@@ -66,18 +75,18 @@ public:
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return std::unique_ptr<Reader>(new ARMELFObjectReader(_context));
+    return std::unique_ptr<Reader>(new ARMELFObjectReader(_ctx));
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return std::unique_ptr<Reader>(new ARMELFDSOReader(_context));
+    return std::unique_ptr<Reader>(new ARMELFDSOReader(_ctx));
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
   static const Registry::KindStrings kindStrings[];
-  ARMLinkingContext &_context;
+  ARMLinkingContext &_ctx;
   std::unique_ptr<ARMTargetLayout<ARMELFType>> _armTargetLayout;
   std::unique_ptr<ARMTargetRelocationHandler> _armRelocationHandler;
 };

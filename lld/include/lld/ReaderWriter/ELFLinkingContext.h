@@ -27,7 +27,6 @@
 #include <set>
 
 namespace lld {
-class DefinedAtom;
 class Reference;
 class File;
 
@@ -52,24 +51,21 @@ public:
   /// \brief The type of ELF executable that the linker
   /// creates.
   enum class OutputMagic : uint8_t {
-    DEFAULT, // The default mode, no specific magic set
-    NMAGIC,  // Disallow shared libraries and don't align sections
-             // PageAlign Data, Mark Text Segment/Data segment RW
-    OMAGIC   // Disallow shared libraries and don't align sections,
-             // Mark Text Segment/Data segment RW
+    // The default mode, no specific magic set
+    DEFAULT,
+    // Disallow shared libraries and don't align sections
+    // PageAlign Data, Mark Text Segment/Data segment RW
+    NMAGIC,
+    // Disallow shared libraries and don't align sections,
+    // Mark Text Segment/Data segment RW
+    OMAGIC,
   };
 
   llvm::Triple getTriple() const { return _triple; }
 
-  // Page size.
-  virtual uint64_t getPageSize() const {
-    if (_maxPageSize)
-      return *_maxPageSize;
-    return 0x1000;
-  }
-  virtual void setMaxPageSize(uint64_t pagesize) {
-    _maxPageSize = pagesize;
-  }
+  uint64_t getPageSize() const { return _maxPageSize; }
+  void setMaxPageSize(uint64_t v) { _maxPageSize = v; }
+
   OutputMagic getOutputMagic() const { return _outputMagic; }
   uint16_t getOutputELFType() const { return _outputELFType; }
   uint16_t getOutputMachine() const;
@@ -85,7 +81,6 @@ public:
   /// created for every undefined symbol that are present in the dynamic table
   /// in the shared library
   bool useShlibUndefines() const { return _useShlibUndefines; }
-  /// @}
 
   /// \brief Does this relocation belong in the dynamic relocation table?
   ///
@@ -99,16 +94,14 @@ public:
   ///
   /// If this is a copy relocation, its target must be an ObjectAtom. We must
   /// include in DT_NEEDED the name of the library where this object came from.
-  virtual bool isCopyRelocation(const Reference &) const {
-    return false;
-  }
+  virtual bool isCopyRelocation(const Reference &) const { return false; }
 
   bool validateImpl(raw_ostream &diagnostics) override;
 
   /// \brief Does the linker allow dynamic libraries to be linked with?
   /// This is true when the output mode of the executable is set to be
   /// having NMAGIC/OMAGIC
-  virtual bool allowLinkWithDynamicLibraries() const {
+  bool allowLinkWithDynamicLibraries() const {
     if (_outputMagic == OutputMagic::NMAGIC ||
         _outputMagic == OutputMagic::OMAGIC || _noAllowDynamicLibraries)
       return false;
@@ -133,19 +126,17 @@ public:
   }
 
   /// \brief The dynamic linker path set by the --dynamic-linker option
-  virtual StringRef getInterpreter() const {
-    if (_dynamicLinkerArg)
-      return _dynamicLinkerPath;
+  StringRef getInterpreter() const {
+    if (_dynamicLinkerPath.hasValue())
+      return _dynamicLinkerPath.getValue();
     return getDefaultInterpreter();
   }
 
   /// \brief Does the output have dynamic sections.
-  virtual bool isDynamic() const;
+  bool isDynamic() const;
 
   /// \brief Are we creating a shared library?
-  virtual bool isDynamicLibrary() const {
-    return _outputELFType == llvm::ELF::ET_DYN;
-  }
+  bool isDynamicLibrary() const { return _outputELFType == llvm::ELF::ET_DYN; }
 
   /// \brief Is the relocation a relative relocation
   virtual bool isRelativeReloc(const Reference &r) const;
@@ -174,19 +165,16 @@ public:
   void finalizeInputFiles() override;
 
   /// \brief Set the dynamic linker path
-  void setInterpreter(StringRef dynamicLinker) {
-    _dynamicLinkerArg = true;
-    _dynamicLinkerPath = dynamicLinker;
-  }
+  void setInterpreter(StringRef s) { _dynamicLinkerPath = s; }
 
   /// \brief Set NMAGIC output kind when the linker specifies --nmagic
   /// or -n in the command line
   /// Set OMAGIC output kind when the linker specifies --omagic
   /// or -N in the command line
-  virtual void setOutputMagic(OutputMagic magic) { _outputMagic = magic; }
+  void setOutputMagic(OutputMagic magic) { _outputMagic = magic; }
 
   /// \brief Disallow dynamic libraries during linking
-  virtual void setNoAllowDynamicLibraries() { _noAllowDynamicLibraries = true; }
+  void setNoAllowDynamicLibraries() { _noAllowDynamicLibraries = true; }
 
   /// Searches directories for a match on the input File
   ErrorOr<StringRef> searchLibrary(StringRef libName) const;
@@ -220,34 +208,17 @@ public:
     _absoluteSymbols[name] = addr;
   }
 
-  void setSharedObjectName(StringRef soname) {
-    _soname = soname;
-  }
-
   StringRef sharedObjectName() const { return _soname; }
+  void setSharedObjectName(StringRef soname) { _soname = soname; }
 
   StringRef getSysroot() const { return _sysrootPath; }
+  void setSysroot(StringRef path) { _sysrootPath = path; }
 
-  /// \brief Set path to the system root
-  void setSysroot(StringRef path) {
-    _sysrootPath = path;
-  }
+  void addRpath(StringRef path) { _rpathList.push_back(path); }
+  range<const StringRef *> getRpathList() const { return _rpathList; }
 
-  void addRpath(StringRef path) {
-   _rpathList.push_back(path);
-  }
-
-  range<const StringRef *> getRpathList() const {
-    return _rpathList;
-  }
-
-  void addRpathLink(StringRef path) {
-   _rpathLinkList.push_back(path);
-  }
-
-  range<const StringRef *> getRpathLinkList() const {
-    return _rpathLinkList;
-  }
+  void addRpathLink(StringRef path) { _rpathLinkList.push_back(path); }
+  range<const StringRef *> getRpathLinkList() const { return _rpathLinkList; }
 
   const std::map<std::string, uint64_t> &getAbsoluteSymbols() const {
     return _absoluteSymbols;
@@ -262,10 +233,7 @@ public:
   }
 
   // add search path to list.
-  virtual bool addSearchPath(StringRef ref) {
-    _inputSearchPaths.push_back(ref);
-    return true;
-  }
+  void addSearchPath(StringRef ref) { _inputSearchPaths.push_back(ref); }
 
   // Retrieve search path list.
   StringRefVector getSearchPaths() { return _inputSearchPaths; };
@@ -308,43 +276,41 @@ public:
   script::Sema &linkerScriptSema() { return _linkerScriptSema; }
   const script::Sema &linkerScriptSema() const { return _linkerScriptSema; }
 
-private:
-  ELFLinkingContext() = delete;
-
 protected:
-  ELFLinkingContext(llvm::Triple, std::unique_ptr<TargetHandlerBase>);
+  ELFLinkingContext(llvm::Triple triple,
+                    std::unique_ptr<TargetHandlerBase> targetHandler)
+      : _triple(triple), _targetHandler(std::move(targetHandler)) {}
 
   Writer &writer() const override;
 
   /// Method to create a internal file for an undefined symbol
   std::unique_ptr<File> createUndefinedSymbolFile() const override;
 
-  uint16_t _outputELFType; // e.g ET_EXEC
+  uint16_t _outputELFType = llvm::ELF::ET_EXEC;
   llvm::Triple _triple;
   std::unique_ptr<TargetHandlerBase> _targetHandler;
-  uint64_t _baseAddress;
-  bool _isStaticExecutable;
-  bool _noInhibitExec;
-  bool _exportDynamic;
-  bool _mergeCommonStrings;
-  bool _useShlibUndefines;
-  bool _dynamicLinkerArg;
-  bool _noAllowDynamicLibraries;
-  bool _mergeRODataToTextSegment;
-  bool _demangle;
-  bool _stripSymbols;
-  bool _alignSegments;
-  bool _nostdlib;
-  bool _collectStats;
-  llvm::Optional<uint64_t> _maxPageSize;
+  uint64_t _baseAddress = 0;
+  bool _isStaticExecutable = false;
+  bool _noInhibitExec = false;
+  bool _exportDynamic = false;
+  bool _mergeCommonStrings = false;
+  bool _useShlibUndefines = true;
+  bool _dynamicLinkerArg = false;
+  bool _noAllowDynamicLibraries = false;
+  bool _mergeRODataToTextSegment = true;
+  bool _demangle = true;
+  bool _stripSymbols = false;
+  bool _alignSegments = true;
+  bool _collectStats = false;
+  uint64_t _maxPageSize = 0x1000;
 
   OutputMagic _outputMagic;
   StringRefVector _inputSearchPaths;
   std::unique_ptr<Writer> _writer;
-  StringRef _dynamicLinkerPath;
-  StringRef _initFunction;
-  StringRef _finiFunction;
-  StringRef _sysrootPath;
+  llvm::Optional<StringRef> _dynamicLinkerPath;
+  StringRef _initFunction = "_init";
+  StringRef _finiFunction = "_fini";
+  StringRef _sysrootPath = "";
   StringRef _soname;
   StringRefVector _rpathList;
   StringRefVector _rpathLinkList;
