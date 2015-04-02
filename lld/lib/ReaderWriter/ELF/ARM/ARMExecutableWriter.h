@@ -13,6 +13,7 @@
 #include "ARMLinkingContext.h"
 #include "ARMTargetHandler.h"
 #include "ARMSymbolTable.h"
+#include "llvm/Support/ELF.h"
 
 namespace {
 const char *gotSymbol = "_GLOBAL_OFFSET_TABLE_";
@@ -66,9 +67,8 @@ template <class ELFT>
 void ARMExecutableWriter<ELFT>::finalizeDefaultAtomValues() {
   // Finalize the atom values that are part of the parent.
   ExecutableWriter<ELFT>::finalizeDefaultAtomValues();
-  auto gotAtomIter = _armLayout.findAbsoluteAtom(gotSymbol);
-  if (gotAtomIter != _armLayout.absoluteAtoms().end()) {
-    auto *gotAtom = *gotAtomIter;
+  AtomLayout *gotAtom = _armLayout.findAbsoluteAtom(gotSymbol);
+  if (gotAtom) {
     if (auto gotpltSection = _armLayout.findOutputSection(".got.plt"))
       gotAtom->_virtualAddr = gotpltSection->virtualAddr();
     else if (auto gotSection = _armLayout.findOutputSection(".got"))
@@ -102,12 +102,28 @@ std::error_code ARMExecutableWriter<ELFT>::setELFHeader() {
   if (std::error_code ec = ExecutableWriter<ELFT>::setELFHeader())
     return ec;
 
-  // Fixup entry point for Thumb code.
+  // Set ARM-specific flags.
+  this->_elfHeader->e_flags(llvm::ELF::EF_ARM_EABI_VER5 |
+                            llvm::ELF::EF_ARM_VFP_FLOAT);
+
   StringRef entryName = _ctx.entrySymbolName();
   if (const AtomLayout *al = _armLayout.findAtomLayoutByName(entryName)) {
-    const auto *ea = dyn_cast<DefinedAtom>(al->_atom);
-    if (ea && ea->codeModel() == DefinedAtom::codeARMThumb)
-      this->_elfHeader->e_entry(al->_virtualAddr | 0x1);
+    if (const auto *ea = dyn_cast<DefinedAtom>(al->_atom)) {
+      switch (ea->codeModel()) {
+      case DefinedAtom::codeNA:
+        if (al->_virtualAddr & 0x3) {
+          llvm::report_fatal_error(
+              "Two least bits must be zero for ARM entry point");
+        }
+      break;
+      case DefinedAtom::codeARMThumb:
+        // Fixup entry point for Thumb code.
+        this->_elfHeader->e_entry(al->_virtualAddr | 0x1);
+      break;
+      default:
+        llvm_unreachable("Wrong code model of entry point atom");
+      }
+    }
   }
 
   return std::error_code();

@@ -26,12 +26,15 @@ enum {
 
 class X86_64LinkingContext : public ELFLinkingContext {
 protected:
-  X86_64LinkingContext(llvm::Triple, std::unique_ptr<TargetHandlerBase>);
+  X86_64LinkingContext(llvm::Triple, std::unique_ptr<TargetHandler>);
+
 public:
   static std::unique_ptr<ELFLinkingContext> create(llvm::Triple);
+  static const int machine = llvm::ELF::EM_X86_64;
   X86_64LinkingContext(llvm::Triple);
 
   void addPasses(PassManager &) override;
+  void registerRelocationNames(Registry &r) override;
 
   uint64_t getBaseAddress() const override {
     if (_baseAddress == 0)

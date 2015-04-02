@@ -43,10 +43,12 @@ typedef llvm::object::ELFType<llvm::support::big, 2, true> Mips64BEType;
 class MipsLinkingContext final : public ELFLinkingContext {
 public:
   static std::unique_ptr<ELFLinkingContext> create(llvm::Triple);
+  static const int machine = llvm::ELF::EM_MIPS;
   MipsLinkingContext(llvm::Triple triple);
 
   uint32_t getMergedELFFlags() const;
   MipsELFFlagsMerger &getELFFlagsMerger();
+  void registerRelocationNames(Registry &r) override;
 
   // ELFLinkingContext
   uint64_t getBaseAddress() const override;
@@ -57,6 +59,7 @@ public:
   bool isDynamicRelocation(const Reference &r) const override;
   bool isCopyRelocation(const Reference &r) const override;
   bool isPLTRelocation(const Reference &r) const override;
+  bool isRelativeReloc(const Reference &r) const override;
 
 private:
   MipsELFFlagsMerger _flagsMerger;

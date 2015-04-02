@@ -164,7 +164,7 @@ namespace llvm {
 
     struct ELFSectionKey {
       std::string SectionName;
-      std::string GroupName;
+      StringRef GroupName;
       ELFSectionKey(StringRef SectionName, StringRef GroupName)
           : SectionName(SectionName), GroupName(GroupName) {}
       bool operator<(const ELFSectionKey &Other) const {
@@ -176,7 +176,7 @@ namespace llvm {
 
     struct COFFSectionKey {
       std::string SectionName;
-      std::string GroupName;
+      StringRef GroupName;
       int SelectionKey;
       COFFSectionKey(StringRef SectionName, StringRef GroupName,
                      int SelectionKey)
@@ -194,6 +194,7 @@ namespace llvm {
     StringMap<const MCSectionMachO*> MachOUniquingMap;
     std::map<ELFSectionKey, const MCSectionELF *> ELFUniquingMap;
     std::map<COFFSectionKey, const MCSectionCOFF *> COFFUniquingMap;
+    StringMap<bool> ELFRelSecNames;
 
     /// Do automatic reset in destructor
     bool AutoReset;
@@ -258,6 +259,7 @@ namespace llvm {
     MCSymbol *getOrCreateSectionSymbol(const MCSectionELF &Section);
 
     MCSymbol *getOrCreateFrameAllocSymbol(StringRef FuncName, unsigned Idx);
+    MCSymbol *getOrCreateParentFrameOffsetSymbol(StringRef FuncName);
 
     /// Get the symbol for \p Name, or null.
     MCSymbol *LookupSymbol(const Twine &Name) const;
@@ -303,6 +305,10 @@ namespace llvm {
                                       unsigned Flags, unsigned EntrySize,
                                       StringRef Group, bool Unique,
                                       const char *BeginSymName = nullptr);
+
+    const MCSectionELF *createELFRelSection(StringRef Name, unsigned Type,
+                                            unsigned Flags, unsigned EntrySize,
+                                            const MCSymbol *Group);
 
     void renameELFSection(const MCSectionELF *Section, StringRef Name);
 

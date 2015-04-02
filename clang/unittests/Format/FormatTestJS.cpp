@@ -144,6 +144,27 @@ TEST_F(FormatTestJS, ContainerLiterals) {
   verifyFormat("x = foo && {a: 123};");
 }
 
+TEST_F(FormatTestJS, MethodsInObjectLiterals) {
+  verifyFormat("var o = {\n"
+               "  value: 'test',\n"
+               "  get value() {  // getter\n"
+               "    return this.value;\n"
+               "  }\n"
+               "};");
+  verifyFormat("var o = {\n"
+               "  value: 'test',\n"
+               "  set value(val) {  // setter\n"
+               "    this.value = val;\n"
+               "  }\n"
+               "};");
+  verifyFormat("var o = {\n"
+               "  value: 'test',\n"
+               "  someMethod(val) {  // method\n"
+               "    doSomething(this.value + val);\n"
+               "  }\n"
+               "};");
+}
+
 TEST_F(FormatTestJS, SpacesInContainerLiterals) {
   verifyFormat("var arr = [1, 2, 3];");
   verifyFormat("f({a: 1, b: 2, c: 3});");
@@ -167,6 +188,11 @@ TEST_F(FormatTestJS, GoogScopes) {
                "var x = a.b;\n"
                "var y = c.d;\n"
                "});  // goog.scope");
+  verifyFormat("goog.scope(function() {\n"
+               "// test\n"
+               "var x = 0;\n"
+               "// test\n"
+               "});");
 }
 
 TEST_F(FormatTestJS, GoogModules) {

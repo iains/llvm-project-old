@@ -19,7 +19,7 @@ template <class ELFT>
 class AArch64ExecutableWriter : public ExecutableWriter<ELFT> {
 public:
   AArch64ExecutableWriter(AArch64LinkingContext &ctx,
-                          AArch64TargetLayout<ELFT> &layout);
+                          TargetLayout<ELFT> &layout);
 
 protected:
   // Add any runtime files and their atoms to the output
@@ -42,14 +42,14 @@ private:
 
   std::unique_ptr<GOTFile> _gotFile;
   AArch64LinkingContext &_ctx;
-  AArch64TargetLayout<ELFT> &_AArch64Layout;
+  TargetLayout<ELFT> &_layout;
 };
 
 template <class ELFT>
 AArch64ExecutableWriter<ELFT>::AArch64ExecutableWriter(
-    AArch64LinkingContext &ctx, AArch64TargetLayout<ELFT> &layout)
+    AArch64LinkingContext &ctx, TargetLayout<ELFT> &layout)
     : ExecutableWriter<ELFT>(ctx, layout), _gotFile(new GOTFile(ctx)),
-      _ctx(ctx), _AArch64Layout(layout) {}
+      _ctx(ctx), _layout(layout) {}
 
 template <class ELFT>
 bool AArch64ExecutableWriter<ELFT>::createImplicitFiles(

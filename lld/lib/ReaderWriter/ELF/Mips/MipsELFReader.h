@@ -36,14 +36,13 @@ class MipsELFObjectReader
 
 public:
   MipsELFObjectReader(MipsLinkingContext &ctx)
-      : BaseReaderType(ctx, llvm::ELF::EM_MIPS),
-        _flagMerger(ctx.getELFFlagsMerger()) {}
+      : BaseReaderType(ctx), _flagMerger(ctx.getELFFlagsMerger()) {}
 
   std::error_code
   loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &registry,
            std::vector<std::unique_ptr<File>> &result) const override {
     auto &hdr = *this->elfHeader(*mb);
-    if (std::error_code ec = _flagMerger.merge(hdr.getFileClass(), hdr.e_flags))
+    if (auto ec = _flagMerger.mergeHeaderFlags(hdr.getFileClass(), hdr.e_flags))
       return ec;
     return BaseReaderType::loadFile(std::move(mb), registry, result);
   }
@@ -58,14 +57,13 @@ class MipsELFDSOReader : public ELFDSOReader<ELFT, MipsLinkingContext> {
 
 public:
   MipsELFDSOReader(MipsLinkingContext &ctx)
-      : BaseReaderType(ctx, llvm::ELF::EM_MIPS),
-        _flagMerger(ctx.getELFFlagsMerger()) {}
+      : BaseReaderType(ctx), _flagMerger(ctx.getELFFlagsMerger()) {}
 
   std::error_code
   loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &registry,
            std::vector<std::unique_ptr<File>> &result) const override {
     auto &hdr = *this->elfHeader(*mb);
-    if (std::error_code ec = _flagMerger.merge(hdr.getFileClass(), hdr.e_flags))
+    if (auto ec = _flagMerger.mergeHeaderFlags(hdr.getFileClass(), hdr.e_flags))
       return ec;
     return BaseReaderType::loadFile(std::move(mb), registry, result);
   }

@@ -420,7 +420,7 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
   Line->Level = InitialLevel;
 }
 
-static bool IsGoogScope(const UnwrappedLine &Line) {
+static bool isGoogScope(const UnwrappedLine &Line) {
   // FIXME: Closure-library specific stuff should not be hard-coded but be
   // configurable.
   if (Line.Tokens.size() < 4)
@@ -456,12 +456,13 @@ void UnwrappedLineParser::parseChildBlock() {
   nextToken();
   {
     bool GoogScope =
-        Style.Language == FormatStyle::LK_JavaScript && IsGoogScope(*Line);
+        Style.Language == FormatStyle::LK_JavaScript && isGoogScope(*Line);
     ScopedLineState LineState(*this);
     ScopedDeclarationState DeclarationState(*Line, DeclarationScopeStack,
                                             /*MustBeDeclaration=*/false);
     Line->Level += GoogScope ? 0 : 1;
     parseLevel(/*HasOpeningBrace=*/true);
+    flushComments(isOnNewLine(*FormatTok));
     Line->Level -= GoogScope ? 0 : 1;
   }
   nextToken();
@@ -1034,6 +1035,17 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons) {
       // from the ones we explicitly parse out (like lambdas).
       FormatTok->BlockKind = BK_BracedInit;
       parseBracedList();
+      break;
+    case tok::r_paren:
+      // JavaScript can just have free standing methods and getters/setters in
+      // object literals. Detect them by a "{" following ")".
+      if (Style.Language == FormatStyle::LK_JavaScript) {
+        nextToken();
+        if (FormatTok->is(tok::l_brace))
+          parseChildBlock();
+        break;
+      }
+      nextToken();
       break;
     case tok::r_brace:
       nextToken();

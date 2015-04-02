@@ -26,7 +26,7 @@ static int relocBNPCREL(uint8_t *location, uint64_t P, uint64_t S, uint64_t A,
   int32_t result = (uint32_t)(((S + A) - P) >> 2);
   int32_t range = 1 << nBits;
   if (result < range && result > -range) {
-    result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+    result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
     APPLY_RELOC(result);
     return 0;
   }
@@ -81,7 +81,7 @@ static int relocHexBNPCRELX(uint8_t *location, uint64_t P, uint64_t S,
   int32_t result = ((S + A - P) & 0x3f);
   int32_t range = 1 << nbits;
   if (result < range && result > -range) {
-    result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+    result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
     APPLY_RELOC(result);
     return 0;
   }
@@ -92,7 +92,7 @@ static int relocHexBNPCRELX(uint8_t *location, uint64_t P, uint64_t S,
 static int relocHex6PCRELX(uint8_t *location, uint64_t P, uint64_t S,
                            uint64_t A) {
   int32_t result = (S + A - P);
-  result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -100,7 +100,7 @@ static int relocHex6PCRELX(uint8_t *location, uint64_t P, uint64_t S,
 // R_HEX_N_X : Word32_U6 : (S + A) : Unsigned Truncate
 static int relocHex_N_X(uint8_t *location, uint64_t P, uint64_t S, uint64_t A) {
   uint32_t result = (S + A);
-  result = lld::scatterBits<uint32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<uint32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -111,7 +111,7 @@ static int relocHexGPRELN(uint8_t *location, uint64_t P, uint64_t S, uint64_t A,
   int32_t result = (int64_t)((S + A - GP) >> nShiftBits);
   int32_t range = 1L << 16;
   if (result <= range) {
-    result = lld::scatterBits<uint32_t>(result, FINDV4BITMASK(location));
+    result = lld::scatterBits<uint32_t>(result, findv4bitmask(location));
     APPLY_RELOC(result);
     return 0;
   }
@@ -146,7 +146,7 @@ static int relocHexGOT16(uint8_t *location, uint64_t A, uint64_t GOT) {
   int32_t result = (int32_t)(GOT-A);
   int32_t range = 1L << 16;
   if (result <= range) {
-    result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+    result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
     APPLY_RELOC(result);
     return 0;
   }
@@ -155,7 +155,7 @@ static int relocHexGOT16(uint8_t *location, uint64_t A, uint64_t GOT) {
 
 static int relocHexGOT32_6_X(uint8_t *location, uint64_t A, uint64_t GOT) {
   int32_t result = (int32_t)((A-GOT) >> 6);
-  result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -164,7 +164,7 @@ static int relocHexGOT16_X(uint8_t *location, uint64_t A, uint64_t GOT) {
   int32_t result = (int32_t)(A-GOT);
   int32_t range = 1L << 6;
   if (result <= range) {
-    result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+    result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
     APPLY_RELOC(result);
     return 0;
   }
@@ -173,7 +173,7 @@ static int relocHexGOT16_X(uint8_t *location, uint64_t A, uint64_t GOT) {
 
 static int relocHexGOT11_X(uint8_t *location, uint64_t A, uint64_t GOT) {
   uint32_t result = (uint32_t)(A-GOT);
-  result = lld::scatterBits<uint32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<uint32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -181,7 +181,7 @@ static int relocHexGOT11_X(uint8_t *location, uint64_t A, uint64_t GOT) {
 static int relocHexGOTRELSigned(uint8_t *location, uint64_t P, uint64_t S,
                                 uint64_t A, uint64_t GOT, int shiftBits = 0) {
   int32_t result = (int32_t)((S + A - GOT) >> shiftBits);
-  result = lld::scatterBits<int32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<int32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -189,7 +189,7 @@ static int relocHexGOTRELSigned(uint8_t *location, uint64_t P, uint64_t S,
 static int relocHexGOTRELUnsigned(uint8_t *location, uint64_t P, uint64_t S,
                                   uint64_t A, uint64_t GOT, int shiftBits = 0) {
   uint32_t result = (uint32_t)((S + A - GOT) >> shiftBits);
-  result = lld::scatterBits<uint32_t>(result, FINDV4BITMASK(location));
+  result = lld::scatterBits<uint32_t>(result, findv4bitmask(location));
   APPLY_RELOC(result);
   return 0;
 }
@@ -262,19 +262,19 @@ std::error_code HexagonTargetRelocationHandler::applyRelocation(
     break;
   case R_HEX_GPREL16_0:
     relocHexGPRELN(location, relocVAddress, targetVAddress, ref.addend(),
-                   _hexagonTargetLayout.getSDataSection()->virtualAddr(), 0);
+                   _targetLayout.getSDataSection()->virtualAddr(), 0);
     break;
   case R_HEX_GPREL16_1:
     relocHexGPRELN(location, relocVAddress, targetVAddress, ref.addend(),
-                   _hexagonTargetLayout.getSDataSection()->virtualAddr(), 1);
+                   _targetLayout.getSDataSection()->virtualAddr(), 1);
     break;
   case R_HEX_GPREL16_2:
     relocHexGPRELN(location, relocVAddress, targetVAddress, ref.addend(),
-                   _hexagonTargetLayout.getSDataSection()->virtualAddr(), 2);
+                   _targetLayout.getSDataSection()->virtualAddr(), 2);
     break;
   case R_HEX_GPREL16_3:
     relocHexGPRELN(location, relocVAddress, targetVAddress, ref.addend(),
-                   _hexagonTargetLayout.getSDataSection()->virtualAddr(), 3);
+                   _targetLayout.getSDataSection()->virtualAddr(), 3);
     break;
   case R_HEX_16_X:
   case R_HEX_12_X:
@@ -294,52 +294,45 @@ std::error_code HexagonTargetRelocationHandler::applyRelocation(
     break;
   case R_HEX_GOTREL_32:
     relocHexGOTREL_32(location, relocVAddress, targetVAddress, ref.addend(),
-                      _hexagonTargetLayout.getGOTSymAddr());
+                      _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOTREL_LO16:
     relocHexGOTREL_HILO16(location, relocVAddress, targetVAddress, ref.addend(),
-                          _hexagonTargetLayout.getGOTSymAddr());
+                          _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOTREL_HI16:
     relocHexGOTREL_HILO16(location, relocVAddress, targetVAddress, ref.addend(),
-                          _hexagonTargetLayout.getGOTSymAddr(), 16);
+                          _targetLayout.getGOTSymAddr(), 16);
     break;
   case R_HEX_GOT_LO16:
-    relocHexGOTLO16(location, targetVAddress,
-                    _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOTLO16(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_HI16:
-    relocHexGOTHI16(location, targetVAddress,
-                    _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOTHI16(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_32:
-    relocHexGOT32(location, targetVAddress,
-                  _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOT32(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_16:
-    relocHexGOT16(location, targetVAddress,
-                  _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOT16(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_32_6_X:
-    relocHexGOT32_6_X(location, targetVAddress,
-                      _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOT32_6_X(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_16_X:
-    relocHexGOT16_X(location, targetVAddress,
-                    _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOT16_X(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOT_11_X:
-    relocHexGOT11_X(location, targetVAddress,
-                    _hexagonTargetLayout.getGOTSymAddr());
+    relocHexGOT11_X(location, targetVAddress, _targetLayout.getGOTSymAddr());
     break;
   case R_HEX_GOTREL_32_6_X:
     relocHexGOTRELSigned(location, relocVAddress, targetVAddress, ref.addend(),
-                         _hexagonTargetLayout.getGOTSymAddr(), 6);
+                         _targetLayout.getGOTSymAddr(), 6);
     break;
   case R_HEX_GOTREL_16_X:
   case R_HEX_GOTREL_11_X:
     relocHexGOTRELUnsigned(location, relocVAddress, targetVAddress,
-                           ref.addend(), _hexagonTargetLayout.getGOTSymAddr());
+                           ref.addend(), _targetLayout.getGOTSymAddr());
     break;
 
   default:

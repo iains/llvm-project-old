@@ -19,20 +19,18 @@ using namespace llvm::ELF;
 using llvm::makeArrayRef;
 
 HexagonTargetHandler::HexagonTargetHandler(HexagonLinkingContext &ctx)
-    : _ctx(ctx),
-      _hexagonRuntimeFile(new HexagonRuntimeFile<HexagonELFType>(ctx)),
-      _hexagonTargetLayout(new HexagonTargetLayout<HexagonELFType>(ctx)),
-      _hexagonRelocationHandler(
-          new HexagonTargetRelocationHandler(*_hexagonTargetLayout.get())) {}
+    : _ctx(ctx), _runtimeFile(new HexagonRuntimeFile<HexagonELFType>(ctx)),
+      _targetLayout(new HexagonTargetLayout<HexagonELFType>(ctx)),
+      _relocationHandler(new HexagonTargetRelocationHandler(*_targetLayout)) {}
 
 std::unique_ptr<Writer> HexagonTargetHandler::getWriter() {
   switch (_ctx.getOutputELFType()) {
   case llvm::ELF::ET_EXEC:
     return llvm::make_unique<HexagonExecutableWriter<HexagonELFType>>(
-        _ctx, *_hexagonTargetLayout.get());
+        _ctx, *_targetLayout);
   case llvm::ELF::ET_DYN:
     return llvm::make_unique<HexagonDynamicLibraryWriter<HexagonELFType>>(
-        _ctx, *_hexagonTargetLayout.get());
+        _ctx, *_targetLayout);
   case llvm::ELF::ET_REL:
     llvm_unreachable("TODO: support -r mode");
   default:
@@ -163,8 +161,7 @@ protected:
   }
 
 public:
-  GOTPLTPass(const ELFLinkingContext &ctx)
-      : _file(ctx), _null(nullptr), _PLT0(nullptr), _got0(nullptr) {}
+  GOTPLTPass(const ELFLinkingContext &ctx) : _file(ctx) {}
 
   /// \brief Do the pass.
   ///
@@ -182,9 +179,9 @@ public:
 
     // Add all created atoms to the link.
     uint64_t ordinal = 0;
-    if (_PLT0) {
-      _PLT0->setOrdinal(ordinal++);
-      mf->addAtom(*_PLT0);
+    if (_plt0) {
+      _plt0->setOrdinal(ordinal++);
+      mf->addAtom(*_plt0);
     }
     for (auto &plt : _pltVector) {
       plt->setOrdinal(ordinal++);
@@ -219,13 +216,13 @@ protected:
   std::vector<PLTAtom *> _pltVector;
 
   /// \brief GOT entry that is always 0. Used for undefined weaks.
-  GOTAtom *_null;
+  GOTAtom *_null = nullptr;
 
   /// \brief The got and plt entries for .PLT0. This is used to call into the
   /// dynamic linker for symbol resolution.
   /// @{
-  PLT0Atom *_PLT0;
-  GOTAtom *_got0;
+  PLT0Atom *_plt0 = nullptr;
+  GOTAtom *_got0 = nullptr;
   /// @}
 };
 
@@ -239,14 +236,14 @@ public:
   }
 
   const PLT0Atom *getPLT0() {
-    if (_PLT0)
-      return _PLT0;
-    _PLT0 = new (_file._alloc) HexagonPLT0Atom(_file);
-    _PLT0->addReferenceELF_Hexagon(R_HEX_B32_PCREL_X, 0, _got0, 0);
-    _PLT0->addReferenceELF_Hexagon(R_HEX_6_PCREL_X, 4, _got0, 4);
+    if (_plt0)
+      return _plt0;
+    _plt0 = new (_file._alloc) HexagonPLT0Atom(_file);
+    _plt0->addReferenceELF_Hexagon(R_HEX_B32_PCREL_X, 0, _got0, 0);
+    _plt0->addReferenceELF_Hexagon(R_HEX_6_PCREL_X, 4, _got0, 4);
     DEBUG_WITH_TYPE("PLT", llvm::dbgs() << "[ PLT0/GOT0 ] "
                                         << "Adding plt0/got0 \n");
-    return _PLT0;
+    return _plt0;
   }
 
   const PLTAtom *getPLTEntry(const Atom *a) {
@@ -316,17 +313,3 @@ void elf::HexagonLinkingContext::addPasses(PassManager &pm) {
     pm.add(llvm::make_unique<DynamicGOTPLTPass>(*this));
   ELFLinkingContext::addPasses(pm);
 }
-
-void HexagonTargetHandler::registerRelocationNames(Registry &registry) {
-  registry.addKindTable(Reference::KindNamespace::ELF,
-                        Reference::KindArch::Hexagon, kindStrings);
-}
-
-#define ELF_RELOC(name, value) LLD_KIND_STRING_ENTRY(name),
-
-const Registry::KindStrings HexagonTargetHandler::kindStrings[] = {
-#include "llvm/Support/ELFRelocs/Hexagon.def"
-  LLD_KIND_STRING_END
-};
-
-#undef ELF_RELOC

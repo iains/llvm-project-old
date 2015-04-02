@@ -11,11 +11,11 @@
 #define LLD_READER_WRITER_X86_64_X86_64_ELF_READER_H
 
 #include "ELFReader.h"
-#include "X86_64ELFFile.h"
 
 namespace lld {
 namespace elf {
 
+class X86_64LinkingContext;
 typedef llvm::object::ELFType<llvm::support::little, 2, true> X86_64ELFType;
 
 struct X86_64ELFFileCreateELFTraits {
@@ -24,26 +24,13 @@ struct X86_64ELFFileCreateELFTraits {
   template <class ELFT>
   static result_type create(std::unique_ptr<llvm::MemoryBuffer> mb,
                             X86_64LinkingContext &ctx) {
-    return lld::elf::X86_64ELFFile<ELFT>::create(std::move(mb), ctx);
+    return lld::elf::ELFFile<ELFT>::create(std::move(mb), ctx);
   }
 };
 
-class X86_64ELFObjectReader
-    : public ELFObjectReader<X86_64ELFType, X86_64ELFFileCreateELFTraits,
-                             X86_64LinkingContext> {
-public:
-  X86_64ELFObjectReader(X86_64LinkingContext &ctx)
-      : ELFObjectReader<X86_64ELFType, X86_64ELFFileCreateELFTraits,
-                        X86_64LinkingContext>(ctx, llvm::ELF::EM_X86_64) {}
-};
-
-class X86_64ELFDSOReader
-    : public ELFDSOReader<X86_64ELFType, X86_64LinkingContext> {
-public:
-  X86_64ELFDSOReader(X86_64LinkingContext &ctx)
-      : ELFDSOReader<X86_64ELFType,
-                     X86_64LinkingContext>(ctx, llvm::ELF::EM_X86_64) {}
-};
+typedef ELFObjectReader<X86_64ELFType, X86_64ELFFileCreateELFTraits,
+                        X86_64LinkingContext> X86_64ELFObjectReader;
+typedef ELFDSOReader<X86_64ELFType, X86_64LinkingContext> X86_64ELFDSOReader;
 
 } // namespace elf
 } // namespace lld

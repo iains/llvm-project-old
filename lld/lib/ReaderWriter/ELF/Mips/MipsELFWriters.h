@@ -10,12 +10,9 @@
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_ELF_WRITERS_H
 
 #include "MipsLinkingContext.h"
-#include "OutputELFWriter.h"
 
 namespace lld {
 namespace elf {
-
-template <class ELFT> class MipsRuntimeFile;
 
 template <class ELFT> class MipsTargetLayout;
 
@@ -54,8 +51,8 @@ public:
     return _targetLayout.getGOTSection().hasGlobalGOTEntry(a);
   }
 
-  std::unique_ptr<MipsRuntimeFile<ELFT>> createRuntimeFile() {
-    auto file = llvm::make_unique<MipsRuntimeFile<ELFT>>(_ctx);
+  std::unique_ptr<RuntimeFile<ELFT>> createRuntimeFile() {
+    auto file = llvm::make_unique<RuntimeFile<ELFT>>(_ctx, "Mips runtime file");
     if (_ctx.isDynamic()) {
       file->addAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
       file->addAbsoluteAtom("_gp");
@@ -70,9 +67,9 @@ private:
   MipsTargetLayout<ELFT> &_targetLayout;
 
   void setAtomValue(StringRef name, uint64_t value) {
-    auto atom = _targetLayout.findAbsoluteAtom(name);
-    assert(atom != _targetLayout.absoluteAtoms().end());
-    (*atom)->_virtualAddr = value;
+    AtomLayout *atom = _targetLayout.findAbsoluteAtom(name);
+    assert(atom);
+    atom->_virtualAddr = value;
   }
 };
 

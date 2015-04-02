@@ -9,7 +9,6 @@
 #ifndef LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 
-#include "DefaultTargetHandler.h"
 #include "MipsDynamicLibraryWriter.h"
 #include "MipsELFReader.h"
 #include "MipsExecutableWriter.h"
@@ -48,19 +47,15 @@ public:
 
   /// \brief Get '_gp' symbol atom layout.
   AtomLayout *getGP() {
-    if (!_gpAtom.hasValue()) {
-      auto atom = this->findAbsoluteAtom("_gp");
-      _gpAtom = atom != this->absoluteAtoms().end() ? *atom : nullptr;
-    }
+    if (!_gpAtom.hasValue())
+      _gpAtom = this->findAbsoluteAtom("_gp");
     return *_gpAtom;
   }
 
   /// \brief Get '_gp_disp' symbol atom layout.
   AtomLayout *getGPDisp() {
-    if (!_gpDispAtom.hasValue()) {
-      auto atom = this->findAbsoluteAtom("_gp_disp");
-      _gpDispAtom = atom != this->absoluteAtoms().end() ? *atom : nullptr;
-    }
+    if (!_gpDispAtom.hasValue())
+      _gpDispAtom = this->findAbsoluteAtom("_gp_disp");
     return *_gpDispAtom;
   }
 
@@ -88,31 +83,13 @@ private:
   llvm::Optional<AtomLayout *> _gpDispAtom;
 };
 
-/// \brief Mips Runtime file.
-template <class ELFT> class MipsRuntimeFile final : public RuntimeFile<ELFT> {
-public:
-  MipsRuntimeFile(MipsLinkingContext &ctx)
-      : RuntimeFile<ELFT>(ctx, "Mips runtime file") {}
-};
-
-/// \brief Auxiliary class holds relocation's names table.
-class MipsRelocationStringTable {
-  static const Registry::KindStrings kindStrings[];
-
-public:
-  static void registerTable(Registry &registry);
-};
-
 /// \brief TargetHandler for Mips
-template <class ELFT>
-class MipsTargetHandler final : public DefaultTargetHandler<ELFT> {
+template <class ELFT> class MipsTargetHandler final : public TargetHandler {
 public:
   MipsTargetHandler(MipsLinkingContext &ctx)
-      : _ctx(ctx), _runtimeFile(new MipsRuntimeFile<ELFT>(ctx)),
-        _targetLayout(new MipsTargetLayout<ELFT>(ctx)),
-        _relocationHandler(createMipsRelocationHandler<ELFT>(ctx)) {}
-
-  MipsTargetLayout<ELFT> &getTargetLayout() override { return *_targetLayout; }
+      : _ctx(ctx), _targetLayout(new MipsTargetLayout<ELFT>(ctx)),
+        _relocationHandler(
+            createMipsRelocationHandler<ELFT>(ctx, *_targetLayout)) {}
 
   std::unique_ptr<Reader> getObjReader() override {
     return llvm::make_unique<MipsELFObjectReader<ELFT>>(_ctx);
@@ -141,13 +118,8 @@ public:
     }
   }
 
-  void registerRelocationNames(Registry &registry) override {
-    MipsRelocationStringTable::registerTable(registry);
-  }
-
 private:
   MipsLinkingContext &_ctx;
-  std::unique_ptr<MipsRuntimeFile<ELFT>> _runtimeFile;
   std::unique_ptr<MipsTargetLayout<ELFT>> _targetLayout;
   std::unique_ptr<TargetRelocationHandler> _relocationHandler;
 };

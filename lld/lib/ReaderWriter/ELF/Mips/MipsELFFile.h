@@ -11,43 +11,9 @@
 
 #include "ELFReader.h"
 #include "MipsLinkingContext.h"
+#include "MipsReginfo.h"
 #include "MipsRelocationHandler.h"
-
-namespace llvm {
-namespace object {
-
-template <class ELFT>
-struct Elf_RegInfo;
-
-template <llvm::support::endianness TargetEndianness, std::size_t MaxAlign>
-struct Elf_RegInfo<ELFType<TargetEndianness, MaxAlign, false>> {
-  LLVM_ELF_IMPORT_TYPES(TargetEndianness, MaxAlign, false)
-  Elf_Word ri_gprmask;     // bit-mask of used general registers
-  Elf_Word ri_cprmask[4];  // bit-mask of used co-processor registers
-  Elf_Addr ri_gp_value;    // gp register value
-};
-
-template <llvm::support::endianness TargetEndianness, std::size_t MaxAlign>
-struct Elf_RegInfo<ELFType<TargetEndianness, MaxAlign, true>> {
-  LLVM_ELF_IMPORT_TYPES(TargetEndianness, MaxAlign, true)
-  Elf_Word ri_gprmask;     // bit-mask of used general registers
-  Elf_Word ri_pad;         // unused padding field
-  Elf_Word ri_cprmask[4];  // bit-mask of used co-processor registers
-  Elf_Addr ri_gp_value;    // gp register value
-};
-
-template <class ELFT> struct Elf_Mips_Options {
-  LLVM_ELF_IMPORT_TYPES(ELFT::TargetEndianness, ELFT::MaxAlignment,
-                        ELFT::Is64Bits)
-  uint8_t kind;     // Determines interpretation of variable part of descriptor
-  uint8_t size;     // Byte size of descriptor, including this header
-  Elf_Half section; // Section header index of section affected,
-                    // or 0 for global options
-  Elf_Word info;    // Kind-specific information
-};
-
-} // end namespace object.
-} // end namespace llvm.
+#include "llvm/ADT/STLExtras.h"
 
 namespace lld {
 namespace elf {
@@ -127,8 +93,7 @@ public:
 
   static ErrorOr<std::unique_ptr<MipsELFFile>>
   create(std::unique_ptr<MemoryBuffer> mb, MipsLinkingContext &ctx) {
-    return std::unique_ptr<MipsELFFile<ELFT>>(
-        new MipsELFFile<ELFT>(std::move(mb), ctx));
+    return llvm::make_unique<MipsELFFile<ELFT>>(std::move(mb), ctx);
   }
 
   bool isPIC() const {
@@ -136,11 +101,11 @@ public:
   }
 
   /// \brief gp register value stored in the .reginfo section.
-  int64_t getGP0() const { return _gp0 ? *_gp0 : 0; }
+  int64_t getGP0() const { return _gp0; }
 
   /// \brief .tdata section address plus fixed offset.
-  uint64_t getTPOffset() const { return *_tpOff; }
-  uint64_t getDTPOffset() const { return *_dtpOff; }
+  uint64_t getTPOffset() const { return _tpOff; }
+  uint64_t getDTPOffset() const { return _dtpOff; }
 
 protected:
   std::error_code doParse() override {
@@ -163,9 +128,9 @@ private:
   static const bool _isMips64EL =
       ELFT::Is64Bits && ELFT::TargetEndianness == llvm::support::little;
 
-  llvm::Optional<int64_t> _gp0;
-  llvm::Optional<uint64_t> _tpOff;
-  llvm::Optional<uint64_t> _dtpOff;
+  int64_t _gp0 = 0;
+  uint64_t _tpOff = 0;
+  uint64_t _dtpOff = 0;
 
   ErrorOr<ELFDefinedAtom<ELFT> *> handleDefinedSymbol(
       StringRef symName, StringRef sectionName, const Elf_Sym *sym,
@@ -277,8 +242,7 @@ private:
 
   Reference::Addend readAddend(const Elf_Rel &ri,
                                const ArrayRef<uint8_t> content) const {
-    const auto &rh =
-        this->_ctx.template getTargetHandler<ELFT>().getRelocationHandler();
+    const auto &rh = this->_ctx.getTargetHandler().getRelocationHandler();
     return static_cast<const MipsRelocationHandler &>(rh)
         .readAddend(getPrimaryType(ri), content.data() + ri.r_offset);
   }

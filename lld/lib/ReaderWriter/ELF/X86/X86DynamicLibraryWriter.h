@@ -18,8 +18,7 @@ namespace elf {
 template <class ELFT>
 class X86DynamicLibraryWriter : public DynamicLibraryWriter<ELFT> {
 public:
-  X86DynamicLibraryWriter(X86LinkingContext &ctx,
-                          X86TargetLayout<ELFT> &layout);
+  X86DynamicLibraryWriter(X86LinkingContext &ctx, TargetLayout<ELFT> &layout);
 
 protected:
   // Add any runtime files and their atoms to the output
@@ -42,14 +41,14 @@ private:
 
   std::unique_ptr<GOTFile> _gotFile;
   X86LinkingContext &_ctx;
-  X86TargetLayout<ELFT> &_x86Layout;
+  TargetLayout<ELFT> &_layout;
 };
 
 template <class ELFT>
 X86DynamicLibraryWriter<ELFT>::X86DynamicLibraryWriter(
-    X86LinkingContext &ctx, X86TargetLayout<ELFT> &layout)
+    X86LinkingContext &ctx, TargetLayout<ELFT> &layout)
     : DynamicLibraryWriter<ELFT>(ctx, layout), _gotFile(new GOTFile(ctx)),
-      _ctx(ctx), _x86Layout(layout) {}
+      _ctx(ctx), _layout(layout) {}
 
 template <class ELFT>
 bool X86DynamicLibraryWriter<ELFT>::createImplicitFiles(

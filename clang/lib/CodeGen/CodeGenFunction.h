@@ -2123,11 +2123,15 @@ public:
   void EmitAtomicStore(RValue rvalue, LValue lvalue, llvm::AtomicOrdering AO,
                        bool IsVolatile, bool isInit);
 
-  std::pair<RValue, RValue> EmitAtomicCompareExchange(
+  std::pair<RValue, llvm::Value *> EmitAtomicCompareExchange(
       LValue Obj, RValue Expected, RValue Desired, SourceLocation Loc,
       llvm::AtomicOrdering Success = llvm::SequentiallyConsistent,
       llvm::AtomicOrdering Failure = llvm::SequentiallyConsistent,
       bool IsWeak = false, AggValueSlot Slot = AggValueSlot::ignored());
+
+  void EmitAtomicUpdate(LValue LVal, llvm::AtomicOrdering AO,
+                        const std::function<RValue(RValue)> &UpdateOp,
+                        bool IsVolatile);
 
   /// EmitToMemory - Change a scalar value from its value
   /// representation to its in-memory representation.
@@ -2430,6 +2434,7 @@ public:
   llvm::Value *EmitX86BuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitPPCBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitR600BuiltinExpr(unsigned BuiltinID, const CallExpr *E);
+  llvm::Value *EmitSystemZBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
 
   llvm::Value *EmitObjCProtocolExpr(const ObjCProtocolExpr *E);
   llvm::Value *EmitObjCStringLiteral(const ObjCStringLiteral *E);

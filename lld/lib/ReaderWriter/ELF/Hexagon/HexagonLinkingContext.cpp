@@ -10,16 +10,28 @@
 #include "HexagonLinkingContext.h"
 #include "HexagonTargetHandler.h"
 
+using namespace lld;
 using namespace lld::elf;
 
 std::unique_ptr<lld::ELFLinkingContext>
 HexagonLinkingContext::create(llvm::Triple triple) {
   if (triple.getArch() == llvm::Triple::hexagon)
-    return std::unique_ptr<lld::ELFLinkingContext>(
-             new HexagonLinkingContext(triple));
+    return llvm::make_unique<HexagonLinkingContext>(triple);
   return nullptr;
 }
 
 HexagonLinkingContext::HexagonLinkingContext(llvm::Triple triple)
-    : ELFLinkingContext(triple, std::unique_ptr<TargetHandlerBase>(
+    : ELFLinkingContext(triple, std::unique_ptr<TargetHandler>(
                                     new HexagonTargetHandler(*this))) {}
+
+static const Registry::KindStrings kindStrings[] = {
+#define ELF_RELOC(name, value) LLD_KIND_STRING_ENTRY(name),
+#include "llvm/Support/ELFRelocs/Hexagon.def"
+#undef ELF_RELOC
+  LLD_KIND_STRING_END
+};
+
+void HexagonLinkingContext::registerRelocationNames(Registry &registry) {
+  registry.addKindTable(Reference::KindNamespace::ELF,
+                        Reference::KindArch::Hexagon, kindStrings);
+}

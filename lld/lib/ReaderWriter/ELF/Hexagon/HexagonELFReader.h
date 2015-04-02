@@ -28,22 +28,9 @@ struct HexagonELFFileCreateELFTraits {
   }
 };
 
-class HexagonELFObjectReader
-    : public ELFObjectReader<HexagonELFType, HexagonELFFileCreateELFTraits,
-                             HexagonLinkingContext> {
-public:
-  HexagonELFObjectReader(HexagonLinkingContext &ctx)
-      : ELFObjectReader<HexagonELFType, HexagonELFFileCreateELFTraits,
-                        HexagonLinkingContext>(ctx, llvm::ELF::EM_HEXAGON) {}
-};
-
-class HexagonELFDSOReader
-    : public ELFDSOReader<HexagonELFType, HexagonLinkingContext> {
-public:
-  HexagonELFDSOReader(HexagonLinkingContext &ctx)
-      : ELFDSOReader<HexagonELFType,
-                     HexagonLinkingContext>(ctx, llvm::ELF::EM_HEXAGON) {}
-};
+typedef ELFObjectReader<HexagonELFType, HexagonELFFileCreateELFTraits,
+                        HexagonLinkingContext> HexagonELFObjectReader;
+typedef ELFDSOReader<HexagonELFType, HexagonLinkingContext> HexagonELFDSOReader;
 
 } // namespace elf
 } // namespace lld

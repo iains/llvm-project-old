@@ -13,7 +13,6 @@
 #include "ARMELFFile.h"
 #include "ARMELFReader.h"
 #include "ARMRelocationHandler.h"
-#include "DefaultTargetHandler.h"
 #include "TargetLayout.h"
 #include "llvm/ADT/Optional.h"
 
@@ -27,10 +26,8 @@ public:
 
   uint64_t getGOTSymAddr() {
     if (!_gotSymAddr.hasValue()) {
-      auto gotAtomIter = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
-      _gotSymAddr = (gotAtomIter != this->absoluteAtoms().end())
-                        ? (*gotAtomIter)->_virtualAddr
-                        : 0;
+      AtomLayout *gotAtom = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
+      _gotSymAddr = gotAtom ? gotAtom->_virtualAddr : 0;
     }
     return *_gotSymAddr;
   }
@@ -60,35 +57,28 @@ private:
   llvm::Optional<uint64_t> _tpOff;
 };
 
-class ARMTargetHandler final : public DefaultTargetHandler<ARMELFType> {
+class ARMTargetHandler final : public TargetHandler {
 public:
   ARMTargetHandler(ARMLinkingContext &ctx);
 
-  ARMTargetLayout<ARMELFType> &getTargetLayout() override {
-    return *(_armTargetLayout.get());
-  }
-
-  void registerRelocationNames(Registry &registry) override;
-
   const ARMTargetRelocationHandler &getRelocationHandler() const override {
-    return *(_armRelocationHandler.get());
+    return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return std::unique_ptr<Reader>(new ARMELFObjectReader(_ctx));
+    return llvm::make_unique<ARMELFObjectReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return std::unique_ptr<Reader>(new ARMELFDSOReader(_ctx));
+    return llvm::make_unique<ARMELFDSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
-  static const Registry::KindStrings kindStrings[];
   ARMLinkingContext &_ctx;
-  std::unique_ptr<ARMTargetLayout<ARMELFType>> _armTargetLayout;
-  std::unique_ptr<ARMTargetRelocationHandler> _armRelocationHandler;
+  std::unique_ptr<ARMTargetLayout<ARMELFType>> _targetLayout;
+  std::unique_ptr<ARMTargetRelocationHandler> _relocationHandler;
 };
 
 } // end namespace elf

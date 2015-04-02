@@ -25,9 +25,11 @@ enum {
 class AArch64LinkingContext final : public ELFLinkingContext {
 public:
   static std::unique_ptr<ELFLinkingContext> create(llvm::Triple);
+  static const int machine = llvm::ELF::EM_AARCH64;
   AArch64LinkingContext(llvm::Triple);
 
   void addPasses(PassManager &) override;
+  void registerRelocationNames(Registry &r) override;
 
   uint64_t getBaseAddress() const override {
     if (_baseAddress == 0)

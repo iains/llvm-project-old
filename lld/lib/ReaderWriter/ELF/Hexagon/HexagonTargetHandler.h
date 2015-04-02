@@ -10,7 +10,6 @@
 #ifndef HEXAGON_TARGET_HANDLER_H
 #define HEXAGON_TARGET_HANDLER_H
 
-#include "DefaultTargetHandler.h"
 #include "HexagonELFReader.h"
 #include "HexagonExecutableAtoms.h"
 #include "HexagonRelocationHandler.h"
@@ -30,14 +29,13 @@ public:
   };
 
   HexagonTargetLayout(HexagonLinkingContext &hti)
-      : TargetLayout<HexagonELFType>(hti), _sdataSection(nullptr),
-        _gotSymAtom(nullptr), _cachedGotSymAtom(false) {
+      : TargetLayout<HexagonELFType>(hti), _sdataSection() {
     _sdataSection = new (_alloc) SDataSection<HexagonELFType>(hti);
   }
 
   /// \brief Return the section order for a input section
-  virtual Layout::SectionOrder getSectionOrder(
-      StringRef name, int32_t contentType, int32_t contentPermissions) {
+  Layout::SectionOrder getSectionOrder(
+      StringRef name, int32_t contentType, int32_t contentPermissions) override {
     if ((contentType == DefinedAtom::typeDataFast) ||
        (contentType == DefinedAtom::typeZeroFillFast))
       return ORDER_SDATA;
@@ -47,7 +45,7 @@ public:
   }
 
   /// \brief Return the appropriate input section name.
-  virtual StringRef getInputSectionName(const DefinedAtom *da) const {
+  StringRef getInputSectionName(const DefinedAtom *da) const override {
     switch (da->contentType()) {
     case DefinedAtom::typeDataFast:
     case DefinedAtom::typeZeroFillFast:
@@ -59,10 +57,10 @@ public:
   }
 
   /// \brief Gets or creates a section.
-  virtual AtomSection<HexagonELFType> *
+  AtomSection<HexagonELFType> *
   createSection(StringRef name, int32_t contentType,
                 DefinedAtom::ContentPermissions contentPermissions,
-                Layout::SectionOrder sectionOrder) {
+                Layout::SectionOrder sectionOrder) override {
     if ((contentType == DefinedAtom::typeDataFast) ||
        (contentType == DefinedAtom::typeZeroFillFast))
       return _sdataSection;
@@ -71,8 +69,8 @@ public:
   }
 
   /// \brief get the segment type for the section thats defined by the target
-  virtual Layout::SegmentType
-  getSegmentType(Section<HexagonELFType> *section) const {
+  Layout::SegmentType
+  getSegmentType(Section<HexagonELFType> *section) const override {
     if (section->order() == ORDER_SDATA)
       return PT_LOAD;
 
@@ -84,57 +82,61 @@ public:
   }
 
   uint64_t getGOTSymAddr() {
-    if (!_cachedGotSymAtom) {
-      auto gotAtomIter = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
-      _gotSymAtom = (*gotAtomIter);
-      _cachedGotSymAtom = true;
-    }
-    if (_gotSymAtom)
-      return _gotSymAtom->_virtualAddr;
+    if (!_gotSymAtom.hasValue())
+      _gotSymAtom = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
+    if (*_gotSymAtom)
+      return (*_gotSymAtom)->_virtualAddr;
     return 0;
   }
 
 private:
   llvm::BumpPtrAllocator _alloc;
-  SDataSection<HexagonELFType> *_sdataSection;
-  AtomLayout *_gotSymAtom;
-  bool _cachedGotSymAtom;
+  SDataSection<HexagonELFType> *_sdataSection = nullptr;
+  llvm::Optional<AtomLayout *> _gotSymAtom;
 };
 
 /// \brief TargetHandler for Hexagon
-class HexagonTargetHandler final :
-    public DefaultTargetHandler<HexagonELFType> {
+class HexagonTargetHandler final : public TargetHandler {
 public:
   HexagonTargetHandler(HexagonLinkingContext &targetInfo);
 
-  void registerRelocationNames(Registry &registry) override;
-
   const HexagonTargetRelocationHandler &getRelocationHandler() const override {
-    return *(_hexagonRelocationHandler.get());
-  }
-
-  HexagonTargetLayout<HexagonELFType> &getTargetLayout() override {
-    return *(_hexagonTargetLayout.get());
+    return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return std::unique_ptr<Reader>(new HexagonELFObjectReader(_ctx));
+    return llvm::make_unique<HexagonELFObjectReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return std::unique_ptr<Reader>(new HexagonELFDSOReader(_ctx));
+    return llvm::make_unique<HexagonELFDSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
-  llvm::BumpPtrAllocator _alloc;
-  static const Registry::KindStrings kindStrings[];
   HexagonLinkingContext &_ctx;
-  std::unique_ptr<HexagonRuntimeFile<HexagonELFType> > _hexagonRuntimeFile;
-  std::unique_ptr<HexagonTargetLayout<HexagonELFType>> _hexagonTargetLayout;
-  std::unique_ptr<HexagonTargetRelocationHandler> _hexagonRelocationHandler;
+  std::unique_ptr<HexagonRuntimeFile<HexagonELFType>> _runtimeFile;
+  std::unique_ptr<HexagonTargetLayout<HexagonELFType>> _targetLayout;
+  std::unique_ptr<HexagonTargetRelocationHandler> _relocationHandler;
 };
+
+template <class ELFT>
+void finalizeHexagonRuntimeAtomValues(HexagonTargetLayout<ELFT> &layout) {
+  AtomLayout *gotAtom = layout.findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
+  OutputSection<ELFT> *gotpltSection = layout.findOutputSection(".got.plt");
+  if (gotpltSection)
+    gotAtom->_virtualAddr = gotpltSection->virtualAddr();
+  else
+    gotAtom->_virtualAddr = 0;
+  AtomLayout *dynamicAtom = layout.findAbsoluteAtom("_DYNAMIC");
+  OutputSection<ELFT> *dynamicSection = layout.findOutputSection(".dynamic");
+  if (dynamicSection)
+    dynamicAtom->_virtualAddr = dynamicSection->virtualAddr();
+  else
+    dynamicAtom->_virtualAddr = 0;
+}
+
 } // end namespace elf
 } // end namespace lld
 

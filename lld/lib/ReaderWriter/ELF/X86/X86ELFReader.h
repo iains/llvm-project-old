@@ -11,11 +11,11 @@
 #define LLD_READER_WRITER_X86_X86_ELF_READER_H
 
 #include "ELFReader.h"
-#include "X86ELFFile.h"
 
 namespace lld {
 namespace elf {
 
+class X86LinkingContext;
 typedef llvm::object::ELFType<llvm::support::little, 2, false> X86ELFType;
 
 struct X86ELFFileCreateELFTraits {
@@ -24,26 +24,13 @@ struct X86ELFFileCreateELFTraits {
   template <class ELFT>
   static result_type create(std::unique_ptr<llvm::MemoryBuffer> mb,
                             X86LinkingContext &ctx) {
-    return lld::elf::X86ELFFile<ELFT>::create(std::move(mb), ctx);
+    return lld::elf::ELFFile<ELFT>::create(std::move(mb), ctx);
   }
 };
 
-class X86ELFObjectReader
-    : public ELFObjectReader<X86ELFType, X86ELFFileCreateELFTraits,
-                             X86LinkingContext> {
-public:
-  X86ELFObjectReader(X86LinkingContext &ctx)
-      : ELFObjectReader<X86ELFType, X86ELFFileCreateELFTraits,
-                        X86LinkingContext>(ctx, llvm::ELF::EM_386) {}
-};
-
-class X86ELFDSOReader
-    : public ELFDSOReader<X86ELFType, X86LinkingContext> {
-public:
-  X86ELFDSOReader(X86LinkingContext &ctx)
-      : ELFDSOReader<X86ELFType,
-                     X86LinkingContext>(ctx, llvm::ELF::EM_386) {}
-};
+typedef ELFObjectReader<X86ELFType, X86ELFFileCreateELFTraits,
+                        X86LinkingContext> X86ELFObjectReader;
+typedef ELFDSOReader<X86ELFType, X86LinkingContext> X86ELFDSOReader;
 
 } // namespace elf
 } // namespace lld
