@@ -30,7 +30,7 @@ void X86_64LinkingContext::addPasses(PassManager &pm) {
 }
 
 std::unique_ptr<ELFLinkingContext>
-X86_64LinkingContext::create(llvm::Triple triple) {
+elf::createX86_64LinkingContext(llvm::Triple triple) {
   if (triple.getArch() == llvm::Triple::x86_64)
     return llvm::make_unique<X86_64LinkingContext>(triple);
   return nullptr;

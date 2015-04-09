@@ -24,37 +24,20 @@ public:
 
 protected:
   // Add any runtime files and their atoms to the output
-  virtual bool createImplicitFiles(std::vector<std::unique_ptr<File>> &);
-
-  virtual void finalizeDefaultAtomValues() {
-    return DynamicLibraryWriter::finalizeDefaultAtomValues();
-  }
-
-  virtual void addDefaultAtoms() {
-    return DynamicLibraryWriter::addDefaultAtoms();
-  }
-
-private:
-  class GOTFile : public SimpleFile {
-  public:
-    GOTFile(const ELFLinkingContext &eti) : SimpleFile("GOTFile") {}
-    llvm::BumpPtrAllocator _alloc;
-  };
-
-  std::unique_ptr<GOTFile> _gotFile;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 };
 
 X86_64DynamicLibraryWriter::X86_64DynamicLibraryWriter(
     X86_64LinkingContext &ctx, X86_64TargetLayout &layout)
-    : DynamicLibraryWriter(ctx, layout), _gotFile(new GOTFile(ctx)) {}
+    : DynamicLibraryWriter(ctx, layout) {}
 
-bool X86_64DynamicLibraryWriter::createImplicitFiles(
+void X86_64DynamicLibraryWriter::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   DynamicLibraryWriter::createImplicitFiles(result);
-  _gotFile->addAtom(*new (_gotFile->_alloc) GlobalOffsetTableAtom(*_gotFile));
-  _gotFile->addAtom(*new (_gotFile->_alloc) DynamicAtom(*_gotFile));
-  result.push_back(std::move(_gotFile));
-  return true;
+  auto gotFile = llvm::make_unique<SimpleFile>("GOTFile");
+  gotFile->addAtom(*new (gotFile->allocator()) GlobalOffsetTableAtom(*gotFile));
+  gotFile->addAtom(*new (gotFile->allocator()) DynamicAtom(*gotFile));
+  result.push_back(std::move(gotFile));
 }
 
 } // namespace elf

@@ -14,7 +14,7 @@ using namespace lld;
 using namespace elf;
 
 std::unique_ptr<ELFLinkingContext>
-ExampleLinkingContext::create(llvm::Triple triple) {
+elf::createExampleLinkingContext(llvm::Triple triple) {
   if (triple.getVendorName() == "example")
     return llvm::make_unique<ExampleLinkingContext>(triple);
   return nullptr;

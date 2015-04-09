@@ -97,7 +97,7 @@ public:
 
   File *find(StringRef sym, bool dataSymbolOnly) override {
     if (sym.equals("___dso_handle") || sym.equals(_machHeaderSymbolName)) {
-      _definedAtoms._atoms.push_back(new (allocator()) MachODefinedAtom(
+      _definedAtoms.push_back(new (allocator()) MachODefinedAtom(
           *this, sym, DefinedAtom::scopeLinkageUnit,
           DefinedAtom::typeMachHeader, DefinedAtom::mergeNo, false, false,
           ArrayRef<uint8_t>(), DefinedAtom::Alignment(4096)));
@@ -106,27 +106,24 @@ public:
     return nullptr;
   }
 
-  const atom_collection<DefinedAtom> &defined() const override {
+  const AtomVector<DefinedAtom> &defined() const override {
     return _definedAtoms;
   }
-  const atom_collection<UndefinedAtom> &undefined() const override {
-    return _undefinedAtoms;
+  const AtomVector<UndefinedAtom> &undefined() const override {
+    return _noUndefinedAtoms;
   }
 
-  const atom_collection<SharedLibraryAtom> &sharedLibrary() const override {
-    return _sharedLibraryAtoms;
+  const AtomVector<SharedLibraryAtom> &sharedLibrary() const override {
+    return _noSharedLibraryAtoms;
   }
 
-  const atom_collection<AbsoluteAtom> &absolute() const override {
-    return _absoluteAtoms;
+  const AtomVector<AbsoluteAtom> &absolute() const override {
+    return _noAbsoluteAtoms;
   }
 
 
 private:
-  mutable atom_collection_vector<DefinedAtom> _definedAtoms;
-  atom_collection_vector<UndefinedAtom> _undefinedAtoms;
-  atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
-  atom_collection_vector<AbsoluteAtom> _absoluteAtoms;
+  mutable AtomVector<DefinedAtom> _definedAtoms;
   StringRef _machHeaderSymbolName;
 };
 

@@ -9,7 +9,6 @@
 #ifndef LLD_READER_WRITER_ELF_OUTPUT_WRITER_H
 #define LLD_READER_WRITER_ELF_OUTPUT_WRITER_H
 
-#include "DefaultLayout.h"
 #include "ELFFile.h"
 #include "TargetLayout.h"
 #include "lld/Core/Instrumentation.h"
@@ -38,7 +37,7 @@ public:
   SymbolFile(ELFLinkingContext &ctx)
       : RuntimeFile<ELFT>(ctx, "Dynamic absolute symbols") {}
 
-  Atom *addUndefinedAtom(StringRef) override {
+  void addUndefinedAtom(StringRef) override {
     llvm_unreachable("Cannot add undefined atoms to resolve undefined symbols");
   }
 
@@ -130,11 +129,8 @@ protected:
   // section header table, string table etc
   virtual void assignSectionsWithNoSegments();
 
-  // Add default atoms that need to be present in the output file
-  virtual void addDefaultAtoms();
-
   // Add any runtime files and their atoms to the output
-  bool createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 
   // Finalize the default atom values
   virtual void finalizeDefaultAtomValues();
@@ -195,7 +191,6 @@ protected:
   unique_bump_ptr<HashSection<ELFT>> _hashTable;
   llvm::StringSet<> _soNeeded;
   /// @}
-  std::unique_ptr<RuntimeFile<ELFT>> _scriptFile;
 
 private:
   static StringRef maybeGetSOName(Node *node);
@@ -207,8 +202,7 @@ private:
 template <class ELFT>
 OutputELFWriter<ELFT>::OutputELFWriter(ELFLinkingContext &ctx,
                                        TargetLayout<ELFT> &layout)
-    : _ctx(ctx), _targetHandler(ctx.getTargetHandler()), _layout(layout),
-      _scriptFile(new RuntimeFile<ELFT>(ctx, "Linker script runtime")) {}
+    : _ctx(ctx), _targetHandler(ctx.getTargetHandler()), _layout(layout) {}
 
 template <class ELFT>
 void OutputELFWriter<ELFT>::buildChunks(const File &file) {
@@ -281,7 +275,7 @@ void OutputELFWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
     auto rpath = new (_alloc) std::string(join(rpathList.begin(),
       rpathList.end(), ":"));
     Elf_Dyn dyn;
-    dyn.d_tag = DT_RPATH;
+    dyn.d_tag = _ctx.getEnableNewDtags() ? DT_RUNPATH : DT_RPATH;
     dyn.d_un.d_val = _dynamicStringTable->addString(*rpath);
     _dynamicTable->addEntry(dyn);
   }
@@ -320,9 +314,11 @@ void OutputELFWriter<ELFT>::buildAtomToAddressMap(const File &file) {
     _atomToAddressMap[atom->_atom] = atom->_virtualAddr;
 
   // Set the total number of atoms in the symbol table, so that appropriate
-  // resizing of the string table can be done
-  _symtab->setNumEntries(totalDefinedAtoms + totalAbsAtoms +
-                         totalUndefinedAtoms);
+  // resizing of the string table can be done.
+  // There's no such thing as symbol table if we're stripping all the symbols
+  if (!_ctx.stripSymbols())
+    _symtab->setNumEntries(totalDefinedAtoms + totalAbsAtoms +
+                           totalUndefinedAtoms);
 }
 
 template<class ELFT>
@@ -350,31 +346,26 @@ void OutputELFWriter<ELFT>::assignSectionsWithNoSegments() {
   _layout.assignFileOffsetsForMiscSections();
   for (auto sec : _layout.sections())
     if (auto section = dyn_cast<Section<ELFT>>(sec))
-      if (!DefaultLayout<ELFT>::hasOutputSegment(section))
+      if (!TargetLayout<ELFT>::hasOutputSegment(section))
         _shdrtab->updateSection(section);
 }
 
-template <class ELFT> void OutputELFWriter<ELFT>::addDefaultAtoms() {
-  const llvm::StringSet<> &symbols =
-      _ctx.linkerScriptSema().getScriptDefinedSymbols();
-  for (auto &sym : symbols)
-    _scriptFile->addAbsoluteAtom(sym.getKey());
-}
-
 template <class ELFT>
-bool OutputELFWriter<ELFT>::createImplicitFiles(
+void OutputELFWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   // Add the virtual archive to resolve undefined symbols.
   // The file will be added later in the linking context.
   auto callback = [this](StringRef sym, RuntimeFile<ELFT> &file) {
     processUndefinedSymbol(sym, file);
   };
-  auto &ctx = const_cast<ELFLinkingContext &>(_ctx);
-  ctx.setUndefinesResolver(
-      llvm::make_unique<DynamicSymbolFile<ELFT>>(ctx, std::move(callback)));
+  _ctx.setUndefinesResolver(
+      llvm::make_unique<DynamicSymbolFile<ELFT>>(_ctx, std::move(callback)));
   // Add script defined symbols
-  result.push_back(std::move(_scriptFile));
-  return true;
+  auto file =
+      llvm::make_unique<RuntimeFile<ELFT>>(_ctx, "Linker script runtime");
+  for (auto &sym : this->_ctx.linkerScriptSema().getScriptDefinedSymbols())
+    file->addAbsoluteAtom(sym.getKey());
+  result.push_back(std::move(file));
 }
 
 template <class ELFT>
@@ -396,18 +387,23 @@ template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
   _layout.setHeader(_elfHeader.get());
   _layout.setProgramHeader(_programHeader.get());
 
-  _symtab = std::move(this->createSymbolTable());
-  _strtab.reset(new (_alloc) StringTable<ELFT>(
-      _ctx, ".strtab", DefaultLayout<ELFT>::ORDER_STRING_TABLE));
+  // Don't create .symtab and .strtab sections if we're going to
+  // strip all the symbols.
+  if (!_ctx.stripSymbols()) {
+    _symtab = std::move(this->createSymbolTable());
+    _strtab.reset(new (_alloc) StringTable<ELFT>(
+        _ctx, ".strtab", TargetLayout<ELFT>::ORDER_STRING_TABLE));
+    _layout.addSection(_symtab.get());
+    _layout.addSection(_strtab.get());
+    _symtab->setStringSection(_strtab.get());
+  }
+
   _shstrtab.reset(new (_alloc) StringTable<ELFT>(
-      _ctx, ".shstrtab", DefaultLayout<ELFT>::ORDER_SECTION_STRINGS));
+      _ctx, ".shstrtab", TargetLayout<ELFT>::ORDER_SECTION_STRINGS));
   _shdrtab.reset(new (_alloc) SectionHeader<ELFT>(
-      _ctx, DefaultLayout<ELFT>::ORDER_SECTION_HEADERS));
-  _layout.addSection(_symtab.get());
-  _layout.addSection(_strtab.get());
+      _ctx, TargetLayout<ELFT>::ORDER_SECTION_HEADERS));
   _layout.addSection(_shstrtab.get());
   _shdrtab->setStringSection(_shstrtab.get());
-  _symtab->setStringSection(_strtab.get());
   _layout.addSection(_shdrtab.get());
 
   for (auto sec : _layout.sections()) {
@@ -416,8 +412,7 @@ template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
     if (!section || section->outputSectionName() != ".eh_frame")
       continue;
     _ehFrameHeader.reset(new (_alloc) EHFrameHeader<ELFT>(
-        _ctx, ".eh_frame_hdr", _layout,
-        DefaultLayout<ELFT>::ORDER_EH_FRAMEHDR));
+        _ctx, ".eh_frame_hdr", _layout, TargetLayout<ELFT>::ORDER_EH_FRAMEHDR));
     _layout.addSection(_ehFrameHeader.get());
     break;
   }
@@ -425,10 +420,10 @@ template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
   if (_ctx.isDynamic()) {
     _dynamicTable = std::move(createDynamicTable());
     _dynamicStringTable.reset(new (_alloc) StringTable<ELFT>(
-        _ctx, ".dynstr", DefaultLayout<ELFT>::ORDER_DYNAMIC_STRINGS, true));
+        _ctx, ".dynstr", TargetLayout<ELFT>::ORDER_DYNAMIC_STRINGS, true));
     _dynamicSymbolTable = std::move(createDynamicSymbolTable());
     _hashTable.reset(new (_alloc) HashSection<ELFT>(
-        _ctx, ".hash", DefaultLayout<ELFT>::ORDER_HASH));
+        _ctx, ".hash", TargetLayout<ELFT>::ORDER_HASH));
     // Set the hash table in the dynamic symbol table so that the entries in the
     // hash table can be created
     _dynamicSymbolTable->setHashTable(_hashTable.get());
@@ -453,7 +448,7 @@ template <class ELFT>
 unique_bump_ptr<SymbolTable<ELFT>>
     OutputELFWriter<ELFT>::createSymbolTable() {
   return unique_bump_ptr<SymbolTable<ELFT>>(new (_alloc) SymbolTable<ELFT>(
-      this->_ctx, ".symtab", DefaultLayout<ELFT>::ORDER_SYMBOL_TABLE));
+      this->_ctx, ".symtab", TargetLayout<ELFT>::ORDER_SYMBOL_TABLE));
 }
 
 /// \brief create dynamic table
@@ -461,7 +456,7 @@ template <class ELFT>
 unique_bump_ptr<DynamicTable<ELFT>>
     OutputELFWriter<ELFT>::createDynamicTable() {
   return unique_bump_ptr<DynamicTable<ELFT>>(new (_alloc) DynamicTable<ELFT>(
-      this->_ctx, _layout, ".dynamic", DefaultLayout<ELFT>::ORDER_DYNAMIC));
+      this->_ctx, _layout, ".dynamic", TargetLayout<ELFT>::ORDER_DYNAMIC));
 }
 
 /// \brief create dynamic symbol table
@@ -471,7 +466,7 @@ unique_bump_ptr<DynamicSymbolTable<ELFT>>
   return unique_bump_ptr<DynamicSymbolTable<ELFT>>(
       new (_alloc)
           DynamicSymbolTable<ELFT>(this->_ctx, _layout, ".dynsym",
-                                   DefaultLayout<ELFT>::ORDER_DYNAMIC_SYMBOLS));
+                                   TargetLayout<ELFT>::ORDER_DYNAMIC_SYMBOLS));
 }
 
 template <class ELFT>

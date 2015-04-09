@@ -24,6 +24,10 @@ public:
   static ErrorOr<std::unique_ptr<DynamicFile>>
   create(std::unique_ptr<llvm::MemoryBuffer> mb, ELFLinkingContext &ctx);
 
+  DynamicFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx)
+      : SharedLibraryFile(mb->getBufferIdentifier()), _mb(std::move(mb)),
+        _ctx(ctx), _useShlibUndefines(ctx.useShlibUndefines()) {}
+
   const SharedLibraryAtom *exports(StringRef name,
                                    bool dataSymbolOnly) const override {
     assert(!dataSymbolOnly && "Invalid option for ELF exports!");
@@ -40,6 +44,10 @@ public:
   }
 
   StringRef getDSOName() const override { return _soname; }
+
+  static bool canParse(file_magic magic) {
+    return magic == file_magic::elf_shared_object;
+  }
 
 protected:
   std::error_code doParse() override {
@@ -79,7 +87,7 @@ protected:
         // Create an undefined atom.
         if (!name->empty()) {
           auto *newAtom = new (_alloc) ELFUndefinedAtom<ELFT>(*this, *name, &*i);
-          _undefinedAtoms._atoms.push_back(newAtom);
+          _undefinedAtoms.push_back(newAtom);
         }
         continue;
       }
@@ -89,10 +97,6 @@ protected:
   }
 
 private:
-  DynamicFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx)
-      : SharedLibraryFile(mb->getBufferIdentifier()), _mb(std::move(mb)),
-        _ctx(ctx), _useShlibUndefines(ctx.useShlibUndefines()) {}
-
   mutable llvm::BumpPtrAllocator _alloc;
   std::unique_ptr<llvm::object::ELFFile<ELFT>> _objFile;
   /// \brief DT_SONAME

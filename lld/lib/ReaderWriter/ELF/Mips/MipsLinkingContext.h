@@ -10,7 +10,9 @@
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_LINKING_CONTEXT_H
 
 #include "MipsELFFlagsMerger.h"
+#include "MipsReginfo.h"
 #include "lld/ReaderWriter/ELFLinkingContext.h"
+#include <mutex>
 
 namespace lld {
 namespace elf {
@@ -42,12 +44,15 @@ typedef llvm::object::ELFType<llvm::support::big, 2, true> Mips64BEType;
 
 class MipsLinkingContext final : public ELFLinkingContext {
 public:
-  static std::unique_ptr<ELFLinkingContext> create(llvm::Triple);
   static const int machine = llvm::ELF::EM_MIPS;
   MipsLinkingContext(llvm::Triple triple);
 
+  std::error_code mergeHeaderFlags(uint8_t fileClass, uint64_t flags) override;
+  void mergeReginfoMask(const MipsReginfo &info);
+
   uint32_t getMergedELFFlags() const;
-  MipsELFFlagsMerger &getELFFlagsMerger();
+  const llvm::Optional<MipsReginfo> &getMergedReginfoMask() const;
+
   void registerRelocationNames(Registry &r) override;
 
   // ELFLinkingContext
@@ -63,6 +68,8 @@ public:
 
 private:
   MipsELFFlagsMerger _flagsMerger;
+  std::mutex _maskMutex;
+  llvm::Optional<MipsReginfo> _reginfoMask;
 };
 
 } // elf

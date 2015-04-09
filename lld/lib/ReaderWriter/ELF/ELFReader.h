@@ -18,26 +18,28 @@
 namespace lld {
 namespace elf {
 
-template <typename ELFT, typename ELFTraitsT, typename ContextT>
-class ELFObjectReader : public Reader {
+template <typename ELFT, typename ContextT, template <typename> class FileT>
+class ELFReader : public Reader {
 public:
   typedef llvm::object::Elf_Ehdr_Impl<ELFT> Elf_Ehdr;
 
-  ELFObjectReader(ContextT &ctx) : _ctx(ctx) {}
+  ELFReader(ContextT &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, StringRef,
-                const MemoryBuffer &buf) const override {
-    return (magic == llvm::sys::fs::file_magic::elf_relocatable &&
-            elfHeader(buf)->e_machine == ContextT::machine);
+  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+    return (FileT<ELFT>::canParse(magic) &&
+            elfHeader(mb)->e_machine == ContextT::machine);
   }
 
   std::error_code
   loadFile(std::unique_ptr<MemoryBuffer> mb, const class Registry &,
            std::vector<std::unique_ptr<File>> &result) const override {
+    const Elf_Ehdr *hdr = elfHeader(*mb);
+    if (auto ec = _ctx.mergeHeaderFlags(hdr->getFileClass(), hdr->e_flags))
+      return ec;
+
     std::size_t maxAlignment =
         1ULL << llvm::countTrailingZeros(uintptr_t(mb->getBufferStart()));
-    auto f =
-        createELF<ELFTraitsT>(llvm::object::getElfArchType(mb->getBuffer()),
+    auto f = createELF<FileT>(llvm::object::getElfArchType(mb->getBuffer()),
                               maxAlignment, std::move(mb), _ctx);
     if (std::error_code ec = f.getError())
       return ec;
@@ -45,60 +47,11 @@ public:
     return std::error_code();
   }
 
-  const Elf_Ehdr *elfHeader(const MemoryBuffer &buf) const {
-    const uint8_t *data =
-        reinterpret_cast<const uint8_t *>(buf.getBuffer().data());
-    return (reinterpret_cast<const Elf_Ehdr *>(data));
+private:
+  static const Elf_Ehdr *elfHeader(const MemoryBuffer &buf) {
+    return reinterpret_cast<const Elf_Ehdr *>(buf.getBuffer().data());
   }
 
-protected:
-  ContextT &_ctx;
-};
-
-struct DynamicFileCreateELFTraits {
-  typedef llvm::ErrorOr<std::unique_ptr<lld::SharedLibraryFile>> result_type;
-
-  template<typename ELFT, typename ContextT>
-  static result_type create(std::unique_ptr<llvm::MemoryBuffer> mb,
-                            ContextT &ctx) {
-    return DynamicFile<ELFT>::create(std::move(mb), ctx);
-  }
-};
-
-template <typename ELFT, typename ContextT>
-class ELFDSOReader : public Reader {
-public:
-  typedef llvm::object::Elf_Ehdr_Impl<ELFT> Elf_Ehdr;
-
-  ELFDSOReader(ContextT &ctx) : _ctx(ctx) {}
-
-  bool canParse(file_magic magic, StringRef,
-                const MemoryBuffer &buf) const override {
-    return (magic == llvm::sys::fs::file_magic::elf_shared_object &&
-            elfHeader(buf)->e_machine == ContextT::machine);
-  }
-
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const class Registry &,
-           std::vector<std::unique_ptr<File>> &result) const override {
-    std::size_t maxAlignment =
-        1ULL << llvm::countTrailingZeros(uintptr_t(mb->getBufferStart()));
-    auto f = createELF<DynamicFileCreateELFTraits>(
-        llvm::object::getElfArchType(mb->getBuffer()),
-        maxAlignment, std::move(mb), _ctx);
-    if (std::error_code ec = f.getError())
-      return ec;
-    result.push_back(std::move(*f));
-    return std::error_code();
-  }
-
-  const Elf_Ehdr *elfHeader(const MemoryBuffer &buf) const {
-    const uint8_t *data =
-        reinterpret_cast<const uint8_t *>(buf.getBuffer().data());
-    return (reinterpret_cast<const Elf_Ehdr *>(data));
-  }
-
-protected:
   ContextT &_ctx;
 };
 

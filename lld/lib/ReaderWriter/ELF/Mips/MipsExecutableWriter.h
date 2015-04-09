@@ -28,9 +28,10 @@ protected:
   void buildDynamicSymbolTable(const File &file) override;
 
   // Add any runtime files and their atoms to the output
-  bool createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 
   void finalizeDefaultAtomValues() override;
+  void createDefaultSections() override;
   std::error_code setELFHeader() override;
 
   unique_bump_ptr<SymbolTable<ELFT>> createSymbolTable() override;
@@ -40,6 +41,7 @@ protected:
 private:
   MipsELFWriter<ELFT> _writeHelper;
   MipsTargetLayout<ELFT> &_targetLayout;
+  unique_bump_ptr<Section<ELFT>> _reginfo;
 };
 
 template <class ELFT>
@@ -74,7 +76,7 @@ void MipsExecutableWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
   for (auto sec : this->_layout.sections())
     if (auto section = dyn_cast<AtomSection<ELFT>>(sec))
       for (const auto &atom : section->atoms()) {
-        if (_writeHelper.hasGlobalGOTEntry(atom->_atom)) {
+        if (_targetLayout.getGOTSection().hasGlobalGOTEntry(atom->_atom)) {
           this->_dynamicSymbolTable->addSymbol(atom->_atom, section->ordinal(),
                                                atom->_virtualAddr, atom);
           continue;
@@ -98,7 +100,7 @@ void MipsExecutableWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
     // FIXME (simon): Consider to move this check to the
     // MipsELFUndefinedAtom class method. That allows to
     // handle more complex coditions in the future.
-    if (_writeHelper.hasGlobalGOTEntry(a))
+    if (_targetLayout.getGOTSection().hasGlobalGOTEntry(a))
       this->_dynamicSymbolTable->addSymbol(a, ELF::SHN_UNDEF);
 
   // Skip our immediate parent class method
@@ -108,11 +110,10 @@ void MipsExecutableWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
 }
 
 template <class ELFT>
-bool MipsExecutableWriter<ELFT>::createImplicitFiles(
+void MipsExecutableWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   ExecutableWriter<ELFT>::createImplicitFiles(result);
   result.push_back(std::move(_writeHelper.createRuntimeFile()));
-  return true;
 }
 
 template <class ELFT>
@@ -120,6 +121,21 @@ void MipsExecutableWriter<ELFT>::finalizeDefaultAtomValues() {
   // Finalize the atom values that are part of the parent.
   ExecutableWriter<ELFT>::finalizeDefaultAtomValues();
   _writeHelper.finalizeMipsRuntimeAtomValues();
+}
+
+template <class ELFT> void MipsExecutableWriter<ELFT>::createDefaultSections() {
+  ExecutableWriter<ELFT>::createDefaultSections();
+  const auto &ctx = static_cast<const MipsLinkingContext &>(this->_ctx);
+  const auto &mask = ctx.getMergedReginfoMask();
+  if (!mask.hasValue())
+    return;
+  if (ELFT::Is64Bits)
+    _reginfo = unique_bump_ptr<Section<ELFT>>(
+        new (this->_alloc) MipsOptionsSection<ELFT>(ctx, _targetLayout, *mask));
+  else
+    _reginfo = unique_bump_ptr<Section<ELFT>>(
+        new (this->_alloc) MipsReginfoSection<ELFT>(ctx, _targetLayout, *mask));
+  this->_layout.addSection(_reginfo.get());
 }
 
 template <class ELFT>

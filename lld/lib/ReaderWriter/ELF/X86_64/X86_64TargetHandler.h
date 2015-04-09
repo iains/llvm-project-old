@@ -10,8 +10,8 @@
 #ifndef LLD_READER_WRITER_ELF_X86_64_X86_64_TARGET_HANDLER_H
 #define LLD_READER_WRITER_ELF_X86_64_X86_64_TARGET_HANDLER_H
 
+#include "ELFReader.h"
 #include "TargetLayout.h"
-#include "X86_64ELFReader.h"
 #include "X86_64LinkingContext.h"
 #include "X86_64RelocationHandler.h"
 #include "lld/Core/Simple.h"
@@ -58,19 +58,23 @@ private:
 };
 
 class X86_64TargetHandler : public TargetHandler {
+  typedef llvm::object::ELFType<llvm::support::little, 2, true> ELFTy;
+  typedef ELFReader<ELFTy, X86_64LinkingContext, ELFFile> ObjReader;
+  typedef ELFReader<ELFTy, X86_64LinkingContext, DynamicFile> DSOReader;
+
 public:
   X86_64TargetHandler(X86_64LinkingContext &ctx);
 
-  const X86_64TargetRelocationHandler &getRelocationHandler() const override {
+  const TargetRelocationHandler &getRelocationHandler() const override {
     return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<X86_64ELFObjectReader>(_ctx);
+    return llvm::make_unique<ObjReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<X86_64ELFDSOReader>(_ctx);
+    return llvm::make_unique<DSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;

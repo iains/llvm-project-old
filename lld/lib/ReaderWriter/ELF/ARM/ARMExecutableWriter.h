@@ -29,13 +29,9 @@ public:
 
 protected:
   // Add any runtime files and their atoms to the output
-  bool createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 
   void finalizeDefaultAtomValues() override;
-
-  void addDefaultAtoms() override {
-    ExecutableWriter<ELFT>::addDefaultAtoms();
-  }
 
   /// \brief Create symbol table.
   unique_bump_ptr<SymbolTable<ELFT>> createSymbolTable() override;
@@ -57,10 +53,9 @@ ARMExecutableWriter<ELFT>::ARMExecutableWriter(ARMLinkingContext &ctx,
     : ExecutableWriter<ELFT>(ctx, layout), _ctx(ctx), _armLayout(layout) {}
 
 template <class ELFT>
-bool ARMExecutableWriter<ELFT>::createImplicitFiles(
+void ARMExecutableWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   ExecutableWriter<ELFT>::createImplicitFiles(result);
-  return true;
 }
 
 template <class ELFT>

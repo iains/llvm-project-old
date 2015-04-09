@@ -22,31 +22,18 @@ public:
 
 protected:
   // Add any runtime files and their atoms to the output
-  virtual bool createImplicitFiles(std::vector<std::unique_ptr<File>> &);
-
-  virtual void finalizeDefaultAtomValues() {
-    return ExecutableWriter<ELFT>::finalizeDefaultAtomValues();
-  }
-
-  virtual void addDefaultAtoms() {
-    return ExecutableWriter<ELFT>::addDefaultAtoms();
-  }
-
-private:
-  X86LinkingContext &_ctx;
-  TargetLayout<ELFT> &_layout;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
 };
 
 template <class ELFT>
 X86ExecutableWriter<ELFT>::X86ExecutableWriter(X86LinkingContext &ctx,
                                                TargetLayout<ELFT> &layout)
-    : ExecutableWriter<ELFT>(ctx, layout), _ctx(ctx), _layout(layout) {}
+    : ExecutableWriter<ELFT>(ctx, layout) {}
 
 template <class ELFT>
-bool X86ExecutableWriter<ELFT>::createImplicitFiles(
+void X86ExecutableWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
   ExecutableWriter<ELFT>::createImplicitFiles(result);
-  return true;
 }
 
 } // namespace elf

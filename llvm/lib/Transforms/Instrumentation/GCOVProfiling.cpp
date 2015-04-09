@@ -487,20 +487,13 @@ void GCOVProfiler::emitProfileNotes() {
     // this pass over the original .o's as they're produced, or run it after
     // LTO, we'll generate the same .gcno files.
 
-    DICompileUnit CU(CU_Nodes->getOperand(i));
+    DICompileUnit CU = cast<MDCompileUnit>(CU_Nodes->getOperand(i));
     std::error_code EC;
     raw_fd_ostream out(mangleName(CU, "gcno"), EC, sys::fs::F_None);
     std::string EdgeDestinations;
 
-    DIArray SPs = CU.getSubprograms();
     unsigned FunctionIdent = 0;
-    for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i) {
-      DISubprogram SP(SPs.getElement(i));
-      assert((!SP || SP.isSubprogram()) &&
-        "A MDNode in subprograms of a CU should be null or a DISubprogram.");
-      if (!SP)
-        continue;
-
+    for (DISubprogram SP : CU->getSubprograms()) {
       Function *F = SP.getFunction();
       if (!F) continue;
       if (!functionHasLines(F)) continue;
@@ -577,15 +570,9 @@ bool GCOVProfiler::emitProfileArcs() {
   bool Result = false;
   bool InsertIndCounterIncrCode = false;
   for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
-    DICompileUnit CU(CU_Nodes->getOperand(i));
-    DIArray SPs = CU.getSubprograms();
+    DICompileUnit CU = cast<MDCompileUnit>(CU_Nodes->getOperand(i));
     SmallVector<std::pair<GlobalVariable *, MDNode *>, 8> CountersBySP;
-    for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i) {
-      DISubprogram SP(SPs.getElement(i));
-      assert((!SP || SP.isSubprogram()) &&
-        "A MDNode in subprograms of a CU should be null or a DISubprogram.");
-      if (!SP)
-        continue;
+    for (DISubprogram SP : CU->getSubprograms()) {
       Function *F = SP.getFunction();
       if (!F) continue;
       if (!functionHasLines(F)) continue;
@@ -631,7 +618,8 @@ bool GCOVProfiler::emitProfileArcs() {
             SmallVector<Value *, 2> Idx;
             Idx.push_back(Builder.getInt64(0));
             Idx.push_back(Sel);
-            Value *Counter = Builder.CreateInBoundsGEP(Counters, Idx);
+            Value *Counter = Builder.CreateInBoundsGEP(Counters->getValueType(),
+                                                       Counters, Idx);
             Value *Count = Builder.CreateLoad(Counter);
             Count = Builder.CreateAdd(Count, Builder.getInt64(1));
             Builder.CreateStore(Count, Counter);
@@ -858,7 +846,7 @@ Function *GCOVProfiler::insertCounterWriteout(
   NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu");
   if (CU_Nodes) {
     for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
-      DICompileUnit CU(CU_Nodes->getOperand(i));
+      DICompileUnit CU = cast<MDCompileUnit>(CU_Nodes->getOperand(i));
       std::string FilenameGcda = mangleName(CU, "gcda");
       uint32_t CfgChecksum = FileChecksums.empty() ? 0 : FileChecksums[i];
       Builder.CreateCall3(StartFile,
@@ -866,7 +854,7 @@ Function *GCOVProfiler::insertCounterWriteout(
                           Builder.CreateGlobalStringPtr(ReversedVersion),
                           Builder.getInt32(CfgChecksum));
       for (unsigned j = 0, e = CountersBySP.size(); j != e; ++j) {
-        DISubprogram SP(CountersBySP[j].second);
+        DISubprogram SP = cast_or_null<MDSubprogram>(CountersBySP[j].second);
         uint32_t FuncChecksum = Funcs.empty() ? 0 : Funcs[j]->getFuncChecksum();
         Builder.CreateCall5(
             EmitFunction, Builder.getInt32(j),
@@ -925,7 +913,7 @@ void GCOVProfiler::insertIndirectCounterIncrement() {
   Value *ZExtPred = Builder.CreateZExt(Pred, Builder.getInt64Ty());
   Arg = std::next(Fn->arg_begin());
   Arg->setName("counters");
-  Value *GEP = Builder.CreateGEP(Arg, ZExtPred);
+  Value *GEP = Builder.CreateGEP(Type::getInt64PtrTy(*Ctx), Arg, ZExtPred);
   Value *Counter = Builder.CreateLoad(GEP, "counter");
   Cond = Builder.CreateICmpEQ(Counter,
                               Constant::getNullValue(

@@ -11,12 +11,13 @@
 #define LLD_READER_WRITER_ELF_SECTION_CHUNKS_H
 
 #include "Chunk.h"
-#include "Layout.h"
 #include "TargetHandler.h"
 #include "Writer.h"
 #include "lld/Core/DefinedAtom.h"
 #include "lld/Core/Parallel.h"
 #include "lld/Core/range.h"
+#include "lld/ReaderWriter/AtomLayout.h"
+#include "lld/ReaderWriter/ELFLinkingContext.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
@@ -35,6 +36,7 @@ namespace elf {
 template <class> class OutputSection;
 using namespace llvm::ELF;
 template <class ELFT> class Segment;
+template <class ELFT> class TargetLayout;
 
 /// \brief An ELF section.
 template <class ELFT> class Section : public Chunk<ELFT> {
@@ -67,10 +69,12 @@ public:
   uint32_t getType() const { return _type; }
   uint32_t getLink() const { return _link; }
   uint32_t getInfo() const { return _info; }
-  Layout::SegmentType getSegmentType() const { return _segmentType; }
+  typename TargetLayout<ELFT>::SegmentType getSegmentType() const {
+    return _segmentType;
+  }
 
   /// \brief Return the type of content that the section contains
-  virtual int getContentType() const override {
+  int getContentType() const override {
     if (_flags & llvm::ELF::SHF_EXECINSTR)
       return Chunk<ELFT>::ContentType::Code;
     else if (_flags & llvm::ELF::SHF_WRITE)
@@ -86,7 +90,8 @@ public:
   StringRef segmentKindToStr() const;
 
   /// \brief Records the segmentType, that this section belongs to
-  void setSegmentType(const Layout::SegmentType segmentType) {
+  void
+  setSegmentType(const typename TargetLayout<ELFT>::SegmentType segmentType) {
     this->_segmentType = segmentType;
   }
 
@@ -141,7 +146,7 @@ protected:
   /// \brief Is this the first section in the output section.
   bool _isFirstSectionInOutputSection = false;
   /// \brief the output ELF segment type of this section.
-  Layout::SegmentType _segmentType = SHT_NULL;
+  typename TargetLayout<ELFT>::SegmentType _segmentType = SHT_NULL;
   /// \brief Input section name.
   StringRef _inputSectionName;
   /// \brief Output section name.
@@ -525,7 +530,7 @@ private:
   int64_t _shInfo = 0;
   int64_t _entSize = 0;
   int64_t _link = 0;
-  uint64_t _alignment = 0;
+  uint64_t _alignment = 1;
   int64_t _kind = 0;
   int64_t _type = 0;
   bool _isLoadableSection = false;

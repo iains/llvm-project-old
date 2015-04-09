@@ -38,6 +38,14 @@ class Reference;
 namespace elf {
 class ELFWriter;
 
+std::unique_ptr<ELFLinkingContext> createAArch64LinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createARMLinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createExampleLinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createHexagonLinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createMipsLinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createX86LinkingContext(llvm::Triple);
+std::unique_ptr<ELFLinkingContext> createX86_64LinkingContext(llvm::Triple);
+
 class TargetRelocationHandler {
 public:
   virtual ~TargetRelocationHandler() {}
@@ -284,6 +292,18 @@ public:
   bool alignSegments() const { return _alignSegments; }
   void setAlignSegments(bool align) { _alignSegments = align; }
 
+  /// \brief Enable new dtags.
+  /// If this flag is set lld emits DT_RUNPATH instead of
+  /// DT_RPATH. They are functionally equivalent except for
+  /// the following two differences:
+  /// - DT_RUNPATH is searched after LD_LIBRARY_PATH, while
+  /// DT_RPATH is searched before.
+  /// - DT_RUNPATH is used only to search for direct dependencies
+  /// of the object it's contained in, while DT_RPATH is used
+  /// for indirect dependencies as well.
+  bool getEnableNewDtags() const { return _enableNewDtags; }
+  void setEnableNewDtags(bool e) { _enableNewDtags = e; }
+
   /// \brief Strip symbols.
   bool stripSymbols() const { return _stripSymbols; }
   void setStripSymbols(bool strip) { _stripSymbols = strip; }
@@ -301,6 +321,18 @@ public:
 
   script::Sema &linkerScriptSema() { return _linkerScriptSema; }
   const script::Sema &linkerScriptSema() const { return _linkerScriptSema; }
+
+  // Set R_ARM_TARGET1 relocation behaviour
+  bool armTarget1Rel() const { return _armTarget1Rel; }
+  void setArmTarget1Rel(bool value) { _armTarget1Rel = value; }
+
+  /// Each time a reader reads a new file, this member function is called
+  /// with the file's ELF magics. This is supposed to "merge" all attributes
+  /// to generate output ELF file magic. This can also reject input files
+  /// if they conflict with previous input files.
+  virtual std::error_code mergeHeaderFlags(uint8_t fileClass, uint64_t flags) {
+    return std::error_code();
+  }
 
 protected:
   ELFLinkingContext(llvm::Triple triple, std::unique_ptr<TargetHandler> handler)
@@ -326,7 +358,9 @@ protected:
   bool _demangle = true;
   bool _stripSymbols = false;
   bool _alignSegments = true;
+  bool _enableNewDtags = false;
   bool _collectStats = false;
+  bool _armTarget1Rel = false;
   uint64_t _maxPageSize = 0x1000;
 
   OutputMagic _outputMagic;
@@ -348,6 +382,7 @@ protected:
   // in the current linking context via _linkerScriptSema.
   script::Sema _linkerScriptSema;
 };
+
 } // end namespace lld
 
 #endif

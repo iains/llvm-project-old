@@ -125,7 +125,7 @@ public:
                                                                  const char* setting,
                                                                  const lldb::TargetSP& target_sp);
 
-    friend class IOHandlerPythonInterpreter;
+    friend class ::IOHandlerPythonInterpreter;
 
     ScriptInterpreterPython (CommandInterpreter &interpreter);
 
@@ -346,10 +346,9 @@ public:
 
     StringList
     ReadCommandInputFromUser (FILE *in_file);
-    
-    virtual void
-    ResetOutputFileHandle (FILE *new_fh) override;
-    
+
+    void ResetOutputFileHandle(FILE *new_fh) override;
+
     static void
     InitializePrivate ();
 

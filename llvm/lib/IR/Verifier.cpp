@@ -110,6 +110,10 @@ private:
     OS << '\n';
   }
 
+  template <class T> void Write(const MDTupleTypedArrayWrapper<T> &MD) {
+    Write(MD.get());
+  }
+
   void Write(const NamedMDNode *NMD) {
     if (!NMD)
       return;
@@ -306,6 +310,8 @@ private:
   void visitMDVariable(const MDVariable &N);
   void visitMDLexicalBlockBase(const MDLexicalBlockBase &N);
   void visitMDTemplateParameter(const MDTemplateParameter &N);
+
+  void visitTemplateParams(const MDNode &N, const Metadata &RawParams);
 
   /// \brief Check for a valid string-based type reference.
   ///
@@ -826,6 +832,15 @@ static bool hasConflictingReferenceFlags(unsigned Flags) {
          (Flags & DebugNode::FlagRValueReference);
 }
 
+void Verifier::visitTemplateParams(const MDNode &N, const Metadata &RawParams) {
+  auto *Params = dyn_cast<MDTuple>(&RawParams);
+  Assert(Params, "invalid template params", &N, &RawParams);
+  for (Metadata *Op : Params->operands()) {
+    Assert(Op && isa<MDTemplateParameter>(Op), "invalid template parameter", &N,
+           Params, Op);
+  }
+}
+
 void Verifier::visitMDCompositeType(const MDCompositeType &N) {
   // Common derived type checks.
   visitMDDerivedTypeBase(N);
@@ -846,6 +861,8 @@ void Verifier::visitMDCompositeType(const MDCompositeType &N) {
          "invalid composite elements", &N, N.getRawElements());
   Assert(!hasConflictingReferenceFlags(N.getFlags()), "invalid reference flags",
          &N);
+  if (auto *Params = N.getRawTemplateParams())
+    visitTemplateParams(N, *Params);
 }
 
 void Verifier::visitMDSubroutineType(const MDSubroutineType &N) {
@@ -924,21 +941,15 @@ void Verifier::visitMDSubprogram(const MDSubprogram &N) {
     Assert(F && FT && isa<FunctionType>(FT->getElementType()),
            "invalid function", &N, F, FT);
   }
-  if (N.getRawTemplateParams()) {
-    auto *Params = dyn_cast<MDTuple>(N.getRawTemplateParams());
-    Assert(Params, "invalid template params", &N, Params);
-    for (Metadata *Op : Params->operands()) {
-      Assert(Op && isa<MDTemplateParameter>(Op), "invalid template parameter",
-             &N, Params, Op);
-    }
-  }
+  if (auto *Params = N.getRawTemplateParams())
+    visitTemplateParams(N, *Params);
   if (auto *S = N.getRawDeclaration()) {
     Assert(isa<MDSubprogram>(S) && !cast<MDSubprogram>(S)->isDefinition(),
            "invalid subprogram declaration", &N, S);
   }
-  if (N.getRawVariables()) {
-    auto *Vars = dyn_cast<MDTuple>(N.getRawVariables());
-    Assert(Vars, "invalid variable list", &N, Vars);
+  if (auto *RawVars = N.getRawVariables()) {
+    auto *Vars = dyn_cast<MDTuple>(RawVars);
+    Assert(Vars, "invalid variable list", &N, RawVars);
     for (Metadata *Op : Vars->operands()) {
       Assert(Op && isa<MDLocalVariable>(Op), "invalid local variable", &N, Vars,
              Op);
@@ -2533,9 +2544,7 @@ void Verifier::visitRangeMetadata(Instruction& I,
 void Verifier::visitLoadInst(LoadInst &LI) {
   PointerType *PTy = dyn_cast<PointerType>(LI.getOperand(0)->getType());
   Assert(PTy, "Load operand must be a pointer.", &LI);
-  Type *ElTy = PTy->getElementType();
-  Assert(ElTy == LI.getType(),
-         "Load result type does not match pointer operand type!", &LI, ElTy);
+  Type *ElTy = LI.getType();
   Assert(LI.getAlignment() <= Value::MaximumAlignment,
          "huge alignment values are unsupported", &LI);
   if (LI.isAtomic()) {
@@ -3204,6 +3213,8 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
     Assert(!SawFrameEscape,
            "multiple calls to llvm.frameescape in one function", &CI);
     for (Value *Arg : CI.arg_operands()) {
+      if (isa<ConstantPointerNull>(Arg))
+        continue; // Null values are allowed as placeholders.
       auto *AI = dyn_cast<AllocaInst>(Arg->stripPointerCasts());
       Assert(AI && AI->isStaticAlloca(),
              "llvm.frameescape only accepts static allocas", &CI);
@@ -3225,13 +3236,6 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
     auto &Entry = FrameEscapeInfo[Fn];
     Entry.second = unsigned(
         std::max(uint64_t(Entry.second), IdxArg->getLimitedValue(~0U) + 1));
-    break;
-  }
-
-  case Intrinsic::eh_unwindhelp: {
-    auto *AI = dyn_cast<AllocaInst>(CI.getArgOperand(0)->stripPointerCasts());
-    Assert(AI && AI->isStaticAlloca(),
-           "llvm.eh.unwindhelp requires a static alloca", &CI);
     break;
   }
 
@@ -3370,6 +3374,20 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
   Assert(isa<MDExpression>(DII.getRawExpression()),
          "invalid llvm.dbg." + Kind + " intrinsic expression", &DII,
          DII.getRawExpression());
+
+  // Ignore broken !dbg attachments; they're checked elsewhere.
+  if (MDNode *N = DII.getDebugLoc().getAsMDNode())
+    if (!isa<MDLocation>(N))
+      return;
+
+  // The inlined-at attachments for variables and !dbg attachments must agree.
+  MDLocalVariable *Var = DII.getVariable();
+  MDLocation *VarIA = Var->getInlinedAt();
+  MDLocation *Loc = DII.getDebugLoc();
+  MDLocation *LocIA = Loc ? Loc->getInlinedAt() : nullptr;
+  BasicBlock *BB = DII.getParent();
+  Assert(VarIA == LocIA, "mismatched variable and !dbg inlined-at", &DII, BB,
+         BB ? BB->getParent() : nullptr, Var, VarIA, Loc, LocIA);
 }
 
 void Verifier::visitUnresolvedTypeRef(const MDString *S, const MDNode *N) {
@@ -3385,8 +3403,8 @@ void Verifier::verifyTypeRefs() {
 
   // Visit all the compile units again to check the type references.
   for (auto *CU : CUs->operands())
-    if (auto *Ts = cast<MDCompileUnit>(CU)->getRetainedTypes())
-      for (auto &Op : Ts->operands())
+    if (auto Ts = cast<MDCompileUnit>(CU)->getRetainedTypes())
+      for (MDType *Op : Ts)
         if (auto *T = dyn_cast<MDCompositeType>(Op))
           TypeRefs.erase(T->getRawIdentifier());
   if (TypeRefs.empty())

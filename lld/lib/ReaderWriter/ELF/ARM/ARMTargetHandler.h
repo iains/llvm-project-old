@@ -11,8 +11,8 @@
 #define LLD_READER_WRITER_ELF_ARM_ARM_TARGET_HANDLER_H
 
 #include "ARMELFFile.h"
-#include "ARMELFReader.h"
 #include "ARMRelocationHandler.h"
+#include "ELFReader.h"
 #include "TargetLayout.h"
 #include "llvm/ADT/Optional.h"
 
@@ -45,6 +45,8 @@ public:
     llvm_unreachable("TLS segment not found");
   }
 
+  bool target1Rel() const { return this->_ctx.armTarget1Rel(); }
+
 private:
   // TCB block size of the TLS.
   enum { TCB_SIZE = 0x8 };
@@ -58,26 +60,30 @@ private:
 };
 
 class ARMTargetHandler final : public TargetHandler {
+  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
+  typedef ELFReader<ELFTy, ARMLinkingContext, ARMELFFile> ObjReader;
+  typedef ELFReader<ELFTy, ARMLinkingContext, DynamicFile> DSOReader;
+
 public:
   ARMTargetHandler(ARMLinkingContext &ctx);
 
-  const ARMTargetRelocationHandler &getRelocationHandler() const override {
+  const TargetRelocationHandler &getRelocationHandler() const override {
     return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<ARMELFObjectReader>(_ctx);
+    return llvm::make_unique<ObjReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<ARMELFDSOReader>(_ctx);
+    return llvm::make_unique<DSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
   ARMLinkingContext &_ctx;
-  std::unique_ptr<ARMTargetLayout<ARMELFType>> _targetLayout;
+  std::unique_ptr<ARMTargetLayout<ELFTy>> _targetLayout;
   std::unique_ptr<ARMTargetRelocationHandler> _relocationHandler;
 };
 

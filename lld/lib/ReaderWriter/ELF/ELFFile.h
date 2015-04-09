@@ -21,8 +21,7 @@ namespace lld {
 namespace elf {
 /// \brief Read a binary, find out based on the symbol table contents what kind
 /// of symbol it is and create corresponding atoms for it
-template <class ELFT> class ELFFile : public File {
-
+template <class ELFT> class ELFFile : public SimpleFile {
   typedef llvm::object::Elf_Sym_Impl<ELFT> Elf_Sym;
   typedef llvm::object::Elf_Shdr_Impl<ELFT> Elf_Shdr;
   typedef llvm::object::Elf_Rel_Impl<ELFT, false> Elf_Rel;
@@ -35,9 +34,6 @@ template <class ELFT> class ELFFile : public File {
   // A Map is used to hold the atoms that have been divided up
   // after reading the section that contains Merge String attributes
   struct MergeSectionKey {
-    MergeSectionKey(const Elf_Shdr *shdr, int64_t offset)
-        : _shdr(shdr), _offset(offset) {}
-    // Data members
     const Elf_Shdr *_shdr;
     int64_t _offset;
   };
@@ -92,18 +88,19 @@ template <class ELFT> class ELFFile : public File {
 
 public:
   ELFFile(StringRef name, ELFLinkingContext &ctx)
-      : File(name, kindObject), _ordinal(0),
+      : SimpleFile(name), _ordinal(0),
         _doStringsMerge(ctx.mergeCommonStrings()), _useWrap(false), _ctx(ctx) {
     setLastError(std::error_code());
   }
 
   ELFFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx)
-      : File(mb->getBufferIdentifier(), kindObject), _mb(std::move(mb)),
-        _ordinal(0), _doStringsMerge(ctx.mergeCommonStrings()),
+      : SimpleFile(mb->getBufferIdentifier()), _mb(std::move(mb)), _ordinal(0),
+        _doStringsMerge(ctx.mergeCommonStrings()),
         _useWrap(ctx.wrapCalls().size()), _ctx(ctx) {}
 
-  static ErrorOr<std::unique_ptr<ELFFile>>
-  create(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx);
+  static bool canParse(file_magic magic) {
+    return magic == file_magic::elf_relocatable;
+  }
 
   virtual Reference::KindArch kindArch();
 
@@ -126,40 +123,33 @@ public:
   /// \brief Create individual atoms
   std::error_code createAtoms();
 
-  const atom_collection<DefinedAtom> &defined() const override {
-    return _definedAtoms;
-  }
+  // Assuming sourceSymbol has a reference to targetSym, find an atom
+  // for targetSym. Usually it's just the atom for targetSym.
+  // However, if an atom is in a section group, we may want to return an
+  // undefined atom for targetSym to let the resolver to resolve the
+  // symbol. (It's because if targetSym is in a section group A, and the
+  // group A is not linked in because other file already provides a
+  // section group B, we want to resolve references to B, not to A.)
+  Atom *findAtom(const Elf_Sym *sourceSym, const Elf_Sym *targetSym) {
+    // Return the atom for targetSym if we can do so.
+    Atom *target = _symbolToAtomMapping.lookup(targetSym);
+    if (target->definition() != Atom::definitionRegular)
+      return target;
+    Atom::Scope scope = llvm::cast<DefinedAtom>(target)->scope();
+    if (scope == DefinedAtom::scopeTranslationUnit)
+      return target;
+    if (!redirectReferenceUsingUndefAtom(sourceSym, targetSym))
+      return target;
 
-  const atom_collection<UndefinedAtom> &undefined() const override {
-    return _undefinedAtoms;
-  }
-
-  const atom_collection<SharedLibraryAtom> &sharedLibrary() const override {
-    return _sharedLibraryAtoms;
-  }
-
-  const atom_collection<AbsoluteAtom> &absolute() const override {
-    return _absoluteAtoms;
-  }
-
-  Atom *findAtom(const Elf_Sym *sourceSymbol, const Elf_Sym *targetSymbol) {
-    // All references to atoms inside a group are through undefined atoms.
-    Atom *targetAtom = _symbolToAtomMapping.lookup(targetSymbol);
-    StringRef targetSymbolName = targetAtom->name();
-    if (targetAtom->definition() != Atom::definitionRegular)
-      return targetAtom;
-    if ((llvm::dyn_cast<DefinedAtom>(targetAtom))->scope() ==
-        DefinedAtom::scopeTranslationUnit)
-      return targetAtom;
-    if (!redirectReferenceUsingUndefAtom(sourceSymbol, targetSymbol))
-      return targetAtom;
-    auto undefForGroupchild = _undefAtomsForGroupChild.find(targetSymbolName);
-    if (undefForGroupchild != _undefAtomsForGroupChild.end())
-      return undefForGroupchild->getValue();
-    auto undefGroupChildAtom =
-        new (_readerStorage) SimpleUndefinedAtom(*this, targetSymbolName);
-    _undefinedAtoms._atoms.push_back(undefGroupChildAtom);
-    return (_undefAtomsForGroupChild[targetSymbolName] = undefGroupChildAtom);
+    // Otherwise, create a new undefined symbol and returns it.
+    StringRef targetName = target->name();
+    auto it = _undefAtomsForGroupChild.find(targetName);
+    if (it != _undefAtomsForGroupChild.end())
+      return it->getValue();
+    auto atom = new (_readerStorage) SimpleUndefinedAtom(*this, targetName);
+    _undefAtomsForGroupChild[targetName] = atom;
+    addAtom(*atom);
+    return atom;
   }
 
 protected:
@@ -250,20 +240,17 @@ protected:
 
   /// Handle creation of atoms for .gnu.linkonce sections.
   std::error_code handleGnuLinkOnceSection(
-      StringRef sectionName,
-      llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection,
-      const Elf_Shdr *shdr);
+      const Elf_Shdr *section,
+      llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection);
 
-  // Handle Section groups/COMDAT scetions.
+  // Handle COMDAT scetions.
   std::error_code handleSectionGroup(
-      StringRef signature, StringRef groupSectionName,
-      llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection,
-      llvm::DenseMap<const Elf_Shdr *, std::vector<StringRef>> &comdatSections,
-      const Elf_Shdr *shdr);
+      const Elf_Shdr *section,
+      llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection);
 
   /// Process the Undefined symbol and create an atom for it.
-  ErrorOr<ELFUndefinedAtom<ELFT> *>
-  handleUndefinedSymbol(StringRef symName, const Elf_Sym *sym) {
+  ELFUndefinedAtom<ELFT> *createUndefinedAtom(StringRef symName,
+                                              const Elf_Sym *sym) {
     return new (_readerStorage) ELFUndefinedAtom<ELFT>(*this, symName, sym);
   }
 
@@ -273,8 +260,8 @@ protected:
   }
 
   /// Process the Absolute symbol and create an atom for it.
-  ErrorOr<ELFAbsoluteAtom<ELFT> *>
-  handleAbsoluteSymbol(StringRef symName, const Elf_Sym *sym, int64_t value) {
+  ELFAbsoluteAtom<ELFT> *createAbsoluteAtom(StringRef symName,
+                                            const Elf_Sym *sym, int64_t value) {
     return new (_readerStorage)
         ELFAbsoluteAtom<ELFT>(*this, symName, sym, value);
   }
@@ -318,8 +305,8 @@ protected:
   }
 
   /// Process the common symbol and create an atom for it.
-  virtual ErrorOr<ELFCommonAtom<ELFT> *>
-  handleCommonSymbol(StringRef symName, const Elf_Sym *sym) {
+  virtual ELFCommonAtom<ELFT> *createCommonAtom(StringRef symName,
+                                                const Elf_Sym *sym) {
     return new (_readerStorage) ELFCommonAtom<ELFT>(*this, symName, sym);
   }
 
@@ -334,25 +321,26 @@ protected:
             sym->getType() == llvm::ELF::STT_TLS);
   }
 
-  /// Process the Defined symbol and create an atom for it.
-  virtual ErrorOr<ELFDefinedAtom<ELFT> *>
-  handleDefinedSymbol(StringRef symName, StringRef sectionName,
-                      const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
-                      ArrayRef<uint8_t> contentData,
-                      unsigned int referenceStart, unsigned int referenceEnd,
-                      std::vector<ELFReference<ELFT> *> &referenceList) {
+  /// Creates an atom for a given defined symbol.
+  virtual ELFDefinedAtom<ELFT> *
+  createDefinedAtom(StringRef symName, StringRef sectionName,
+                    const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
+                    ArrayRef<uint8_t> contentData, unsigned int referenceStart,
+                    unsigned int referenceEnd,
+                    std::vector<ELFReference<ELFT> *> &referenceList) {
     return new (_readerStorage) ELFDefinedAtom<ELFT>(
         *this, symName, sectionName, sym, sectionHdr, contentData,
         referenceStart, referenceEnd, referenceList);
   }
 
   /// Process the Merge string and create an atom for it.
-  ErrorOr<ELFMergeAtom<ELFT> *>
-  handleMergeString(StringRef sectionName, const Elf_Shdr *sectionHdr,
-                    ArrayRef<uint8_t> contentData, unsigned int offset) {
+  ELFMergeAtom<ELFT> *createMergedString(StringRef sectionName,
+                                         const Elf_Shdr *sectionHdr,
+                                         ArrayRef<uint8_t> contentData,
+                                         unsigned int offset) {
     ELFMergeAtom<ELFT> *mergeAtom = new (_readerStorage)
         ELFMergeAtom<ELFT>(*this, sectionName, sectionHdr, contentData, offset);
-    const MergeSectionKey mergedSectionKey(sectionHdr, offset);
+    const MergeSectionKey mergedSectionKey = {sectionHdr, offset};
     if (_mergedSectionMap.find(mergedSectionKey) == _mergedSectionMap.end())
       _mergedSectionMap.insert(std::make_pair(mergedSectionKey, mergeAtom));
     return mergeAtom;
@@ -381,10 +369,6 @@ protected:
 
   llvm::BumpPtrAllocator _readerStorage;
   std::unique_ptr<llvm::object::ELFFile<ELFT> > _objFile;
-  atom_collection_vector<DefinedAtom> _definedAtoms;
-  atom_collection_vector<UndefinedAtom> _undefinedAtoms;
-  atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
-  atom_collection_vector<AbsoluteAtom> _absoluteAtoms;
 
   /// \brief _relocationAddendReferences and _relocationReferences contain the
   /// list of relocations references.  In ELF, if a section named, ".text" has
@@ -443,47 +427,33 @@ public:
       : ELFFile<ELFT>(name, ctx) {}
 
   /// \brief add a global absolute atom
-  virtual Atom *addAbsoluteAtom(StringRef symbolName) {
+  virtual void addAbsoluteAtom(StringRef symbolName) {
     assert(!symbolName.empty() && "AbsoluteAtoms must have a name");
-    Elf_Sym *symbol = new (this->_readerStorage) Elf_Sym;
-    symbol->st_name = 0;
-    symbol->st_value = 0;
-    symbol->st_shndx = llvm::ELF::SHN_ABS;
-    symbol->setBindingAndType(llvm::ELF::STB_GLOBAL, llvm::ELF::STT_OBJECT);
-    symbol->setVisibility(llvm::ELF::STV_DEFAULT);
-    symbol->st_size = 0;
-    auto newAtom = this->handleAbsoluteSymbol(symbolName, symbol, -1);
-    this->_absoluteAtoms._atoms.push_back(*newAtom);
-    return *newAtom;
+    Elf_Sym *sym = new (this->_readerStorage) Elf_Sym;
+    sym->st_name = 0;
+    sym->st_value = 0;
+    sym->st_shndx = llvm::ELF::SHN_ABS;
+    sym->setBindingAndType(llvm::ELF::STB_GLOBAL, llvm::ELF::STT_OBJECT);
+    sym->setVisibility(llvm::ELF::STV_DEFAULT);
+    sym->st_size = 0;
+    ELFAbsoluteAtom<ELFT> *atom = this->createAbsoluteAtom(symbolName, sym, -1);
+    this->addAtom(*atom);
   }
 
   /// \brief add an undefined atom
-  virtual Atom *addUndefinedAtom(StringRef symbolName) {
+  virtual void addUndefinedAtom(StringRef symbolName) {
     assert(!symbolName.empty() && "UndefinedAtoms must have a name");
-    Elf_Sym *symbol = new (this->_readerStorage) Elf_Sym;
-    symbol->st_name = 0;
-    symbol->st_value = 0;
-    symbol->st_shndx = llvm::ELF::SHN_UNDEF;
-    symbol->setBindingAndType(llvm::ELF::STB_GLOBAL, llvm::ELF::STT_NOTYPE);
-    symbol->setVisibility(llvm::ELF::STV_DEFAULT);
-    symbol->st_size = 0;
-    auto newAtom = this->handleUndefinedSymbol(symbolName, symbol);
-    this->_undefinedAtoms._atoms.push_back(*newAtom);
-    return *newAtom;
-  }
-
-  // cannot add atoms to Runtime file
-  virtual void addAtom(const Atom &) {
-    llvm_unreachable("cannot add atoms to Runtime files");
+    Elf_Sym *sym = new (this->_readerStorage) Elf_Sym;
+    sym->st_name = 0;
+    sym->st_value = 0;
+    sym->st_shndx = llvm::ELF::SHN_UNDEF;
+    sym->setBindingAndType(llvm::ELF::STB_GLOBAL, llvm::ELF::STT_NOTYPE);
+    sym->setVisibility(llvm::ELF::STV_DEFAULT);
+    sym->st_size = 0;
+    ELFUndefinedAtom<ELFT> *atom = this->createUndefinedAtom(symbolName, sym);
+    this->addAtom(*atom);
   }
 };
-
-template <class ELFT>
-ErrorOr<std::unique_ptr<ELFFile<ELFT>>>
-ELFFile<ELFT>::create(std::unique_ptr<MemoryBuffer> mb,
-                      ELFLinkingContext &ctx) {
-  return llvm::make_unique<ELFFile<ELFT>>(std::move(mb), ctx);
-}
 
 template <class ELFT>
 std::error_code ELFFile<ELFT>::doParse() {
@@ -614,11 +584,11 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createMergeableAtoms() {
   for (const MergeString *tai : tokens) {
     ArrayRef<uint8_t> content((const uint8_t *)tai->_string.data(),
                               tai->_string.size());
-    ErrorOr<ELFMergeAtom<ELFT> *> mergeAtom =
-        handleMergeString(tai->_sectionName, tai->_shdr, content, tai->_offset);
-    (*mergeAtom)->setOrdinal(++_ordinal);
-    _definedAtoms._atoms.push_back(*mergeAtom);
-    _mergeAtoms.push_back(*mergeAtom);
+    ELFMergeAtom<ELFT> *atom = createMergedString(tai->_sectionName, tai->_shdr,
+                                                  content, tai->_offset);
+    atom->setOrdinal(++_ordinal);
+    addAtom(*atom);
+    _mergeAtoms.push_back(atom);
   }
   return std::error_code();
 }
@@ -641,10 +611,10 @@ std::error_code ELFFile<ELFT>::createSymbolsFromAtomizableSections() {
       return ec;
 
     if (isAbsoluteSymbol(&*SymI)) {
-      ErrorOr<ELFAbsoluteAtom<ELFT> *> absAtom =
-          handleAbsoluteSymbol(*symbolName, &*SymI, (int64_t)getSymbolValue(&*SymI));
-      _absoluteAtoms._atoms.push_back(*absAtom);
-      _symbolToAtomMapping.insert(std::make_pair(&*SymI, *absAtom));
+      ELFAbsoluteAtom<ELFT> *absAtom = createAbsoluteAtom(
+          *symbolName, &*SymI, (int64_t)getSymbolValue(&*SymI));
+      addAtom(*absAtom);
+      _symbolToAtomMapping.insert(std::make_pair(&*SymI, absAtom));
     } else if (isUndefinedSymbol(&*SymI)) {
       if (_useWrap &&
           (_wrapSymbolMap.find(*symbolName) != _wrapSymbolMap.end())) {
@@ -653,16 +623,15 @@ std::error_code ELFFile<ELFT>::createSymbolsFromAtomizableSections() {
             std::make_pair(&*SymI, wrapAtom->getValue()));
         continue;
       }
-      ErrorOr<ELFUndefinedAtom<ELFT> *> undefAtom =
-          handleUndefinedSymbol(*symbolName, &*SymI);
-      _undefinedAtoms._atoms.push_back(*undefAtom);
-      _symbolToAtomMapping.insert(std::make_pair(&*SymI, *undefAtom));
+      ELFUndefinedAtom<ELFT> *undefAtom =
+          createUndefinedAtom(*symbolName, &*SymI);
+      addAtom(*undefAtom);
+      _symbolToAtomMapping.insert(std::make_pair(&*SymI, undefAtom));
     } else if (isCommonSymbol(&*SymI)) {
-      ErrorOr<ELFCommonAtom<ELFT> *> commonAtom =
-          handleCommonSymbol(*symbolName, &*SymI);
-      (*commonAtom)->setOrdinal(++_ordinal);
-      _definedAtoms._atoms.push_back(*commonAtom);
-      _symbolToAtomMapping.insert(std::make_pair(&*SymI, *commonAtom));
+      ELFCommonAtom<ELFT> *commonAtom = createCommonAtom(*symbolName, &*SymI);
+      commonAtom->setOrdinal(++_ordinal);
+      addAtom(*commonAtom);
+      _symbolToAtomMapping.insert(std::make_pair(&*SymI, commonAtom));
     } else if (isDefinedSymbol(&*SymI)) {
       _sectionSymbols[section].push_back(SymI);
     } else {
@@ -678,12 +647,8 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
   // Holds all the atoms that are part of the section. They are the targets of
   // the kindGroupChild reference.
   llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> atomsForSection;
-  // group sections have a mapping of the section header to the
-  // signature/section.
-  llvm::DenseMap<const Elf_Shdr *, std::pair<StringRef, StringRef>>
-      groupSections;
+
   // Contains a list of comdat sections for a group.
-  llvm::DenseMap<const Elf_Shdr *, std::vector<StringRef>> comdatSections;
   for (auto &i : _sectionSymbols) {
     const Elf_Shdr *section = i.first;
     std::vector<Elf_Sym_Iter> &symbols = i.second;
@@ -702,57 +667,19 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
     if (std::error_code ec = sectionContents.getError())
       return ec;
 
-    bool addAtoms = true;
-
-    // A section of type SHT_GROUP defines a grouping of sections. The name of a
-    // symbol from one of the containing object's symbol tables provides a
-    // signature
-    // for the section group. The section header of the SHT_GROUP section
-    // specifies
-    // the identifying symbol entry, as described : the sh_link member contains
-    // the section header index of the symbol table section that contains the
-    // entry.
-    // The sh_info member contains the symbol table index of the identifying
-    // entry.
-    // The sh_flags member of the section header contains 0. The name of the
-    // section
-    // (sh_name) is not specified.
-    if (isGroupSection(section)) {
-      const Elf_Word *groupMembers =
-          reinterpret_cast<const Elf_Word *>(sectionContents->data());
-      const long count = (section->sh_size) / sizeof(Elf_Word);
-      for (int i = 1; i < count; i++) {
-        const Elf_Shdr *sHdr = _objFile->getSection(groupMembers[i]);
-        ErrorOr<StringRef> sectionName = _objFile->getSectionName(sHdr);
-        if (std::error_code ec = sectionName.getError())
-          return ec;
-        comdatSections[section].push_back(*sectionName);
-      }
-      const Elf_Sym *symbol = _objFile->getSymbol(section->sh_info);
-      const Elf_Shdr *symtab = _objFile->getSection(section->sh_link);
-      ErrorOr<StringRef> symbolName = _objFile->getSymbolName(symtab, symbol);
-      if (std::error_code ec = symbolName.getError())
-        return ec;
-      groupSections.insert(
-          std::make_pair(section, std::make_pair(*symbolName, *sectionName)));
+    // SHT_GROUP sections are handled in the following loop.
+    if (isGroupSection(section))
       continue;
-    }
 
-    if (isGnuLinkOnceSection(*sectionName)) {
-      groupSections.insert(
-          std::make_pair(section, std::make_pair(*sectionName, *sectionName)));
-      addAtoms = false;
-    }
-
-    if (isSectionMemberOfGroup(section))
-      addAtoms = false;
+    bool addAtoms = (!isGnuLinkOnceSection(*sectionName) &&
+                     !isSectionMemberOfGroup(section));
 
     if (handleSectionWithNoSymbols(section, symbols)) {
       ELFDefinedAtom<ELFT> *newAtom =
           createSectionAtom(section, *sectionName, *sectionContents);
       newAtom->setOrdinal(++_ordinal);
       if (addAtoms)
-        _definedAtoms._atoms.push_back(newAtom);
+        addAtom(*newAtom);
       else
         atomsForSection[*sectionName].push_back(newAtom);
       continue;
@@ -798,16 +725,16 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
       // merged away as well as these symbols have to be part of symbol
       // resolution
       if (isMergeableStringSection(section)) {
-        if (symbol->getBinding() == llvm::ELF::STB_GLOBAL) {
-          auto definedMergeAtom = handleDefinedSymbol(
-              symbolName, *sectionName, &**si, section, symbolData,
-              _references.size(), _references.size(), _references);
-          (*definedMergeAtom)->setOrdinal(++_ordinal);
-          if (addAtoms)
-            _definedAtoms._atoms.push_back(*definedMergeAtom);
-          else
-            atomsForSection[*sectionName].push_back(*definedMergeAtom);
-        }
+        if (symbol->getBinding() != llvm::ELF::STB_GLOBAL)
+          continue;
+        ELFDefinedAtom<ELFT> *atom = createDefinedAtom(
+          symbolName, *sectionName, &**si, section, symbolData,
+          _references.size(), _references.size(), _references);
+        atom->setOrdinal(++_ordinal);
+        if (addAtoms)
+          addAtom(*atom);
+        else
+          atomsForSection[*sectionName].push_back(atom);
         continue;
       }
 
@@ -853,7 +780,7 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
       previousAtom = anonAtom ? anonAtom : newAtom;
 
       if (addAtoms)
-        _definedAtoms._atoms.push_back(newAtom);
+        addAtom(*newAtom);
       else
         atomsForSection[*sectionName].push_back(newAtom);
 
@@ -861,24 +788,19 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
       if (anonAtom) {
         anonAtom->setOrdinal(++_ordinal);
         if (addAtoms)
-          _definedAtoms._atoms.push_back(anonAtom);
+          addAtom(*anonAtom);
         else
           atomsForSection[*sectionName].push_back(anonAtom);
       }
     }
   }
 
-  // Iterate over all the group sections to create parent atoms pointing to
-  // group-child atoms.
-  for (auto &sect : groupSections) {
-    StringRef signature = sect.second.first;
-    StringRef groupSectionName = sect.second.second;
-    if (isGnuLinkOnceSection(signature))
-      handleGnuLinkOnceSection(signature, atomsForSection, sect.first);
-    else if (isGroupSection(sect.first))
-      handleSectionGroup(signature, groupSectionName, atomsForSection,
-                         comdatSections, sect.first);
-  }
+  for (auto &i : _sectionSymbols)
+    if (std::error_code ec = handleSectionGroup(i.first, atomsForSection))
+      return ec;
+  for (auto &i : _sectionSymbols)
+    if (std::error_code ec = handleGnuLinkOnceSection(i.first, atomsForSection))
+      return ec;
 
   updateReferences();
   return std::error_code();
@@ -886,72 +808,108 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
 
 template <class ELFT>
 std::error_code ELFFile<ELFT>::handleGnuLinkOnceSection(
-    StringRef signature,
-    llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection,
-    const Elf_Shdr *shdr) {
-  // TODO: Check for errors.
+    const Elf_Shdr *section,
+    llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection) {
+  ErrorOr<StringRef> sectionName = this->getSectionName(section);
+  if (std::error_code ec = sectionName.getError())
+    return ec;
+  if (!isGnuLinkOnceSection(*sectionName))
+    return std::error_code();
+
   unsigned int referenceStart = _references.size();
   std::vector<ELFReference<ELFT> *> refs;
-  for (auto ha : atomsForSection[signature]) {
-    _groupChild[ha->symbol()] = std::make_pair(signature, shdr);
+  for (auto ha : atomsForSection[*sectionName]) {
+    _groupChild[ha->symbol()] = std::make_pair(*sectionName, section);
     ELFReference<ELFT> *ref =
         new (_readerStorage) ELFReference<ELFT>(lld::Reference::kindGroupChild);
     ref->setTarget(ha);
     refs.push_back(ref);
   }
-  atomsForSection[signature].clear();
+  atomsForSection[*sectionName].clear();
   // Create a gnu linkonce atom.
-  auto gnuLinkOnceAtom = handleDefinedSymbol(
-      signature, signature, nullptr, shdr, ArrayRef<uint8_t>(), referenceStart,
-      _references.size(), _references);
-  (*gnuLinkOnceAtom)->setOrdinal(++_ordinal);
-  _definedAtoms._atoms.push_back(*gnuLinkOnceAtom);
+  ELFDefinedAtom<ELFT> *atom = createDefinedAtom(
+      *sectionName, *sectionName, nullptr, section, ArrayRef<uint8_t>(),
+      referenceStart, _references.size(), _references);
+  atom->setOrdinal(++_ordinal);
+  addAtom(*atom);
   for (auto reference : refs)
-    (*gnuLinkOnceAtom)->addReference(reference);
+    atom->addReference(reference);
   return std::error_code();
 }
 
 template <class ELFT>
 std::error_code ELFFile<ELFT>::handleSectionGroup(
-    StringRef signature, StringRef groupSectionName,
-    llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection,
-    llvm::DenseMap<const Elf_Shdr *, std::vector<StringRef>> &comdatSections,
-    const Elf_Shdr *shdr) {
-  // TODO: Check for errors.
+    const Elf_Shdr *section,
+    llvm::StringMap<std::vector<ELFDefinedAtom<ELFT> *>> &atomsForSection) {
+  ErrorOr<StringRef> sectionName = this->getSectionName(section);
+  if (std::error_code ec = sectionName.getError())
+    return ec;
+  if (!isGroupSection(section))
+    return std::error_code();
+
+  auto sectionContents = getSectionContents(section);
+  if (std::error_code ec = sectionContents.getError())
+    return ec;
+
+  // A section of type SHT_GROUP defines a grouping of sections. The
+  // name of a symbol from one of the containing object's symbol tables
+  // provides a signature for the section group. The section header of
+  // the SHT_GROUP section specifies the identifying symbol entry, as
+  // described: the sh_link member contains the section header index of
+  // the symbol table section that contains the entry. The sh_info
+  // member contains the symbol table index of the identifying entry.
+  // The sh_flags member of the section header contains 0. The name of
+  // the section (sh_name) is not specified.
+  std::vector<StringRef> sectionNames;
+  const Elf_Word *groupMembers =
+      reinterpret_cast<const Elf_Word *>(sectionContents->data());
+  const size_t count = section->sh_size / sizeof(Elf_Word);
+  for (size_t i = 1; i < count; i++) {
+    const Elf_Shdr *shdr = _objFile->getSection(groupMembers[i]);
+    ErrorOr<StringRef> sectionName = _objFile->getSectionName(shdr);
+    if (std::error_code ec = sectionName.getError())
+      return ec;
+    sectionNames.push_back(*sectionName);
+  }
+  const Elf_Sym *symbol = _objFile->getSymbol(section->sh_info);
+  const Elf_Shdr *symtab = _objFile->getSection(section->sh_link);
+  ErrorOr<StringRef> symbolName = _objFile->getSymbolName(symtab, symbol);
+  if (std::error_code ec = symbolName.getError())
+    return ec;
+
   unsigned int referenceStart = _references.size();
   std::vector<ELFReference<ELFT> *> refs;
-  auto sectionNamesInGroup = comdatSections[shdr];
-  for (auto sectionName : sectionNamesInGroup) {
-    for (auto ha : atomsForSection[sectionName]) {
-      _groupChild[ha->symbol()] = std::make_pair(signature, shdr);
+  for (auto name : sectionNames) {
+    for (auto ha : atomsForSection[name]) {
+      _groupChild[ha->symbol()] = std::make_pair(*symbolName, section);
       ELFReference<ELFT> *ref = new (_readerStorage)
           ELFReference<ELFT>(lld::Reference::kindGroupChild);
       ref->setTarget(ha);
       refs.push_back(ref);
     }
-    atomsForSection[sectionName].clear();
+    atomsForSection[name].clear();
   }
-  // Create a gnu linkonce atom.
-  auto sectionGroupAtom = handleDefinedSymbol(
-      signature, groupSectionName, nullptr, shdr, ArrayRef<uint8_t>(),
+
+  // Create an atom for comdat signature.
+  ELFDefinedAtom<ELFT> *atom = createDefinedAtom(
+      *symbolName, *sectionName, nullptr, section, ArrayRef<uint8_t>(),
       referenceStart, _references.size(), _references);
-  (*sectionGroupAtom)->setOrdinal(++_ordinal);
-  _definedAtoms._atoms.push_back(*sectionGroupAtom);
+  atom->setOrdinal(++_ordinal);
+  addAtom(*atom);
   for (auto reference : refs)
-    (*sectionGroupAtom)->addReference(reference);
+    atom->addReference(reference);
   return std::error_code();
 }
 
 template <class ELFT> std::error_code ELFFile<ELFT>::createAtomsFromContext() {
   if (!_useWrap)
     return std::error_code();
-  // Steps :-
+  // Steps:
   // a) Create an undefined atom for the symbol specified by the --wrap option,
-  // as that
-  // may be needed to be pulled from an archive.
+  //    as that may be needed to be pulled from an archive.
   // b) Create an undefined atom for __wrap_<symbolname>.
   // c) All references to the symbol specified by wrap should point to
-  // __wrap_<symbolname>
+  //    __wrap_<symbolname>
   // d) All references to __real_symbol should point to the <symbol>
   for (auto &wrapsym : _ctx.wrapCalls()) {
     StringRef wrapStr = wrapsym.getKey();
@@ -969,8 +927,8 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtomsFromContext() {
     // Whenever there is a reference to realCall it should point to the symbol
     // created for each wrap usage.
     _wrapSymbolMap.insert(std::make_pair(realCallSym, wrapSymAtom));
-    _undefinedAtoms._atoms.push_back(wrapSymAtom);
-    _undefinedAtoms._atoms.push_back(wrapCallAtom);
+    addAtom(*wrapSymAtom);
+    addAtom(*wrapCallAtom);
   }
   return std::error_code();
 }
@@ -993,9 +951,8 @@ ELFDefinedAtom<ELFT> *ELFFile<ELFT>::createDefinedAtomAndAssignRelocations(
     createRelocationReferences(symbol, symContent, secContent, rri->second);
 
   // Create the DefinedAtom and add it to the list of DefinedAtoms.
-  return *handleDefinedSymbol(symbolName, sectionName, symbol, section,
-                              symContent, referenceStart, _references.size(),
-                              _references);
+  return createDefinedAtom(symbolName, sectionName, symbol, section, symContent,
+                           referenceStart, _references.size(), _references);
 }
 
 template <class ELFT>
@@ -1048,7 +1005,7 @@ void ELFFile<ELFT>::updateReferenceForMergeStringAccess(ELFReference<ELFT> *ref,
   if (addend < 0)
     addend = 0;
 
-  const MergeSectionKey ms(shdr, addend);
+  const MergeSectionKey ms = {shdr, addend};
   auto msec = _mergedSectionMap.find(ms);
   if (msec != _mergedSectionMap.end()) {
     ref->setTarget(msec->second);

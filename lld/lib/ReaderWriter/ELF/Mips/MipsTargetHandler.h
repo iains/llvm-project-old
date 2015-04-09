@@ -9,8 +9,9 @@
 #ifndef LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 
+#include "ELFReader.h"
 #include "MipsDynamicLibraryWriter.h"
-#include "MipsELFReader.h"
+#include "MipsELFFile.h"
 #include "MipsExecutableWriter.h"
 #include "MipsLinkingContext.h"
 #include "MipsRelocationHandler.h"
@@ -32,14 +33,15 @@ public:
   const MipsGOTSection<ELFT> &getGOTSection() const { return *_gotSection; }
   const MipsPLTSection<ELFT> &getPLTSection() const { return *_pltSection; }
 
-  AtomSection<ELFT> *createSection(StringRef name, int32_t type,
-                                   DefinedAtom::ContentPermissions permissions,
-                                   Layout::SectionOrder order) override {
+  AtomSection<ELFT> *
+  createSection(StringRef name, int32_t type,
+                DefinedAtom::ContentPermissions permissions,
+                typename TargetLayout<ELFT>::SectionOrder order) override {
     if (type == DefinedAtom::typeGOT && name == ".got")
       return _gotSection;
     if (type == DefinedAtom::typeStub && name == ".plt")
       return _pltSection;
-    return DefaultLayout<ELFT>::createSection(name, type, permissions, order);
+    return TargetLayout<ELFT>::createSection(name, type, permissions, order);
   }
 
   /// \brief GP offset relative to .got section.
@@ -60,13 +62,14 @@ public:
   }
 
   /// \brief Return the section order for a input section
-  Layout::SectionOrder getSectionOrder(StringRef name, int32_t contentType,
-                                       int32_t contentPermissions) override {
+  typename TargetLayout<ELFT>::SectionOrder
+  getSectionOrder(StringRef name, int32_t contentType,
+                  int32_t contentPermissions) override {
     if ((contentType == DefinedAtom::typeStub) && (name.startswith(".text")))
-      return DefaultLayout<ELFT>::ORDER_TEXT;
+      return TargetLayout<ELFT>::ORDER_TEXT;
 
-    return DefaultLayout<ELFT>::getSectionOrder(name, contentType,
-                                                contentPermissions);
+    return TargetLayout<ELFT>::getSectionOrder(name, contentType,
+                                               contentPermissions);
   }
 
 protected:
@@ -85,6 +88,9 @@ private:
 
 /// \brief TargetHandler for Mips
 template <class ELFT> class MipsTargetHandler final : public TargetHandler {
+  typedef ELFReader<ELFT, MipsLinkingContext, MipsELFFile> ObjReader;
+  typedef ELFReader<ELFT, MipsLinkingContext, DynamicFile> DSOReader;
+
 public:
   MipsTargetHandler(MipsLinkingContext &ctx)
       : _ctx(ctx), _targetLayout(new MipsTargetLayout<ELFT>(ctx)),
@@ -92,11 +98,11 @@ public:
             createMipsRelocationHandler<ELFT>(ctx, *_targetLayout)) {}
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<MipsELFObjectReader<ELFT>>(_ctx);
+    return llvm::make_unique<ObjReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<MipsELFDSOReader<ELFT>>(_ctx);
+    return llvm::make_unique<DSOReader>(_ctx);
   }
 
   const TargetRelocationHandler &getRelocationHandler() const override {
@@ -130,7 +136,7 @@ public:
 
   MipsSymbolTable(const ELFLinkingContext &ctx)
       : SymbolTable<ELFT>(ctx, ".symtab",
-                          DefaultLayout<ELFT>::ORDER_SYMBOL_TABLE) {}
+                          TargetLayout<ELFT>::ORDER_SYMBOL_TABLE) {}
 
   void addDefinedAtom(Elf_Sym &sym, const DefinedAtom *da,
                       int64_t addr) override {
@@ -172,7 +178,7 @@ public:
   MipsDynamicSymbolTable(const ELFLinkingContext &ctx,
                          MipsTargetLayout<ELFT> &layout)
       : DynamicSymbolTable<ELFT>(ctx, layout, ".dynsym",
-                                 DefaultLayout<ELFT>::ORDER_DYNAMIC_SYMBOLS),
+                                 TargetLayout<ELFT>::ORDER_DYNAMIC_SYMBOLS),
         _targetLayout(layout) {}
 
   void sortSymbols() override {

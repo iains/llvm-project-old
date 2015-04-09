@@ -163,6 +163,14 @@ TEST_F(FormatTestJS, MethodsInObjectLiterals) {
                "    doSomething(this.value + val);\n"
                "  }\n"
                "};");
+  verifyFormat("var o = {\n"
+               "  someMethod(val) {  // method\n"
+               "    doSomething(this.value + val);\n"
+               "  },\n"
+               "  someOtherMethod(val) {  // method\n"
+               "    doSomething(this.value + val);\n"
+               "  }\n"
+               "};");
 }
 
 TEST_F(FormatTestJS, SpacesInContainerLiterals) {
@@ -400,10 +408,9 @@ TEST_F(FormatTestJS, MultipleFunctionLiterals) {
                "      body();\n"
                "    });");
 
-  // FIXME: This is bad, but it used to be formatted correctly by accident.
-  verifyFormat("getSomeLongPromise().then(function(value) {\n"
-               "  body();\n"
-               "}).thenCatch(function(error) { body(); });");
+  verifyFormat("getSomeLongPromise()\n"
+               "    .then(function(value) { body(); })\n"
+               "    .thenCatch(function(error) { body(); });");
 }
 
 TEST_F(FormatTestJS, ReturnStatements) {

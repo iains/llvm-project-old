@@ -112,12 +112,6 @@ public:
   HexagonELFFile(std::unique_ptr<MemoryBuffer> mb, HexagonLinkingContext &ctx)
       : ELFFile<ELFT>(std::move(mb), ctx) {}
 
-  static ErrorOr<std::unique_ptr<HexagonELFFile>>
-  create(std::unique_ptr<MemoryBuffer> mb, HexagonLinkingContext &ctx) {
-    return std::unique_ptr<HexagonELFFile<ELFT>>(
-        new HexagonELFFile<ELFT>(std::move(mb), ctx));
-  }
-
   bool isCommonSymbol(const Elf_Sym *symbol) const override {
     switch (symbol->st_shndx) {
     // Common symbols
@@ -134,20 +128,20 @@ public:
   }
 
   /// Process the Defined symbol and create an atom for it.
-  ErrorOr<ELFDefinedAtom<ELFT> *>
-  handleDefinedSymbol(StringRef symName, StringRef sectionName,
-                      const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
-                      ArrayRef<uint8_t> contentData,
-                      unsigned int referenceStart, unsigned int referenceEnd,
-                      std::vector<ELFReference<ELFT> *> &referenceList) override {
+  ELFDefinedAtom<ELFT> *
+  createDefinedAtom(StringRef symName, StringRef sectionName,
+                    const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
+                    ArrayRef<uint8_t> contentData, unsigned int referenceStart,
+                    unsigned int referenceEnd,
+                    std::vector<ELFReference<ELFT> *> &referenceList) override {
     return new (this->_readerStorage) HexagonELFDefinedAtom<ELFT>(
         *this, symName, sectionName, sym, sectionHdr, contentData,
         referenceStart, referenceEnd, referenceList);
   }
 
   /// Process the Common symbol and create an atom for it.
-  ErrorOr<ELFCommonAtom<ELFT> *>
-  handleCommonSymbol(StringRef symName, const Elf_Sym *sym) override {
+  ELFCommonAtom<ELFT> *createCommonAtom(StringRef symName,
+                                        const Elf_Sym *sym) override {
     return new (this->_readerStorage)
         HexagonELFCommonAtom<ELFT>(*this, symName, sym);
   }

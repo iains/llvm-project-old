@@ -10,7 +10,8 @@
 #ifndef HEXAGON_TARGET_HANDLER_H
 #define HEXAGON_TARGET_HANDLER_H
 
-#include "HexagonELFReader.h"
+#include "ELFReader.h"
+#include "HexagonELFFile.h"
 #include "HexagonExecutableAtoms.h"
 #include "HexagonRelocationHandler.h"
 #include "HexagonSectionChunks.h"
@@ -21,27 +22,28 @@ namespace elf {
 class HexagonLinkingContext;
 
 /// \brief TargetLayout for Hexagon
-template <class HexagonELFType>
-class HexagonTargetLayout final : public TargetLayout<HexagonELFType> {
+template <class ELFT>
+class HexagonTargetLayout final : public TargetLayout<ELFT> {
 public:
   enum HexagonSectionOrder {
     ORDER_SDATA = 205
   };
 
   HexagonTargetLayout(HexagonLinkingContext &hti)
-      : TargetLayout<HexagonELFType>(hti), _sdataSection() {
-    _sdataSection = new (_alloc) SDataSection<HexagonELFType>(hti);
+      : TargetLayout<ELFT>(hti), _sdataSection() {
+    _sdataSection = new (_alloc) SDataSection<ELFT>(hti);
   }
 
   /// \brief Return the section order for a input section
-  Layout::SectionOrder getSectionOrder(
-      StringRef name, int32_t contentType, int32_t contentPermissions) override {
+  typename TargetLayout<ELFT>::SectionOrder
+  getSectionOrder(StringRef name, int32_t contentType,
+                  int32_t contentPermissions) override {
     if ((contentType == DefinedAtom::typeDataFast) ||
        (contentType == DefinedAtom::typeZeroFillFast))
       return ORDER_SDATA;
 
-    return DefaultLayout<HexagonELFType>::getSectionOrder(name, contentType,
-                                                          contentPermissions);
+    return TargetLayout<ELFT>::getSectionOrder(name, contentType,
+                                               contentPermissions);
   }
 
   /// \brief Return the appropriate input section name.
@@ -53,33 +55,31 @@ public:
     default:
       break;
     }
-    return DefaultLayout<HexagonELFType>::getInputSectionName(da);
+    return TargetLayout<ELFT>::getInputSectionName(da);
   }
 
   /// \brief Gets or creates a section.
-  AtomSection<HexagonELFType> *
-  createSection(StringRef name, int32_t contentType,
-                DefinedAtom::ContentPermissions contentPermissions,
-                Layout::SectionOrder sectionOrder) override {
+  AtomSection<ELFT> *createSection(
+      StringRef name, int32_t contentType,
+      DefinedAtom::ContentPermissions contentPermissions,
+      typename TargetLayout<ELFT>::SectionOrder sectionOrder) override {
     if ((contentType == DefinedAtom::typeDataFast) ||
        (contentType == DefinedAtom::typeZeroFillFast))
       return _sdataSection;
-    return DefaultLayout<HexagonELFType>::createSection(
-        name, contentType, contentPermissions, sectionOrder);
+    return TargetLayout<ELFT>::createSection(name, contentType,
+                                             contentPermissions, sectionOrder);
   }
 
   /// \brief get the segment type for the section thats defined by the target
-  Layout::SegmentType
-  getSegmentType(Section<HexagonELFType> *section) const override {
+  typename TargetLayout<ELFT>::SegmentType
+  getSegmentType(Section<ELFT> *section) const override {
     if (section->order() == ORDER_SDATA)
       return PT_LOAD;
 
-    return DefaultLayout<HexagonELFType>::getSegmentType(section);
+    return TargetLayout<ELFT>::getSegmentType(section);
   }
 
-  Section<HexagonELFType> *getSDataSection() const {
-    return _sdataSection;
-  }
+  Section<ELFT> *getSDataSection() const { return _sdataSection; }
 
   uint64_t getGOTSymAddr() {
     if (!_gotSymAtom.hasValue())
@@ -91,33 +91,37 @@ public:
 
 private:
   llvm::BumpPtrAllocator _alloc;
-  SDataSection<HexagonELFType> *_sdataSection = nullptr;
+  SDataSection<ELFT> *_sdataSection = nullptr;
   llvm::Optional<AtomLayout *> _gotSymAtom;
 };
 
 /// \brief TargetHandler for Hexagon
 class HexagonTargetHandler final : public TargetHandler {
+  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
+  typedef ELFReader<ELFTy, HexagonLinkingContext, HexagonELFFile> ObjReader;
+  typedef ELFReader<ELFTy, HexagonLinkingContext, DynamicFile> ELFDSOReader;
+
 public:
   HexagonTargetHandler(HexagonLinkingContext &targetInfo);
 
-  const HexagonTargetRelocationHandler &getRelocationHandler() const override {
+  const TargetRelocationHandler &getRelocationHandler() const override {
     return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<HexagonELFObjectReader>(_ctx);
+    return llvm::make_unique<ObjReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<HexagonELFDSOReader>(_ctx);
+    return llvm::make_unique<ELFDSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
   HexagonLinkingContext &_ctx;
-  std::unique_ptr<HexagonRuntimeFile<HexagonELFType>> _runtimeFile;
-  std::unique_ptr<HexagonTargetLayout<HexagonELFType>> _targetLayout;
+  std::unique_ptr<HexagonRuntimeFile<ELFTy>> _runtimeFile;
+  std::unique_ptr<HexagonTargetLayout<ELFTy>> _targetLayout;
   std::unique_ptr<HexagonTargetRelocationHandler> _relocationHandler;
 };
 

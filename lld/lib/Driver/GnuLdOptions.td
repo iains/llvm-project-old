@@ -231,6 +231,12 @@ defm defsym : mDashEq<"defsym",
 //===----------------------------------------------------------------------===//
 def grp_customopts : OptionGroup<"opts">,
      HelpText<"CUSTOM OPTIONS">;
+def disable_newdtags: Flag<["--"], "disable-new-dtags">,
+     HelpText<"Disable new dynamic tags">,
+     Group<grp_customopts>;
+def enable_newdtags: Flag<["--"], "enable-new-dtags">,
+     HelpText<"Enable new dynamic tags">,
+     Group<grp_customopts>;
 def rosegment: Flag<["--"], "rosegment">,
      HelpText<"Put read-only non-executable sections in their own segment">,
      Group<grp_customopts>;
@@ -311,6 +317,16 @@ def output_filetype: Separate<["--"], "output-filetype">,
       Group<grp_extns>;
 def alias_output_filetype: Joined<["--"], "output-filetype=">,
       Alias<output_filetype>;
+
+//===----------------------------------------------------------------------===//
+/// Target Specific Options
+//===----------------------------------------------------------------------===//
+def grp_targetopts : OptionGroup<"opts">,
+     HelpText<"ARCH SPECIFIC OPTIONS">;
+def arm_target1_rel : Flag<["--"], "arm-target1-rel">,
+     Group<grp_targetopts>, HelpText<"Interpret R_ARM_TARGET1 as R_ARM_REL32">;
+def arm_target1_abs : Flag<["--"], "arm-target1-abs">,
+     Group<grp_targetopts>, HelpText<"Interpret R_ARM_TARGET1 as R_ARM_ABS32">;
 
 //===----------------------------------------------------------------------===//
 /// Ignored options

@@ -25,6 +25,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
@@ -214,30 +215,14 @@ private:
   NameToAtom _groupMap;
 };
 
-// Used in NormalizedFile to hold the atoms lists.
-template <typename T> class AtomList : public lld::File::atom_collection<T> {
+/// Mapping of Atoms.
+template <typename T> class AtomList {
+  typedef lld::File::AtomVector<T> Ty;
+
 public:
-  virtual lld::File::atom_iterator<T> begin() const {
-    return lld::File::atom_iterator<T>(
-        *this,
-        _atoms.empty() ? 0 : reinterpret_cast<const void *>(_atoms.data()));
-  }
-  virtual lld::File::atom_iterator<T> end() const {
-    return lld::File::atom_iterator<T>(
-        *this, _atoms.empty() ? 0 : reinterpret_cast<const void *>(
-                                        _atoms.data() + _atoms.size()));
-  }
-  virtual const T *deref(const void *it) const {
-    return *reinterpret_cast<const T *const *>(it);
-  }
-  virtual void next(const void *&it) const {
-    const T *const *p = reinterpret_cast<const T *const *>(it);
-    ++p;
-    it = reinterpret_cast<const void *>(p);
-  }
-  virtual void push_back(const T *element) { _atoms.push_back(element); }
-  virtual uint64_t size() const { return _atoms.size(); }
-  std::vector<const T *> _atoms;
+  typename Ty::iterator begin() { return _atoms.begin(); }
+  typename Ty::iterator end() { return _atoms.end(); }
+  Ty _atoms;
 };
 
 /// Mapping of kind: field in yaml files.
@@ -597,17 +582,17 @@ template <> struct MappingTraits<const lld::File *> {
 
     const lld::File *denormalize(IO &io) { return this; }
 
-    const atom_collection<lld::DefinedAtom> &defined() const override {
+    const AtomVector<lld::DefinedAtom> &defined() const override {
       return _noDefinedAtoms;
     }
-    const atom_collection<lld::UndefinedAtom> &undefined() const override {
+    const AtomVector<lld::UndefinedAtom> &undefined() const override {
       return _noUndefinedAtoms;
     }
-    virtual const atom_collection<lld::SharedLibraryAtom> &
+    virtual const AtomVector<lld::SharedLibraryAtom> &
     sharedLibrary() const override {
       return _noSharedLibraryAtoms;
     }
-    const atom_collection<lld::AbsoluteAtom> &absolute() const override {
+    const AtomVector<lld::AbsoluteAtom> &absolute() const override {
       return _noAbsoluteAtoms;
     }
     File *find(StringRef name, bool dataSymbolOnly) override {
@@ -645,28 +630,28 @@ template <> struct MappingTraits<const lld::File *> {
         : File(file->path(), kindObject), _io(io),
           _rnb(new RefNameBuilder(*file)), _path(file->path()) {
       for (const lld::DefinedAtom *a : file->defined())
-        _definedAtoms.push_back(a);
+        _definedAtoms._atoms.push_back(a);
       for (const lld::UndefinedAtom *a : file->undefined())
-        _undefinedAtoms.push_back(a);
+        _undefinedAtoms._atoms.push_back(a);
       for (const lld::SharedLibraryAtom *a : file->sharedLibrary())
-        _sharedLibraryAtoms.push_back(a);
+        _sharedLibraryAtoms._atoms.push_back(a);
       for (const lld::AbsoluteAtom *a : file->absolute())
-        _absoluteAtoms.push_back(a);
+        _absoluteAtoms._atoms.push_back(a);
     }
     const lld::File *denormalize(IO &io);
 
-    const atom_collection<lld::DefinedAtom> &defined() const override {
-      return _definedAtoms;
+    const AtomVector<lld::DefinedAtom> &defined() const override {
+      return _definedAtoms._atoms;
     }
-    const atom_collection<lld::UndefinedAtom> &undefined() const override {
-      return _undefinedAtoms;
+    const AtomVector<lld::UndefinedAtom> &undefined() const override {
+      return _undefinedAtoms._atoms;
     }
-    virtual const atom_collection<lld::SharedLibraryAtom> &
+    virtual const AtomVector<lld::SharedLibraryAtom> &
     sharedLibrary() const override {
-      return _sharedLibraryAtoms;
+      return _sharedLibraryAtoms._atoms;
     }
-    const atom_collection<lld::AbsoluteAtom> &absolute() const override {
-      return _absoluteAtoms;
+    const AtomVector<lld::AbsoluteAtom> &absolute() const override {
+      return _absoluteAtoms._atoms;
     }
 
     // Allocate a new copy of this string in _storage, so the strings
@@ -1304,8 +1289,9 @@ class YAMLReader : public Reader {
 public:
   YAMLReader(const Registry &registry) : _registry(registry) {}
 
-  bool canParse(file_magic, StringRef ext, const MemoryBuffer &) const override {
-    return (ext.equals(".objtxt") || ext.equals(".yaml"));
+  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+    StringRef ext = llvm::sys::path::extension(mb.getBufferIdentifier());
+    return ext.equals(".objtxt") || ext.equals(".yaml");
   }
 
   std::error_code

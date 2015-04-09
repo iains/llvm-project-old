@@ -19,38 +19,20 @@ namespace elf {
 class X86_64ExecutableWriter : public ExecutableWriter<X86_64ELFType> {
 public:
   X86_64ExecutableWriter(X86_64LinkingContext &ctx, X86_64TargetLayout &layout)
-      : ExecutableWriter(ctx, layout), _gotFile(new GOTFile(ctx)), _ctx(ctx) {}
+      : ExecutableWriter(ctx, layout) {}
 
 protected:
   // Add any runtime files and their atoms to the output
-  virtual bool
-  createImplicitFiles(std::vector<std::unique_ptr<File>> &result) {
+  void
+  createImplicitFiles(std::vector<std::unique_ptr<File>> &result) override {
     ExecutableWriter::createImplicitFiles(result);
-    _gotFile->addAtom(*new (_gotFile->_alloc)
-                      GlobalOffsetTableAtom(*_gotFile));
-    if (_ctx.isDynamic())
-      _gotFile->addAtom(*new (_gotFile->_alloc) DynamicAtom(*_gotFile));
-    result.push_back(std::move(_gotFile));
-    return true;
+    auto gotFile = llvm::make_unique<SimpleFile>("GOTFile");
+    gotFile->addAtom(*new (gotFile->allocator())
+                         GlobalOffsetTableAtom(*gotFile));
+    if (this->_ctx.isDynamic())
+      gotFile->addAtom(*new (gotFile->allocator()) DynamicAtom(*gotFile));
+    result.push_back(std::move(gotFile));
   }
-
-  virtual void finalizeDefaultAtomValues() {
-    return ExecutableWriter::finalizeDefaultAtomValues();
-  }
-
-  virtual void addDefaultAtoms() {
-    return ExecutableWriter::addDefaultAtoms();
-  }
-
-private:
-  class GOTFile : public SimpleFile {
-  public:
-    GOTFile(const ELFLinkingContext &eti) : SimpleFile("GOTFile") {}
-    llvm::BumpPtrAllocator _alloc;
-  };
-
-  std::unique_ptr<GOTFile> _gotFile;
-  X86_64LinkingContext &_ctx;
 };
 
 } // namespace elf

@@ -11,7 +11,7 @@
 #define LLD_READER_WRITER_ELF_X86_TARGET_HANDLER_H
 
 #include "TargetLayout.h"
-#include "X86ELFReader.h"
+#include "ELFReader.h"
 #include "X86RelocationHandler.h"
 
 namespace lld {
@@ -20,26 +20,30 @@ namespace elf {
 class X86LinkingContext;
 
 class X86TargetHandler final : public TargetHandler {
+  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
+  typedef ELFReader<ELFTy, X86LinkingContext, ELFFile> ObjReader;
+  typedef ELFReader<ELFTy, X86LinkingContext, DynamicFile> DSOReader;
+
 public:
   X86TargetHandler(X86LinkingContext &ctx);
 
-  const X86TargetRelocationHandler &getRelocationHandler() const override {
+  const TargetRelocationHandler &getRelocationHandler() const override {
     return *_relocationHandler;
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<X86ELFObjectReader>(_ctx);
+    return llvm::make_unique<ObjReader>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<X86ELFDSOReader>(_ctx);
+    return llvm::make_unique<DSOReader>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 protected:
   X86LinkingContext &_ctx;
-  std::unique_ptr<TargetLayout<X86ELFType>> _targetLayout;
+  std::unique_ptr<TargetLayout<ELFTy>> _targetLayout;
   std::unique_ptr<X86TargetRelocationHandler> _relocationHandler;
 };
 } // end namespace elf

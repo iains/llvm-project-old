@@ -30,18 +30,15 @@ struct MipsRelocationParams {
   bool _shuffle;  // Relocation's addendum/result needs to be shuffled
 };
 
-template <class ELFT> class RelocationHandler : public MipsRelocationHandler {
+template <class ELFT> class RelocationHandler : public TargetRelocationHandler {
 public:
   RelocationHandler(MipsLinkingContext &ctx, MipsTargetLayout<ELFT> &layout)
-    : _ctx(ctx), _targetLayout(layout) {}
+      : _ctx(ctx), _targetLayout(layout) {}
 
   std::error_code applyRelocation(ELFWriter &writer,
                                   llvm::FileOutputBuffer &buf,
                                   const lld::AtomLayout &atom,
                                   const Reference &ref) const override;
-
-  Reference::Addend readAddend(Reference::KindValue kind,
-                               const uint8_t *content) const override;
 
 private:
   MipsLinkingContext &_ctx;
@@ -488,16 +485,15 @@ static ErrorOr<uint64_t> calculateRelocation(Reference::KindValue kind,
   }
 }
 
-template <class ELFT>
 static uint64_t relocRead(const MipsRelocationParams &params,
                           const uint8_t *loc) {
   uint64_t data;
   switch (params._size) {
   case 4:
-    data = endian::read<uint32_t, ELFT::TargetEndianness, unaligned>(loc);
+    data = endian::read32le(loc);
     break;
   case 8:
-    data = endian::read<uint64_t, ELFT::TargetEndianness, unaligned>(loc);
+    data = endian::read64le(loc);
     break;
   default:
     llvm_unreachable("Unexpected size");
@@ -572,7 +568,7 @@ std::error_code RelocationHandler<ELFT>::applyRelocation(
   }
 
   auto params = getRelocationParams(op);
-  uint64_t ins = relocRead<ELFT>(params, location);
+  uint64_t ins = relocRead(params, location);
 
   if (auto ec = adjustJumpOpCode(ins, tgtAddr, jumpMode))
     return ec;
@@ -581,15 +577,6 @@ std::error_code RelocationHandler<ELFT>::applyRelocation(
   relocWrite<ELFT>(ins, params, location);
 
   return std::error_code();
-}
-
-template <class ELFT>
-Reference::Addend
-RelocationHandler<ELFT>::readAddend(Reference::KindValue kind,
-                                    const uint8_t *content) const {
-  auto params = getRelocationParams(kind);
-  uint64_t ins = relocRead<ELFT>(params, content);
-  return (ins & params._mask) << params._shift;
 }
 
 namespace lld {
@@ -607,6 +594,13 @@ std::unique_ptr<TargetRelocationHandler>
 createMipsRelocationHandler<Mips64ELType>(MipsLinkingContext &ctx,
                                           MipsTargetLayout<Mips64ELType> &layout) {
   return llvm::make_unique<RelocationHandler<Mips64ELType>>(ctx, layout);
+}
+
+Reference::Addend readMipsRelocAddend(Reference::KindValue kind,
+                                      const uint8_t *content) {
+  auto params = getRelocationParams(kind);
+  uint64_t ins = relocRead(params, content);
+  return (ins & params._mask) << params._shift;
 }
 
 } // elf

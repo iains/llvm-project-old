@@ -217,12 +217,12 @@ public:
       : SimpleFile("<entry>"), _ctx(const_cast<PECOFFLinkingContext *>(&ctx)),
         _firstTime(true) {}
 
-  const atom_collection<UndefinedAtom> &undefined() const override {
+  const AtomVector<UndefinedAtom> &undefined() const override {
     return const_cast<EntryPointFile *>(this)->getUndefinedAtoms();
   }
 
 private:
-  const atom_collection<UndefinedAtom> &getUndefinedAtoms() {
+  const AtomVector<UndefinedAtom> &getUndefinedAtoms() {
     std::lock_guard<std::mutex> lock(_mutex);
     if (!_firstTime)
       return _undefinedAtoms;
@@ -230,7 +230,7 @@ private:
 
     if (_ctx->hasEntry()) {
       StringRef entrySym = _ctx->allocate(getEntry());
-      _undefinedAtoms._atoms.push_back(
+      _undefinedAtoms.push_back(
           new (_alloc) SimpleUndefinedAtom(*this, entrySym));
       _ctx->setHasEntry(true);
       _ctx->setEntrySymbolName(entrySym);
@@ -299,7 +299,7 @@ private:
   }
 
   PECOFFLinkingContext *_ctx;
-  atom_collection_vector<UndefinedAtom> _undefinedAtoms;
+  AtomVector<UndefinedAtom> _undefinedAtoms;
   std::mutex _mutex;
   llvm::BumpPtrAllocator _alloc;
   bool _firstTime;

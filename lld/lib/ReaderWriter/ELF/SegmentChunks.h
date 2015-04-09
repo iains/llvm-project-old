@@ -11,7 +11,6 @@
 #define LLD_READER_WRITER_ELF_SEGMENT_CHUNKS_H
 
 #include "Chunk.h"
-#include "Layout.h"
 #include "SectionChunks.h"
 #include "Writer.h"
 #include "lld/Core/range.h"
@@ -29,7 +28,7 @@
 namespace lld {
 namespace elf {
 
-template <typename ELFT> class DefaultLayout;
+template <typename ELFT> class TargetLayout;
 
 /// \brief A segment can be divided into segment slices
 ///        depending on how the segments can be split
@@ -97,7 +96,7 @@ public:
   typedef typename std::vector<Chunk<ELFT> *>::iterator SectionIter;
 
   Segment(const ELFLinkingContext &ctx, StringRef name,
-          const Layout::SegmentType type);
+          const typename TargetLayout<ELFT>::SegmentType type);
 
   /// \brief the Order of segments that appear in the output file
   enum SegmentOrder {
@@ -180,7 +179,9 @@ public:
   int32_t sectionCount() const { return _sections.size(); }
 
   /// \brief, this function returns the type of segment (PT_*)
-  Layout::SegmentType segmentType() { return _segmentType; }
+  typename TargetLayout<ELFT>::SegmentType segmentType() {
+    return _segmentType;
+  }
 
   /// \brief return the segment type depending on the content,
   /// If the content corresponds to Code, this will return Segment::Code
@@ -251,7 +252,7 @@ protected:
   /// \brief Section or some other chunk type.
   std::vector<Chunk<ELFT> *> _sections;
   std::vector<SegmentSlice<ELFT> *> _segmentSlices;
-  Layout::SegmentType _segmentType;
+  typename TargetLayout<ELFT>::SegmentType _segmentType;
   uint64_t _flags;
   int64_t _atomflags;
   llvm::BumpPtrAllocator _segmentAllocate;
@@ -313,10 +314,10 @@ public:
 
 template <class ELFT>
 Segment<ELFT>::Segment(const ELFLinkingContext &ctx, StringRef name,
-                       const Layout::SegmentType type)
+                       const typename TargetLayout<ELFT>::SegmentType type)
     : Chunk<ELFT>(name, Chunk<ELFT>::Kind::ELFSegment, ctx), _segmentType(type),
       _flags(0), _atomflags(0) {
-  this->_alignment = 0;
+  this->_alignment = 1;
   this->_fsize = 0;
   _outputMagic = ctx.getOutputMagic();
 }
@@ -527,7 +528,7 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
       // segment. If we see a tbss section, don't add memory size to addr The
       // fileOffset is automatically taken care of since TBSS section does not
       // end up using file size
-      if ((*si)->order() != DefaultLayout<ELFT>::ORDER_TBSS)
+      if ((*si)->order() != TargetLayout<ELFT>::ORDER_TBSS)
         curSliceSize = (*si)->memSize();
     } else {
       uint64_t curAddr = curSliceAddress + curSliceSize;
@@ -610,7 +611,7 @@ template <class ELFT> void Segment<ELFT>::assignVirtualAddress(uint64_t addr) {
         // any segment. If we see a tbss section, don't add memory size to addr
         // The fileOffset is automatically taken care of since TBSS section does
         // not end up using file size.
-        if ((*si)->order() != DefaultLayout<ELFT>::ORDER_TBSS)
+        if ((*si)->order() != TargetLayout<ELFT>::ORDER_TBSS)
           curSliceSize = newAddr - curSliceAddress + (*si)->memSize();
         else
           curSliceSize = newAddr - curSliceAddress;

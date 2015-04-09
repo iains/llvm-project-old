@@ -369,25 +369,21 @@ public:
     // the _definedAtoms array which was allocated to contain an array
     // of Atom objects.  The atoms have empty destructors, so it is ok
     // to just delete the memory.
-    delete _definedAtoms._arrayStart;
-    delete _undefinedAtoms._arrayStart;
-    delete _sharedLibraryAtoms._arrayStart;
-    delete _absoluteAtoms._arrayStart;
     delete _referencesV1.arrayStart;
     delete _referencesV2.arrayStart;
     delete [] _targetsTable;
   }
 
-  const atom_collection<DefinedAtom>&  defined() const override {
+  const AtomVector<DefinedAtom> &defined() const override {
     return _definedAtoms;
   }
-  const atom_collection<UndefinedAtom>& undefined() const override {
+  const AtomVector<UndefinedAtom> &undefined() const override {
       return _undefinedAtoms;
   }
-  const atom_collection<SharedLibraryAtom>& sharedLibrary() const override {
+  const AtomVector<SharedLibraryAtom> &sharedLibrary() const override {
       return _sharedLibraryAtoms;
   }
-  const atom_collection<AbsoluteAtom> &absolute() const override {
+  const AtomVector<AbsoluteAtom> &absolute() const override {
     return _absoluteAtoms;
   }
 
@@ -398,43 +394,30 @@ private:
   friend NativeAbsoluteAtomV1;
   friend NativeReferenceV1;
   friend NativeReferenceV2;
+  template <typename T> class AtomArray;
+
+  // instantiate array of BASeT from IvarsT data in file
+  template <typename BaseT, typename AtomT, typename IvarsT>
+  std::error_code processAtoms(AtomVector<BaseT> &result, const uint8_t *base,
+                               const NativeChunk *chunk) {
+    std::vector<const BaseT *> vec(chunk->elementCount);
+    const size_t ivarElementSize = chunk->fileSize / chunk->elementCount;
+    if (ivarElementSize != sizeof(IvarsT))
+      return make_error_code(NativeReaderError::file_malformed);
+    auto *ivar = reinterpret_cast<const IvarsT *>(base + chunk->fileOffset);
+    for (size_t i = 0; i < chunk->elementCount; ++i)
+      vec[i] = new (_alloc) AtomT(*this, ivar++);
+    result = std::move(vec);
+    return make_error_code(NativeReaderError::success);
+  }
 
   // instantiate array of DefinedAtoms from v1 ivar data in file
   std::error_code processDefinedAtomsV1(const uint8_t *base,
                                         const NativeChunk *chunk) {
-    const size_t atomSize = sizeof(NativeDefinedAtomV1);
-    size_t atomsArraySize = chunk->elementCount * atomSize;
-    uint8_t* atomsStart = reinterpret_cast<uint8_t*>
-                                (operator new(atomsArraySize, std::nothrow));
-    if (atomsStart == nullptr)
-      return make_error_code(NativeReaderError::memory_error);
-    const size_t ivarElementSize = chunk->fileSize
-                                          / chunk->elementCount;
-    if ( ivarElementSize != sizeof(NativeDefinedAtomIvarsV1) )
-      return make_error_code(NativeReaderError::file_malformed);
-    uint8_t* atomsEnd = atomsStart + atomsArraySize;
-    const NativeDefinedAtomIvarsV1* ivarData =
-                             reinterpret_cast<const NativeDefinedAtomIvarsV1*>
-                                                  (base + chunk->fileOffset);
-    for(uint8_t* s = atomsStart; s != atomsEnd; s += atomSize) {
-      NativeDefinedAtomV1* atomAllocSpace =
-                  reinterpret_cast<NativeDefinedAtomV1*>(s);
-      new (atomAllocSpace) NativeDefinedAtomV1(*this, ivarData);
-      ++ivarData;
-    }
-    this->_definedAtoms._arrayStart = atomsStart;
-    this->_definedAtoms._arrayEnd = atomsEnd;
-    this->_definedAtoms._elementSize = atomSize;
-    this->_definedAtoms._elementCount = chunk->elementCount;
-    DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
-                    << " chunk DefinedAtomsV1:      "
-                    << " count=" << chunk->elementCount
-                    << " chunkSize=" << chunk->fileSize
-                    << "\n");
-    return make_error_code(NativeReaderError::success);
+    return processAtoms<DefinedAtom, NativeDefinedAtomV1,
+                        NativeDefinedAtomIvarsV1>(this->_definedAtoms, base,
+                                                  chunk);
   }
-
-
 
   // set up pointers to attributes array
   std::error_code processAttributesV1(const uint8_t *base,
@@ -465,108 +448,27 @@ private:
   // instantiate array of UndefinedAtoms from v1 ivar data in file
   std::error_code processUndefinedAtomsV1(const uint8_t *base,
                                           const NativeChunk *chunk) {
-    const size_t atomSize = sizeof(NativeUndefinedAtomV1);
-    size_t atomsArraySize = chunk->elementCount * atomSize;
-    uint8_t* atomsStart = reinterpret_cast<uint8_t*>
-                                (operator new(atomsArraySize, std::nothrow));
-    if (atomsStart == nullptr)
-      return make_error_code(NativeReaderError::memory_error);
-    const size_t ivarElementSize = chunk->fileSize
-                                          / chunk->elementCount;
-    if ( ivarElementSize != sizeof(NativeUndefinedAtomIvarsV1) )
-      return make_error_code(NativeReaderError::file_malformed);
-    uint8_t* atomsEnd = atomsStart + atomsArraySize;
-    const NativeUndefinedAtomIvarsV1* ivarData =
-                            reinterpret_cast<const NativeUndefinedAtomIvarsV1*>
-                                                  (base + chunk->fileOffset);
-    for(uint8_t* s = atomsStart; s != atomsEnd; s += atomSize) {
-      NativeUndefinedAtomV1* atomAllocSpace =
-                  reinterpret_cast<NativeUndefinedAtomV1*>(s);
-      new (atomAllocSpace) NativeUndefinedAtomV1(*this, ivarData);
-      ++ivarData;
-    }
-    this->_undefinedAtoms._arrayStart = atomsStart;
-    this->_undefinedAtoms._arrayEnd = atomsEnd;
-    this->_undefinedAtoms._elementSize = atomSize;
-    this->_undefinedAtoms._elementCount = chunk->elementCount;
-    DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
-                    << " chunk UndefinedAtomsV1:"
-                    << " count=" << chunk->elementCount
-                    << " chunkSize=" << chunk->fileSize
-                    << "\n");
-    return make_error_code(NativeReaderError::success);
+    return processAtoms<UndefinedAtom, NativeUndefinedAtomV1,
+                        NativeUndefinedAtomIvarsV1>(this->_undefinedAtoms, base,
+                                                    chunk);
   }
 
 
   // instantiate array of ShareLibraryAtoms from v1 ivar data in file
   std::error_code processSharedLibraryAtomsV1(const uint8_t *base,
                                               const NativeChunk *chunk) {
-    const size_t atomSize = sizeof(NativeSharedLibraryAtomV1);
-    size_t atomsArraySize = chunk->elementCount * atomSize;
-    uint8_t* atomsStart = reinterpret_cast<uint8_t*>
-                                (operator new(atomsArraySize, std::nothrow));
-    if (atomsStart == nullptr)
-      return make_error_code(NativeReaderError::memory_error);
-    const size_t ivarElementSize = chunk->fileSize
-                                          / chunk->elementCount;
-    if ( ivarElementSize != sizeof(NativeSharedLibraryAtomIvarsV1) )
-      return make_error_code(NativeReaderError::file_malformed);
-    uint8_t* atomsEnd = atomsStart + atomsArraySize;
-    const NativeSharedLibraryAtomIvarsV1* ivarData =
-                      reinterpret_cast<const NativeSharedLibraryAtomIvarsV1*>
-                                                  (base + chunk->fileOffset);
-    for(uint8_t* s = atomsStart; s != atomsEnd; s += atomSize) {
-      NativeSharedLibraryAtomV1* atomAllocSpace =
-                  reinterpret_cast<NativeSharedLibraryAtomV1*>(s);
-      new (atomAllocSpace) NativeSharedLibraryAtomV1(*this, ivarData);
-      ++ivarData;
-    }
-    this->_sharedLibraryAtoms._arrayStart = atomsStart;
-    this->_sharedLibraryAtoms._arrayEnd = atomsEnd;
-    this->_sharedLibraryAtoms._elementSize = atomSize;
-    this->_sharedLibraryAtoms._elementCount = chunk->elementCount;
-    DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
-                    << " chunk SharedLibraryAtomsV1:"
-                    << " count=" << chunk->elementCount
-                    << " chunkSize=" << chunk->fileSize
-                    << "\n");
-    return make_error_code(NativeReaderError::success);
+    return processAtoms<SharedLibraryAtom, NativeSharedLibraryAtomV1,
+                        NativeSharedLibraryAtomIvarsV1>(
+        this->_sharedLibraryAtoms, base, chunk);
   }
 
 
    // instantiate array of AbsoluteAtoms from v1 ivar data in file
   std::error_code processAbsoluteAtomsV1(const uint8_t *base,
                                          const NativeChunk *chunk) {
-    const size_t atomSize = sizeof(NativeAbsoluteAtomV1);
-    size_t atomsArraySize = chunk->elementCount * atomSize;
-    uint8_t* atomsStart = reinterpret_cast<uint8_t*>
-                                (operator new(atomsArraySize, std::nothrow));
-    if (atomsStart == nullptr)
-      return make_error_code(NativeReaderError::memory_error);
-    const size_t ivarElementSize = chunk->fileSize
-                                          / chunk->elementCount;
-    if ( ivarElementSize != sizeof(NativeAbsoluteAtomIvarsV1) )
-      return make_error_code(NativeReaderError::file_malformed);
-    uint8_t* atomsEnd = atomsStart + atomsArraySize;
-    const NativeAbsoluteAtomIvarsV1* ivarData =
-                      reinterpret_cast<const NativeAbsoluteAtomIvarsV1*>
-                                                  (base + chunk->fileOffset);
-    for(uint8_t* s = atomsStart; s != atomsEnd; s += atomSize) {
-      NativeAbsoluteAtomV1* atomAllocSpace =
-                  reinterpret_cast<NativeAbsoluteAtomV1*>(s);
-      new (atomAllocSpace) NativeAbsoluteAtomV1(*this, ivarData);
-      ++ivarData;
-    }
-    this->_absoluteAtoms._arrayStart = atomsStart;
-    this->_absoluteAtoms._arrayEnd = atomsEnd;
-    this->_absoluteAtoms._elementSize = atomSize;
-    this->_absoluteAtoms._elementCount = chunk->elementCount;
-    DEBUG_WITH_TYPE("ReaderNative", llvm::dbgs()
-                    << " chunk AbsoluteAtomsV1:     "
-                    << " count=" << chunk->elementCount
-                    << " chunkSize=" << chunk->fileSize
-                    << "\n");
-    return make_error_code(NativeReaderError::success);
+    return processAtoms<AbsoluteAtom, NativeAbsoluteAtomV1,
+                        NativeAbsoluteAtomIvarsV1>(this->_absoluteAtoms, base,
+                                                   chunk);
   }
 
   template <class T, class U>
@@ -641,34 +543,23 @@ private:
     this->_targetsTable = new const Atom*[chunk->elementCount];
     for (uint32_t i=0; i < chunk->elementCount; ++i) {
       const uint32_t index = targetIndexes[i];
-      if ( index < _definedAtoms._elementCount ) {
-        const uint8_t* p = _definedAtoms._arrayStart
-                                    + index * _definedAtoms._elementSize;
-        this->_targetsTable[i] = reinterpret_cast<const DefinedAtom*>(p);
+      if (index < _definedAtoms.size()) {
+        this->_targetsTable[i] = _definedAtoms[index];
         continue;
       }
-      const uint32_t undefIndex = index - _definedAtoms._elementCount;
-      if ( undefIndex < _undefinedAtoms._elementCount ) {
-        const uint8_t* p = _undefinedAtoms._arrayStart
-                                    + undefIndex * _undefinedAtoms._elementSize;
-        this->_targetsTable[i] = reinterpret_cast<const UndefinedAtom*>(p);
+      const uint32_t undefIndex = index - _definedAtoms.size();
+      if (undefIndex < _undefinedAtoms.size()) {
+        this->_targetsTable[i] = _undefinedAtoms[index];
         continue;
       }
-      const uint32_t slIndex = index - _definedAtoms._elementCount
-                                     - _undefinedAtoms._elementCount;
-      if ( slIndex < _sharedLibraryAtoms._elementCount ) {
-        const uint8_t* p = _sharedLibraryAtoms._arrayStart
-                                  + slIndex * _sharedLibraryAtoms._elementSize;
-        this->_targetsTable[i] = reinterpret_cast<const SharedLibraryAtom*>(p);
+      const uint32_t slIndex = undefIndex - _undefinedAtoms.size();
+      if (slIndex < _sharedLibraryAtoms.size()) {
+        this->_targetsTable[i] = _sharedLibraryAtoms[slIndex];
         continue;
       }
-      const uint32_t abIndex = index - _definedAtoms._elementCount
-                                     - _undefinedAtoms._elementCount
-                                     - _sharedLibraryAtoms._elementCount;
-      if ( abIndex < _absoluteAtoms._elementCount ) {
-        const uint8_t* p = _absoluteAtoms._arrayStart
-                                  + abIndex * _absoluteAtoms._elementSize;
-        this->_targetsTable[i] = reinterpret_cast<const AbsoluteAtom*>(p);
+      const uint32_t abIndex = slIndex - _sharedLibraryAtoms.size();
+      if (abIndex < _absoluteAtoms.size()) {
+        this->_targetsTable[i] = _absoluteAtoms[abIndex];
         continue;
       }
      return make_error_code(NativeReaderError::file_malformed);
@@ -784,33 +675,6 @@ private:
     _targetsTable[index] = newAtom;
   }
 
-  template <typename T>
-  class AtomArray : public File::atom_collection<T> {
-  public:
-     AtomArray() : _arrayStart(nullptr), _arrayEnd(nullptr),
-                   _elementSize(0), _elementCount(0) { }
-
-    virtual atom_iterator<T> begin() const {
-      return atom_iterator<T>(*this, reinterpret_cast<const void*>(_arrayStart));
-    }
-    virtual atom_iterator<T> end() const{
-      return atom_iterator<T>(*this, reinterpret_cast<const void*>(_arrayEnd));
-    }
-    virtual const T* deref(const void* it) const {
-      return reinterpret_cast<const T*>(it);
-    }
-    virtual void next(const void*& it) const {
-      const uint8_t* p = reinterpret_cast<const uint8_t*>(it);
-      p += _elementSize;
-      it = reinterpret_cast<const void*>(p);
-    }
-    virtual uint64_t size() const { return _elementCount; }
-    const uint8_t *_arrayStart;
-    const uint8_t *_arrayEnd;
-    uint32_t           _elementSize;
-    uint32_t           _elementCount;
-  };
-
   struct IvarArray {
                       IvarArray() :
                         arrayStart(nullptr),
@@ -826,10 +690,10 @@ private:
 
   std::unique_ptr<MemoryBuffer>   _mb;
   const NativeFileHeader*         _header;
-  AtomArray<DefinedAtom>          _definedAtoms;
-  AtomArray<UndefinedAtom>        _undefinedAtoms;
-  AtomArray<SharedLibraryAtom>    _sharedLibraryAtoms;
-  AtomArray<AbsoluteAtom>         _absoluteAtoms;
+  AtomVector<DefinedAtom> _definedAtoms;
+  AtomVector<UndefinedAtom> _undefinedAtoms;
+  AtomVector<SharedLibraryAtom> _sharedLibraryAtoms;
+  AtomVector<AbsoluteAtom> _absoluteAtoms;
   const uint8_t*                  _absAttributes;
   uint32_t                        _absAbsoluteMaxOffset;
   const uint8_t*                  _attributes;
@@ -844,15 +708,19 @@ private:
   uint32_t                        _addendsMaxIndex;
   const uint8_t                  *_contentStart;
   const uint8_t                  *_contentEnd;
+  llvm::BumpPtrAllocator _alloc;
 };
 
 inline const lld::File &NativeDefinedAtomV1::file() const {
   return *_file;
 }
 
-inline uint64_t NativeDefinedAtomV1:: ordinal() const {
+inline uint64_t NativeDefinedAtomV1::ordinal() const {
   const uint8_t* p = reinterpret_cast<const uint8_t*>(_ivarData);
-  return p - _file->_definedAtoms._arrayStart;
+  auto *start = reinterpret_cast<const NativeDefinedAtomV1 *>(
+      _file->_definedAtoms[0]);
+  const uint8_t *startp = reinterpret_cast<const uint8_t *>(start->_ivarData);
+  return p - startp;
 }
 
 inline StringRef NativeDefinedAtomV1::name() const {
@@ -988,8 +856,7 @@ namespace {
 
 class NativeReader : public Reader {
 public:
-  virtual bool canParse(file_magic magic, StringRef,
-                        const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
     const NativeFileHeader *const header =
         reinterpret_cast<const NativeFileHeader *>(mb.getBufferStart());
     return (memcmp(header->magic, NATIVE_FILE_HEADER_MAGIC,

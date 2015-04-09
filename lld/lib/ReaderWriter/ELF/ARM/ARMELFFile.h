@@ -60,12 +60,6 @@ public:
   ARMELFFile(std::unique_ptr<MemoryBuffer> mb, ARMLinkingContext &ctx)
       : ELFFile<ELFT>(std::move(mb), ctx) {}
 
-  static ErrorOr<std::unique_ptr<ARMELFFile>>
-  create(std::unique_ptr<MemoryBuffer> mb, ARMLinkingContext &ctx) {
-    return std::unique_ptr<ARMELFFile<ELFT>>(
-        new ARMELFFile<ELFT>(std::move(mb), ctx));
-  }
-
 protected:
   /// Returns initial addend; for ARM it is 0, because it is read
   /// during the relocations applying
@@ -87,12 +81,12 @@ private:
   }
 
   /// Process the Defined symbol and create an atom for it.
-  ErrorOr<ELFDefinedAtom<ELFT> *> handleDefinedSymbol(StringRef symName,
-          StringRef sectionName,
-          const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
-          ArrayRef<uint8_t> contentData,
-          unsigned int referenceStart, unsigned int referenceEnd,
-          std::vector<ELFReference<ELFT> *> &referenceList) override {
+  ELFDefinedAtom<ELFT> *
+  createDefinedAtom(StringRef symName, StringRef sectionName,
+                    const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
+                    ArrayRef<uint8_t> contentData, unsigned int referenceStart,
+                    unsigned int referenceEnd,
+                    std::vector<ELFReference<ELFT> *> &referenceList) override {
     if (symName.size() >= 2 && symName[0] == '$') {
       switch (symName[1]) {
       case 'a':
@@ -112,7 +106,7 @@ private:
                 referenceStart, referenceEnd, referenceList);
       default:
         // Fall through and create regular defined atom.
-      break;
+        break;
       }
     }
     return new (this->_readerStorage) ARMELFDefinedAtom<ELFT>(

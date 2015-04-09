@@ -16,9 +16,6 @@ namespace elf {
 using namespace llvm;
 using namespace llvm::object;
 
-template<class ELFT>
-class DynamicLibraryWriter;
-
 //===----------------------------------------------------------------------===//
 //  DynamicLibraryWriter Class
 //===----------------------------------------------------------------------===//
@@ -26,17 +23,12 @@ template<class ELFT>
 class DynamicLibraryWriter : public OutputELFWriter<ELFT> {
 public:
   DynamicLibraryWriter(ELFLinkingContext &ctx, TargetLayout<ELFT> &layout)
-      : OutputELFWriter<ELFT>(ctx, layout),
-        _runtimeFile(new RuntimeFile<ELFT>(ctx, "C runtime")) {}
+      : OutputELFWriter<ELFT>(ctx, layout) {}
 
 protected:
-  virtual void buildDynamicSymbolTable(const File &file);
-  virtual void addDefaultAtoms();
-  virtual bool createImplicitFiles(std::vector<std::unique_ptr<File> > &);
-  virtual void finalizeDefaultAtomValues();
-
-protected:
-  std::unique_ptr<RuntimeFile<ELFT> > _runtimeFile;
+  void buildDynamicSymbolTable(const File &file) override;
+  void createImplicitFiles(std::vector<std::unique_ptr<File>> &) override;
+  void finalizeDefaultAtomValues() override;
 };
 
 //===----------------------------------------------------------------------===//
@@ -62,23 +54,20 @@ void DynamicLibraryWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
   OutputELFWriter<ELFT>::buildDynamicSymbolTable(file);
 }
 
-template <class ELFT> void DynamicLibraryWriter<ELFT>::addDefaultAtoms() {
-  _runtimeFile->addAbsoluteAtom("_end");
-}
-
 /// \brief Hook in lld to add CRuntime file
 template <class ELFT>
-bool DynamicLibraryWriter<ELFT>::createImplicitFiles(
+void DynamicLibraryWriter<ELFT>::createImplicitFiles(
     std::vector<std::unique_ptr<File> > &result) {
-  // Add the default atoms as defined by executables
-  DynamicLibraryWriter<ELFT>::addDefaultAtoms();
   OutputELFWriter<ELFT>::createImplicitFiles(result);
-  result.push_back(std::move(_runtimeFile));
-  return true;
+  // Add the default atoms as defined by executables
+  auto file = llvm::make_unique<RuntimeFile<ELFT>>(this->_ctx, "C runtime");
+  file->addAbsoluteAtom("_end");
+  result.push_back(std::move(file));
 }
 
 template <class ELFT>
 void DynamicLibraryWriter<ELFT>::finalizeDefaultAtomValues() {
+  OutputELFWriter<ELFT>::finalizeDefaultAtomValues();
   lld::AtomLayout *underScoreEndAtom = this->_layout.findAbsoluteAtom("_end");
   assert(underScoreEndAtom);
 

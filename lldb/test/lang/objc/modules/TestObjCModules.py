@@ -16,6 +16,7 @@ class ObjCModulesTestCase(TestBase):
 
     @skipUnlessDarwin
     @dsym_test
+    @unittest2.expectedFailure("rdar://20416388")
     def test_expr_with_dsym(self):
         self.buildDsym()
         self.expr()
@@ -23,6 +24,7 @@ class ObjCModulesTestCase(TestBase):
     @dwarf_test
     @skipIfFreeBSD
     @skipIfLinux
+    @unittest2.expectedFailure("rdar://20416388")
     def test_expr_with_dwarf(self):
         self.buildDwarf()
         self.expr()
@@ -65,14 +67,26 @@ class ObjCModulesTestCase(TestBase):
 
         self.common_setup()
 
-        self.expect("expr @import Foundation; 3", VARIABLES_DISPLAYED_CORRECTLY,
+        self.expect("expr @import Darwin; 3", VARIABLES_DISPLAYED_CORRECTLY,
             substrs = ["int", "3"])
+
+        self.expect("expr getpid()", VARIABLES_DISPLAYED_CORRECTLY,
+            substrs = ["pid_t"])
+
+        self.expect("expr @import Foundation; 4", VARIABLES_DISPLAYED_CORRECTLY,
+            substrs = ["int", "4"])
 
         self.expect("expr string.length", VARIABLES_DISPLAYED_CORRECTLY,
             substrs = ["NSUInteger", "5"])
 
         self.expect("expr array.count", VARIABLES_DISPLAYED_CORRECTLY,
             substrs = ["NSUInteger", "3"])
+
+        self.expect("p *[NSURL URLWithString:@\"http://lldb.llvm.org\"]", VARIABLES_DISPLAYED_CORRECTLY,
+            substrs = ["NSURL", "isa", "_urlString"])
+
+        self.expect("p [NSURL URLWithString:@\"http://lldb.llvm.org\"].scheme", VARIABLES_DISPLAYED_CORRECTLY,
+            substrs = ["http"])
             
 if __name__ == '__main__':
     import atexit

@@ -9,19 +9,123 @@
 #ifndef LLD_READER_WRITER_ELF_MIPS_MIPS_SECTION_CHUNKS_H
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_SECTION_CHUNKS_H
 
+#include "MipsReginfo.h"
+
 namespace lld {
 namespace elf {
 
 template <typename ELFT> class MipsTargetLayout;
 class MipsLinkingContext;
 
+/// \brief Handle Mips .reginfo section
+template <class ELFT> class MipsReginfoSection : public Section<ELFT> {
+public:
+  MipsReginfoSection(const ELFLinkingContext &ctx,
+                     MipsTargetLayout<ELFT> &targetLayout,
+                     const MipsReginfo &reginfo)
+      : Section<ELFT>(ctx, ".reginfo", "MipsReginfo"),
+        _targetLayout(targetLayout) {
+    this->setOrder(MipsTargetLayout<ELFT>::ORDER_RO_NOTE);
+    this->_entSize = sizeof(Elf_RegInfo);
+    this->_fsize = sizeof(Elf_RegInfo);
+    this->_msize = sizeof(Elf_RegInfo);
+    this->_alignment = 4;
+    this->_type = SHT_MIPS_REGINFO;
+    this->_flags = SHF_ALLOC;
+
+    std::memset(&_reginfo, 0, sizeof(_reginfo));
+    _reginfo.ri_gprmask = reginfo._gpRegMask;
+    _reginfo.ri_cprmask[0] = reginfo._cpRegMask[0];
+    _reginfo.ri_cprmask[1] = reginfo._cpRegMask[1];
+    _reginfo.ri_cprmask[2] = reginfo._cpRegMask[2];
+    _reginfo.ri_cprmask[3] = reginfo._cpRegMask[3];
+  }
+
+  void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
+             llvm::FileOutputBuffer &buffer) override {
+    uint8_t *dest = buffer.getBufferStart() + this->fileOffset();
+    std::memcpy(dest, &_reginfo, this->_fsize);
+  }
+
+  void finalize() override {
+    const AtomLayout *gpAtom = _targetLayout.getGP();
+    _reginfo.ri_gp_value = gpAtom ? gpAtom->_virtualAddr : 0;;
+
+    if (this->_outputSection)
+      this->_outputSection->setType(this->_type);
+  }
+
+private:
+  typedef llvm::object::Elf_RegInfo<ELFT> Elf_RegInfo;
+
+  Elf_RegInfo _reginfo;
+  MipsTargetLayout<ELFT> &_targetLayout;
+};
+
+/// \brief Handle .MIPS.options section
+template <class ELFT> class MipsOptionsSection : public Section<ELFT> {
+public:
+  typedef typename std::vector<MipsReginfo>::const_iterator mask_const_iterator;
+
+  MipsOptionsSection(const ELFLinkingContext &ctx,
+                     MipsTargetLayout<ELFT> &targetLayout,
+                     const MipsReginfo &reginfo)
+      : Section<ELFT>(ctx, ".MIPS.options", "MipsOptions"),
+        _targetLayout(targetLayout) {
+    this->setOrder(MipsTargetLayout<ELFT>::ORDER_RO_NOTE);
+    this->_entSize = 1;
+    this->_alignment = 8;
+    this->_fsize = llvm::RoundUpToAlignment(
+        sizeof(Elf_Mips_Options) + sizeof(Elf_RegInfo), this->_alignment);
+    this->_msize = this->_fsize;
+    this->_type = SHT_MIPS_OPTIONS;
+    this->_flags = SHF_ALLOC | SHF_MIPS_NOSTRIP;
+
+    _header.kind = ODK_REGINFO;
+    _header.size = this->_fsize;
+    _header.section = 0;
+    _header.info = 0;
+
+    std::memset(&_reginfo, 0, sizeof(_reginfo));
+    _reginfo.ri_gprmask = reginfo._gpRegMask;
+    _reginfo.ri_cprmask[0] = reginfo._cpRegMask[0];
+    _reginfo.ri_cprmask[1] = reginfo._cpRegMask[1];
+    _reginfo.ri_cprmask[2] = reginfo._cpRegMask[2];
+    _reginfo.ri_cprmask[3] = reginfo._cpRegMask[3];
+  }
+
+  void write(ELFWriter *writer, TargetLayout<ELFT> &layout,
+             llvm::FileOutputBuffer &buffer) override {
+    uint8_t *dest = buffer.getBufferStart() + this->fileOffset();
+    std::memset(dest, 0, this->_fsize);
+    std::memcpy(dest, &_header, sizeof(_header));
+    std::memcpy(dest + sizeof(_header), &_reginfo, sizeof(_reginfo));
+  }
+
+  void finalize() override {
+    const AtomLayout *gpAtom = _targetLayout.getGP();
+    _reginfo.ri_gp_value = gpAtom ? gpAtom->_virtualAddr : 0;;
+
+    if (this->_outputSection)
+      this->_outputSection->setType(this->_type);
+  }
+
+private:
+  typedef llvm::object::Elf_Mips_Options<ELFT> Elf_Mips_Options;
+  typedef llvm::object::Elf_RegInfo<ELFT> Elf_RegInfo;
+
+  Elf_Mips_Options _header;
+  Elf_RegInfo _reginfo;
+  MipsTargetLayout<ELFT> &_targetLayout;
+};
+
 /// \brief Handle Mips GOT section
-template <class ELFType> class MipsGOTSection : public AtomSection<ELFType> {
+template <class ELFT> class MipsGOTSection : public AtomSection<ELFT> {
 public:
   MipsGOTSection(const MipsLinkingContext &ctx)
-      : AtomSection<ELFType>(ctx, ".got", DefinedAtom::typeGOT,
-                             DefinedAtom::permRW_,
-                             MipsTargetLayout<ELFType>::ORDER_GOT),
+      : AtomSection<ELFT>(ctx, ".got", DefinedAtom::typeGOT,
+                          DefinedAtom::permRW_,
+                          MipsTargetLayout<ELFT>::ORDER_GOT),
         _hasNonLocal(false), _localCount(0) {
     this->_flags |= SHF_MIPS_GPREL;
     this->_alignment = 4;
@@ -60,14 +164,14 @@ public:
       case LLD_R_MIPS_GLOBAL_GOT:
         _hasNonLocal = true;
         _posMap[r->target()] = _posMap.size();
-        return AtomSection<ELFType>::appendAtom(atom);
+        return AtomSection<ELFT>::appendAtom(atom);
       case R_MIPS_TLS_TPREL32:
       case R_MIPS_TLS_DTPREL32:
       case R_MIPS_TLS_TPREL64:
       case R_MIPS_TLS_DTPREL64:
         _hasNonLocal = true;
         _tlsMap[r->target()] = _tlsMap.size();
-        return AtomSection<ELFType>::appendAtom(atom);
+        return AtomSection<ELFT>::appendAtom(atom);
       case R_MIPS_TLS_DTPMOD32:
       case R_MIPS_TLS_DTPMOD64:
         _hasNonLocal = true;
@@ -78,7 +182,7 @@ public:
     if (!_hasNonLocal)
       ++_localCount;
 
-    return AtomSection<ELFType>::appendAtom(atom);
+    return AtomSection<ELFT>::appendAtom(atom);
   }
 
 private:
@@ -96,12 +200,12 @@ private:
 };
 
 /// \brief Handle Mips PLT section
-template <class ELFType> class MipsPLTSection : public AtomSection<ELFType> {
+template <class ELFT> class MipsPLTSection : public AtomSection<ELFT> {
 public:
   MipsPLTSection(const MipsLinkingContext &ctx)
-      : AtomSection<ELFType>(ctx, ".plt", DefinedAtom::typeGOT,
-                             DefinedAtom::permR_X,
-                             MipsTargetLayout<ELFType>::ORDER_PLT) {}
+      : AtomSection<ELFT>(ctx, ".plt", DefinedAtom::typeGOT,
+                          DefinedAtom::permR_X,
+                          MipsTargetLayout<ELFT>::ORDER_PLT) {}
 
   const AtomLayout *findPLTLayout(const Atom *plt) const {
     auto it = _pltLayoutMap.find(plt);
@@ -109,7 +213,7 @@ public:
   }
 
   const lld::AtomLayout *appendAtom(const Atom *atom) override {
-    const auto *layout = AtomSection<ELFType>::appendAtom(atom);
+    const auto *layout = AtomSection<ELFT>::appendAtom(atom);
 
     const DefinedAtom *da = cast<DefinedAtom>(atom);
 

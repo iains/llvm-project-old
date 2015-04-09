@@ -282,19 +282,19 @@ public:
     return std::error_code();
   }
 
-  const atom_collection<DefinedAtom> &defined() const override {
+  const AtomVector<DefinedAtom> &defined() const override {
     return _definedAtoms;
   }
 
-  const atom_collection<UndefinedAtom> &undefined() const override {
+  const AtomVector<UndefinedAtom> &undefined() const override {
     return _noUndefinedAtoms;
   }
 
-  const atom_collection<SharedLibraryAtom> &sharedLibrary() const override {
+  const AtomVector<SharedLibraryAtom> &sharedLibrary() const override {
     return _sharedLibraryAtoms;
   }
 
-  const atom_collection<AbsoluteAtom> &absolute() const override {
+  const AtomVector<AbsoluteAtom> &absolute() const override {
     return _noAbsoluteAtoms;
   }
 
@@ -305,18 +305,18 @@ private:
                                                     StringRef dllName) {
     auto *atom = new (_alloc)
         COFFSharedLibraryAtom(*this, hint, symbolName, importName, dllName);
-    _sharedLibraryAtoms._atoms.push_back(atom);
+    _sharedLibraryAtoms.push_back(atom);
     return atom;
   }
 
   void addFuncAtom(StringRef symbolName, StringRef dllName,
                    const COFFSharedLibraryAtom *impAtom) {
     auto *atom = new (_alloc) FuncAtom(*this, symbolName, impAtom, _machine);
-    _definedAtoms._atoms.push_back(atom);
+    _definedAtoms.push_back(atom);
   }
 
-  atom_collection_vector<DefinedAtom> _definedAtoms;
-  atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
+  AtomVector<DefinedAtom> _definedAtoms;
+  AtomVector<SharedLibraryAtom> _sharedLibraryAtoms;
   mutable llvm::BumpPtrAllocator _alloc;
 
   // Does the same thing as StringRef::ltrim() but removes at most one
@@ -361,11 +361,10 @@ class COFFImportLibraryReader : public Reader {
 public:
   COFFImportLibraryReader(PECOFFLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, StringRef,
-                const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
     if (mb.getBufferSize() < sizeof(COFF::ImportHeader))
       return false;
-    return (magic == llvm::sys::fs::file_magic::coff_import_library);
+    return magic == llvm::sys::fs::file_magic::coff_import_library;
   }
 
   std::error_code

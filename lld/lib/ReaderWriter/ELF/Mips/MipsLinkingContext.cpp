@@ -17,7 +17,7 @@ using namespace lld;
 using namespace lld::elf;
 
 std::unique_ptr<ELFLinkingContext>
-MipsLinkingContext::create(llvm::Triple triple) {
+elf::createMipsLinkingContext(llvm::Triple triple) {
   if (triple.getArch() == llvm::Triple::mipsel ||
       triple.getArch() == llvm::Triple::mips64el)
     return llvm::make_unique<MipsLinkingContext>(triple);
@@ -42,12 +42,26 @@ MipsLinkingContext::MipsLinkingContext(llvm::Triple triple)
     : ELFLinkingContext(triple, createTarget(triple, *this)),
       _flagsMerger(triple.isArch64Bit()) {}
 
+std::error_code MipsLinkingContext::mergeHeaderFlags(uint8_t fileClass,
+                                                     uint64_t flags) {
+  return _flagsMerger.mergeHeaderFlags(fileClass, flags);
+}
+
+void MipsLinkingContext::mergeReginfoMask(const MipsReginfo &info) {
+  std::lock_guard<std::mutex> lock(_maskMutex);
+  if (_reginfoMask.hasValue())
+    _reginfoMask->merge(info);
+  else
+    _reginfoMask = info;
+}
+
 uint32_t MipsLinkingContext::getMergedELFFlags() const {
   return _flagsMerger.getMergedELFFlags();
 }
 
-MipsELFFlagsMerger &MipsLinkingContext::getELFFlagsMerger() {
-  return _flagsMerger;
+const llvm::Optional<MipsReginfo> &
+MipsLinkingContext::getMergedReginfoMask() const {
+  return _reginfoMask;
 }
 
 uint64_t MipsLinkingContext::getBaseAddress() const {

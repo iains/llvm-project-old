@@ -84,26 +84,26 @@ public:
   bool isCompatibleWithSEH() const { return _compatibleWithSEH; }
   llvm::COFF::MachineTypes getMachineType() { return _machineType; }
 
-  const atom_collection<DefinedAtom> &defined() const override {
+  const AtomVector<DefinedAtom> &defined() const override {
     return _definedAtoms;
   }
 
-  const atom_collection<UndefinedAtom> &undefined() const override {
+  const AtomVector<UndefinedAtom> &undefined() const override {
     return _undefinedAtoms;
   }
 
-  const atom_collection<SharedLibraryAtom> &sharedLibrary() const override {
+  const AtomVector<SharedLibraryAtom> &sharedLibrary() const override {
     return _sharedLibraryAtoms;
   }
 
-  const atom_collection<AbsoluteAtom> &absolute() const override {
+  const AtomVector<AbsoluteAtom> &absolute() const override {
     return _absoluteAtoms;
   }
 
   void beforeLink() override;
 
   void addUndefinedSymbol(StringRef sym) {
-    _undefinedAtoms._atoms.push_back(new (_alloc) COFFUndefinedAtom(*this, sym));
+    _undefinedAtoms.push_back(new (_alloc) COFFUndefinedAtom(*this, sym));
   }
 
   AliasAtom *createAlias(StringRef name, const DefinedAtom *target, int cnt);
@@ -159,10 +159,10 @@ private:
 
   std::unique_ptr<const llvm::object::COFFObjectFile> _obj;
   std::unique_ptr<MemoryBuffer> _mb;
-  atom_collection_vector<DefinedAtom> _definedAtoms;
-  atom_collection_vector<UndefinedAtom> _undefinedAtoms;
-  atom_collection_vector<SharedLibraryAtom> _sharedLibraryAtoms;
-  atom_collection_vector<AbsoluteAtom> _absoluteAtoms;
+  AtomVector<DefinedAtom> _definedAtoms;
+  AtomVector<UndefinedAtom> _undefinedAtoms;
+  AtomVector<SharedLibraryAtom> _sharedLibraryAtoms;
+  AtomVector<AbsoluteAtom> _absoluteAtoms;
 
   // The target type of the object.
   Reference::KindArch _referenceArch;
@@ -329,11 +329,11 @@ std::error_code FileCOFF::doParse() {
   if (std::error_code ec = readSymbolTable(symbols))
     return ec;
 
-  createAbsoluteAtoms(symbols, _absoluteAtoms._atoms);
+  createAbsoluteAtoms(symbols, _absoluteAtoms);
   if (std::error_code ec =
-      createUndefinedAtoms(symbols, _undefinedAtoms._atoms))
+      createUndefinedAtoms(symbols, _undefinedAtoms))
     return ec;
-  if (std::error_code ec = createDefinedSymbols(symbols, _definedAtoms._atoms))
+  if (std::error_code ec = createDefinedSymbols(symbols, _definedAtoms))
     return ec;
   if (std::error_code ec = addRelocationReferenceToAtoms())
     return ec;
@@ -862,7 +862,7 @@ void FileCOFF::createAlternateNameAtoms() {
       aliases.push_back(createAlias(alias, atom, cnt++));
   }
   for (AliasAtom *alias : aliases)
-    _definedAtoms._atoms.push_back(alias);
+    _definedAtoms.push_back(alias);
 }
 
 // Interpret the contents of .drectve section. If exists, the section contains
@@ -997,7 +997,7 @@ std::error_code FileCOFF::maybeCreateSXDataAtoms() {
       handlerFunc, 0));
   }
 
-  _definedAtoms._atoms.push_back(atom);
+  _definedAtoms.push_back(atom);
   return std::error_code();
 }
 
@@ -1049,8 +1049,7 @@ class COFFObjectReader : public Reader {
 public:
   COFFObjectReader(PECOFFLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, StringRef ext,
-                const MemoryBuffer &) const override {
+  bool canParse(file_magic magic, const MemoryBuffer &) const override {
     return magic == llvm::sys::fs::file_magic::coff_object;
   }
 

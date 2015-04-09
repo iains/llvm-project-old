@@ -436,9 +436,8 @@ static int dl_iterate_phdr_cb(dl_phdr_info *info, size_t size, void *arg) {
     return 0;
   if (data->filter && !data->filter(module_name.data()))
     return 0;
-  void *mem = &data->modules[data->current_n];
-  LoadedModule *cur_module = new(mem) LoadedModule(module_name.data(),
-                                                   info->dlpi_addr);
+  LoadedModule *cur_module = &data->modules[data->current_n];
+  cur_module->set(module_name.data(), info->dlpi_addr);
   data->current_n++;
   for (int i = 0; i < info->dlpi_phnum; i++) {
     const Elf_Phdr *phdr = &info->dlpi_phdr[i];
@@ -474,8 +473,8 @@ static uptr GetRSSFromGetrusage() {
 uptr GetRSS() {
   if (!common_flags()->can_use_proc_maps_statm)
     return GetRSSFromGetrusage();
-  uptr fd = OpenFile("/proc/self/statm", RdOnly);
-  if ((sptr)fd < 0)
+  fd_t fd = OpenFile("/proc/self/statm", RdOnly);
+  if (fd == kInvalidFd)
     return GetRSSFromGetrusage();
   char buf[64];
   uptr len = internal_read(fd, buf, sizeof(buf) - 1);

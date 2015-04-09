@@ -15,7 +15,6 @@
 
 #include "lld/Driver/Driver.h"
 #include "lld/ReaderWriter/ELFLinkingContext.h"
-#include "lld/ReaderWriter/ELFTargets.h"
 #include "lld/ReaderWriter/LinkerScript.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
@@ -350,17 +349,13 @@ void GnuLdDriver::addPlatformSearchDirs(ELFLinkingContext &ctx,
 std::unique_ptr<ELFLinkingContext>
 GnuLdDriver::createELFLinkingContext(llvm::Triple triple) {
   std::unique_ptr<ELFLinkingContext> p;
-  // FIXME: #include "llvm/Config/Targets.def"
-#define LLVM_TARGET(targetName) \
-  if ((p = elf::targetName##LinkingContext::create(triple))) return p;
-  LLVM_TARGET(AArch64)
-  LLVM_TARGET(ARM)
-  LLVM_TARGET(Hexagon)
-  LLVM_TARGET(Mips)
-  LLVM_TARGET(X86)
-  LLVM_TARGET(Example)
-  LLVM_TARGET(X86_64)
-#undef LLVM_TARGET
+  if ((p = elf::createAArch64LinkingContext(triple))) return p;
+  if ((p = elf::createARMLinkingContext(triple))) return p;
+  if ((p = elf::createExampleLinkingContext(triple))) return p;
+  if ((p = elf::createHexagonLinkingContext(triple))) return p;
+  if ((p = elf::createMipsLinkingContext(triple))) return p;
+  if ((p = elf::createX86LinkingContext(triple))) return p;
+  if ((p = elf::createX86_64LinkingContext(triple))) return p;
   return nullptr;
 }
 
@@ -543,6 +538,25 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
   if (auto *arg = parsedArgs->getLastArg(OPT_output_filetype))
     ctx->setOutputFileType(arg->getValue());
 
+  // Process ELF/ARM specific options
+  bool hasArmTarget1Rel = parsedArgs->hasArg(OPT_arm_target1_rel);
+  bool hasArmTarget1Abs = parsedArgs->hasArg(OPT_arm_target1_abs);
+  if (triple.getArch() == llvm::Triple::arm) {
+    if (hasArmTarget1Rel && hasArmTarget1Abs) {
+      diag << "error: options --arm-target1-rel and --arm-target1-abs"
+              " can't be used together.\n";
+      return false;
+    } else if (hasArmTarget1Rel || hasArmTarget1Abs) {
+      ctx->setArmTarget1Rel(hasArmTarget1Rel && !hasArmTarget1Abs);
+    }
+  } else if (hasArmTarget1Rel) {
+    diag << "warning: ignoring unsupported ARM/ELF specific argument: "
+         << "--arm-target1-rel\n";
+  } else if (hasArmTarget1Abs) {
+    diag << "warning: ignoring unsupported ARM/ELF specific argument: "
+         << "--arm-target1-abs\n";
+  }
+
   for (auto *arg : parsedArgs->filtered(OPT_L))
     ctx->addSearchPath(arg->getValue());
 
@@ -605,6 +619,10 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
     for (auto path : rpaths)
       ctx->addRpathLink(path);
   }
+
+  // Enable new dynamic tags.
+  if (parsedArgs->hasArg(OPT_enable_newdtags))
+    ctx->setEnableNewDtags(true);
 
   // Support --wrap option.
   for (auto *arg : parsedArgs->filtered(OPT_wrap))

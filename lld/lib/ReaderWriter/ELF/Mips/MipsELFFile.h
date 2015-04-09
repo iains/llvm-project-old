@@ -91,11 +91,6 @@ public:
   MipsELFFile(std::unique_ptr<MemoryBuffer> mb, MipsLinkingContext &ctx)
       : ELFFile<ELFT>(std::move(mb), ctx) {}
 
-  static ErrorOr<std::unique_ptr<MipsELFFile>>
-  create(std::unique_ptr<MemoryBuffer> mb, MipsLinkingContext &ctx) {
-    return llvm::make_unique<MipsELFFile<ELFT>>(std::move(mb), ctx);
-  }
-
   bool isPIC() const {
     return this->_objFile->getHeader()->e_flags & llvm::ELF::EF_MIPS_PIC;
   }
@@ -132,11 +127,12 @@ private:
   uint64_t _tpOff = 0;
   uint64_t _dtpOff = 0;
 
-  ErrorOr<ELFDefinedAtom<ELFT> *> handleDefinedSymbol(
-      StringRef symName, StringRef sectionName, const Elf_Sym *sym,
-      const Elf_Shdr *sectionHdr, ArrayRef<uint8_t> contentData,
-      unsigned int referenceStart, unsigned int referenceEnd,
-      std::vector<ELFReference<ELFT> *> &referenceList) override {
+  ELFDefinedAtom<ELFT> *
+  createDefinedAtom(StringRef symName, StringRef sectionName,
+                    const Elf_Sym *sym, const Elf_Shdr *sectionHdr,
+                    ArrayRef<uint8_t> contentData, unsigned int referenceStart,
+                    unsigned int referenceEnd,
+                    std::vector<ELFReference<ELFT> *> &referenceList) override {
     return new (this->_readerStorage) MipsELFDefinedAtom<ELFT>(
         *this, symName, sectionName, sym, sectionHdr, contentData,
         referenceStart, referenceEnd, referenceList);
@@ -166,6 +162,8 @@ private:
     typedef llvm::object::Elf_RegInfo<ELFT> Elf_RegInfo;
     typedef llvm::object::Elf_Mips_Options<ELFT> Elf_Mips_Options;
 
+    auto &ctx = static_cast<MipsLinkingContext &>(this->_ctx);
+
     if (const Elf_Shdr *sec = findSectionByType(SHT_MIPS_OPTIONS)) {
       auto contents = this->getSectionContents(sec);
       if (std::error_code ec = contents.getError())
@@ -177,9 +175,12 @@ private:
           return make_dynamic_error_code(
               StringRef("Invalid size of MIPS_OPTIONS section"));
 
-        const auto *opt = reinterpret_cast<const Elf_Mips_Options *>(raw.data());
+        const auto *opt =
+            reinterpret_cast<const Elf_Mips_Options *>(raw.data());
         if (opt->kind == ODK_REGINFO) {
-          _gp0 = reinterpret_cast<const Elf_RegInfo *>(opt + 1)->ri_gp_value;
+          const auto *regInfo = reinterpret_cast<const Elf_RegInfo *>(opt + 1);
+          ctx.mergeReginfoMask(*regInfo);
+          _gp0 = regInfo->ri_gp_value;
           break;
         }
         raw = raw.slice(opt->size);
@@ -194,7 +195,9 @@ private:
         return make_dynamic_error_code(
             StringRef("Invalid size of MIPS_REGINFO section"));
 
-      _gp0 = reinterpret_cast<const Elf_RegInfo *>(raw.data())->ri_gp_value;
+      const auto *regInfo = reinterpret_cast<const Elf_RegInfo *>(raw.data());
+      ctx.mergeReginfoMask(*regInfo);
+      _gp0 = regInfo->ri_gp_value;
     }
     return std::error_code();
   }
@@ -242,9 +245,8 @@ private:
 
   Reference::Addend readAddend(const Elf_Rel &ri,
                                const ArrayRef<uint8_t> content) const {
-    const auto &rh = this->_ctx.getTargetHandler().getRelocationHandler();
-    return static_cast<const MipsRelocationHandler &>(rh)
-        .readAddend(getPrimaryType(ri), content.data() + ri.r_offset);
+    return readMipsRelocAddend(getPrimaryType(ri),
+                               content.data() + ri.r_offset);
   }
 
   uint32_t getPairRelocation(const Elf_Rel &rel) const {
