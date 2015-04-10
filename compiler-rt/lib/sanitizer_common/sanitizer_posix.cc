@@ -219,6 +219,35 @@ fd_t OpenFile(const char *filename, FileAccessMode mode, error_t *errno_p) {
   return res;
 }
 
+void CloseFile(fd_t fd) {
+  internal_close(fd);
+}
+
+bool ReadFromFile(fd_t fd, void *buff, uptr buff_size, uptr *bytes_read,
+                  error_t *error_p) {
+  uptr res = internal_read(fd, buff, buff_size);
+  if (internal_iserror(res, error_p))
+    return false;
+  if (bytes_read)
+    *bytes_read = res;
+  return true;
+}
+
+bool WriteToFile(fd_t fd, const void *buff, uptr buff_size, uptr *bytes_written,
+                 error_t *error_p) {
+  uptr res = internal_write(fd, buff, buff_size);
+  if (internal_iserror(res, error_p))
+    return false;
+  if (bytes_written)
+    *bytes_written = res;
+  return true;
+}
+
+bool RenameFile(const char *oldpath, const char *newpath, error_t *error_p) {
+  uptr res = internal_rename(oldpath, newpath);
+  return !internal_iserror(res, error_p);
+}
+
 void *MapFileToMemory(const char *file_name, uptr *buff_size) {
   fd_t fd = OpenFile(file_name, RdOnly);
   CHECK(fd != kInvalidFd);
