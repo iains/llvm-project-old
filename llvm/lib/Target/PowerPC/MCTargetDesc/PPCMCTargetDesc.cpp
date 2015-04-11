@@ -94,7 +94,7 @@ static MCCodeGenInfo *createPPCMCCodeGenInfo(const Triple &TT, Reloc::Model RM,
 
   if (RM == Reloc::Default) {
     if (TT.isOSDarwin())
-      RM = Reloc::DynamicNoPIC;
+      RM = Reloc::PIC_;
     else
       RM = Reloc::Static;
   }

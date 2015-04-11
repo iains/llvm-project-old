@@ -1,7 +1,9 @@
 ; RUN: llc < %s -march=ppc32 | \
 ; RUN:   not grep addi
+; XFAIL: darwin
 ; RUN: llc -code-model=small < %s -march=ppc64 | \
 ; RUN:   not grep addi
+; XFAIL: darwin
 
 @Glob = global i64 4
 

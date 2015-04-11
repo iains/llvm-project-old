@@ -1,6 +1,5 @@
 ; RUN: llc -O0 -mcpu=ppc64 -mtriple=powerpc64-unknown-linux-gnu -fast-isel=false < %s | FileCheck %s
-; RUN: llc -O0 -mcpu=g4 -mtriple=powerpc-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN32 %s
-; RUN: llc -O0 -mcpu=ppc970 -mtriple=powerpc64-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN64 %s
+; RUN: llc -O0 -mcpu=g4 -mtriple=powerpc-apple-darwin8 -relocation-model=dynamic-no-pic < %s | FileCheck -check-prefix=DARWIN32 %s
 
 ; Test case for PR 14779: anonymous aggregates are not handled correctly.
 ; Darwin bug report PR 15821 is similar.
@@ -37,16 +36,6 @@ unequal:
 ; DARWIN32: lwz r3, -[[OFFSET1]]
 ; DARWIN32: lwz r3, -[[OFFSET2]]
 
-; DARWIN64: _func1:
-; DARWIN64: mr
-; DARWIN64: mr r[[REG1:[0-9]+]], r[[REGA:[0-9]+]]
-; DARWIN64: mr r[[REG2:[0-9]+]], r[[REGB:[0-9]+]]
-; DARWIN64: cmpld {{(cr[0-9]+,)?}}r[[REGA]], r[[REGB]]
-; DARWIN64: std r[[REG1]], -[[OFFSET1:[0-9]+]]
-; DARWIN64: std r[[REG2]], -[[OFFSET2:[0-9]+]]
-; DARWIN64: ld r3, -[[OFFSET1]]
-; DARWIN64: ld r3, -[[OFFSET2]]
-
 
 define i8* @func2({ i64, i8* } %array1, %tarray* byval %array2) {
 entry:
@@ -79,16 +68,6 @@ unequal:
 ; DARWIN32: stw r[[REG2]], -[[OFFSET2:[0-9]+]]
 ; DARWIN32: lwz r3, -[[OFFSET1]]
 ; DARWIN32: lwz r3, -[[OFFSET2]]
-
-; DARWIN64: _func2:
-; DARWIN64: ld r[[REG2:[0-9]+]], 72(r1)
-; DARWIN64: mr
-; DARWIN64: mr r[[REG3:[0-9]+]], r[[REGA:[0-9]+]]
-; DARWIN64: cmpld {{(cr[0-9]+,)?}}r[[REGA]], r[[REG2]]
-; DARWIN64: std r[[REG3]], -[[OFFSET1:[0-9]+]]
-; DARWIN64: std r[[REG2]], -[[OFFSET2:[0-9]+]]
-; DARWIN64: ld r3, -[[OFFSET1]]
-; DARWIN64: ld r3, -[[OFFSET2]]
 
 
 define i8* @func3({ i64, i8* }* byval %array1, %tarray* byval %array2) {
@@ -125,15 +104,6 @@ unequal:
 ; DARWIN32: lwz r3, -[[OFFSET2]]
 ; DARWIN32: lwz r3, -[[OFFSET1]]
 
-; DARWIN64: _func3:
-; DARWIN64: ld r[[REG3:[0-9]+]], 72(r1)
-; DARWIN64: ld r[[REG4:[0-9]+]], 56(r1)
-; DARWIN64: cmpld {{(cr[0-9]+,)?}}r[[REG4]], r[[REG3]]
-; DARWIN64: std r[[REG3]], -[[OFFSET1:[0-9]+]]
-; DARWIN64: std r[[REG4]], -[[OFFSET2:[0-9]+]]
-; DARWIN64: ld r3, -[[OFFSET2]]
-; DARWIN64: ld r3, -[[OFFSET1]]
-
 
 define i8* @func4(i64 %p1, i64 %p2, i64 %p3, i64 %p4,
                   i64 %p5, i64 %p6, i64 %p7, i64 %p8,
@@ -169,13 +139,3 @@ unequal:
 ; DARWIN32: stw r[[REG3]], -[[OFFSET2:[0-9]+]]
 ; DARWIN32: lwz r[[REG1]], -[[OFFSET1]]
 ; DARWIN32: lwz r[[REG1]], -[[OFFSET2]]
-
-; DARWIN64: _func4:
-; DARWIN64: ld r[[REG2:[0-9]+]], 120(r1)
-; DARWIN64: ld r[[REG3:[0-9]+]], 136(r1)
-; DARWIN64: mr r[[REG4:[0-9]+]], r[[REG2]]
-; DARWIN64: cmpld {{(cr[0-9]+,)?}}r[[REG2]], r[[REG3]]
-; DARWIN64: std r[[REG4]], -[[OFFSET1:[0-9]+]]
-; DARWIN64: std r[[REG3]], -[[OFFSET2:[0-9]+]]
-; DARWIN64: ld r3, -[[OFFSET1]]
-; DARWIN64: ld r3, -[[OFFSET2]]

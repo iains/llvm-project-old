@@ -1,7 +1,6 @@
-; RUN: llc < %s | grep mflr | count 1
+; RUN: llc -mtriple=powerpc-apple-darwin8 -relocation-model=dynamic-no-pic < %s | grep mflr | count 1
 
 target datalayout = "e-p:32:32"
-target triple = "powerpc-apple-darwin8"
 @str = internal constant [18 x i8] c"hello world!, %d\0A\00"            ; <[18 x i8]*> [#uses=1]
 
 

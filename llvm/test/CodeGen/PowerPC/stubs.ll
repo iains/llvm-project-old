@@ -1,4 +1,5 @@
-; RUN: llc %s -o - -mtriple=powerpc-apple-darwin8 | FileCheck %s
+; RUN: llc %s -o - -mtriple=powerpc-apple-darwin8 -relocation-model=dynamic-no-pic \
+; RUN:  | FileCheck %s
 define ppc_fp128 @test1(i64 %X) nounwind readnone {
 entry:
   %0 = sitofp i64 %X to ppc_fp128
