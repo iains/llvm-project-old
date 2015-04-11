@@ -1297,9 +1297,9 @@ uninstall-local::
 else
 ifdef NO_INSTALL_ARCHIVES
 install-local::
-	$(Echo) Install circumvented with NO_INSTALL
+#	$(Echo) Install circumvented with NO_INSTALL
 uninstall-local::
-	$(Echo) Uninstall circumvented with NO_INSTALL
+#	$(Echo) Uninstall circumvented with NO_INSTALL
 else
 DestArchiveLib := $(DESTDIR)$(PROJ_libdir)/lib$(LIBRARYNAME).a
 
