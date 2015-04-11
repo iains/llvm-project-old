@@ -112,11 +112,16 @@ cross-compile-build-tools:
 	  cd BuildTools ; \
 	  unset CFLAGS ; \
 	  unset CXXFLAGS ; \
+	  unset MACOSX_DEPLOYMENT_TARGET ; \
 	  AR=$(BUILD_AR) ; \
+	  RANLIB=$(BUILD_RANLIB) ; \
 	  AS=$(BUILD_AS) ; \
 	  LD=$(BUILD_LD) ; \
 	  CC=$(BUILD_CC) ; \
 	  CXX=$(BUILD_CXX) ; \
+	  CFLAGS=$(BUILD_CFLAGS) ; \
+	  CXXFLAGS=$(BUILD_CXXFLAGS) ; \
+	  LDFLAGS=$(BUILD_LDFLAGS) ; \
 	  unset SDKROOT ; \
 	  unset UNIVERSAL_SDK_PATH ; \
 	  configure_opts= ; \
@@ -142,8 +147,12 @@ cross-compile-build-tools:
 	  DISABLE_ASSERTIONS=$(DISABLE_ASSERTIONS) \
 	  ENABLE_EXPENSIVE_CHECKS=$(ENABLE_EXPENSIVE_CHECKS) \
 	  ENABLE_LIBCPP=$(ENABLE_LIBCPP) \
+	  CC=$(BUILD_CC) \
+	  CXX=$(BUILD_CXX) \
 	  CFLAGS= \
 	  CXXFLAGS= \
+	  LDFLAGS= \
+	  MACOSX_DEPLOYMENT_TARGET= \
 	) || exit 1;
 endif
 
