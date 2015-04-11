@@ -313,7 +313,7 @@ def stats : Flag<["--"], "stats">,
 def grp_extns : OptionGroup<"opts">,
      HelpText<"Extensions">;
 def output_filetype: Separate<["--"], "output-filetype">,
-      HelpText<"Specify what type of output file that lld creates, YAML/Native">,
+      HelpText<"Specify yaml to create an output in YAML format">,
       Group<grp_extns>;
 def alias_output_filetype: Joined<["--"], "output-filetype=">,
       Alias<output_filetype>;
@@ -327,6 +327,15 @@ def arm_target1_rel : Flag<["--"], "arm-target1-rel">,
      Group<grp_targetopts>, HelpText<"Interpret R_ARM_TARGET1 as R_ARM_REL32">;
 def arm_target1_abs : Flag<["--"], "arm-target1-abs">,
      Group<grp_targetopts>, HelpText<"Interpret R_ARM_TARGET1 as R_ARM_ABS32">;
+
+//===----------------------------------------------------------------------===//
+/// MIPS Target Specific Options
+//===----------------------------------------------------------------------===//
+def grp_mips_targetopts : OptionGroup<"MIPS SPECIFIC OPTIONS">,
+     Group<grp_targetopts>;
+def pcrel_eh_reloc : Flag<["-", "--"], "pcrel-eh-reloc">,
+     Group<grp_mips_targetopts>,
+     HelpText<"Interpret R_MIPS_EH as R_MIPS_PC32">;
 
 //===----------------------------------------------------------------------===//
 /// Ignored options

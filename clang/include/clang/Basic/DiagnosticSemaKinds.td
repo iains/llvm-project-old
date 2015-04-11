@@ -5030,7 +5030,23 @@ def err_typecheck_op_on_nonoverlapping_address_space_pointers : Error<
   "%select{comparison between %diff{ ($ and $)|}0,1"
   "|arithmetic operation with operands of type %diff{ ($ and $)|}0,1}2"
   " which are pointers to non-overlapping address spaces">;
-def err_typecheck_assign_const : Error<"read-only variable is not assignable">;
+
+def err_typecheck_assign_const : Error<
+  "%select{"
+  "cannot assign to return value because function %1 returns a const value|"
+  "cannot assign to variable %1 with const-qualified type %2|"
+  "cannot assign to %select{non-|}1static data member %2 "
+  "with const-qualified type %3|"
+  "cannot assign to non-static data member within const member function %1|"
+  "read-only variable is not assignable}0">;
+
+def note_typecheck_assign_const : Note<
+  "%select{"
+  "function %1 which returns const-qualified type %2 declared here|"
+  "variable %1 declared const here|"
+  "%select{non-|}1static data member %2 declared const here|"
+  "member function %q1 is declared const here}0">;
+
 def warn_mixed_sign_comparison : Warning<
   "comparison of integers of different signs: %0 and %1">,
   InGroup<SignCompare>, DefaultIgnore;
@@ -7451,7 +7467,7 @@ def note_omp_referenced : Note<
 def err_omp_reduction_in_task : Error<
   "reduction variables may not be accessed in an explicit task">;
 def err_omp_reduction_id_not_compatible : Error<
-  "variable of type %0 is not valid for specified reduction operation">;
+  "variable of type %0 is not valid for specified reduction operation: unable to provide default initialization value">;
 def err_omp_prohibited_region : Error<
   "region cannot be%select{| closely}0 nested inside '%1' region"
   "%select{|; perhaps you forget to enclose 'omp %3' directive into a parallel region?|"

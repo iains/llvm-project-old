@@ -263,6 +263,10 @@ public:
   /// potentially set the return value.
   bool SawAsmBlock;
 
+  /// True if the current function is an outlined SEH helper. This can be a
+  /// finally block or filter expression.
+  bool IsOutlinedSEHHelper;
+
   const CodeGen::CGBlockInfo *BlockInfo;
   llvm::Value *BlockPointer;
 
@@ -349,17 +353,6 @@ public:
                llvm::Constant *beginCatchFn, llvm::Constant *endCatchFn,
                llvm::Constant *rethrowFn);
     void exit(CodeGenFunction &CGF);
-  };
-
-  /// Cleanups can be emitted for two reasons: normal control leaving a region
-  /// exceptional control flow leaving a region.
-  struct SEHFinallyInfo {
-    SEHFinallyInfo()
-        : FinallyBB(nullptr), ContBB(nullptr), ResumeBB(nullptr) {}
-
-    llvm::BasicBlock *FinallyBB;
-    llvm::BasicBlock *ContBB;
-    llvm::BasicBlock *ResumeBB;
   };
 
   /// Returns true inside SEH __try blocks.
@@ -1052,10 +1045,6 @@ public:
   llvm::Value *getExceptionSlot();
   llvm::Value *getEHSelectorSlot();
 
-  /// Stack slot that contains whether a __finally block is being executed as an
-  /// EH cleanup or as a normal cleanup.
-  llvm::Value *getAbnormalTerminationSlot();
-
   /// Returns the contents of the function's exception object and selector
   /// slots.
   llvm::Value *getExceptionFromSlot();
@@ -1741,6 +1730,9 @@ public:
   void EmitCXXTemporary(const CXXTemporary *Temporary, QualType TempType,
                         llvm::Value *Ptr);
 
+  llvm::Value *EmitLifetimeStart(uint64_t Size, llvm::Value *Addr);
+  void EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr);
+
   llvm::Value *EmitCXXNewExpr(const CXXNewExpr *E);
   void EmitCXXDeleteExpr(const CXXDeleteExpr *E);
 
@@ -2000,11 +1992,18 @@ public:
   void EmitCXXTryStmt(const CXXTryStmt &S);
   void EmitSEHTryStmt(const SEHTryStmt &S);
   void EmitSEHLeaveStmt(const SEHLeaveStmt &S);
-  void EnterSEHTryStmt(const SEHTryStmt &S, SEHFinallyInfo &FI);
-  void ExitSEHTryStmt(const SEHTryStmt &S, SEHFinallyInfo &FI);
+  void EnterSEHTryStmt(const SEHTryStmt &S);
+  void ExitSEHTryStmt(const SEHTryStmt &S);
+
+  void startOutlinedSEHHelper(CodeGenFunction &ParentCGF, StringRef Name,
+                              QualType RetTy, FunctionArgList &Args,
+                              const Stmt *OutlinedStmt);
 
   llvm::Function *GenerateSEHFilterFunction(CodeGenFunction &ParentCGF,
                                             const SEHExceptStmt &Except);
+
+  llvm::Function *GenerateSEHFinallyFunction(CodeGenFunction &ParentCGF,
+                                             const SEHFinallyStmt &Finally);
 
   void EmitSEHExceptionCodeSave();
   llvm::Value *EmitSEHExceptionCode();
@@ -2029,10 +2028,39 @@ public:
   void EmitOMPAggregateAssign(LValue OriginalAddr, llvm::Value *PrivateAddr,
                               const Expr *AssignExpr, QualType Type,
                               const VarDecl *VDInit);
+  /// \brief Emit atomic update code for constructs: \a X = \a X \a BO \a E or
+  /// \a X = \a E \a BO \a E.
+  ///
+  /// \param X Value to be updated.
+  /// \param E Update value.
+  /// \param BO Binary operation for update operation.
+  /// \param IsXLHSInRHSPart true if \a X is LHS in RHS part of the update
+  /// expression, false otherwise.
+  /// \param AO Atomic ordering of the generated atomic instructions.
+  /// \param CommonGen Code generator for complex expressions that cannot be
+  /// expressed through atomicrmw instruction.
+  void EmitOMPAtomicSimpleUpdateExpr(
+      LValue X, RValue E, BinaryOperatorKind BO, bool IsXLHSInRHSPart,
+      llvm::AtomicOrdering AO, SourceLocation Loc,
+      const llvm::function_ref<RValue(RValue)> &CommonGen);
   void EmitOMPFirstprivateClause(const OMPExecutableDirective &D,
                                  OMPPrivateScope &PrivateScope);
   void EmitOMPPrivateClause(const OMPExecutableDirective &D,
                             OMPPrivateScope &PrivateScope);
+  /// \brief Emit initial code for reduction variables. Creates reduction copies
+  /// and initializes them with the values according to OpenMP standard.
+  ///
+  /// \param D Directive (possibly) with the 'reduction' clause.
+  /// \param PrivateScope Private scope for capturing reduction variables for
+  /// proper codegen in internal captured statement.
+  ///
+  void EmitOMPReductionClauseInit(const OMPExecutableDirective &D,
+                                  OMPPrivateScope &PrivateScope);
+  /// \brief Emit final update of reduction values to original variables at
+  /// the end of the directive.
+  ///
+  /// \param D Directive that has at least one 'reduction' directives.
+  void EmitOMPReductionClauseFinal(const OMPExecutableDirective &D);
 
   void EmitOMPParallelDirective(const OMPParallelDirective &S);
   void EmitOMPSimdDirective(const OMPSimdDirective &S);

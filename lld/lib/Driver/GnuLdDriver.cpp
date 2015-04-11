@@ -557,6 +557,19 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
          << "--arm-target1-abs\n";
   }
 
+  // Process MIPS specific options.
+  if (triple.getArch() == llvm::Triple::mips ||
+      triple.getArch() == llvm::Triple::mipsel ||
+      triple.getArch() == llvm::Triple::mips64 ||
+      triple.getArch() == llvm::Triple::mips64el)
+    ctx->setMipsPcRelEhRel(parsedArgs->hasArg(OPT_pcrel_eh_reloc));
+  else {
+    for (const auto *arg : parsedArgs->filtered(OPT_grp_mips_targetopts)) {
+      diag << "warning: ignoring unsupported MIPS specific argument: "
+           << arg->getSpelling() << "\n";
+    }
+  }
+
   for (auto *arg : parsedArgs->filtered(OPT_L))
     ctx->addSearchPath(arg->getValue());
 
@@ -632,7 +645,6 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
   ctx->registry().addSupportELFObjects(*ctx);
   ctx->registry().addSupportArchives(ctx->logInputFiles());
   ctx->registry().addSupportYamlFiles();
-  ctx->registry().addSupportNativeObjects();
   if (ctx->allowLinkWithDynamicLibraries())
     ctx->registry().addSupportELFDynamicSharedObjects(*ctx);
 
@@ -738,9 +750,6 @@ bool GnuLdDriver::parse(int argc, const char *argv[],
     switch (ctx->outputFileType()) {
     case LinkingContext::OutputFileType::YAML:
       ctx->setOutputPath("-");
-      break;
-    case LinkingContext::OutputFileType::Native:
-      ctx->setOutputPath("a.native");
       break;
     default:
       ctx->setOutputPath("a.out");

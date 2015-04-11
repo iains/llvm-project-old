@@ -527,6 +527,7 @@ void RelocationPass<ELFT>::handleReference(const MipsELFDefinedAtom<ELFT> &atom,
   case R_MICROMIPS_26_S1:
     handle26(atom, ref);
     break;
+  case R_MIPS_EH:
   case R_MIPS_GOT16:
   case R_MIPS_CALL16:
   case R_MICROMIPS_GOT16:
@@ -598,6 +599,9 @@ void RelocationPass<ELFT>::collectReferenceInfo(
     return;
 
   auto refKind = ref.kindValue();
+  if (refKind == R_MIPS_EH && this->_ctx.mipsPcRelEhRel())
+    ref.setKindValue(R_MIPS_PC32);
+
   if (!isConstrainSym(atom, refKind))
     return;
 
@@ -607,7 +611,8 @@ void RelocationPass<ELFT>::collectReferenceInfo(
     _hasStaticRelocations.insert(ref.target());
 
   if (refKind != R_MIPS_CALL16 && refKind != R_MICROMIPS_CALL16 &&
-      refKind != R_MIPS_26 && refKind != R_MICROMIPS_26_S1)
+      refKind != R_MIPS_26 && refKind != R_MICROMIPS_26_S1 &&
+      refKind != R_MIPS_EH)
     _requiresPtrEquality.insert(ref.target());
 }
 
@@ -787,7 +792,7 @@ template <typename ELFT> void RelocationPass<ELFT>::handleGOT(Reference &ref) {
 
   if (ref.kindValue() == R_MIPS_GOT_PAGE)
     ref.setTarget(getLocalGOTPageEntry(ref));
-  else if (ref.kindValue() == R_MIPS_GOT_DISP)
+  else if (ref.kindValue() == R_MIPS_GOT_DISP || ref.kindValue() == R_MIPS_EH)
     ref.setTarget(getLocalGOTEntry(ref));
   else if (isLocal(ref.target()))
     ref.setTarget(getLocalGOTPageEntry(ref));

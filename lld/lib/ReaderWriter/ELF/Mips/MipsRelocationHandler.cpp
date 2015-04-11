@@ -56,6 +56,7 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_32:
   case R_MIPS_GPREL32:
   case R_MIPS_PC32:
+  case R_MIPS_EH:
     return {4, 0xffffffff, 0, false};
   case LLD_R_MIPS_32_HI16:
     return {4, 0xffff0000, 0, false};
@@ -157,7 +158,7 @@ static uint64_t reloc64(uint64_t S, int64_t A) { return S + A; }
 static uint64_t relocSub(uint64_t S, int64_t A) { return S - A; }
 
 /// \brief R_MIPS_PC32
-/// local/external: word32 S + A i- P (truncate)
+/// local/external: word32 S + A - P (truncate)
 static uint32_t relocpc32(uint64_t P, uint64_t S, int64_t A) {
   return S + A - P;
 }
@@ -401,6 +402,7 @@ static ErrorOr<uint64_t> calculateRelocation(Reference::KindValue kind,
     return relocPcLo16(relAddr, tgtAddr, addend);
   case R_MICROMIPS_LO16:
     return relocLo16(relAddr, tgtAddr, addend, isGP, true);
+  case R_MIPS_EH:
   case R_MIPS_GOT16:
   case R_MIPS_CALL16:
   case R_MIPS_GOT_DISP:
@@ -528,8 +530,7 @@ std::error_code RelocationHandler<ELFT>::applyRelocation(
     return std::error_code();
   assert(ref.kindArch() == Reference::KindArch::Mips);
 
-  AtomLayout *gpAtom = _targetLayout.getGP();
-  uint64_t gpAddr = gpAtom ? gpAtom->_virtualAddr : 0;
+  uint64_t gpAddr = _targetLayout.getGPAddr();
 
   AtomLayout *gpDispAtom = _targetLayout.getGPDisp();
   bool isGpDisp = gpDispAtom && ref.target() == gpDispAtom->_atom;
