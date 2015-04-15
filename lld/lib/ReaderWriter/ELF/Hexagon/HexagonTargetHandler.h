@@ -12,38 +12,45 @@
 
 #include "ELFReader.h"
 #include "HexagonELFFile.h"
-#include "HexagonExecutableAtoms.h"
 #include "HexagonRelocationHandler.h"
-#include "HexagonSectionChunks.h"
 #include "TargetLayout.h"
 
 namespace lld {
 namespace elf {
 class HexagonLinkingContext;
 
+/// \brief Handle Hexagon SData section
+class SDataSection : public AtomSection<ELF32LE> {
+public:
+  SDataSection(const HexagonLinkingContext &ctx);
+
+  /// \brief Finalize the section contents before writing
+  void doPreFlight() override;
+
+  /// \brief Does this section have an output segment.
+  bool hasOutputSegment() const override { return true; }
+
+  const AtomLayout *appendAtom(const Atom *atom) override;
+};
+
 /// \brief TargetLayout for Hexagon
-template <class ELFT>
-class HexagonTargetLayout final : public TargetLayout<ELFT> {
+class HexagonTargetLayout final : public TargetLayout<ELF32LE> {
 public:
   enum HexagonSectionOrder {
     ORDER_SDATA = 205
   };
 
-  HexagonTargetLayout(HexagonLinkingContext &hti)
-      : TargetLayout<ELFT>(hti), _sdataSection() {
-    _sdataSection = new (_alloc) SDataSection<ELFT>(hti);
-  }
+  HexagonTargetLayout(HexagonLinkingContext &ctx)
+      : TargetLayout(ctx), _sdataSection(ctx) {}
 
   /// \brief Return the section order for a input section
-  typename TargetLayout<ELFT>::SectionOrder
+  TargetLayout::SectionOrder
   getSectionOrder(StringRef name, int32_t contentType,
                   int32_t contentPermissions) override {
-    if ((contentType == DefinedAtom::typeDataFast) ||
-       (contentType == DefinedAtom::typeZeroFillFast))
+    if (contentType == DefinedAtom::typeDataFast ||
+        contentType == DefinedAtom::typeZeroFillFast)
       return ORDER_SDATA;
-
-    return TargetLayout<ELFT>::getSectionOrder(name, contentType,
-                                               contentPermissions);
+    return TargetLayout::getSectionOrder(name, contentType, contentPermissions);
   }
 
   /// \brief Return the appropriate input section name.
@@ -55,53 +62,47 @@ public:
     default:
       break;
     }
-    return TargetLayout<ELFT>::getInputSectionName(da);
+    return TargetLayout::getInputSectionName(da);
   }
 
   /// \brief Gets or creates a section.
-  AtomSection<ELFT> *createSection(
-      StringRef name, int32_t contentType,
-      DefinedAtom::ContentPermissions contentPermissions,
-      typename TargetLayout<ELFT>::SectionOrder sectionOrder) override {
-    if ((contentType == DefinedAtom::typeDataFast) ||
-       (contentType == DefinedAtom::typeZeroFillFast))
-      return _sdataSection;
-    return TargetLayout<ELFT>::createSection(name, contentType,
-                                             contentPermissions, sectionOrder);
+  AtomSection<ELF32LE> *
+  createSection(StringRef name, int32_t contentType,
+                DefinedAtom::ContentPermissions contentPermissions,
+                TargetLayout::SectionOrder sectionOrder) override {
+    if (contentType == DefinedAtom::typeDataFast ||
+        contentType == DefinedAtom::typeZeroFillFast)
+      return &_sdataSection;
+    return TargetLayout::createSection(name, contentType, contentPermissions,
+                                       sectionOrder);
   }
 
   /// \brief get the segment type for the section thats defined by the target
-  typename TargetLayout<ELFT>::SegmentType
-  getSegmentType(Section<ELFT> *section) const override {
+  TargetLayout::SegmentType
+  getSegmentType(Section<ELF32LE> *section) const override {
     if (section->order() == ORDER_SDATA)
       return PT_LOAD;
-
-    return TargetLayout<ELFT>::getSegmentType(section);
+    return TargetLayout::getSegmentType(section);
   }
 
-  Section<ELFT> *getSDataSection() const { return _sdataSection; }
+  Section<ELF32LE> *getSDataSection() { return &_sdataSection; }
 
   uint64_t getGOTSymAddr() {
     std::call_once(_gotOnce, [this]() {
-      if (AtomLayout *got = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_"))
+      if (AtomLayout *got = findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_"))
         _gotAddr = got->_virtualAddr;
     });
     return _gotAddr;
   }
 
 private:
-  llvm::BumpPtrAllocator _alloc;
-  SDataSection<ELFT> *_sdataSection = nullptr;
+  SDataSection _sdataSection;
   uint64_t _gotAddr = 0;
   std::once_flag _gotOnce;
 };
 
 /// \brief TargetHandler for Hexagon
 class HexagonTargetHandler final : public TargetHandler {
-  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
-  typedef ELFReader<ELFTy, HexagonLinkingContext, HexagonELFFile> ObjReader;
-  typedef ELFReader<ELFTy, HexagonLinkingContext, DynamicFile> ELFDSOReader;
-
 public:
   HexagonTargetHandler(HexagonLinkingContext &targetInfo);
 
@@ -110,37 +111,22 @@ public:
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<ObjReader>(_ctx);
+    return llvm::make_unique<ELFReader<HexagonELFFile>>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<ELFDSOReader>(_ctx);
+    return llvm::make_unique<ELFReader<DynamicFile<ELF32LE>>>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
   HexagonLinkingContext &_ctx;
-  std::unique_ptr<HexagonRuntimeFile<ELFTy>> _runtimeFile;
-  std::unique_ptr<HexagonTargetLayout<ELFTy>> _targetLayout;
+  std::unique_ptr<HexagonTargetLayout> _targetLayout;
   std::unique_ptr<HexagonTargetRelocationHandler> _relocationHandler;
 };
 
-template <class ELFT>
-void finalizeHexagonRuntimeAtomValues(HexagonTargetLayout<ELFT> &layout) {
-  AtomLayout *gotAtom = layout.findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
-  OutputSection<ELFT> *gotpltSection = layout.findOutputSection(".got.plt");
-  if (gotpltSection)
-    gotAtom->_virtualAddr = gotpltSection->virtualAddr();
-  else
-    gotAtom->_virtualAddr = 0;
-  AtomLayout *dynamicAtom = layout.findAbsoluteAtom("_DYNAMIC");
-  OutputSection<ELFT> *dynamicSection = layout.findOutputSection(".dynamic");
-  if (dynamicSection)
-    dynamicAtom->_virtualAddr = dynamicSection->virtualAddr();
-  else
-    dynamicAtom->_virtualAddr = 0;
-}
+void finalizeHexagonRuntimeAtomValues(HexagonTargetLayout &layout);
 
 } // end namespace elf
 } // end namespace lld

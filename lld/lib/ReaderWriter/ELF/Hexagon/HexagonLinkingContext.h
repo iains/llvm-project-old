@@ -18,11 +18,9 @@
 namespace lld {
 namespace elf {
 
-typedef llvm::object::ELFType<llvm::support::little, 2, false> HexagonELFType;
-
 class HexagonLinkingContext final : public ELFLinkingContext {
 public:
-  static const int machine = llvm::ELF::EM_HEXAGON;
+  int getMachineType() const override { return llvm::ELF::EM_HEXAGON; }
   HexagonLinkingContext(llvm::Triple triple);
 
   void addPasses(PassManager &) override;
@@ -43,12 +41,7 @@ public:
   bool isPLTRelocation(const Reference &r) const override {
     if (r.kindNamespace() != Reference::KindNamespace::ELF)
       return false;
-    switch (r.kindValue()) {
-    case llvm::ELF::R_HEX_JMP_SLOT:
-      return true;
-    default:
-      return false;
-    }
+    return r.kindValue() == llvm::ELF::R_HEX_JMP_SLOT;
   }
 
   /// \brief Hexagon has only one relative relocation
@@ -56,21 +49,11 @@ public:
   bool isRelativeReloc(const Reference &r) const override {
     if (r.kindNamespace() != Reference::KindNamespace::ELF)
       return false;
-    switch (r.kindValue()) {
-    case llvm::ELF::R_HEX_RELATIVE:
-      return true;
-    default:
-      return false;
-    }
+    return r.kindValue() == llvm::ELF::R_HEX_RELATIVE;
   }
 };
 
-template <class ELFT> void setHexagonELFHeader(ELFHeader<ELFT> &elfHeader) {
-  elfHeader.e_ident(llvm::ELF::EI_VERSION, 1);
-  elfHeader.e_ident(llvm::ELF::EI_OSABI, 0);
-  elfHeader.e_version(1);
-  elfHeader.e_flags(0x3);
-}
+void setHexagonELFHeader(ELFHeader<ELF32LE> &elfHeader);
 
 } // elf
 } // lld

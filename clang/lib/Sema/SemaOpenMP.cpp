@@ -1117,7 +1117,11 @@ void Sema::ActOnOpenMPRegionStart(OpenMPDirectiveKind DKind, Scope *CurScope) {
     break;
   }
   case OMPD_parallel_sections: {
+    QualType KmpInt32Ty = Context.getIntTypeForBitwidth(32, 1);
+    QualType KmpInt32PtrTy = Context.getPointerType(KmpInt32Ty);
     Sema::CapturedParamNameType Params[] = {
+        std::make_pair(".global_tid.", KmpInt32PtrTy),
+        std::make_pair(".bound_tid.", KmpInt32PtrTy),
         std::make_pair(StringRef(), QualType()) // __context with shared vars
     };
     ActOnCapturedRegionStart(DSAStack->getConstructLoc(), CurScope, CR_OpenMP,
@@ -4801,7 +4805,7 @@ OMPClause *Sema::ActOnOpenMPFirstprivateClause(ArrayRef<Expr *> VarList,
     //  A variable of class type (or array thereof) that appears in a private
     //  clause requires an accessible, unambiguous copy constructor for the
     //  class type.
-    Type = Context.getBaseElementType(Type);
+    Type = Context.getBaseElementType(Type).getNonReferenceType();
 
     // If an implicit firstprivate variable found it was checked already.
     if (!IsImplicitClause) {
@@ -4891,10 +4895,10 @@ OMPClause *Sema::ActOnOpenMPFirstprivateClause(ArrayRef<Expr *> VarList,
       }
     }
 
-    Type = Type.getUnqualifiedType();
-    auto VDPrivate = VarDecl::Create(Context, CurContext, DE->getLocStart(),
-                                     ELoc, VD->getIdentifier(), VD->getType(),
-                                     VD->getTypeSourceInfo(), /*S*/ SC_Auto);
+    auto VDPrivate =
+        VarDecl::Create(Context, CurContext, DE->getLocStart(), ELoc,
+                        VD->getIdentifier(), VD->getType().getUnqualifiedType(),
+                        VD->getTypeSourceInfo(), /*S*/ SC_Auto);
     // Generate helper private variable and initialize it with the value of the
     // original variable. The address of the original variable is replaced by
     // the address of the new private variable in the CodeGen. This new variable
@@ -4913,9 +4917,12 @@ OMPClause *Sema::ActOnOpenMPFirstprivateClause(ArrayRef<Expr *> VarList,
           /*TemplateKWLoc*/ SourceLocation(), VDInit,
           /*RefersToEnclosingVariableOrCapture*/ true, ELoc, Type,
           /*VK*/ VK_LValue);
-      VDInit->setIsUsed();
       auto Init = DefaultLvalueConversion(VDInitRefExpr).get();
-      InitializedEntity Entity = InitializedEntity::InitializeVariable(VDInit);
+      auto *VDInitTemp =
+          BuildVarDecl(*this, DE->getLocStart(), Type.getUnqualifiedType(),
+                       ".firstprivate.temp");
+      InitializedEntity Entity =
+          InitializedEntity::InitializeVariable(VDInitTemp);
       InitializationKind Kind = InitializationKind::CreateCopy(ELoc, ELoc);
 
       InitializationSequence InitSeq(*this, Entity, Kind, Init);
@@ -4925,15 +4932,13 @@ OMPClause *Sema::ActOnOpenMPFirstprivateClause(ArrayRef<Expr *> VarList,
       else
         VDPrivate->setInit(Result.getAs<Expr>());
     } else {
-      AddInitializerToDecl(
-          VDPrivate,
-          DefaultLvalueConversion(
-              DeclRefExpr::Create(Context, NestedNameSpecifierLoc(),
-                                  SourceLocation(), DE->getDecl(),
-                                  /*RefersToEnclosingVariableOrCapture=*/true,
-                                  DE->getExprLoc(), DE->getType(),
-                                  /*VK=*/VK_LValue)).get(),
-          /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+      auto *VDInit =
+          BuildVarDecl(*this, DE->getLocStart(), Type, ".firstprivate.temp");
+      VDInitRefExpr =
+          BuildDeclRefExpr(VDInit, Type, VK_LValue, DE->getExprLoc()).get();
+      AddInitializerToDecl(VDPrivate,
+                           DefaultLvalueConversion(VDInitRefExpr).get(),
+                           /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
     }
     if (VDPrivate->isInvalidDecl()) {
       if (IsImplicitClause) {
@@ -4943,12 +4948,11 @@ OMPClause *Sema::ActOnOpenMPFirstprivateClause(ArrayRef<Expr *> VarList,
       continue;
     }
     CurContext->addDecl(VDPrivate);
-    auto VDPrivateRefExpr =
-        DeclRefExpr::Create(Context, /*QualifierLoc*/ NestedNameSpecifierLoc(),
-                            /*TemplateKWLoc*/ SourceLocation(), VDPrivate,
-                            /*RefersToEnclosingVariableOrCapture*/ false,
-                            DE->getLocStart(), DE->getType(),
-                            /*VK*/ VK_LValue);
+    auto VDPrivateRefExpr = DeclRefExpr::Create(
+        Context, /*QualifierLoc*/ NestedNameSpecifierLoc(),
+        /*TemplateKWLoc*/ SourceLocation(), VDPrivate,
+        /*RefersToEnclosingVariableOrCapture*/ false, DE->getLocStart(),
+        DE->getType().getUnqualifiedType(), /*VK*/ VK_LValue);
     DSAStack->addDSA(VD, DE, OMPC_firstprivate);
     Vars.push_back(DE);
     PrivateCopies.push_back(VDPrivateRefExpr);
@@ -6079,14 +6083,15 @@ OMPClause *Sema::ActOnOpenMPCopyprivateClause(ArrayRef<Expr *> VarList,
     //  A variable of class type (or array thereof) that appears in a
     //  copyin clause requires an accessible, unambiguous copy assignment
     //  operator for the class type.
-    auto *SrcVD = BuildVarDecl(*this, DE->getLocStart(), VD->getType(),
-                               ".copyprivate.src");
-    auto *PseudoSrcExpr = BuildDeclRefExpr(SrcVD, DE->getType(), VK_LValue,
-                                           DE->getExprLoc()).get();
-    auto *DstVD = BuildVarDecl(*this, DE->getLocStart(), VD->getType(),
-                               ".copyprivate.dst");
-    auto *PseudoDstExpr = BuildDeclRefExpr(DstVD, DE->getType(), VK_LValue,
-                                           DE->getExprLoc()).get();
+    Type = Context.getBaseElementType(Type).getUnqualifiedType();
+    auto *SrcVD =
+        BuildVarDecl(*this, DE->getLocStart(), Type, ".copyprivate.src");
+    auto *PseudoSrcExpr =
+        BuildDeclRefExpr(SrcVD, Type, VK_LValue, DE->getExprLoc()).get();
+    auto *DstVD =
+        BuildVarDecl(*this, DE->getLocStart(), Type, ".copyprivate.dst");
+    auto *PseudoDstExpr =
+        BuildDeclRefExpr(DstVD, Type, VK_LValue, DE->getExprLoc()).get();
     auto AssignmentOp = BuildBinOp(/*S=*/nullptr, DE->getExprLoc(), BO_Assign,
                                    PseudoDstExpr, PseudoSrcExpr);
     if (AssignmentOp.isInvalid())

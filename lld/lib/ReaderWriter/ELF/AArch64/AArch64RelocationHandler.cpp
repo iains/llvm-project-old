@@ -39,13 +39,6 @@ static void relocR_AARCH64_ABS64(uint8_t *location, uint64_t P, uint64_t S,
   write64le(location, result | read64le(location));
 }
 
-/// \brief R_AARCH64_PREL32 - word32: S + A - P
-static void relocR_AARCH64_PREL32(uint8_t *location, uint64_t P, uint64_t S,
-                                  int64_t A) {
-  int32_t result = (int32_t)(S + A - P);
-  write32le(location, result + (int32_t)read32le(location));
-}
-
 /// \brief R_AARCH64_ABS32 - word32:  S + A
 static std::error_code relocR_AARCH64_ABS32(uint8_t *location, uint64_t P,
                                             uint64_t S, int64_t A) {
@@ -61,10 +54,72 @@ static std::error_code relocR_AARCH64_ABS32(uint8_t *location, uint64_t P,
   return std::error_code();
 }
 
-/// \brief R_AARCH64_ADR_PREL_PG_HI21 - Page(S+A) - Page(P)
-static void relocR_AARCH64_ADR_PREL_PG_HI21(uint8_t *location, uint64_t P,
+/// \brief R_AARCH64_ABS16 - word16:  S + A
+static std::error_code relocR_AARCH64_ABS16(uint8_t *location, uint64_t P,
                                             uint64_t S, int64_t A) {
-  uint64_t result = (page(S + A) - page(P));
+  int64_t result = S + A;
+  if (!withinSignedUnsignedRange(result, 16))
+    return make_out_of_range_reloc_error();
+  DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
+        llvm::dbgs() << " S: 0x" << Twine::utohexstr(S);
+        llvm::dbgs() << " A: 0x" << Twine::utohexstr(A);
+        llvm::dbgs() << " P: 0x" << Twine::utohexstr(P);
+        llvm::dbgs() << " result: 0x" << Twine::utohexstr(result) << "\n");
+  write16le(location, result | read16le(location));
+  return std::error_code();
+}
+
+/// \brief R_AARCH64_PREL64 - word64: S + A - P
+static void relocR_AARCH64_PREL64(uint8_t *location, uint64_t P,
+                                  uint64_t S, int64_t A) {
+  int64_t result = S + A - P;
+  DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
+        llvm::dbgs() << " S: 0x" << Twine::utohexstr(S);
+        llvm::dbgs() << " A: 0x" << Twine::utohexstr(A);
+        llvm::dbgs() << " P: 0x" << Twine::utohexstr(P);
+        llvm::dbgs() << " result: 0x" << Twine::utohexstr(result) << "\n");
+  write64le(location, result + read64le(location));
+}
+
+/// \brief R_AARCH64_PREL32 - word32: S + A - P
+static std::error_code relocR_AARCH64_PREL32(uint8_t *location, uint64_t P,
+                                             uint64_t S, int64_t A) {
+  int64_t result = S + A - P;
+  // ELF for the ARM 64-bit architecture manual states the overflow
+  // for R_AARCH64_PREL32 to be -2^(-31) <= X < 2^32
+  if (!withinSignedUnsignedRange(result, 32))
+    return make_out_of_range_reloc_error();
+  DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
+        llvm::dbgs() << " S: 0x" << Twine::utohexstr(S);
+        llvm::dbgs() << " A: 0x" << Twine::utohexstr(A);
+        llvm::dbgs() << " P: 0x" << Twine::utohexstr(P);
+        llvm::dbgs() << " result: 0x" << Twine::utohexstr(result) << "\n");
+  write32le(location, result + read32le(location));
+  return std::error_code();
+}
+
+/// \brief R_AARCH64_PREL16 - word16: S + A - P
+static std::error_code relocR_AARCH64_PREL16(uint8_t *location, uint64_t P,
+                                             uint64_t S, int64_t A) {
+  int64_t result = S + A - P;
+  if (!withinSignedUnsignedRange(result, 16))
+    return make_out_of_range_reloc_error();
+  DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
+        llvm::dbgs() << " S: 0x" << Twine::utohexstr(S);
+        llvm::dbgs() << " A: 0x" << Twine::utohexstr(A);
+        llvm::dbgs() << " P: 0x" << Twine::utohexstr(P);
+        llvm::dbgs() << " result: 0x" << Twine::utohexstr(result) << "\n");
+  write16le(location, result + read16le(location));
+  return std::error_code();
+}
+
+/// \brief R_AARCH64_ADR_PREL_PG_HI21 - Page(S+A) - Page(P)
+static std::error_code relocR_AARCH64_ADR_PREL_PG_HI21(uint8_t *location,
+                                                       uint64_t P, uint64_t S,
+                                                       int64_t A) {
+  int64_t result = page(S + A) - page(P);
+  if (!isInt<32>(result))
+    return make_out_of_range_reloc_error();
   result = result >> 12;
   uint32_t immlo = result & 0x3;
   uint32_t immhi = result & 0x1FFFFC;
@@ -78,13 +133,15 @@ static void relocR_AARCH64_ADR_PREL_PG_HI21(uint8_t *location, uint64_t P,
         llvm::dbgs() << " immlo: " << Twine::utohexstr(immlo);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, immlo | immhi | read32le(location));
-  // TODO: Make sure this is correct!
+  return std::error_code();
 }
 
 /// \brief R_AARCH64_ADR_PREL_LO21 - S + A - P
-static void relocR_AARCH64_ADR_PREL_LO21(uint8_t *location, uint64_t P,
-                                         uint64_t S, int64_t A) {
+static std::error_code relocR_AARCH64_ADR_PREL_LO21(uint8_t *location, uint64_t P,
+                                                    uint64_t S, int64_t A) {
   uint64_t result = S + A - P;
+  if (!isInt<20>(result))
+    return make_out_of_range_reloc_error();
   uint32_t immlo = result & 0x3;
   uint32_t immhi = result & 0x1FFFFC;
   immlo = immlo << 29;
@@ -97,7 +154,7 @@ static void relocR_AARCH64_ADR_PREL_LO21(uint8_t *location, uint64_t P,
         llvm::dbgs() << " immlo: " << Twine::utohexstr(immlo);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, immlo | immhi | read32le(location));
-  // TODO: Make sure this is correct!
+  return std::error_code();
 }
 
 /// \brief R_AARCH64_ADD_ABS_LO12_NC
@@ -113,8 +170,12 @@ static void relocR_AARCH64_ADD_ABS_LO12_NC(uint8_t *location, uint64_t P,
   write32le(location, result | read32le(location));
 }
 
-static void relocJump26(uint8_t *location, uint64_t P, uint64_t S, int64_t A) {
-  int32_t result = (int32_t)(S + A - P);
+/// \brief R_AARCH64_CALL26 and R_AARCH64_JUMP26
+static std::error_code relocJump26(uint8_t *location, uint64_t P, uint64_t S,
+                                   int64_t A) {
+  int64_t result = S + A - P;
+  if (!isInt<27>(result))
+    return make_out_of_range_reloc_error();
   result &= 0x0FFFFFFC;
   result >>= 2;
   DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
@@ -123,12 +184,15 @@ static void relocJump26(uint8_t *location, uint64_t P, uint64_t S, int64_t A) {
         llvm::dbgs() << " P: " << Twine::utohexstr(P);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, result | read32le(location));
+  return std::error_code();
 }
 
 /// \brief R_AARCH64_CONDBR19
-static void relocR_AARCH64_CONDBR19(uint8_t *location, uint64_t P, uint64_t S,
-                                    int64_t A) {
-  int32_t result = (int32_t)(S + A - P);
+static std::error_code relocR_AARCH64_CONDBR19(uint8_t *location, uint64_t P,
+                                               uint64_t S, int64_t A) {
+  int64_t result = S + A - P;
+  if (!isInt<20>(result))
+    return make_out_of_range_reloc_error();
   result &= 0x01FFFFC;
   result <<= 3;
   DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
@@ -137,6 +201,7 @@ static void relocR_AARCH64_CONDBR19(uint8_t *location, uint64_t P, uint64_t S,
         llvm::dbgs() << " P: " << Twine::utohexstr(P);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, result | read32le(location));
+  return std::error_code();
 }
 
 /// \brief R_AARCH64_LDST8_ABS_LO12_NC - S + A
@@ -208,10 +273,13 @@ static void relocR_AARCH64_LDST128_ABS_LO12_NC(uint8_t *location, uint64_t P,
   write32le(location, result | read32le(location));
 }
 
-static void relocR_AARCH64_ADR_GOT_PAGE(uint8_t *location, uint64_t P,
-                                        uint64_t S, int64_t A) {
+static std::error_code relocR_AARCH64_ADR_GOT_PAGE(uint8_t *location,
+                                                   uint64_t P, uint64_t S,
+                                                   int64_t A) {
   uint64_t result = page(S + A) - page(P);
-  result >>= 12;
+  if (!isInt<32>(result))
+    return make_out_of_range_reloc_error();
+  result = (result >> 12) & 0x3FFFF;
   uint32_t immlo = result & 0x3;
   uint32_t immhi = result & 0x1FFFFC;
   immlo = immlo << 29;
@@ -224,20 +292,24 @@ static void relocR_AARCH64_ADR_GOT_PAGE(uint8_t *location, uint64_t P,
         llvm::dbgs() << " immlo: " << Twine::utohexstr(immlo);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, immlo | immhi | read32le(location));
+  return std::error_code();
 }
 
 // R_AARCH64_LD64_GOT_LO12_NC
-static void relocR_AARCH64_LD64_GOT_LO12_NC(uint8_t *location, uint64_t P,
-                                            uint64_t S, int64_t A) {
+static std::error_code relocR_AARCH64_LD64_GOT_LO12_NC(uint8_t *location,
+                                                       uint64_t P, uint64_t S,
+                                                       int64_t A) {
   int32_t result = S + A;
-  DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
-        llvm::dbgs() << " S: " << Twine::utohexstr(S);
+  DEBUG(llvm::dbgs() << " S: " << Twine::utohexstr(S);
         llvm::dbgs() << " A: " << Twine::utohexstr(A);
         llvm::dbgs() << " P: " << Twine::utohexstr(P);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
+  if ((result & 0x7) != 0)
+    return make_unaligned_range_reloc_error();
   result &= 0xFF8;
   result <<= 7;
   write32le(location, result | read32le(location));
+  return std::error_code();
 }
 
 // ADD_AARCH64_GOTRELINDEX
@@ -255,10 +327,13 @@ static void relocADD_AARCH64_GOTRELINDEX(uint8_t *location, uint64_t P,
 }
 
 // R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21
-static void relocR_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21(uint8_t *location,
-                                                     uint64_t P, uint64_t S,
-                                                     int64_t A) {
+static std::error_code relocR_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21(uint8_t *location,
+                                                                uint64_t P,
+                                                                uint64_t S,
+                                                                int64_t A) {
   int64_t result = page(S + A) - page(P);
+  if (!isInt<32>(result))
+    return make_out_of_range_reloc_error();
   result >>= 12;
   uint32_t immlo = result & 0x3;
   uint32_t immhi = result & 0x1FFFFC;
@@ -272,6 +347,7 @@ static void relocR_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21(uint8_t *location,
         llvm::dbgs() << " immlo: " << Twine::utohexstr(immlo);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, immlo | immhi | read32le(location));
+  return std::error_code();
 }
 
 // R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC
@@ -290,9 +366,13 @@ static void relocR_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC(uint8_t *location,
 }
 
 /// \brief R_AARCH64_TLSLE_ADD_TPREL_HI12
-static void relocR_AARCH64_TLSLE_ADD_TPREL_HI12(uint8_t *location, uint64_t P,
-                                                uint64_t S, int64_t A) {
-  int32_t result = S + A;
+static std::error_code relocR_AARCH64_TLSLE_ADD_TPREL_HI12(uint8_t *location,
+                                                           uint64_t P,
+                                                           uint64_t S,
+                                                           int64_t A) {
+  int64_t result = S + A;
+  if (!isUInt<24>(result))
+    return make_out_of_range_reloc_error();
   result &= 0x0FFF000;
   result >>= 2;
   DEBUG(llvm::dbgs() << "\t\tHandle " << LLVM_FUNCTION_NAME << " -";
@@ -301,6 +381,7 @@ static void relocR_AARCH64_TLSLE_ADD_TPREL_HI12(uint8_t *location, uint64_t P,
         llvm::dbgs() << " P: " << Twine::utohexstr(P);
         llvm::dbgs() << " result: " << Twine::utohexstr(result) << "\n");
   write32le(location, result | read32le(location));
+  return std::error_code();
 }
 
 /// \brief R_AARCH64_TLSLE_ADD_TPREL_LO12_NC
@@ -319,7 +400,7 @@ static void relocR_AARCH64_TLSLE_ADD_TPREL_LO12_NC(uint8_t *location,
 }
 
 std::error_code AArch64TargetRelocationHandler::applyRelocation(
-    ELFWriter &writer, llvm::FileOutputBuffer &buf, const lld::AtomLayout &atom,
+    ELFWriter &writer, llvm::FileOutputBuffer &buf, const AtomLayout &atom,
     const Reference &ref) const {
   uint8_t *atomContent = buf.getBufferStart() + atom._fileOffset;
   uint8_t *loc = atomContent + ref.offsetInAtom();
@@ -336,11 +417,17 @@ std::error_code AArch64TargetRelocationHandler::applyRelocation(
   case R_AARCH64_ABS64:
     relocR_AARCH64_ABS64(loc, reloc, target, addend);
     break;
-  case R_AARCH64_PREL32:
-    relocR_AARCH64_PREL32(loc, reloc, target, addend);
-    break;
   case R_AARCH64_ABS32:
     return relocR_AARCH64_ABS32(loc, reloc, target, addend);
+  case R_AARCH64_ABS16:
+    return relocR_AARCH64_ABS16(loc, reloc, target, addend);
+  case R_AARCH64_PREL64:
+    relocR_AARCH64_PREL64(loc, reloc, target, addend);
+    break;
+  case R_AARCH64_PREL32:
+    return relocR_AARCH64_PREL32(loc, reloc, target, addend);
+  case R_AARCH64_PREL16:
+    return relocR_AARCH64_PREL16(loc, reloc, target, addend);
   // Runtime only relocations. Ignore here.
   case R_AARCH64_RELATIVE:
   case R_AARCH64_IRELATIVE:
@@ -348,27 +435,21 @@ std::error_code AArch64TargetRelocationHandler::applyRelocation(
   case R_AARCH64_GLOB_DAT:
     break;
   case R_AARCH64_ADR_PREL_PG_HI21:
-    relocR_AARCH64_ADR_PREL_PG_HI21(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_ADR_PREL_PG_HI21(loc, reloc, target, addend);
   case R_AARCH64_ADR_PREL_LO21:
-    relocR_AARCH64_ADR_PREL_LO21(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_ADR_PREL_LO21(loc, reloc, target, addend);
   case R_AARCH64_ADD_ABS_LO12_NC:
     relocR_AARCH64_ADD_ABS_LO12_NC(loc, reloc, target, addend);
     break;
   case R_AARCH64_CALL26:
   case R_AARCH64_JUMP26:
-    relocJump26(loc, reloc, target, addend);
-    break;
+    return relocJump26(loc, reloc, target, addend);
   case R_AARCH64_CONDBR19:
-    relocR_AARCH64_CONDBR19(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_CONDBR19(loc, reloc, target, addend);
   case R_AARCH64_ADR_GOT_PAGE:
-    relocR_AARCH64_ADR_GOT_PAGE(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_ADR_GOT_PAGE(loc, reloc, target, addend);
   case R_AARCH64_LD64_GOT_LO12_NC:
-    relocR_AARCH64_LD64_GOT_LO12_NC(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_LD64_GOT_LO12_NC(loc, reloc, target, addend);
   case R_AARCH64_LDST8_ABS_LO12_NC:
     relocR_AARCH64_LDST8_ABS_LO12_NC(loc, reloc, target, addend);
     break;
@@ -388,14 +469,12 @@ std::error_code AArch64TargetRelocationHandler::applyRelocation(
     relocADD_AARCH64_GOTRELINDEX(loc, reloc, target, addend);
     break;
   case R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21:
-    relocR_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21(loc, reloc, target, addend);
   case R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC:
     relocR_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC(loc, reloc, target, addend);
     break;
   case R_AARCH64_TLSLE_ADD_TPREL_HI12:
-    relocR_AARCH64_TLSLE_ADD_TPREL_HI12(loc, reloc, target, addend);
-    break;
+    return relocR_AARCH64_TLSLE_ADD_TPREL_HI12(loc, reloc, target, addend);
   case R_AARCH64_TLSLE_ADD_TPREL_LO12_NC:
     relocR_AARCH64_TLSLE_ADD_TPREL_LO12_NC(loc, reloc, target, addend);
     break;

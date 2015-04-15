@@ -10,19 +10,18 @@
 #define HEXAGON_EXECUTABLE_WRITER_H
 
 #include "ExecutableWriter.h"
-#include "HexagonExecutableAtoms.h"
 #include "HexagonLinkingContext.h"
+#include "HexagonTargetHandler.h"
 
 namespace lld {
 namespace elf {
 
-template <typename ELFT> class HexagonTargetLayout;
+class HexagonTargetLayout;
 
-template <class ELFT>
-class HexagonExecutableWriter : public ExecutableWriter<ELFT> {
+class HexagonExecutableWriter : public ExecutableWriter<ELF32LE> {
 public:
   HexagonExecutableWriter(HexagonLinkingContext &ctx,
-                          HexagonTargetLayout<ELFT> &layout);
+                          HexagonTargetLayout &layout);
 
 protected:
   // Add any runtime files and their atoms to the output
@@ -31,39 +30,37 @@ protected:
   void finalizeDefaultAtomValues() override;
 
   std::error_code setELFHeader() override {
-    ExecutableWriter<ELFT>::setELFHeader();
-    setHexagonELFHeader(*this->_elfHeader);
+    ExecutableWriter::setELFHeader();
+    setHexagonELFHeader(*_elfHeader);
     return std::error_code();
   }
 
 private:
   HexagonLinkingContext &_ctx;
-  HexagonTargetLayout<ELFT> &_targetLayout;
+  HexagonTargetLayout &_targetLayout;
 };
 
-template <class ELFT>
-HexagonExecutableWriter<ELFT>::HexagonExecutableWriter(
-    HexagonLinkingContext &ctx, HexagonTargetLayout<ELFT> &layout)
-    : ExecutableWriter<ELFT>(ctx, layout), _ctx(ctx), _targetLayout(layout) {}
+HexagonExecutableWriter::HexagonExecutableWriter(HexagonLinkingContext &ctx,
+                                                 HexagonTargetLayout &layout)
+    : ExecutableWriter(ctx, layout), _ctx(ctx), _targetLayout(layout) {}
 
-template <class ELFT>
-void HexagonExecutableWriter<ELFT>::createImplicitFiles(
+void HexagonExecutableWriter::createImplicitFiles(
     std::vector<std::unique_ptr<File>> &result) {
-  ExecutableWriter<ELFT>::createImplicitFiles(result);
+  ExecutableWriter::createImplicitFiles(result);
   // Add the default atoms as defined for hexagon
-  auto file = llvm::make_unique<HexagonRuntimeFile<ELFT>>(_ctx);
+  auto file =
+      llvm::make_unique<RuntimeFile<ELF32LE>>(_ctx, "Hexagon runtime file");
   file->addAbsoluteAtom("_SDA_BASE_");
-  if (this->_ctx.isDynamic()) {
+  if (_ctx.isDynamic()) {
     file->addAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
     file->addAbsoluteAtom("_DYNAMIC");
   }
   result.push_back(std::move(file));
 }
 
-template <class ELFT>
-void HexagonExecutableWriter<ELFT>::finalizeDefaultAtomValues() {
+void HexagonExecutableWriter::finalizeDefaultAtomValues() {
   // Finalize the atom values that are part of the parent.
-  ExecutableWriter<ELFT>::finalizeDefaultAtomValues();
+  ExecutableWriter::finalizeDefaultAtomValues();
   AtomLayout *sdabaseAtom = _targetLayout.findAbsoluteAtom("_SDA_BASE_");
   sdabaseAtom->_virtualAddr = _targetLayout.getSDataSection()->virtualAddr();
   if (_ctx.isDynamic())

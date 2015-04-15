@@ -10,7 +10,6 @@
 #include "MipsELFFile.h"
 #include "MipsLinkingContext.h"
 #include "MipsRelocationPass.h"
-#include "MipsTargetHandler.h"
 #include "llvm/ADT/DenseSet.h"
 
 using namespace lld;
@@ -120,10 +119,10 @@ public:
   ArrayRef<uint8_t> rawContent() const override;
 };
 
-template <> ArrayRef<uint8_t> GOT0Atom<Mips32ELType>::rawContent() const {
+template <> ArrayRef<uint8_t> GOT0Atom<ELF32LE>::rawContent() const {
   return llvm::makeArrayRef(mipsGot0AtomContent).slice(4);
 }
-template <> ArrayRef<uint8_t> GOT0Atom<Mips64ELType>::rawContent() const {
+template <> ArrayRef<uint8_t> GOT0Atom<ELF64LE>::rawContent() const {
   return llvm::makeArrayRef(mipsGot0AtomContent);
 }
 
@@ -136,11 +135,11 @@ public:
 };
 
 template <>
-ArrayRef<uint8_t> GOTModulePointerAtom<Mips32ELType>::rawContent() const {
+ArrayRef<uint8_t> GOTModulePointerAtom<ELF32LE>::rawContent() const {
   return llvm::makeArrayRef(mipsGotModulePointerAtomContent).slice(4);
 }
 template <>
-ArrayRef<uint8_t> GOTModulePointerAtom<Mips64ELType>::rawContent() const {
+ArrayRef<uint8_t> GOTModulePointerAtom<ELF64LE>::rawContent() const {
   return llvm::makeArrayRef(mipsGotModulePointerAtomContent);
 }
 
@@ -152,11 +151,11 @@ public:
   ArrayRef<uint8_t> rawContent() const override;
 };
 
-template <> ArrayRef<uint8_t> GOTTLSGdAtom<Mips32ELType>::rawContent() const {
+template <> ArrayRef<uint8_t> GOTTLSGdAtom<ELF32LE>::rawContent() const {
     return llvm::makeArrayRef(mipsGotTlsGdAtomContent).slice(8);
 }
 
-template <> ArrayRef<uint8_t> GOTTLSGdAtom<Mips64ELType>::rawContent() const {
+template <> ArrayRef<uint8_t> GOTTLSGdAtom<ELF64LE>::rawContent() const {
     return llvm::makeArrayRef(mipsGotTlsGdAtomContent);
 }
 
@@ -508,7 +507,7 @@ void RelocationPass<ELFT>::handleReference(const MipsELFDefinedAtom<ELFT> &atom,
                                            Reference &ref) {
   if (!ref.target())
     return;
-  if (ref.kindNamespace() != lld::Reference::KindNamespace::ELF)
+  if (ref.kindNamespace() != Reference::KindNamespace::ELF)
     return;
   assert(ref.kindArch() == Reference::KindArch::Mips);
   switch (ref.kindValue()) {
@@ -530,8 +529,16 @@ void RelocationPass<ELFT>::handleReference(const MipsELFDefinedAtom<ELFT> &atom,
   case R_MIPS_EH:
   case R_MIPS_GOT16:
   case R_MIPS_CALL16:
+  case R_MIPS_GOT_HI16:
+  case R_MIPS_GOT_LO16:
+  case R_MIPS_CALL_HI16:
+  case R_MIPS_CALL_LO16:
   case R_MICROMIPS_GOT16:
   case R_MICROMIPS_CALL16:
+  case R_MICROMIPS_GOT_HI16:
+  case R_MICROMIPS_GOT_LO16:
+  case R_MICROMIPS_CALL_HI16:
+  case R_MICROMIPS_CALL_LO16:
   case R_MIPS_GOT_DISP:
   case R_MIPS_GOT_PAGE:
     handleGOT(ref);
@@ -595,7 +602,7 @@ void RelocationPass<ELFT>::collectReferenceInfo(
     const MipsELFDefinedAtom<ELFT> &atom, Reference &ref) {
   if (!ref.target())
     return;
-  if (ref.kindNamespace() != lld::Reference::KindNamespace::ELF)
+  if (ref.kindNamespace() != Reference::KindNamespace::ELF)
     return;
 
   auto refKind = ref.kindValue();
@@ -612,6 +619,10 @@ void RelocationPass<ELFT>::collectReferenceInfo(
 
   if (refKind != R_MIPS_CALL16 && refKind != R_MICROMIPS_CALL16 &&
       refKind != R_MIPS_26 && refKind != R_MICROMIPS_26_S1 &&
+      refKind != R_MIPS_GOT_HI16 && refKind != R_MIPS_GOT_LO16 &&
+      refKind != R_MIPS_CALL_HI16 && refKind != R_MIPS_CALL_LO16 &&
+      refKind != R_MICROMIPS_GOT_HI16 && refKind != R_MICROMIPS_GOT_LO16 &&
+      refKind != R_MICROMIPS_CALL_HI16 && refKind != R_MICROMIPS_CALL_LO16 &&
       refKind != R_MIPS_EH)
     _requiresPtrEquality.insert(ref.target());
 }
@@ -641,7 +652,11 @@ template <typename ELFT>
 bool RelocationPass<ELFT>::mightBeDynamic(const MipsELFDefinedAtom<ELFT> &atom,
                                           Reference::KindValue refKind) const {
   if (refKind == R_MIPS_CALL16 || refKind == R_MIPS_GOT16 ||
-      refKind == R_MICROMIPS_CALL16 || refKind == R_MICROMIPS_GOT16)
+      refKind == R_MICROMIPS_CALL16 || refKind == R_MICROMIPS_GOT16 ||
+      refKind == R_MIPS_GOT_HI16 || refKind == R_MIPS_GOT_LO16 ||
+      refKind == R_MIPS_CALL_HI16 || refKind == R_MIPS_CALL_LO16 ||
+      refKind == R_MICROMIPS_GOT_HI16 || refKind == R_MICROMIPS_GOT_LO16 ||
+      refKind == R_MICROMIPS_CALL_HI16 || refKind == R_MICROMIPS_CALL_LO16)
     return true;
 
   if (refKind != R_MIPS_32 && refKind != R_MIPS_64)
@@ -792,7 +807,16 @@ template <typename ELFT> void RelocationPass<ELFT>::handleGOT(Reference &ref) {
 
   if (ref.kindValue() == R_MIPS_GOT_PAGE)
     ref.setTarget(getLocalGOTPageEntry(ref));
-  else if (ref.kindValue() == R_MIPS_GOT_DISP || ref.kindValue() == R_MIPS_EH)
+  else if (ref.kindValue() == R_MIPS_GOT_DISP ||
+           ref.kindValue() == R_MIPS_GOT_HI16 ||
+           ref.kindValue() == R_MIPS_GOT_LO16 ||
+           ref.kindValue() == R_MIPS_CALL_HI16 ||
+           ref.kindValue() == R_MIPS_CALL_LO16 ||
+           ref.kindValue() == R_MICROMIPS_GOT_HI16 ||
+           ref.kindValue() == R_MICROMIPS_GOT_LO16 ||
+           ref.kindValue() == R_MICROMIPS_CALL_HI16 ||
+           ref.kindValue() == R_MICROMIPS_CALL_LO16 ||
+           ref.kindValue() == R_MIPS_EH)
     ref.setTarget(getLocalGOTEntry(ref));
   else if (isLocal(ref.target()))
     ref.setTarget(getLocalGOTPageEntry(ref));
@@ -1053,9 +1077,9 @@ RelocationPass<ELFT>::getObjectEntry(const SharedLibraryAtom *a) {
 static std::unique_ptr<Pass> createPass(MipsLinkingContext &ctx) {
   switch (ctx.getTriple().getArch()) {
   case llvm::Triple::mipsel:
-    return llvm::make_unique<RelocationPass<Mips32ELType>>(ctx);
+    return llvm::make_unique<RelocationPass<ELF32LE>>(ctx);
   case llvm::Triple::mips64el:
-    return llvm::make_unique<RelocationPass<Mips64ELType>>(ctx);
+    return llvm::make_unique<RelocationPass<ELF64LE>>(ctx);
   default:
     llvm_unreachable("Unhandled arch");
   }

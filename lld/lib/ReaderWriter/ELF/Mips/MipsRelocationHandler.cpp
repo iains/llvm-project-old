@@ -7,9 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MipsTargetHandler.h"
 #include "MipsLinkingContext.h"
 #include "MipsRelocationHandler.h"
+#include "MipsTargetLayout.h"
+#include "llvm/Support/Format.h"
 
 using namespace lld;
 using namespace elf;
@@ -37,7 +38,7 @@ public:
 
   std::error_code applyRelocation(ELFWriter &writer,
                                   llvm::FileOutputBuffer &buf,
-                                  const lld::AtomLayout &atom,
+                                  const AtomLayout &atom,
                                   const Reference &ref) const override;
 
 private:
@@ -82,6 +83,10 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MIPS_GOT_DISP:
   case R_MIPS_GOT_PAGE:
   case R_MIPS_GOT_OFST:
+  case R_MIPS_GOT_HI16:
+  case R_MIPS_GOT_LO16:
+  case R_MIPS_CALL_HI16:
+  case R_MIPS_CALL_LO16:
   case R_MIPS_TLS_DTPREL_HI16:
   case R_MIPS_TLS_DTPREL_LO16:
   case R_MIPS_TLS_TPREL_HI16:
@@ -118,6 +123,10 @@ static MipsRelocationParams getRelocationParams(uint32_t rType) {
   case R_MICROMIPS_TLS_GD:
   case R_MICROMIPS_TLS_LDM:
   case R_MICROMIPS_TLS_GOTTPREL:
+  case R_MICROMIPS_GOT_HI16:
+  case R_MICROMIPS_GOT_LO16:
+  case R_MICROMIPS_CALL_HI16:
+  case R_MICROMIPS_CALL_LO16:
     return {4, 0xffff, 0, true};
   case R_MIPS_JALR:
     return {4, 0x0, 0, false};
@@ -219,6 +228,20 @@ static uint32_t relocPcLo16(uint64_t P, uint64_t S, int64_t AHL) {
 static uint64_t relocGOT(uint64_t S, uint64_t GP) {
   int64_t G = (int64_t)(S - GP);
   return G;
+}
+
+/// \brief R_MIPS_GOT_LO16, R_MIPS_CALL_LO16
+/// R_MICROMIPS_GOT_LO16, R_MICROMIPS_CALL_LO16
+/// rel16 G (truncate)
+static uint64_t relocGOTLo16(uint64_t S, uint64_t GP) {
+  return S - GP;
+}
+
+/// \brief R_MIPS_GOT_HI16, R_MIPS_CALL_HI16,
+/// R_MICROMIPS_GOT_HI16, R_MICROMIPS_CALL_HI16
+/// rel16 %high(G) (truncate)
+static uint64_t relocGOTHi16(uint64_t S, uint64_t GP) {
+  return (S - GP + 0x8000) >> 16;
 }
 
 /// R_MIPS_GOT_OFST
@@ -328,8 +351,7 @@ static std::error_code adjustJumpOpCode(uint64_t &ins, uint64_t tgt,
   uint32_t opCross = toMicro ? 0x1d : 0x3c;
 
   if ((tgt & 1) != toMicro)
-    return make_dynamic_error_code(
-        Twine("Incorrect bit 0 for the jalx target"));
+    return make_dynamic_error_code("Incorrect bit 0 for the jalx target");
 
   if (tgt & 2)
     return make_dynamic_error_code(Twine("The jalx target 0x") +
@@ -402,6 +424,16 @@ static ErrorOr<uint64_t> calculateRelocation(Reference::KindValue kind,
     return relocPcLo16(relAddr, tgtAddr, addend);
   case R_MICROMIPS_LO16:
     return relocLo16(relAddr, tgtAddr, addend, isGP, true);
+  case R_MIPS_GOT_LO16:
+  case R_MIPS_CALL_LO16:
+  case R_MICROMIPS_GOT_LO16:
+  case R_MICROMIPS_CALL_LO16:
+    return relocGOTLo16(tgtAddr, gpAddr);
+  case R_MIPS_GOT_HI16:
+  case R_MIPS_CALL_HI16:
+  case R_MICROMIPS_GOT_HI16:
+  case R_MICROMIPS_CALL_HI16:
+    return relocGOTHi16(tgtAddr, gpAddr);
   case R_MIPS_EH:
   case R_MIPS_GOT16:
   case R_MIPS_CALL16:
@@ -524,9 +556,9 @@ static void relocWrite(uint64_t data, const MipsRelocationParams &params,
 
 template <class ELFT>
 std::error_code RelocationHandler<ELFT>::applyRelocation(
-    ELFWriter &writer, llvm::FileOutputBuffer &buf, const lld::AtomLayout &atom,
+    ELFWriter &writer, llvm::FileOutputBuffer &buf, const AtomLayout &atom,
     const Reference &ref) const {
-  if (ref.kindNamespace() != lld::Reference::KindNamespace::ELF)
+  if (ref.kindNamespace() != Reference::KindNamespace::ELF)
     return std::error_code();
   assert(ref.kindArch() == Reference::KindArch::Mips);
 
@@ -585,16 +617,16 @@ namespace elf {
 
 template <>
 std::unique_ptr<TargetRelocationHandler>
-createMipsRelocationHandler<Mips32ELType>(MipsLinkingContext &ctx,
-                                          MipsTargetLayout<Mips32ELType> &layout) {
-  return llvm::make_unique<RelocationHandler<Mips32ELType>>(ctx, layout);
+createMipsRelocationHandler<ELF32LE>(MipsLinkingContext &ctx,
+                                     MipsTargetLayout<ELF32LE> &layout) {
+  return llvm::make_unique<RelocationHandler<ELF32LE>>(ctx, layout);
 }
 
 template <>
 std::unique_ptr<TargetRelocationHandler>
-createMipsRelocationHandler<Mips64ELType>(MipsLinkingContext &ctx,
-                                          MipsTargetLayout<Mips64ELType> &layout) {
-  return llvm::make_unique<RelocationHandler<Mips64ELType>>(ctx, layout);
+createMipsRelocationHandler<ELF64LE>(MipsLinkingContext &ctx,
+                                     MipsTargetLayout<ELF64LE> &layout) {
+  return llvm::make_unique<RelocationHandler<ELF64LE>>(ctx, layout);
 }
 
 Reference::Addend readMipsRelocAddend(Reference::KindValue kind,

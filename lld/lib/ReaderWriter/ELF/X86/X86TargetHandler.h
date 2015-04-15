@@ -20,10 +20,6 @@ namespace elf {
 class X86LinkingContext;
 
 class X86TargetHandler final : public TargetHandler {
-  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
-  typedef ELFReader<ELFTy, X86LinkingContext, ELFFile> ObjReader;
-  typedef ELFReader<ELFTy, X86LinkingContext, DynamicFile> DSOReader;
-
 public:
   X86TargetHandler(X86LinkingContext &ctx);
 
@@ -32,18 +28,18 @@ public:
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<ObjReader>(_ctx);
+    return llvm::make_unique<ELFReader<ELFFile<ELF32LE>>>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<DSOReader>(_ctx);
+    return llvm::make_unique<ELFReader<DynamicFile<ELF32LE>>>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 protected:
   X86LinkingContext &_ctx;
-  std::unique_ptr<TargetLayout<ELFTy>> _targetLayout;
+  std::unique_ptr<TargetLayout<ELF32LE>> _targetLayout;
   std::unique_ptr<X86TargetRelocationHandler> _relocationHandler;
 };
 } // end namespace elf

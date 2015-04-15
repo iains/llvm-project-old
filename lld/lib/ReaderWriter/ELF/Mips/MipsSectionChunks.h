@@ -10,6 +10,7 @@
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_SECTION_CHUNKS_H
 
 #include "MipsReginfo.h"
+#include "SectionChunks.h"
 
 namespace lld {
 namespace elf {
@@ -151,11 +152,11 @@ public:
     return ia == _posMap.end() && ib != _posMap.end();
   }
 
-  const lld::AtomLayout *appendAtom(const Atom *atom) override {
+  const AtomLayout *appendAtom(const Atom *atom) override {
     const DefinedAtom *da = dyn_cast<DefinedAtom>(atom);
 
     for (const auto &r : *da) {
-      if (r->kindNamespace() != lld::Reference::KindNamespace::ELF)
+      if (r->kindNamespace() != Reference::KindNamespace::ELF)
         continue;
       assert(r->kindArch() == Reference::KindArch::Mips);
       switch (r->kindValue()) {
@@ -210,13 +211,13 @@ public:
     return it != _pltLayoutMap.end() ? it->second : nullptr;
   }
 
-  const lld::AtomLayout *appendAtom(const Atom *atom) override {
+  const AtomLayout *appendAtom(const Atom *atom) override {
     const auto *layout = AtomSection<ELFT>::appendAtom(atom);
 
     const DefinedAtom *da = cast<DefinedAtom>(atom);
 
     for (const auto &r : *da) {
-      if (r->kindNamespace() != lld::Reference::KindNamespace::ELF)
+      if (r->kindNamespace() != Reference::KindNamespace::ELF)
         continue;
       assert(r->kindArch() == Reference::KindArch::Mips);
       if (r->kindValue() == LLD_R_MIPS_STO_PLT) {

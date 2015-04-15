@@ -46,6 +46,11 @@ std::unique_ptr<ELFLinkingContext> createMipsLinkingContext(llvm::Triple);
 std::unique_ptr<ELFLinkingContext> createX86LinkingContext(llvm::Triple);
 std::unique_ptr<ELFLinkingContext> createX86_64LinkingContext(llvm::Triple);
 
+typedef llvm::object::ELFType<llvm::support::little, 2, false> ELF32LE;
+typedef llvm::object::ELFType<llvm::support::big, 2, false> ELF32BE;
+typedef llvm::object::ELFType<llvm::support::little, 2, true> ELF64LE;
+typedef llvm::object::ELFType<llvm::support::big, 2, true> ELF64BE;
+
 class TargetRelocationHandler {
 public:
   virtual ~TargetRelocationHandler() {}
@@ -101,6 +106,7 @@ public:
   uint16_t getOutputELFType() const { return _outputELFType; }
   uint16_t getOutputMachine() const;
   bool mergeCommonStrings() const { return _mergeCommonStrings; }
+  virtual int getMachineType() const = 0;
   virtual uint64_t getBaseAddress() const { return _baseAddress; }
   virtual void setBaseAddress(uint64_t address) { _baseAddress = address; }
 

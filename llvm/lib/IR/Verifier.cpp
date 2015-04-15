@@ -181,9 +181,6 @@ class Verifier : public InstVisitor<Verifier>, VerifierSupport {
   /// \brief Track unresolved string-based type references.
   SmallDenseMap<const MDString *, const MDNode *, 32> UnresolvedTypeRefs;
 
-  /// \brief Track queue of bit piece expressions to verify.
-  SmallVector<const DbgInfoIntrinsic *, 32> QueuedBitPieceExpressions;
-
   /// \brief The personality function referenced by the LandingPadInsts.
   /// All LandingPadInsts within the same function must use the same
   /// personality function.
@@ -994,7 +991,7 @@ void Verifier::visitMDSubprogram(const MDSubprogram &N) {
         continue;
 
       // FIXME: Once N is canonical, check "SP == &N".
-      Assert(DISubprogram(SP).describes(F),
+      Assert(SP->describes(F),
              "!dbg attachment points at wrong subprogram for function", &N, F,
              &I, DL, Scope, SP);
     }
@@ -3377,11 +3374,6 @@ void Verifier::visitDbgIntrinsic(StringRef Kind, DbgIntrinsicTy &DII) {
          "invalid llvm.dbg." + Kind + " intrinsic expression", &DII,
          DII.getRawExpression());
 
-  // Queue up bit piece expressions to be verified once we can resolve
-  // typerefs.
-  if (DII.getExpression()->isValid() && DII.getExpression()->isBitPiece())
-    QueuedBitPieceExpressions.push_back(&DII);
-
   // Ignore broken !dbg attachments; they're checked elsewhere.
   if (MDNode *N = DII.getDebugLoc().getAsMDNode())
     if (!isa<MDLocation>(N))
@@ -3433,16 +3425,21 @@ void Verifier::verifyBitPieceExpression(const DbgInfoIntrinsic &I,
   MDLocalVariable *V;
   MDExpression *E;
   if (auto *DVI = dyn_cast<DbgValueInst>(&I)) {
-    V = DVI->getVariable();
-    E = DVI->getExpression();
+    V = dyn_cast_or_null<MDLocalVariable>(DVI->getRawVariable());
+    E = dyn_cast_or_null<MDExpression>(DVI->getRawExpression());
   } else {
     auto *DDI = cast<DbgDeclareInst>(&I);
-    V = DDI->getVariable();
-    E = DDI->getExpression();
+    V = dyn_cast_or_null<MDLocalVariable>(DDI->getRawVariable());
+    E = dyn_cast_or_null<MDExpression>(DDI->getRawExpression());
   }
 
-  assert(V && E->isValid() && E->isBitPiece() &&
-         "Expected valid bitpieces here");
+  // We don't know whether this intrinsic verified correctly.
+  if (!V || !E || !E->isValid())
+    return;
+
+  // Nothing to do if this isn't a bit piece expression.
+  if (!E->isBitPiece())
+    return;
 
   // If there's no size, the type is broken, but that should be checked
   // elsewhere.
@@ -3479,9 +3476,15 @@ void Verifier::verifyTypeRefs() {
             TypeRefs.insert(std::make_pair(S, T));
           }
 
-  // Verify debug intrinsic bit piece expressions.
-  for (auto *DII : QueuedBitPieceExpressions)
-    verifyBitPieceExpression(*DII, TypeRefs);
+  // Verify debug info intrinsic bit piece expressions.  This needs a second
+  // pass through the intructions, since we haven't built TypeRefs yet when
+  // verifying functions, and simply queuing the DbgInfoIntrinsics to evaluate
+  // later/now would queue up some that could be later deleted.
+  for (const Function &F : *M)
+    for (const BasicBlock &BB : F)
+      for (const Instruction &I : BB)
+        if (auto *DII = dyn_cast<DbgInfoIntrinsic>(&I))
+          verifyBitPieceExpression(*DII, TypeRefs);
 
   // Return early if all typerefs were resolved.
   if (UnresolvedTypeRefs.empty())

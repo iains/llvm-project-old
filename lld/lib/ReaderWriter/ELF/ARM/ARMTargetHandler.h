@@ -14,56 +14,51 @@
 #include "ARMRelocationHandler.h"
 #include "ELFReader.h"
 #include "TargetLayout.h"
-#include "llvm/ADT/Optional.h"
 
 namespace lld {
-namespace elf {
-class ARMLinkingContext;
+class ELFLinkingContext;
 
-template <class ELFT> class ARMTargetLayout : public TargetLayout<ELFT> {
+namespace elf {
+
+class ARMTargetLayout : public TargetLayout<ELF32LE> {
 public:
-  ARMTargetLayout(ARMLinkingContext &ctx) : TargetLayout<ELFT>(ctx) {}
+  ARMTargetLayout(ELFLinkingContext &ctx) : TargetLayout(ctx) {}
 
   uint64_t getGOTSymAddr() {
-    if (!_gotSymAddr.hasValue()) {
-      AtomLayout *gotAtom = this->findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_");
-      _gotSymAddr = gotAtom ? gotAtom->_virtualAddr : 0;
-    }
-    return *_gotSymAddr;
+    std::call_once(_gotSymOnce, [this]() {
+      if (AtomLayout *gotAtom = findAbsoluteAtom("_GLOBAL_OFFSET_TABLE_"))
+        _gotSymAddr = gotAtom->_virtualAddr;
+    });
+    return _gotSymAddr;
   }
 
   uint64_t getTPOffset() {
-    if (_tpOff.hasValue())
-      return *_tpOff;
-
-    for (const auto &phdr : *this->_programHeader) {
-      if (phdr->p_type == llvm::ELF::PT_TLS) {
-        _tpOff = llvm::RoundUpToAlignment(TCB_SIZE, phdr->p_align);
-        return *_tpOff;
+    std::call_once(_tpOffOnce, [this]() {
+      for (const auto &phdr : *_programHeader) {
+        if (phdr->p_type == llvm::ELF::PT_TLS) {
+          _tpOff = llvm::RoundUpToAlignment(TCB_SIZE, phdr->p_align);
+          break;
+        }
       }
-    }
-    llvm_unreachable("TLS segment not found");
+      assert(_tpOff != 0 && "TLS segment not found");
+    });
+    return _tpOff;
   }
 
-  bool target1Rel() const { return this->_ctx.armTarget1Rel(); }
+  bool target1Rel() const { return _ctx.armTarget1Rel(); }
 
 private:
   // TCB block size of the TLS.
   enum { TCB_SIZE = 0x8 };
 
 private:
-  // Cached value of the GOT origin symbol address.
-  llvm::Optional<uint64_t> _gotSymAddr;
-
-  // Cached value of the TLS offset from the $tp pointer.
-  llvm::Optional<uint64_t> _tpOff;
+  uint64_t _gotSymAddr = 0;
+  uint64_t _tpOff = 0;
+  std::once_flag _gotSymOnce;
+  std::once_flag _tpOffOnce;
 };
 
 class ARMTargetHandler final : public TargetHandler {
-  typedef llvm::object::ELFType<llvm::support::little, 2, false> ELFTy;
-  typedef ELFReader<ELFTy, ARMLinkingContext, ARMELFFile> ObjReader;
-  typedef ELFReader<ELFTy, ARMLinkingContext, DynamicFile> DSOReader;
-
 public:
   ARMTargetHandler(ARMLinkingContext &ctx);
 
@@ -72,18 +67,18 @@ public:
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<ObjReader>(_ctx);
+    return llvm::make_unique<ELFReader<ARMELFFile>>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<DSOReader>(_ctx);
+    return llvm::make_unique<ELFReader<DynamicFile<ELF32LE>>>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;
 
 private:
   ARMLinkingContext &_ctx;
-  std::unique_ptr<ARMTargetLayout<ELFTy>> _targetLayout;
+  std::unique_ptr<ARMTargetLayout> _targetLayout;
   std::unique_ptr<ARMTargetRelocationHandler> _relocationHandler;
 };
 

@@ -19,13 +19,13 @@
 namespace lld {
 namespace elf {
 
-class X86_64TargetLayout : public TargetLayout<X86_64ELFType> {
+class X86_64TargetLayout : public TargetLayout<ELF64LE> {
 public:
   X86_64TargetLayout(X86_64LinkingContext &ctx) : TargetLayout(ctx) {}
 
   void finalizeOutputSectionLayout() override {
-    sortOutputSectionByPriority<X86_64ELFType>(".init_array");
-    sortOutputSectionByPriority<X86_64ELFType>(".fini_array");
+    sortOutputSectionByPriority<ELF64LE>(".init_array");
+    sortOutputSectionByPriority<ELF64LE>(".fini_array");
   }
 
 private:
@@ -58,10 +58,6 @@ private:
 };
 
 class X86_64TargetHandler : public TargetHandler {
-  typedef llvm::object::ELFType<llvm::support::little, 2, true> ELFTy;
-  typedef ELFReader<ELFTy, X86_64LinkingContext, ELFFile> ObjReader;
-  typedef ELFReader<ELFTy, X86_64LinkingContext, DynamicFile> DSOReader;
-
 public:
   X86_64TargetHandler(X86_64LinkingContext &ctx);
 
@@ -70,11 +66,11 @@ public:
   }
 
   std::unique_ptr<Reader> getObjReader() override {
-    return llvm::make_unique<ObjReader>(_ctx);
+    return llvm::make_unique<ELFReader<ELFFile<ELF64LE>>>(_ctx);
   }
 
   std::unique_ptr<Reader> getDSOReader() override {
-    return llvm::make_unique<DSOReader>(_ctx);
+    return llvm::make_unique<ELFReader<DynamicFile<ELF64LE>>>(_ctx);
   }
 
   std::unique_ptr<Writer> getWriter() override;

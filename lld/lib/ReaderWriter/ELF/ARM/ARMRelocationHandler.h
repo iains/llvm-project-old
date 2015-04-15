@@ -15,21 +15,18 @@
 namespace lld {
 namespace elf {
 
-typedef llvm::object::ELFType<llvm::support::little, 2, false> ARMELFType;
-
-template <class ELFT> class ARMTargetLayout;
+class ARMTargetLayout;
 
 class ARMTargetRelocationHandler final : public TargetRelocationHandler {
 public:
-  ARMTargetRelocationHandler(ARMTargetLayout<ARMELFType> &layout)
-      : _armLayout(layout) {}
+  ARMTargetRelocationHandler(ARMTargetLayout &layout) : _armLayout(layout) {}
 
   std::error_code applyRelocation(ELFWriter &, llvm::FileOutputBuffer &,
-                                  const lld::AtomLayout &,
+                                  const AtomLayout &,
                                   const Reference &) const override;
 
 private:
-  ARMTargetLayout<ARMELFType> &_armLayout;
+  ARMTargetLayout &_armLayout;
 };
 
 } // end namespace elf

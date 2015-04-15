@@ -1372,6 +1372,15 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
                               /*DontDefer=*/false);
       return;
     }
+
+    if (llvm::GlobalValue *GV = GetGlobalValue(getMangledName(GD)))
+      if (!GV->isDeclaration()) {
+        getDiags().Report(FD->getLocation(), diag::err_duplicate_mangled_name);
+        GlobalDecl OldGD = Manglings.lookup(GV->getName());
+        if (auto *Prev = OldGD.getDecl())
+          getDiags().Report(Prev->getLocation(), diag::note_previous_definition);
+        return;
+      }
   } else {
     const auto *VD = cast<VarDecl>(Global);
     assert(VD->isFileVarDecl() && "Cannot emit local var decl as global.");
@@ -2405,14 +2414,6 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
     }
   }
 
-  if (!GV->isDeclaration()) {
-    getDiags().Report(D->getLocation(), diag::err_duplicate_mangled_name);
-    GlobalDecl OldGD = Manglings.lookup(GV->getName());
-    if (auto *Prev = OldGD.getDecl())
-      getDiags().Report(Prev->getLocation(), diag::note_previous_definition);
-    return;
-  }
-
   if (GV->getType()->getElementType() != Ty) {
     // If the types mismatch then we have to rewrite the definition.
     assert(GV->isDeclaration() && "Shouldn't replace non-declaration");
@@ -3430,7 +3431,7 @@ void CodeGenModule::ClearUnusedCoverageMapping(const Decl *D) {
 
 void CodeGenModule::EmitDeferredUnusedCoverageMappings() {
   std::vector<const Decl *> DeferredDecls;
-  for (const auto I : DeferredEmptyCoverageMappingDecls) {
+  for (const auto &I : DeferredEmptyCoverageMappingDecls) {
     if (!I.second)
       continue;
     DeferredDecls.push_back(I.first);

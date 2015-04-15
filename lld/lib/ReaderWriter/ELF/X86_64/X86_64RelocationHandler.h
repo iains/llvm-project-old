@@ -14,8 +14,6 @@
 
 namespace lld {
 namespace elf {
-typedef llvm::object::ELFType<llvm::support::little, 2, true> X86_64ELFType;
-
 class X86_64TargetLayout;
 
 class X86_64TargetRelocationHandler final : public TargetRelocationHandler {
@@ -24,7 +22,7 @@ public:
       : _tlsSize(0), _layout(layout) {}
 
   std::error_code applyRelocation(ELFWriter &, llvm::FileOutputBuffer &,
-                                  const lld::AtomLayout &,
+                                  const AtomLayout &,
                                   const Reference &) const override;
 
 private:

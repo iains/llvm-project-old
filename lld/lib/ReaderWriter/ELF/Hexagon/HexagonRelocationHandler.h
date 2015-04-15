@@ -14,21 +14,19 @@
 namespace lld {
 namespace elf {
 class HexagonTargetHandler;
-template <class ELFT> class HexagonTargetLayout;
-
-typedef llvm::object::ELFType<llvm::support::little, 2, false> HexagonELFType;
+class HexagonTargetLayout;
 
 class HexagonTargetRelocationHandler final : public TargetRelocationHandler {
 public:
-  HexagonTargetRelocationHandler(HexagonTargetLayout<HexagonELFType> &layout)
+  HexagonTargetRelocationHandler(HexagonTargetLayout &layout)
       : _targetLayout(layout) {}
 
   std::error_code applyRelocation(ELFWriter &, llvm::FileOutputBuffer &,
-                                  const lld::AtomLayout &,
+                                  const AtomLayout &,
                                   const Reference &) const override;
 
 private:
-  HexagonTargetLayout<HexagonELFType> &_targetLayout;
+  HexagonTargetLayout &_targetLayout;
 };
 } // elf
 } // lld
