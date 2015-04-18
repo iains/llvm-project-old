@@ -56,7 +56,7 @@ class CGDebugInfo {
   SourceLocation CurLoc;
   llvm::DIType VTablePtrType;
   llvm::DIType ClassTy;
-  llvm::DICompositeType ObjTy;
+  llvm::MDCompositeType *ObjTy = nullptr;
   llvm::DIType SelTy;
   llvm::DIType OCLImage1dDITy, OCLImage1dArrayDITy, OCLImage1dBufferDITy;
   llvm::DIType OCLImage2dDITy, OCLImage2dArrayDITy;
@@ -93,7 +93,7 @@ class CGDebugInfo {
       FwdDeclReplaceMap;
 
   // LexicalBlockStack - Keep track of our current nested lexical block.
-  std::vector<llvm::TrackingMDNodeRef> LexicalBlockStack;
+  std::vector<llvm::TypedTrackingMDRef<llvm::MDScope>> LexicalBlockStack;
   llvm::DenseMap<const Decl *, llvm::TrackingMDRef> RegionMap;
   // FnBeginRegionCount - Keep track of LexicalBlockStack counter at the
   // beginning of a function. This is used to pop unbalanced regions at
@@ -129,8 +129,9 @@ class CGDebugInfo {
   llvm::DIType CreateType(const FunctionType *Ty, llvm::DIFile F);
   llvm::DIType CreateType(const RecordType *Tyg);
   llvm::DIType CreateTypeDefinition(const RecordType *Ty);
-  llvm::DICompositeType CreateLimitedType(const RecordType *Ty);
-  void CollectContainingType(const CXXRecordDecl *RD, llvm::DICompositeType CT);
+  llvm::MDCompositeType *CreateLimitedType(const RecordType *Ty);
+  void CollectContainingType(const CXXRecordDecl *RD,
+                             llvm::MDCompositeType *CT);
   llvm::DIType CreateType(const ObjCInterfaceType *Ty, llvm::DIFile F);
   llvm::DIType CreateTypeDefinition(const ObjCInterfaceType *Ty, llvm::DIFile F);
   llvm::DIType CreateType(const ObjCObjectType *Ty, llvm::DIFile F);
@@ -144,12 +145,13 @@ class CGDebugInfo {
   llvm::DIType CreateTypeDefinition(const EnumType *Ty);
   llvm::DIType CreateSelfType(const QualType &QualTy, llvm::DIType Ty);
   llvm::DIType getTypeOrNull(const QualType);
-  llvm::DICompositeType getOrCreateMethodType(const CXXMethodDecl *Method,
-                                              llvm::DIFile F);
-  llvm::DICompositeType getOrCreateInstanceMethodType(
-      QualType ThisPtr, const FunctionProtoType *Func, llvm::DIFile Unit);
-  llvm::DICompositeType getOrCreateFunctionType(const Decl *D, QualType FnType,
+  llvm::MDSubroutineType *getOrCreateMethodType(const CXXMethodDecl *Method,
                                                 llvm::DIFile F);
+  llvm::MDSubroutineType *
+  getOrCreateInstanceMethodType(QualType ThisPtr, const FunctionProtoType *Func,
+                                llvm::DIFile Unit);
+  llvm::MDSubroutineType *
+  getOrCreateFunctionType(const Decl *D, QualType FnType, llvm::DIFile F);
   llvm::DIType getOrCreateVTablePtrType(llvm::DIFile F);
   llvm::DINameSpace getOrCreateNameSpace(const NamespaceDecl *N);
   llvm::DIType getOrCreateTypeDeclaration(QualType PointeeTy, llvm::DIFile F);
@@ -323,11 +325,8 @@ private:
   llvm::DIScope getCurrentContextDescriptor(const Decl *Decl);
 
   /// \brief Create a forward decl for a RecordType in a given context.
-  llvm::DICompositeType getOrCreateRecordFwdDecl(const RecordType *,
-                                                 llvm::DIDescriptor);
-
-  /// \brief Create a set of decls for the context chain.
-  llvm::DIDescriptor createContextChain(const Decl *Decl);
+  llvm::MDCompositeType *getOrCreateRecordFwdDecl(const RecordType *,
+                                                  llvm::MDScope *);
 
   /// \brief Return current directory name.
   StringRef getCurrentDirname();
@@ -363,7 +362,7 @@ private:
 
   /// \brief Retrieve the DIDescriptor, if any, for the canonical form of this
   /// declaration.
-  llvm::DIDescriptor getDeclarationOrDefinition(const Decl *D);
+  llvm::DebugNode *getDeclarationOrDefinition(const Decl *D);
 
   /// \brief Return debug info descriptor to describe method
   /// declaration for the given method definition.
@@ -385,9 +384,9 @@ private:
   /// Return a global variable that represents one of the collection of
   /// global variables created for an anonmyous union.
   llvm::DIGlobalVariable
-  CollectAnonRecordDecls(const RecordDecl *RD, llvm::DIFile Unit, unsigned LineNo,
-                         StringRef LinkageName, llvm::GlobalVariable *Var,
-                         llvm::DIDescriptor DContext);
+  CollectAnonRecordDecls(const RecordDecl *RD, llvm::DIFile Unit,
+                         unsigned LineNo, StringRef LinkageName,
+                         llvm::GlobalVariable *Var, llvm::MDScope *DContext);
 
   /// \brief Get function name for the given FunctionDecl. If the
   /// name is constructed on demand (e.g. C++ destructor) then the name
@@ -419,18 +418,15 @@ private:
 
   /// \brief Collect various properties of a FunctionDecl.
   /// \param GD  A GlobalDecl whose getDecl() must return a FunctionDecl.
-  void collectFunctionDeclProps(GlobalDecl GD,
-                                llvm::DIFile Unit,
+  void collectFunctionDeclProps(GlobalDecl GD, llvm::DIFile Unit,
                                 StringRef &Name, StringRef &LinkageName,
-                                llvm::DIDescriptor &FDContext,
-                                llvm::DIArray &TParamsArray,
-                                unsigned &Flags);
+                                llvm::MDScope *&FDContext,
+                                llvm::DIArray &TParamsArray, unsigned &Flags);
 
   /// \brief Collect various properties of a VarDecl.
   void collectVarDeclProps(const VarDecl *VD, llvm::DIFile &Unit,
-                           unsigned &LineNo, QualType &T,
-                           StringRef &Name, StringRef &LinkageName,
-                           llvm::DIDescriptor &VDContext);
+                           unsigned &LineNo, QualType &T, StringRef &Name,
+                           StringRef &LinkageName, llvm::MDScope *&VDContext);
 
   /// \brief Allocate a copy of \p A using the DebugInfoNames allocator
   /// and return a reference to it. If multiple arguments are given the strings
