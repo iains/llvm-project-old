@@ -876,6 +876,15 @@ bool MemCpyOpt::processMemSetMemCpyDependence(MemCpyInst *MemCpy,
 
   IRBuilder<> Builder(MemCpy->getNextNode());
 
+  // If the sizes have different types, zext the smaller one.
+  if (DestSize->getType() != SrcSize->getType()) {
+    if (DestSize->getType()->getIntegerBitWidth() >
+        SrcSize->getType()->getIntegerBitWidth())
+      SrcSize = Builder.CreateZExt(SrcSize, DestSize->getType());
+    else
+      DestSize = Builder.CreateZExt(DestSize, SrcSize->getType());
+  }
+
   Value *MemsetLen =
       Builder.CreateSelect(Builder.CreateICmpULE(DestSize, SrcSize),
                            ConstantInt::getNullValue(DestSize->getType()),
