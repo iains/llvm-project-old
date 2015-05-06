@@ -24,17 +24,17 @@ template <typename FileT> class ELFReader : public Reader {
 public:
   ELFReader(ELFLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, MemoryBufferRef mb) const override {
     return FileT::canParse(magic);
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const class Registry &,
-           std::vector<std::unique_ptr<File>> &result) const override {
-    if (std::error_code ec = FileT::isCompatible(*mb, _ctx))
+  ErrorOr<std::unique_ptr<File>>
+  loadFile(std::unique_ptr<MemoryBuffer> mb,
+           const class Registry &) const override {
+    if (std::error_code ec = FileT::isCompatible(mb->getMemBufferRef(), _ctx))
       return ec;
-    result.push_back(llvm::make_unique<FileT>(std::move(mb), _ctx));
-    return std::error_code();
+    std::unique_ptr<File> ret = llvm::make_unique<FileT>(std::move(mb), _ctx);
+    return std::move(ret);
   }
 
 private:

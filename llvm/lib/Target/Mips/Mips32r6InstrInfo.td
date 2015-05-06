@@ -453,7 +453,7 @@ class BNEZALC_DESC : CMP_CBR_RT_Z_DESC_BASE<"bnezalc", brtarget, GPR32Opnd> {
 }
 
 class MUL_R6_DESC_BASE<string instr_asm, RegisterOperand GPROpnd,
-                       SDPatternOperator Op=null_frag> {
+                       SDPatternOperator Op=null_frag> : MipsR6Arch<instr_asm> {
   dag OutOperandList = (outs GPROpnd:$rd);
   dag InOperandList = (ins GPROpnd:$rs, GPROpnd:$rt);
   string AsmString = !strconcat(instr_asm, "\t$rd, $rs, $rt");
@@ -546,7 +546,7 @@ class CLASS_S_DESC : CLASS_RINT_DESC_BASE<"class.s", FGR32Opnd>;
 class CLASS_D_DESC : CLASS_RINT_DESC_BASE<"class.d", FGR64Opnd>;
 
 class CACHE_HINT_DESC<string instr_asm, Operand MemOpnd,
-                      RegisterOperand GPROpnd> {
+                      RegisterOperand GPROpnd> : MipsR6Arch<instr_asm> {
   dag OutOperandList = (outs);
   dag InOperandList = (ins MemOpnd:$addr, uimm5:$hint);
   string AsmString = !strconcat(instr_asm, "\t$hint, $addr");
@@ -677,7 +677,7 @@ def BNEZALC : BNEZALC_ENC, BNEZALC_DESC, ISA_MIPS32R6;
 def BNEZC : BNEZC_ENC, BNEZC_DESC, ISA_MIPS32R6;
 def BNVC : BNVC_ENC, BNVC_DESC, ISA_MIPS32R6;
 def BOVC : BOVC_ENC, BOVC_DESC, ISA_MIPS32R6;
-def CACHE_R6 : CACHE_ENC, CACHE_DESC, ISA_MIPS32R6;
+def CACHE_R6 : R6MMR6Rel, CACHE_ENC, CACHE_DESC, ISA_MIPS32R6;
 def CLASS_D : CLASS_D_ENC, CLASS_D_DESC, ISA_MIPS32R6;
 def CLASS_S : CLASS_S_ENC, CLASS_S_DESC, ISA_MIPS32R6;
 def CLO_R6 : CLO_R6_ENC, CLO_R6_DESC, ISA_MIPS32R6;
@@ -709,12 +709,12 @@ def MOD : MOD_ENC, MOD_DESC, ISA_MIPS32R6;
 def MODU : MODU_ENC, MODU_DESC, ISA_MIPS32R6;
 def MSUBF_S : MSUBF_S_ENC, MSUBF_S_DESC, ISA_MIPS32R6;
 def MSUBF_D : MSUBF_D_ENC, MSUBF_D_DESC, ISA_MIPS32R6;
-def MUH    : MUH_ENC, MUH_DESC, ISA_MIPS32R6;
-def MUHU   : MUHU_ENC, MUHU_DESC, ISA_MIPS32R6;
-def MUL_R6 : MUL_R6_ENC, MUL_R6_DESC, ISA_MIPS32R6;
-def MULU   : MULU_ENC, MULU_DESC, ISA_MIPS32R6;
+def MUH    : R6MMR6Rel, MUH_ENC, MUH_DESC, ISA_MIPS32R6;
+def MUHU   : R6MMR6Rel, MUHU_ENC, MUHU_DESC, ISA_MIPS32R6;
+def MUL_R6 : R6MMR6Rel, MUL_R6_ENC, MUL_R6_DESC, ISA_MIPS32R6;
+def MULU   : R6MMR6Rel, MULU_ENC, MULU_DESC, ISA_MIPS32R6;
 def NAL; // BAL with rd=0
-def PREF_R6 : PREF_ENC, PREF_DESC, ISA_MIPS32R6;
+def PREF_R6 : R6MMR6Rel, PREF_ENC, PREF_DESC, ISA_MIPS32R6;
 def RINT_D : RINT_D_ENC, RINT_D_DESC, ISA_MIPS32R6;
 def RINT_S : RINT_S_ENC, RINT_S_DESC, ISA_MIPS32R6;
 def SC_R6 : SC_R6_ENC, SC_R6_DESC, ISA_MIPS32R6;

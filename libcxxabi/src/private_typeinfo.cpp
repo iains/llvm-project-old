@@ -387,9 +387,13 @@ __pointer_type_info::can_catch(const __shim_type_info* thrown_type,
     if (is_equal(__pointee, thrown_pointer_type->__pointee, false))
         return true;
     // bullet 3A
-    if (is_equal(__pointee, &typeid(void), false))
-        return true;
-
+    if (is_equal(__pointee, &typeid(void), false)) {
+        // pointers to functions cannot be converted to void*.
+        // pointers to member functions are not handled here.
+        const __function_type_info* thrown_function =
+            dynamic_cast<const __function_type_info*>(thrown_pointer_type->__pointee);
+        return (thrown_function == nullptr);
+    }
     // Handle pointer to pointer
     const __pointer_type_info* nested_pointer_type =
         dynamic_cast<const __pointer_type_info*>(__pointee);
@@ -599,7 +603,7 @@ __dynamic_cast(const void* static_ptr,
     // Currently clang always sets src2dst_offset to -1 (no hint).
 
     // Get (dynamic_ptr, dynamic_type) from static_ptr
-    void** vtable = *(void***)static_ptr;
+    void **vtable = *static_cast<void ** const *>(static_ptr);
     ptrdiff_t offset_to_derived = reinterpret_cast<ptrdiff_t>(vtable[-2]);
     const void* dynamic_ptr = static_cast<const char*>(static_ptr) + offset_to_derived;
     const __class_type_info* dynamic_type = static_cast<const __class_type_info*>(vtable[-1]);

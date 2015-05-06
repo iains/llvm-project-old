@@ -361,18 +361,18 @@ class COFFImportLibraryReader : public Reader {
 public:
   COFFImportLibraryReader(PECOFFLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, MemoryBufferRef mb) const override {
     if (mb.getBufferSize() < sizeof(COFF::ImportHeader))
       return false;
     return magic == llvm::sys::fs::file_magic::coff_import_library;
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const class Registry &,
-           std::vector<std::unique_ptr<File> > &result) const override {
-    auto *file = new FileImportLibrary(std::move(mb), _ctx.getMachineType());
-    result.push_back(std::unique_ptr<File>(file));
-    return std::error_code();
+  ErrorOr<std::unique_ptr<File>>
+  loadFile(std::unique_ptr<MemoryBuffer> mb,
+           const class Registry &) const override {
+    std::unique_ptr<File> ret = llvm::make_unique<FileImportLibrary>(
+        std::move(mb), _ctx.getMachineType());
+    return std::move(ret);
   }
 
 private:

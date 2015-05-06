@@ -263,14 +263,13 @@ void LandingPadInst::addClause(Constant *Val) {
 CallInst::~CallInst() {
 }
 
-void CallInst::init(Value *Func, ArrayRef<Value *> Args, const Twine &NameStr) {
+void CallInst::init(FunctionType *FTy, Value *Func, ArrayRef<Value *> Args,
+                    const Twine &NameStr) {
+  this->FTy = FTy;
   assert(NumOperands == Args.size() + 1 && "NumOperands not set up?");
   Op<-1>() = Func;
 
 #ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-
   assert((Args.size() == FTy->getNumParams() ||
           (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
          "Calling a function with bad signature!");
@@ -286,15 +285,12 @@ void CallInst::init(Value *Func, ArrayRef<Value *> Args, const Twine &NameStr) {
 }
 
 void CallInst::init(Value *Func, const Twine &NameStr) {
+  FTy =
+      cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
   assert(NumOperands == 1 && "NumOperands not set up?");
   Op<-1>() = Func;
 
-#ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-
   assert(FTy->getNumParams() == 0 && "Calling a function with bad signature");
-#endif
 
   setName(NameStr);
 }
@@ -320,10 +316,10 @@ CallInst::CallInst(Value *Func, const Twine &Name,
 }
 
 CallInst::CallInst(const CallInst &CI)
-  : Instruction(CI.getType(), Instruction::Call,
-                OperandTraits<CallInst>::op_end(this) - CI.getNumOperands(),
-                CI.getNumOperands()) {
-  setAttributes(CI.getAttributes());
+    : Instruction(CI.getType(), Instruction::Call,
+                  OperandTraits<CallInst>::op_end(this) - CI.getNumOperands(),
+                  CI.getNumOperands()),
+      AttributeList(CI.AttributeList), FTy(CI.FTy) {
   setTailCallKind(CI.getTailCallKind());
   setCallingConv(CI.getCallingConv());
     
@@ -543,15 +539,14 @@ Instruction* CallInst::CreateFree(Value* Source, BasicBlock *InsertAtEnd) {
 
 void InvokeInst::init(Value *Fn, BasicBlock *IfNormal, BasicBlock *IfException,
                       ArrayRef<Value *> Args, const Twine &NameStr) {
+  FTy = cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType());
+
   assert(NumOperands == 3 + Args.size() && "NumOperands not set up?");
   Op<-3>() = Fn;
   Op<-2>() = IfNormal;
   Op<-1>() = IfException;
 
 #ifndef NDEBUG
-  FunctionType *FTy =
-    cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType());
-
   assert(((Args.size() == FTy->getNumParams()) ||
           (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
          "Invoking a function with bad signature");
@@ -567,11 +562,11 @@ void InvokeInst::init(Value *Fn, BasicBlock *IfNormal, BasicBlock *IfException,
 }
 
 InvokeInst::InvokeInst(const InvokeInst &II)
-  : TerminatorInst(II.getType(), Instruction::Invoke,
-                   OperandTraits<InvokeInst>::op_end(this)
-                   - II.getNumOperands(),
-                   II.getNumOperands()) {
-  setAttributes(II.getAttributes());
+    : TerminatorInst(II.getType(), Instruction::Invoke,
+                     OperandTraits<InvokeInst>::op_end(this) -
+                         II.getNumOperands(),
+                     II.getNumOperands()),
+      AttributeList(II.AttributeList), FTy(II.FTy) {
   setCallingConv(II.getCallingConv());
   std::copy(II.op_begin(), II.op_end(), op_begin());
   SubclassOptionalData = II.SubclassOptionalData;
@@ -869,8 +864,9 @@ AllocaInst::AllocaInst(Type *Ty, Value *ArraySize, const Twine &Name,
 
 AllocaInst::AllocaInst(Type *Ty, Value *ArraySize, unsigned Align,
                        const Twine &Name, Instruction *InsertBefore)
-  : UnaryInstruction(PointerType::getUnqual(Ty), Alloca,
-                     getAISize(Ty->getContext(), ArraySize), InsertBefore) {
+    : UnaryInstruction(PointerType::getUnqual(Ty), Alloca,
+                       getAISize(Ty->getContext(), ArraySize), InsertBefore),
+      AllocatedType(Ty) {
   setAlignment(Align);
   assert(!Ty->isVoidTy() && "Cannot allocate void!");
   setName(Name);
@@ -878,8 +874,9 @@ AllocaInst::AllocaInst(Type *Ty, Value *ArraySize, unsigned Align,
 
 AllocaInst::AllocaInst(Type *Ty, Value *ArraySize, unsigned Align,
                        const Twine &Name, BasicBlock *InsertAtEnd)
-  : UnaryInstruction(PointerType::getUnqual(Ty), Alloca,
-                     getAISize(Ty->getContext(), ArraySize), InsertAtEnd) {
+    : UnaryInstruction(PointerType::getUnqual(Ty), Alloca,
+                       getAISize(Ty->getContext(), ArraySize), InsertAtEnd),
+      AllocatedType(Ty) {
   setAlignment(Align);
   assert(!Ty->isVoidTy() && "Cannot allocate void!");
   setName(Name);
@@ -902,10 +899,6 @@ bool AllocaInst::isArrayAllocation() const {
   if (ConstantInt *CI = dyn_cast<ConstantInt>(getOperand(0)))
     return !CI->isOne();
   return true;
-}
-
-Type *AllocaInst::getAllocatedType() const {
-  return getType()->getElementType();
 }
 
 /// isStaticAlloca - Return true if this alloca is in the entry block of the
@@ -1250,10 +1243,11 @@ void GetElementPtrInst::init(Value *Ptr, ArrayRef<Value *> IdxList,
 }
 
 GetElementPtrInst::GetElementPtrInst(const GetElementPtrInst &GEPI)
-  : Instruction(GEPI.getType(), GetElementPtr,
-                OperandTraits<GetElementPtrInst>::op_end(this)
-                - GEPI.getNumOperands(),
-                GEPI.getNumOperands()) {
+    : Instruction(GEPI.getType(), GetElementPtr,
+                  OperandTraits<GetElementPtrInst>::op_end(this) -
+                      GEPI.getNumOperands(),
+                  GEPI.getNumOperands()),
+      SourceElementType(GEPI.SourceElementType) {
   std::copy(GEPI.op_begin(), GEPI.op_end(), op_begin());
   SubclassOptionalData = GEPI.SubclassOptionalData;
 }
@@ -2118,7 +2112,7 @@ unsigned CastInst::isEliminableCastPair(
     // N  X  X  U  S  F  F  N  X  N  2  V  V   |
     // C  T  T  I  I  P  P  C  T  T  P  T  T  -+
     {  1, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // Trunc         -+
-    {  8, 1, 9,99,99, 2, 0,99,99,99, 2, 3, 0}, // ZExt           |
+    {  8, 1, 9,99,99, 2,17,99,99,99, 2, 3, 0}, // ZExt           |
     {  8, 0, 1,99,99, 0, 2,99,99,99, 0, 3, 0}, // SExt           |
     {  0, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // FPToUI         |
     {  0, 0, 0,99,99, 0, 0,99,99,99, 0, 3, 0}, // FPToSI         |
@@ -2285,6 +2279,9 @@ unsigned CastInst::isEliminableCastPair(
         "Illegal bitcast, ptrtoint sequence!");
       // Allowed, use second cast's opcode
       return secondOp;
+    case 17:
+      // (sitofp (zext x)) -> (uitofp x)
+      return Instruction::UIToFP;
     case 99: 
       // Cast combination can't happen (error in input). This is for all cases
       // where the MidTy is not the same for the two cast instructions.

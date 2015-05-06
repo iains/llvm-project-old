@@ -84,13 +84,16 @@ namespace process_linux {
         GetMemoryRegionInfo (lldb::addr_t load_addr, MemoryRegionInfo &range_info) override;
 
         Error
-        ReadMemory (lldb::addr_t addr, void *buf, lldb::addr_t size, lldb::addr_t &bytes_read) override;
+        ReadMemory(lldb::addr_t addr, void *buf, size_t size, size_t &bytes_read) override;
 
         Error
-        WriteMemory (lldb::addr_t addr, const void *buf, lldb::addr_t size, lldb::addr_t &bytes_written) override;
+        ReadMemoryWithoutTrap(lldb::addr_t addr, void *buf, size_t size, size_t &bytes_read) override;
 
         Error
-        AllocateMemory (lldb::addr_t size, uint32_t permissions, lldb::addr_t &addr) override;
+        WriteMemory(lldb::addr_t addr, const void *buf, size_t size, size_t &bytes_written) override;
+
+        Error
+        AllocateMemory(size_t size, uint32_t permissions, lldb::addr_t &addr) override;
 
         Error
         DeallocateMemory (lldb::addr_t addr) override;
@@ -106,6 +109,12 @@ namespace process_linux {
 
         Error
         SetBreakpoint (lldb::addr_t addr, uint32_t size, bool hardware) override;
+
+        Error
+        SetWatchpoint (lldb::addr_t addr, size_t size, uint32_t watch_flags, bool hardware) override;
+
+        Error
+        RemoveWatchpoint (lldb::addr_t addr) override;
 
         void
         DoStopIDBumped (uint32_t newBumpId) override;
@@ -182,7 +191,6 @@ namespace process_linux {
         Mutex m_mem_region_cache_mutex;
 
         std::unique_ptr<ThreadStateCoordinator> m_coordinator_up;
-        HostThread m_coordinator_thread;
 
         // List of thread ids stepping with a breakpoint with the address of
         // the relevan breakpoint
@@ -263,6 +271,9 @@ namespace process_linux {
         MonitorCallback(lldb::pid_t pid, bool exited, int signal, int status);
 
         void
+        WaitForNewThread(::pid_t tid);
+
+        void
         MonitorSIGTRAP(const siginfo_t *info, lldb::pid_t pid);
 
         void
@@ -276,6 +287,12 @@ namespace process_linux {
 
         void
         MonitorSignal(const siginfo_t *info, lldb::pid_t pid, bool exited);
+
+        bool
+        SupportHardwareSingleStepping() const;
+
+        Error
+        SetupSoftwareSingleStepping(NativeThreadProtocolSP thread_sp);
 
 #if 0
         static ::ProcessMessage::CrashReason
@@ -291,19 +308,6 @@ namespace process_linux {
         GetCrashReasonForSIGBUS(const siginfo_t *info);
 #endif
 
-        Error
-        StartCoordinatorThread ();
-
-        static void*
-        CoordinatorThread (void *arg);
-
-        void
-        StopCoordinatorThread ();
-
-        /// Stops monitoring the child process thread.
-        void
-        StopMonitor();
-
         bool
         HasThreadNoLock (lldb::tid_t thread_id);
 
@@ -315,9 +319,6 @@ namespace process_linux {
 
         NativeThreadProtocolSP
         AddThread (lldb::tid_t thread_id);
-
-        NativeThreadProtocolSP
-        GetOrCreateThread (lldb::tid_t thread_id, bool &created);
 
         Error
         GetSoftwareBreakpointPCOffset (NativeRegisterContextSP context_sp, uint32_t &actual_opcode_size);

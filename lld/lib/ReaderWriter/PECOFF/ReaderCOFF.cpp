@@ -1048,17 +1048,16 @@ class COFFObjectReader : public Reader {
 public:
   COFFObjectReader(PECOFFLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &) const override {
+  bool canParse(file_magic magic, MemoryBufferRef) const override {
     return magic == llvm::sys::fs::file_magic::coff_object;
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &,
-           std::vector<std::unique_ptr<File>> &result) const override {
+  ErrorOr<std::unique_ptr<File>> loadFile(std::unique_ptr<MemoryBuffer> mb,
+                                          const Registry &) const override {
     // Parse the memory buffer as PECOFF file.
-    auto *file = new FileCOFF(std::move(mb), _ctx);
-    result.push_back(std::unique_ptr<File>(file));
-    return std::error_code();
+    std::unique_ptr<File> ret =
+        llvm::make_unique<FileCOFF>(std::move(mb), _ctx);
+    return std::move(ret);
   }
 
 private:

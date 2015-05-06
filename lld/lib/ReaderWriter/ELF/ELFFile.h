@@ -90,7 +90,7 @@ public:
   ELFFile(StringRef name, ELFLinkingContext &ctx);
   ELFFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx);
 
-  static std::error_code isCompatible(const MemoryBuffer &mb,
+  static std::error_code isCompatible(MemoryBufferRef mb,
                                       ELFLinkingContext &ctx);
 
   static bool canParse(file_magic magic) {
@@ -398,7 +398,7 @@ public:
       : ELFFile<ELFT>(name, ctx) {}
 
   /// \brief add a global absolute atom
-  virtual void addAbsoluteAtom(StringRef symbolName);
+  virtual void addAbsoluteAtom(StringRef symbolName, bool isHidden = false);
 
   /// \brief add an undefined atom
   virtual void addUndefinedAtom(StringRef symbolName);

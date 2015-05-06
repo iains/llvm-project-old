@@ -28,7 +28,7 @@ ELFFile<ELFT>::ELFFile(std::unique_ptr<MemoryBuffer> mb, ELFLinkingContext &ctx)
       _useWrap(ctx.wrapCalls().size()), _ctx(ctx) {}
 
 template <typename ELFT>
-std::error_code ELFFile<ELFT>::isCompatible(const MemoryBuffer &mb,
+std::error_code ELFFile<ELFT>::isCompatible(MemoryBufferRef mb,
                                             ELFLinkingContext &ctx) {
   return elf::isCompatible<ELFT>(mb, ctx);
 }
@@ -38,6 +38,11 @@ Atom *ELFFile<ELFT>::findAtom(const Elf_Sym *sourceSym,
                               const Elf_Sym *targetSym) {
   // Return the atom for targetSym if we can do so.
   Atom *target = _symbolToAtomMapping.lookup(targetSym);
+  if (!target)
+    // Some realocations (R_ARM_V4BX) do not have a defined
+    // target.  For this cases make it points to itself.
+    target = _symbolToAtomMapping.lookup(sourceSym);
+
   if (target->definition() != Atom::definitionRegular)
     return target;
   Atom::Scope scope = llvm::cast<DefinedAtom>(target)->scope();
@@ -736,14 +741,17 @@ bool ELFFile<ELFT>::redirectReferenceUsingUndefAtom(
 }
 
 template <class ELFT>
-void RuntimeFile<ELFT>::addAbsoluteAtom(StringRef symbolName) {
+void RuntimeFile<ELFT>::addAbsoluteAtom(StringRef symbolName, bool isHidden) {
   assert(!symbolName.empty() && "AbsoluteAtoms must have a name");
   Elf_Sym *sym = new (this->_readerStorage) Elf_Sym;
   sym->st_name = 0;
   sym->st_value = 0;
   sym->st_shndx = llvm::ELF::SHN_ABS;
   sym->setBindingAndType(llvm::ELF::STB_GLOBAL, llvm::ELF::STT_OBJECT);
-  sym->setVisibility(llvm::ELF::STV_DEFAULT);
+  if (isHidden)
+    sym->setVisibility(llvm::ELF::STV_HIDDEN);
+  else
+    sym->setVisibility(llvm::ELF::STV_DEFAULT);
   sym->st_size = 0;
   ELFAbsoluteAtom<ELFT> *atom = this->createAbsoluteAtom(symbolName, sym, -1);
   this->addAtom(*atom);

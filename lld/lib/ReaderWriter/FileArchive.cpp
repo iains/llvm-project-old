@@ -173,11 +173,11 @@ private:
     std::unique_ptr<MemoryBuffer> memberMB(MemoryBuffer::getMemBuffer(
         mb.getBuffer(), mb.getBufferIdentifier(), false));
 
-    std::vector<std::unique_ptr<File>> files;
-    if (std::error_code ec = _registry.loadFile(std::move(memberMB), files))
+    ErrorOr<std::unique_ptr<File>> fileOrErr =
+        _registry.loadFile(std::move(memberMB));
+    if (std::error_code ec = fileOrErr.getError())
       return ec;
-    assert(files.size() == 1);
-    result = std::move(files[0]);
+    result = std::move(fileOrErr.get());
     if (std::error_code ec = result->parse())
       return ec;
     result->setArchivePath(_archive->getFileName());
@@ -261,18 +261,16 @@ class ArchiveReader : public Reader {
 public:
   ArchiveReader(bool logLoading) : _logLoading(logLoading) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &) const override {
+  bool canParse(file_magic magic, MemoryBufferRef) const override {
     return magic == llvm::sys::fs::file_magic::archive;
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &reg,
-           std::vector<std::unique_ptr<File>> &result) const override {
+  ErrorOr<std::unique_ptr<File>> loadFile(std::unique_ptr<MemoryBuffer> mb,
+                                          const Registry &reg) const override {
     StringRef path = mb->getBufferIdentifier();
-    std::unique_ptr<FileArchive> file(
-        new FileArchive(std::move(mb), reg, path, _logLoading));
-    result.push_back(std::move(file));
-    return std::error_code();
+    std::unique_ptr<File> ret =
+        llvm::make_unique<FileArchive>(std::move(mb), reg, path, _logLoading);
+    return std::move(ret);
   }
 
 private:

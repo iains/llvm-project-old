@@ -20,6 +20,11 @@ class MipsLinkingContext;
 /// \brief TargetLayout for Mips
 template <class ELFT> class MipsTargetLayout final : public TargetLayout<ELFT> {
 public:
+  enum MipsSectionOrder {
+    ORDER_MIPS_REGINFO = TargetLayout<ELFT>::ORDER_RO_NOTE + 1,
+    ORDER_MIPS_OPTIONS
+  };
+
   MipsTargetLayout(MipsLinkingContext &ctx)
       : TargetLayout<ELFT>(ctx),
         _gotSection(new (this->_allocator) MipsGOTSection<ELFT>(ctx)),
@@ -37,6 +42,18 @@ public:
     if (type == DefinedAtom::typeStub && name == ".plt")
       return _pltSection;
     return TargetLayout<ELFT>::createSection(name, type, permissions, order);
+  }
+
+  typename TargetLayout<ELFT>::SegmentType
+  getSegmentType(Section<ELFT> *section) const override {
+    switch (section->order()) {
+    case ORDER_MIPS_REGINFO:
+      return llvm::ELF::PT_MIPS_REGINFO;
+    case ORDER_MIPS_OPTIONS:
+      return llvm::ELF::PT_LOAD;
+    default:
+      return TargetLayout<ELFT>::getSegmentType(section);
+    }
   }
 
   /// \brief GP offset relative to .got section.
@@ -67,6 +84,11 @@ protected:
   createRelocationTable(StringRef name, int32_t order) override {
     return unique_bump_ptr<RelocationTable<ELFT>>(new (
         this->_allocator) MipsRelocationTable<ELFT>(this->_ctx, name, order));
+  }
+
+  uint64_t getLookupSectionFlags(const OutputSection<ELFT> *os) const override {
+    uint64_t flags = TargetLayout<ELFT>::getLookupSectionFlags(os);
+    return flags & ~llvm::ELF::SHF_MIPS_NOSTRIP;
   }
 
 private:

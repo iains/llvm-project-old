@@ -30,6 +30,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Support/Casting.h"
@@ -169,9 +170,8 @@ bool isThinObjectFile(StringRef path, MachOLinkingContext::Arch &arch) {
   return true;
 }
 
-
-bool sliceFromFatFile(const MemoryBuffer &mb, MachOLinkingContext::Arch arch,
-                                             uint32_t &offset, uint32_t &size) {
+bool sliceFromFatFile(MemoryBufferRef mb, MachOLinkingContext::Arch arch,
+                      uint32_t &offset, uint32_t &size) {
   const char *start = mb.getBufferStart();
   const llvm::MachO::fat_header *fh =
       reinterpret_cast<const llvm::MachO::fat_header *>(start);
@@ -211,7 +211,7 @@ readBinary(std::unique_ptr<MemoryBuffer> &mb,
 
   uint32_t sliceOffset;
   uint32_t sliceSize;
-  if (sliceFromFatFile(*mb, arch, sliceOffset, sliceSize)) {
+  if (sliceFromFatFile(mb->getMemBufferRef(), arch, sliceOffset, sliceSize)) {
     start = &start[sliceOffset];
     objSize = sliceSize;
     mh = reinterpret_cast<const mach_header *>(start);
@@ -516,17 +516,17 @@ class MachOObjectReader : public Reader {
 public:
   MachOObjectReader(MachOLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, MemoryBufferRef mb) const override {
     return (magic == llvm::sys::fs::file_magic::macho_object &&
             mb.getBufferSize() > 32);
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &registry,
-           std::vector<std::unique_ptr<File>> &result) const override {
-    auto *file = new MachOFile(std::move(mb), &_ctx);
-    result.push_back(std::unique_ptr<MachOFile>(file));
-    return std::error_code();
+  ErrorOr<std::unique_ptr<File>>
+  loadFile(std::unique_ptr<MemoryBuffer> mb,
+           const Registry &registry) const override {
+    std::unique_ptr<File> ret =
+        llvm::make_unique<MachOFile>(std::move(mb), &_ctx);
+    return std::move(ret);
   }
 
 private:
@@ -537,7 +537,7 @@ class MachODylibReader : public Reader {
 public:
   MachODylibReader(MachOLinkingContext &ctx) : _ctx(ctx) {}
 
-  bool canParse(file_magic magic, const MemoryBuffer &mb) const override {
+  bool canParse(file_magic magic, MemoryBufferRef mb) const override {
     switch (magic) {
     case llvm::sys::fs::file_magic::macho_dynamically_linked_shared_lib:
     case llvm::sys::fs::file_magic::macho_dynamically_linked_shared_lib_stub:
@@ -547,12 +547,12 @@ public:
     }
   }
 
-  std::error_code
-  loadFile(std::unique_ptr<MemoryBuffer> mb, const Registry &registry,
-           std::vector<std::unique_ptr<File>> &result) const override {
-    auto *file = new MachODylibFile(std::move(mb), &_ctx);
-    result.push_back(std::unique_ptr<MachODylibFile>(file));
-    return std::error_code();
+  ErrorOr<std::unique_ptr<File>>
+  loadFile(std::unique_ptr<MemoryBuffer> mb,
+           const Registry &registry) const override {
+    std::unique_ptr<File> ret =
+        llvm::make_unique<MachODylibFile>(std::move(mb), &_ctx);
+    return std::move(ret);
   }
 
 private:

@@ -133,8 +133,7 @@ bool MachOLinkingContext::isThinObjectFile(StringRef path, Arch &arch) {
   return mach_o::normalized::isThinObjectFile(path, arch);
 }
 
-bool MachOLinkingContext::sliceFromFatFile(const MemoryBuffer &mb,
-                                           uint32_t &offset,
+bool MachOLinkingContext::sliceFromFatFile(MemoryBufferRef mb, uint32_t &offset,
                                            uint32_t &size) {
   return mach_o::normalized::sliceFromFatFile(mb, _arch, offset, size);
 }
@@ -613,7 +612,7 @@ MachOLinkingContext::getMemoryBuffer(StringRef path) {
   // and switch buffer to point to just that required slice.
   uint32_t offset;
   uint32_t size;
-  if (sliceFromFatFile(*mb, offset, size))
+  if (sliceFromFatFile(mb->getMemBufferRef(), offset, size))
     return MemoryBuffer::getFileSlice(path, size, offset);
   return std::move(mb);
 }
@@ -623,14 +622,15 @@ MachODylibFile* MachOLinkingContext::loadIndirectDylib(StringRef path) {
   if (mbOrErr.getError())
     return nullptr;
 
-  std::vector<std::unique_ptr<File>> files;
-  if (registry().loadFile(std::move(mbOrErr.get()), files))
+  ErrorOr<std::unique_ptr<File>> fileOrErr =
+      registry().loadFile(std::move(mbOrErr.get()));
+  if (!fileOrErr)
     return nullptr;
-  assert(files.size() == 1 && "expected one file in dylib");
-  files[0]->parse();
-  MachODylibFile* result = reinterpret_cast<MachODylibFile*>(files[0].get());
+  std::unique_ptr<File> &file = fileOrErr.get();
+  file->parse();
+  MachODylibFile *result = reinterpret_cast<MachODylibFile *>(file.get());
   // Node object now owned by _indirectDylibs vector.
-  _indirectDylibs.push_back(std::move(files[0]));
+  _indirectDylibs.push_back(std::move(file));
   return result;
 }
 

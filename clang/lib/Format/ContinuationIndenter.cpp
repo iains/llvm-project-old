@@ -319,7 +319,8 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
     State.Stack.back().Indent = State.Column + Spaces;
   if (State.Stack.back().AvoidBinPacking && startsNextParameter(Current, Style))
     State.Stack.back().NoLineBreak = true;
-  if (startsSegmentOfBuilderTypeCall(Current))
+  if (startsSegmentOfBuilderTypeCall(Current) &&
+      State.Column > getNewLineColumn(State))
     State.Stack.back().ContainsUnwrappedBuilder = true;
 
   if (Current.is(TT_LambdaArrow))
@@ -813,6 +814,7 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
 
   unsigned NewIndent;
   unsigned NewIndentLevel = State.Stack.back().IndentLevel;
+  unsigned LastSpace = State.Stack.back().LastSpace;
   bool AvoidBinPacking;
   bool BreakBeforeParameter = false;
   if (Current.isOneOf(tok::l_brace, TT_ArrayInitializerLSquare)) {
@@ -832,6 +834,18 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
     NewIndent = Style.ContinuationIndentWidth +
                 std::max(State.Stack.back().LastSpace,
                          State.Stack.back().StartOfFunctionCall);
+
+    // Ensure that different different brackets force relative alignment, e.g.:
+    // void SomeFunction(vector<  // break
+    //                       int> v);
+    // FIXME: We likely want to do this for more combinations of brackets.
+    // Verify that it is wanted for ObjC, too.
+    if (Current.Tok.getKind() == tok::less &&
+        Current.ParentBracket == tok::l_paren) {
+      NewIndent = std::max(NewIndent, State.Stack.back().Indent);
+      LastSpace = std::max(LastSpace, State.Stack.back().Indent);
+    }
+
     AvoidBinPacking =
         (State.Line->MustBeDeclaration && !Style.BinPackParameters) ||
         (!State.Line->MustBeDeclaration && !Style.BinPackArguments) ||
@@ -839,20 +853,33 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
          (Current.PackingKind == PPK_OnePerLine ||
           (!BinPackInconclusiveFunctions &&
            Current.PackingKind == PPK_Inconclusive)));
-    // If this '[' opens an ObjC call, determine whether all parameters fit
-    // into one line and put one per line if they don't.
-    if (Current.is(TT_ObjCMethodExpr) && Style.ColumnLimit != 0 &&
-        getLengthToMatchingParen(Current) + State.Column >
+    if (Current.is(TT_ObjCMethodExpr) && Current.MatchingParen) {
+      if (Style.ColumnLimit) {
+        // If this '[' opens an ObjC call, determine whether all parameters fit
+        // into one line and put one per line if they don't.
+        if (getLengthToMatchingParen(Current) + State.Column >
             getColumnLimit(State))
-      BreakBeforeParameter = true;
+          BreakBeforeParameter = true;
+      } else {
+        // For ColumnLimit = 0, we have to figure out whether there is or has to
+        // be a line break within this call.
+        for (const FormatToken *Tok = &Current;
+             Tok && Tok != Current.MatchingParen; Tok = Tok->Next) {
+          if (Tok->MustBreakBefore || 
+              (Tok->CanBreakBefore && Tok->NewlinesBefore > 0)) {
+            BreakBeforeParameter = true;
+            break;
+          }
+        }
+      }
+    }
   }
   bool NoLineBreak = State.Stack.back().NoLineBreak ||
                      (Current.is(TT_TemplateOpener) &&
                       State.Stack.back().ContainsUnwrappedBuilder);
   unsigned NestedBlockIndent = std::max(State.Stack.back().StartOfFunctionCall,
                                         State.Stack.back().NestedBlockIndent);
-  State.Stack.push_back(ParenState(NewIndent, NewIndentLevel,
-                                   State.Stack.back().LastSpace,
+  State.Stack.push_back(ParenState(NewIndent, NewIndentLevel, LastSpace,
                                    AvoidBinPacking, NoLineBreak));
   State.Stack.back().NestedBlockIndent = NestedBlockIndent;
   State.Stack.back().BreakBeforeParameter = BreakBeforeParameter;
