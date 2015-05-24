@@ -29,7 +29,7 @@ StaticAssertCheck::StaticAssertCheck(StringRef Name, ClangTidyContext *Context)
 void StaticAssertCheck::registerMatchers(MatchFinder *Finder) {
   auto IsAlwaysFalse = expr(ignoringParenImpCasts(
       expr(anyOf(boolLiteral(equals(false)), integerLiteral(equals(0)),
-          nullPtrLiteralExpr())).bind("isAlwaysFalse")));
+          nullPtrLiteralExpr(), gnuNullExpr())).bind("isAlwaysFalse")));
   auto IsAlwaysFalseWithCast = ignoringParenImpCasts(anyOf(IsAlwaysFalse,
       cStyleCastExpr(has(IsAlwaysFalse)).bind("castExpr")));
   auto AssertExprRoot = anyOf(
@@ -39,11 +39,13 @@ void StaticAssertCheck::registerMatchers(MatchFinder *Finder) {
           anyOf(binaryOperator(hasEitherOperand(IsAlwaysFalseWithCast)),
           anything())).bind("assertExprRoot"),
       IsAlwaysFalse);
+  auto NonConstexprFunctionCall =
+      callExpr(hasDeclaration(functionDecl(unless(isConstexpr()))));
   auto Condition = expr(anyOf(
       expr(ignoringParenCasts(anyOf(
           AssertExprRoot,
           unaryOperator(hasUnaryOperand(ignoringParenCasts(AssertExprRoot)))))),
-      anything()));
+      anything()), unless(findAll(NonConstexprFunctionCall)));
 
   Finder->addMatcher(
       stmt(anyOf(conditionalOperator(hasCondition(Condition.bind("condition"))),

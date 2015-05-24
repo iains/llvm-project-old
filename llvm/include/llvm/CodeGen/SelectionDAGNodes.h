@@ -981,44 +981,6 @@ public:
            (NoSignedZeros << 6) | (AllowReciprocal << 7);
   }
 };
-  
-/// Returns true if the opcode is an operation with optional optimization flags.
-static bool mayHaveOptimizationFlags(unsigned Opcode) {
-  switch (Opcode) {
-  case ISD::SDIV:
-  case ISD::UDIV:
-  case ISD::SRA:
-  case ISD::SRL:
-  case ISD::MUL:
-  case ISD::ADD:
-  case ISD::SUB:
-  case ISD::SHL:
-  case ISD::FADD:
-  case ISD::FDIV:
-  case ISD::FMUL:
-  case ISD::FREM:
-  case ISD::FSUB:
-    return true;
-  default:
-    return false;
-  }
-}
-/// This class is an extension of SDNode used from instructions that may have
-/// associated extra flags.
-class SDNodeWithFlags : public SDNode {
-public:
-  SDNodeFlags Flags;
-  SDNodeWithFlags(unsigned Opc, unsigned Order, DebugLoc dl, SDVTList VTs,
-                  ArrayRef<SDValue> Ops, const SDNodeFlags &NodeFlags)
-    : SDNode(Opc, Order, dl, VTs, Ops) {
-    Flags = NodeFlags;
-  }
-
-  // This is used to implement dyn_cast, isa, and other type queries.
-  static bool classof(const SDNode *N) {
-    return mayHaveOptimizationFlags(N->getOpcode());
-  }
-};
 
 /// This class is used for single-operand SDNodes.  This is solely
 /// to allow co-allocation of node operands with the node itself.
@@ -1041,6 +1003,36 @@ public:
                SDValue X, SDValue Y)
     : SDNode(Opc, Order, dl, VTs) {
     InitOperands(Ops, X, Y);
+  }
+};
+
+/// Returns true if the opcode is a binary operation with flags.
+static bool isBinOpWithFlags(unsigned Opcode) {
+  switch (Opcode) {
+  case ISD::SDIV:
+  case ISD::UDIV:
+  case ISD::SRA:
+  case ISD::SRL:
+  case ISD::MUL:
+  case ISD::ADD:
+  case ISD::SUB:
+  case ISD::SHL:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// This class is an extension of BinarySDNode
+/// used from those opcodes that have associated extra flags.
+class BinaryWithFlagsSDNode : public BinarySDNode {
+public:
+  SDNodeFlags Flags;
+  BinaryWithFlagsSDNode(unsigned Opc, unsigned Order, DebugLoc dl, SDVTList VTs,
+                        SDValue X, SDValue Y)
+      : BinarySDNode(Opc, Order, dl, VTs, X, Y), Flags() {}
+  static bool classof(const SDNode *N) {
+    return isBinOpWithFlags(N->getOpcode());
   }
 };
 
@@ -1089,7 +1081,7 @@ public:
   }
 };
 
-/// Abstact virtual class for operations for memory operations
+/// This is an abstract virtual class for memory operations.
 class MemSDNode : public SDNode {
 private:
   // VT of in-memory value.
@@ -1206,7 +1198,7 @@ public:
   }
 };
 
-/// A SDNode reprenting atomic operations.
+/// This is an SDNode representing atomic operations.
 class AtomicSDNode : public MemSDNode {
   SDUse Ops[4];
 
@@ -1437,9 +1429,9 @@ public:
 class ConstantFPSDNode : public SDNode {
   const ConstantFP *Value;
   friend class SelectionDAG;
-  ConstantFPSDNode(bool isTarget, const ConstantFP *val, EVT VT)
+  ConstantFPSDNode(bool isTarget, const ConstantFP *val, DebugLoc DL, EVT VT)
     : SDNode(isTarget ? ISD::TargetConstantFP : ISD::ConstantFP,
-             0, DebugLoc(), getSDVTList(VT)), Value(val) {
+             0, DL, getSDVTList(VT)), Value(val) {
   }
 public:
 

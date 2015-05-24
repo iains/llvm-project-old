@@ -129,6 +129,9 @@ public:
   bool PIE() const { return _pie; }
   void setPIE(bool pie) { _pie = pie; }
 
+  uint64_t stackSize() const { return _stackSize; }
+  void setStackSize(uint64_t stackSize) { _stackSize = stackSize; }
+
   uint64_t baseAddress() const { return _baseAddress; }
   void setBaseAddress(uint64_t baseAddress) { _baseAddress = baseAddress; }
 
@@ -338,6 +341,7 @@ private:
   uint64_t _pageZeroSize;
   uint64_t _pageSize;
   uint64_t _baseAddress;
+  uint64_t _stackSize;
   uint32_t _compatibilityVersion;
   uint32_t _currentVersion;
   StringRef _installName;
@@ -355,6 +359,7 @@ private:
   mutable std::set<mach_o::MachODylibFile*> _allDylibs;
   mutable std::set<mach_o::MachODylibFile*> _upwardDylibs;
   mutable std::vector<std::unique_ptr<File>> _indirectDylibs;
+  mutable std::mutex _dylibsMutex;
   ExportMode _exportMode;
   llvm::StringSet<> _exportedSymbols;
   DebugInfoMode _debugInfoMode;

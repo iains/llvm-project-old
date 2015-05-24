@@ -380,7 +380,8 @@ IOHandlerEditline::IOHandlerEditline (Debugger &debugger,
     m_curr_line_idx (UINT32_MAX),
     m_multi_line (multi_line),
     m_color_prompts (color_prompts),
-    m_interrupt_exits (true)
+    m_interrupt_exits (true),
+    m_editing (false)
 {
     SetPrompt(prompt);
 
@@ -474,6 +475,7 @@ IOHandlerEditline::GetLine (std::string &line, bool &interrupted)
             char buffer[256];
             bool done = false;
             bool got_line = false;
+            m_editing = true;
             while (!done)
             {
                 if (fgets(buffer, sizeof(buffer), in) == NULL)
@@ -508,6 +510,7 @@ IOHandlerEditline::GetLine (std::string &line, bool &interrupted)
                     line.append(buffer, buffer_len);
                 }
             }
+            m_editing = false;
             // We might have gotten a newline on a line by itself
             // make sure to return true in this case.
             return got_line;
@@ -754,7 +757,7 @@ IOHandlerEditline::Refresh ()
     {
         m_editline_ap->Refresh();
     }
-    else
+    else if (m_editing)
     {
 #endif
         const char *prompt = GetPrompt();
@@ -5326,7 +5329,8 @@ public:
                                                                                       eLazyBoolCalculate,        // Check inlines using global setting
                                                                                       eLazyBoolCalculate,        // Skip prologue using global setting,
                                                                                       false,                     // internal
-                                                                                      false);                    // request_hardware
+                                                                                      false,                     // request_hardware
+                                                                                      eLazyBoolCalculate);       // move_to_nearest_code
                         // Make breakpoint one shot
                         bp_sp->GetOptions()->SetOneShot(true);
                         exe_ctx.GetProcessRef().Resume();
@@ -5361,7 +5365,8 @@ public:
                                                                                       eLazyBoolCalculate,        // Check inlines using global setting
                                                                                       eLazyBoolCalculate,        // Skip prologue using global setting,
                                                                                       false,                     // internal
-                                                                                      false);                    // request_hardware
+                                                                                      false,                     // request_hardware
+                                                                                      eLazyBoolCalculate);       // move_to_nearest_code
                     }
                 }
                 else if (m_selected_line < GetNumDisassemblyLines())

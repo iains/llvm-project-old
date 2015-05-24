@@ -1639,7 +1639,7 @@ template <class _Traits, class _Tp>
 struct __rebind_alloc_helper
 {
 #ifndef _LIBCPP_HAS_NO_TEMPLATE_ALIASES
-	typedef typename _Traits::template rebind_alloc<_Tp>        type;
+    typedef typename _Traits::template rebind_alloc<_Tp>        type;
 #else
     typedef typename _Traits::template rebind_alloc<_Tp>::other type;
 #endif
@@ -1855,6 +1855,9 @@ public:
     _LIBCPP_INLINE_VISIBILITY raw_storage_iterator& operator++() {++__x_; return *this;}
     _LIBCPP_INLINE_VISIBILITY raw_storage_iterator  operator++(int)
         {raw_storage_iterator __t(*this); ++__x_; return __t;}
+#if _LIBCPP_STD_VER >= 14
+    _LIBCPP_INLINE_VISIBILITY _OutputIterator base() const { return __x_; } 
+#endif
 };
 
 template <class _Tp>
@@ -3524,8 +3527,8 @@ uninitialized_copy(_InputIterator __f, _InputIterator __l, _ForwardIterator __r)
     try
     {
 #endif
-        for (; __f != __l; ++__f, ++__r)
-            ::new(&*__r) value_type(*__f);
+        for (; __f != __l; ++__f, (void) ++__r)
+            ::new (static_cast<void*>(_VSTD::addressof(*__r))) value_type(*__f);
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
     catch (...)
@@ -3548,8 +3551,8 @@ uninitialized_copy_n(_InputIterator __f, _Size __n, _ForwardIterator __r)
     try
     {
 #endif
-        for (; __n > 0; ++__f, ++__r, --__n)
-            ::new(&*__r) value_type(*__f);
+        for (; __n > 0; ++__f, (void) ++__r, (void) --__n)
+            ::new (static_cast<void*>(_VSTD::addressof(*__r))) value_type(*__f);
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
     catch (...)
@@ -3573,7 +3576,7 @@ uninitialized_fill(_ForwardIterator __f, _ForwardIterator __l, const _Tp& __x)
     {
 #endif
         for (; __f != __l; ++__f)
-            ::new(&*__f) value_type(__x);
+            ::new (static_cast<void*>(_VSTD::addressof(*__f))) value_type(__x);
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
     catch (...)
@@ -3595,8 +3598,8 @@ uninitialized_fill_n(_ForwardIterator __f, _Size __n, const _Tp& __x)
     try
     {
 #endif
-        for (; __n > 0; ++__f, --__n)
-            ::new(&*__f) value_type(__x);
+        for (; __n > 0; ++__f, (void) --__n)
+            ::new (static_cast<void*>(_VSTD::addressof(*__f))) value_type(__x);
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
     catch (...)
@@ -4274,9 +4277,16 @@ shared_ptr<_Tp>::shared_ptr(unique_ptr<_Yp, _Dp> __r,
                             >::type)
     : __ptr_(__r.get())
 {
-    typedef __shared_ptr_pointer<_Yp*, _Dp, allocator<_Yp> > _CntrlBlk;
-    __cntrl_ = new _CntrlBlk(__r.get(), __r.get_deleter(), allocator<_Yp>());
-    __enable_weak_this(__r.get());
+#if _LIBCPP_STD_VER > 11
+    if (__ptr_ == nullptr)
+        __cntrl_ = nullptr;
+    else
+#endif
+    {
+        typedef __shared_ptr_pointer<_Yp*, _Dp, allocator<_Yp> > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__r.get(), __r.get_deleter(), allocator<_Yp>());
+        __enable_weak_this(__r.get());
+    }
     __r.release();
 }
 
@@ -4296,11 +4306,18 @@ shared_ptr<_Tp>::shared_ptr(unique_ptr<_Yp, _Dp> __r,
                             >::type)
     : __ptr_(__r.get())
 {
-    typedef __shared_ptr_pointer<_Yp*,
-                                 reference_wrapper<typename remove_reference<_Dp>::type>,
-                                 allocator<_Yp> > _CntrlBlk;
-    __cntrl_ = new _CntrlBlk(__r.get(), ref(__r.get_deleter()), allocator<_Yp>());
-    __enable_weak_this(__r.get());
+#if _LIBCPP_STD_VER > 11
+    if (__ptr_ == nullptr)
+        __cntrl_ = nullptr;
+    else
+#endif
+    {
+        typedef __shared_ptr_pointer<_Yp*,
+                                     reference_wrapper<typename remove_reference<_Dp>::type>,
+                                     allocator<_Yp> > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__r.get(), ref(__r.get_deleter()), allocator<_Yp>());
+        __enable_weak_this(__r.get());
+    }
     __r.release();
 }
 

@@ -126,28 +126,20 @@ void OutputELFWriter<ELFT>::buildDynamicSymbolTable(const File &file) {
   }
   // Never mark the dynamic linker as DT_NEEDED
   _soNeeded.erase(sys::path::filename(_ctx.getInterpreter()));
-  for (const auto &loadName : _soNeeded) {
-    Elf_Dyn dyn;
-    dyn.d_tag = DT_NEEDED;
-    dyn.d_un.d_val = _dynamicStringTable->addString(loadName.getKey());
-    _dynamicTable->addEntry(dyn);
-  }
+  for (const auto &loadName : _soNeeded)
+    _dynamicTable->addEntry(DT_NEEDED,
+                            _dynamicStringTable->addString(loadName.getKey()));
   const auto &rpathList = _ctx.getRpathList();
   if (!rpathList.empty()) {
     auto rpath =
         new (_alloc) std::string(join(rpathList.begin(), rpathList.end(), ":"));
-    Elf_Dyn dyn;
-    dyn.d_tag = _ctx.getEnableNewDtags() ? DT_RUNPATH : DT_RPATH;
-    dyn.d_un.d_val = _dynamicStringTable->addString(*rpath);
-    _dynamicTable->addEntry(dyn);
+    _dynamicTable->addEntry(_ctx.getEnableNewDtags() ? DT_RUNPATH : DT_RPATH,
+                            _dynamicStringTable->addString(*rpath));
   }
   StringRef soname = _ctx.sharedObjectName();
-  if (!soname.empty() && _ctx.getOutputELFType() == llvm::ELF::ET_DYN) {
-    Elf_Dyn dyn;
-    dyn.d_tag = DT_SONAME;
-    dyn.d_un.d_val = _dynamicStringTable->addString(soname);
-    _dynamicTable->addEntry(dyn);
-  }
+  if (!soname.empty() && _ctx.getOutputELFType() == llvm::ELF::ET_DYN)
+    _dynamicTable->addEntry(DT_SONAME, _dynamicStringTable->addString(soname));
+
   // The dynamic symbol table need to be sorted earlier because the hash
   // table needs to be built using the dynamic symbol table. It would be
   // late to sort the symbols due to that in finalize. In the dynamic symbol
@@ -250,7 +242,7 @@ template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
   // Don't create .symtab and .strtab sections if we're going to
   // strip all the symbols.
   if (!_ctx.stripSymbols()) {
-    _symtab = std::move(this->createSymbolTable());
+    _symtab = this->createSymbolTable();
     _strtab.reset(new (_alloc) StringTable<ELFT>(
         _ctx, ".strtab", TargetLayout<ELFT>::ORDER_STRING_TABLE));
     _layout.addSection(_symtab.get());
@@ -278,10 +270,10 @@ template <class ELFT> void OutputELFWriter<ELFT>::createDefaultSections() {
   }
 
   if (_ctx.isDynamic()) {
-    _dynamicTable = std::move(createDynamicTable());
+    _dynamicTable = createDynamicTable();
     _dynamicStringTable.reset(new (_alloc) StringTable<ELFT>(
         _ctx, ".dynstr", TargetLayout<ELFT>::ORDER_DYNAMIC_STRINGS, true));
-    _dynamicSymbolTable = std::move(createDynamicSymbolTable());
+    _dynamicSymbolTable = createDynamicSymbolTable();
     _hashTable.reset(new (_alloc) HashSection<ELFT>(
         _ctx, ".hash", TargetLayout<ELFT>::ORDER_HASH));
     // Set the hash table in the dynamic symbol table so that the entries in the
@@ -445,6 +437,26 @@ std::error_code OutputELFWriter<ELFT>::writeFile(const File &file,
   if (std::error_code ec = setELFHeader())
     return ec;
   return writeOutput(file, path);
+}
+
+template <class ELFT>
+void OutputELFWriter<ELFT>::updateScopeAtomValues(StringRef sym,
+                                                  StringRef sec) {
+  std::string start = ("__" + sym + "_start").str();
+  std::string end = ("__" + sym + "_end").str();
+  AtomLayout *s = _layout.findAbsoluteAtom(start);
+  AtomLayout *e = _layout.findAbsoluteAtom(end);
+  OutputSection<ELFT> *section = _layout.findOutputSection(sec);
+  if (!s || !e)
+    return;
+
+  if (section) {
+    s->_virtualAddr = section->virtualAddr();
+    e->_virtualAddr = section->virtualAddr() + section->memSize();
+  } else {
+    s->_virtualAddr = 0;
+    e->_virtualAddr = 0;
+  }
 }
 
 template class OutputELFWriter<ELF32LE>;

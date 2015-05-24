@@ -142,9 +142,9 @@ MachOLinkingContext::MachOLinkingContext()
     : _outputMachOType(MH_EXECUTE), _outputMachOTypeStatic(false),
       _doNothing(false), _pie(false), _arch(arch_unknown), _os(OS::macOSX),
       _osMinVersion(0), _pageZeroSize(0), _pageSize(4096), _baseAddress(0),
-      _compatibilityVersion(0), _currentVersion(0), _deadStrippableDylib(false),
-      _printAtoms(false), _testingFileUsage(false), _keepPrivateExterns(false),
-      _demangle(false), _archHandler(nullptr),
+      _stackSize(0), _compatibilityVersion(0), _currentVersion(0),
+      _deadStrippableDylib(false), _printAtoms(false), _testingFileUsage(false),
+      _keepPrivateExterns(false), _demangle(false), _archHandler(nullptr),
       _exportMode(ExportMode::globals),
       _debugInfoMode(DebugInfoMode::addDebugMap), _orderFileEntries(0) {}
 
@@ -705,6 +705,7 @@ void MachOLinkingContext::createImplicitFiles(
 
 void MachOLinkingContext::registerDylib(MachODylibFile *dylib,
                                         bool upward) const {
+  std::lock_guard<std::mutex> lock(_dylibsMutex);
   _allDylibs.insert(dylib);
   _pathToDylibMap[dylib->installName()] = dylib;
   // If path is different than install name, register path too.

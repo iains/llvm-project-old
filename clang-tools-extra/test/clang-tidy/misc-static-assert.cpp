@@ -20,6 +20,9 @@ void abort() {}
 
 constexpr bool myfunc(int a, int b) { return a * b == 0; }
 
+typedef __SIZE_TYPE__ size_t;
+extern "C" size_t strlen(const char *s);
+
 class A {
 public:
   bool method() { return true; }
@@ -95,6 +98,12 @@ int main() {
   assert(NULL && "Report me!");
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: found assert() that could be
   // CHECK-FIXES: {{^  }}static_assert(NULL , "Report me!");
+
+#define NULL __null
+  assert(__null == "Don't report me!");
+  // CHECK-FIXES: {{^  }}assert(__null == "Don't report me!");
+  assert(NULL == "Don't report me!");
+  // CHECK-FIXES: {{^  }}assert(NULL == "Don't report me!");
 #undef NULL
 
   assert(ZERO_MACRO && "Report me!");
@@ -113,6 +122,9 @@ int main() {
   assert(10==5 && "Report me!");
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: found assert() that could be
   // CHECK-FIXES: {{^  }}static_assert(10==5 , "Report me!");
+
+  assert(strlen("12345") == 5);
+  // CHECK-FIXES: {{^  }}assert(strlen("12345") == 5);
 
   return 0;
 }

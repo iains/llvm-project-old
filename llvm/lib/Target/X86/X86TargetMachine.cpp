@@ -98,10 +98,6 @@ X86TargetMachine::X86TargetMachine(const Target &T, StringRef TT, StringRef CPU,
                         RM, CM, OL),
       TLOF(createTLOF(Triple(getTargetTriple()))),
       Subtarget(TT, CPU, FS, *this, Options.StackAlignmentOverride) {
-  // default to hard float ABI
-  if (Options.FloatABIType == FloatABI::Default)
-    this->Options.FloatABIType = FloatABI::Hard;
-
   // Windows stack unwinder gets confused when execution flow "falls through"
   // after a call to 'noreturn' function.
   // To prevent that, we emit a trap for 'unreachable' IR instructions.
@@ -131,13 +127,15 @@ X86TargetMachine::getSubtargetImpl(const Function &F) const {
   // function before we can generate a subtarget. We also need to use
   // it as a key for the subtarget since that can be the only difference
   // between two functions.
-  Attribute SFAttr = F.getFnAttribute("use-soft-float");
-  bool SoftFloat = !SFAttr.hasAttribute(Attribute::None)
-                       ? SFAttr.getValueAsString() == "true"
-                       : Options.UseSoftFloat;
+  bool SoftFloat =
+      F.hasFnAttribute("use-soft-float") &&
+      F.getFnAttribute("use-soft-float").getValueAsString() == "true";
+  // If the soft float attribute is set on the function turn on the soft float
+  // subtarget feature.
+  if (SoftFloat)
+    FS += FS.empty() ? "+soft-float" : ",+soft-float";
 
-  auto &I = SubtargetMap[CPU + FS + (SoftFloat ? "use-soft-float=true"
-                                               : "use-soft-float=false")];
+  auto &I = SubtargetMap[CPU + FS];
   if (!I) {
     // This needs to be done before we create a new subtarget since any
     // creation will depend on the TM and the code generation flags on the
@@ -189,6 +187,7 @@ public:
   void addPreRegAlloc() override;
   void addPostRegAlloc() override;
   void addPreEmitPass() override;
+  void addPreSched2() override;
 };
 } // namespace
 
@@ -236,6 +235,8 @@ void X86PassConfig::addPreRegAlloc() {
 void X86PassConfig::addPostRegAlloc() {
   addPass(createX86FloatingPointStackifierPass());
 }
+
+void X86PassConfig::addPreSched2() { addPass(createX86ExpandPseudoPass()); }
 
 void X86PassConfig::addPreEmitPass() {
   if (getOptLevel() != CodeGenOpt::None)

@@ -3,9 +3,9 @@
 """
 Run the test suite using a separate process for each test file.
 
-Each test will run with a time limit of 5 minutes by default.
+Each test will run with a time limit of 10 minutes by default.
 
-Override the default time limit of 5 minutes by setting
+Override the default time limit of 10 minutes by setting
 the environment variable LLDB_TEST_TIMEOUT.
 
 E.g., export LLDB_TEST_TIMEOUT=10m
@@ -24,6 +24,8 @@ or    export LLDB_TESTCONCURRENTEVENTS_TIMEOUT=0
 import multiprocessing
 import os
 import platform
+import re
+import dotest_args
 import shlex
 import subprocess
 import sys
@@ -48,7 +50,7 @@ def get_timeout_command():
 
 timeout_command = get_timeout_command()
 
-default_timeout = os.getenv("LLDB_TEST_TIMEOUT") or "5m"
+default_timeout = os.getenv("LLDB_TEST_TIMEOUT") or "10m"
 
 # Status codes for running command with timeout.
 eTimedOut, ePassed, eFailed = 124, 0, 1
@@ -68,7 +70,7 @@ def call_with_timeout(command, timeout):
         return (ePassed if subprocess.call(command, stdin=subprocess.PIPE) == 0
                 else eFailed)
 
-def process_dir(root, files, test_root, dotest_options):
+def process_dir(root, files, test_root, dotest_argv):
     """Examine a directory for tests, and invoke any found within it."""
     timed_out = []
     failed = []
@@ -85,10 +87,8 @@ def process_dir(root, files, test_root, dotest_options):
             continue
 
         script_file = os.path.join(test_root, "dotest.py")
-        is_posix = (os.name == "posix")
-        split_args = shlex.split(dotest_options, posix=is_posix) if dotest_options else []
         command = ([sys.executable, script_file] +
-                   split_args +
+                   dotest_argv +
                    ["-p", name, root])
 
         timeout_name = os.path.basename(os.path.splitext(name)[0]).upper()
@@ -111,19 +111,23 @@ out_q = None
 def process_dir_worker(arg_tuple):
     """Worker thread main loop when in multithreaded mode.
     Takes one directory specification at a time and works on it."""
-    (root, files, test_root, dotest_options) = arg_tuple
-    return process_dir(root, files, test_root, dotest_options)
+    (root, files, test_root, dotest_argv) = arg_tuple
+    return process_dir(root, files, test_root, dotest_argv)
 
-def walk_and_invoke(test_root, dotest_options, num_threads):
+def walk_and_invoke(test_directory, test_subdir, dotest_argv, num_threads):
     """Look for matched files and invoke test driver on each one.
     In single-threaded mode, each test driver is invoked directly.
     In multi-threaded mode, submit each test driver to a worker
-    queue, and then wait for all to complete."""
+    queue, and then wait for all to complete.
+
+    test_directory - lldb/test/ directory
+    test_subdir - lldb/test/ or a subfolder with the tests we're interested in running
+    """
 
     # Collect the test files that we'll run.
     test_work_items = []
-    for root, dirs, files in os.walk(test_root, topdown=False):
-        test_work_items.append((root, files, test_root, dotest_options))
+    for root, dirs, files in os.walk(test_subdir, topdown=False):
+        test_work_items.append((root, files, test_directory, dotest_argv))
 
     # Run the items, either in a pool (for multicore speedup) or
     # calling each individually.
@@ -147,15 +151,59 @@ def walk_and_invoke(test_root, dotest_options, num_threads):
 
     return (timed_out, failed, passed)
 
-def main():
-    test_root = sys.path[0]
+def getExpectedTimeouts(platform_name):
+    # returns a set of test filenames that might timeout
+    # are we running against a remote target?
+    if platform_name is None:
+        target = sys.platform
+        remote = False
+    else:
+        m = re.search('remote-(\w+)', platform_name)
+        target = m.group(1)
+        remote = True
 
+    expected_timeout = set()
+
+    if target.startswith("linux"):
+        expected_timeout |= {
+            "TestAttachDenied.py",
+            "TestAttachResume.py",
+            "TestConnectRemote.py",
+            "TestCreateAfterAttach.py",
+            "TestEvents.py",
+            "TestExitDuringStep.py",
+            "TestThreadStepOut.py",
+        }
+    elif target.startswith("android"):
+        expected_timeout |= {
+            "TestExitDuringStep.py",
+            "TestHelloWorld.py",
+        }
+    elif target.startswith("freebsd"):
+        expected_timeout |= {
+            "TestBreakpointConditions.py",
+            "TestWatchpointConditionAPI.py",
+        }
+    elif target.startswith("darwin"):
+        expected_timeout |= {
+            "TestThreadSpecificBreakpoint.py", # times out on MBP Retina, Mid 2012
+        }
+    return expected_timeout
+
+def touch(fname, times=None):
+    with open(fname, 'a'):
+        os.utime(fname, times)
+
+def main():
+    # We can't use sys.path[0] to determine the script directory
+    # because it doesn't work under a debugger
+    test_directory = os.path.dirname(os.path.realpath(__file__))
     parser = OptionParser(usage="""\
 Run lldb test suite using a separate process for each test file.
 
-       Each test will run with a time limit of 5 minutes by default.
+       Each test will run with a time limit of 10 minutes by default.
 
-       Override the default time limit of 5 minutes by setting
+       Override the default time limit of 10 minutes by setting
        the environment variable LLDB_TEST_TIMEOUT.
 
        E.g., export LLDB_TEST_TIMEOUT=10m
@@ -181,7 +229,31 @@ Run lldb test suite using a separate process for each test file.
                       help="""The number of threads to use when running tests separately.""")
 
     opts, args = parser.parse_args()
-    dotest_options = opts.dotest_options
+    dotest_option_string = opts.dotest_options
+
+    is_posix = (os.name == "posix")
+    dotest_argv = shlex.split(dotest_option_string, posix=is_posix) if dotest_option_string else []
+
+    parser = dotest_args.create_parser()
+    dotest_options = dotest_args.parse_args(parser, dotest_argv)
+
+    if not dotest_options.s:
+        # no session log directory, we need to add this to prevent
+        # every dotest invocation from creating its own directory
+        import datetime
+        # The windows platforms don't like ':' in the pathname.
+        timestamp_started = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
+        dotest_argv.append('-s')
+        dotest_argv.append(timestamp_started)
+        dotest_options.s = timestamp_started
+
+    session_dir = os.path.join(os.getcwd(), dotest_options.s)
+
+    # The root directory was specified on the command line
+    if len(args) == 0:
+        test_subdir = test_directory
+    else:
+        test_subdir = os.path.join(test_directory, args[0])
 
     if opts.num_threads:
         num_threads = opts.num_threads
@@ -195,10 +267,26 @@ Run lldb test suite using a separate process for each test file.
         num_threads = 1
 
     system_info = " ".join(platform.uname())
-    (timed_out, failed, passed) = walk_and_invoke(test_root, dotest_options,
+    (timed_out, failed, passed) = walk_and_invoke(test_directory, test_subdir, dotest_argv,
                                                   num_threads)
     timed_out = set(timed_out)
     num_tests = len(failed) + len(passed)
+
+    # remove expected timeouts from failures
+    expected_timeout = getExpectedTimeouts(dotest_options.lldb_platform_name)
+    for xtime in expected_timeout:
+        if xtime in timed_out:
+            timed_out.remove(xtime)
+            failed.remove(xtime)
+            result = "ExpectedTimeout"
+        elif xtime in passed:
+            result = "UnexpectedCompletion"
+        else:
+            result = None  # failed
+
+        if result:
+            test_name = os.path.splitext(xtime)[0]
+            touch(os.path.join(session_dir, "{}-{}".format(result, test_name)))
 
     print "Ran %d tests." % num_tests
     if len(failed) > 0:

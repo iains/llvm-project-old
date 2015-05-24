@@ -566,8 +566,8 @@ protected:
 
     // Create specific GOT entry.
     const auto *ga = (static_cast<Derived *>(this)->*gotFactory)(da);
-    assert(_gotAtoms.lookup(da) == ga &&
-           "GOT entry should be added to the map");
+    assert(_gotpltAtoms.lookup(da) == ga &&
+           "GOT entry should be added to the PLTGOT map");
     assert(ga->customSectionName() == ".got.plt" &&
            "GOT entry should be in a special section");
 
@@ -592,7 +592,7 @@ protected:
 
   /// \brief Create the GOT entry for a given IFUNC Atom.
   const GOTAtom *createIFUNCGOT(const Atom *da) {
-    assert(!_gotAtoms.lookup(da) && "IFUNC GOT entry already exists");
+    assert(!_gotpltAtoms.lookup(da) && "IFUNC GOT entry already exists");
     auto g = new (_file._alloc) ARMGOTPLTAtom(_file);
     g->addReferenceELF_ARM(R_ARM_ABS32, 0, da, 0);
     g->addReferenceELF_ARM(R_ARM_IRELATIVE, 0, da, 0);
@@ -600,7 +600,7 @@ protected:
     g->_name = "__got_ifunc_";
     g->_name += da->name();
 #endif
-    _gotAtoms[da] = g;
+    _gotpltAtoms[da] = g;
     return g;
   }
 
@@ -740,6 +740,11 @@ public:
       got->setOrdinal(ordinal++);
       mf->addAtom(*got);
     }
+    for (auto &gotKV : _gotpltAtoms) {
+      auto &got = gotKV.second;
+      got->setOrdinal(ordinal++);
+      mf->addAtom(*got);
+    }
     for (auto &objectKV : _objectAtoms) {
       auto &obj = objectKV.second;
       obj->setOrdinal(ordinal++);
@@ -763,6 +768,9 @@ protected:
 
   /// \brief Map Atoms to their GOT entries.
   llvm::MapVector<const Atom *, GOTAtom *> _gotAtoms;
+
+  /// \brief Map Atoms to their PLTGOT entries.
+  llvm::MapVector<const Atom *, GOTAtom *> _gotpltAtoms;
 
   /// \brief Map Atoms to their Object entries.
   llvm::MapVector<const Atom *, ObjectAtom *> _objectAtoms;
@@ -861,7 +869,7 @@ public:
 
   /// \brief Create the GOT entry for a given atom.
   const GOTAtom *createPLTGOT(const Atom *da) {
-    assert(!_gotAtoms.lookup(da) && "PLTGOT entry already exists");
+    assert(!_gotpltAtoms.lookup(da) && "PLTGOT entry already exists");
     auto g = new (_file._alloc) ARMGOTPLTAtom(_file);
     g->addReferenceELF_ARM(R_ARM_ABS32, 0, getPLT0(), 0);
     g->addReferenceELF_ARM(R_ARM_JUMP_SLOT, 0, da, 0);
@@ -869,7 +877,7 @@ public:
     g->_name = "__got_plt0_";
     g->_name += da->name();
 #endif
-    _gotAtoms[da] = g;
+    _gotpltAtoms[da] = g;
     return g;
   }
 
@@ -945,9 +953,15 @@ public:
     return _plt0;
   }
 
+  const GOTAtom *getSharedGOTEntry(const SharedLibraryAtom *sla) {
+    return getGOT<R_ARM_GLOB_DAT>(sla);
+  }
+
   std::error_code handleGOT(const Reference &ref) {
-    assert(!isa<const SharedLibraryAtom>(ref.target()) &&
-           "Shared GOT entries aren't handled yet");
+    if (const auto sla = dyn_cast<const SharedLibraryAtom>(ref.target())) {
+      const_cast<Reference &>(ref).setTarget(getSharedGOTEntry(sla));
+      return std::error_code();
+    }
     return ARMRelocationPass::handleGOT(ref);
   }
 };
@@ -961,6 +975,8 @@ lld::elf::createARMRelocationPass(const ARMLinkingContext &ctx) {
     if (ctx.isDynamic())
       return llvm::make_unique<ARMDynamicRelocationPass>(ctx);
     return llvm::make_unique<ARMStaticRelocationPass>(ctx);
+  case llvm::ELF::ET_DYN:
+    return llvm::make_unique<ARMDynamicRelocationPass>(ctx);
   default:
     llvm_unreachable("Unhandled output file type");
   }
