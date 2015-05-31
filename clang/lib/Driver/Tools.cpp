@@ -753,12 +753,13 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   if (const Arg *A = Args.getLastArg(options::OPT_mhwdiv_EQ))
     getARMHWDivFeatures(D, A, Args, Features);
 
-  // Check if -march is valid by checking if it can be canonicalised. getARMArch
-  // is used here instead of just checking the -march value in order to handle
-  // -march=native correctly.
+  // Check if -march is valid by checking if it can be canonicalised and parsed.
+  // getARMArch is used here instead of just checking the -march value in order
+  // to handle -march=native correctly.
   if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
     StringRef Arch = arm::getARMArch(Args, Triple);
-    if (llvm::ARMTargetParser::getCanonicalArchName(Arch).empty())
+    Arch = llvm::ARMTargetParser::getCanonicalArchName(Arch);
+    if (llvm::ARMTargetParser::parseArch(Arch) == llvm::ARM::AK_INVALID)
       D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
   }
 
@@ -2276,6 +2277,55 @@ static void addProfileRT(const ToolChain &TC, const ArgList &Args,
     return;
 
   CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, "profile")));
+}
+
+namespace {
+enum OpenMPRuntimeKind {
+  /// An unknown OpenMP runtime. We can't generate effective OpenMP code
+  /// without knowing what runtime to target.
+  OMPRT_Unknown,
+
+  /// The LLVM OpenMP runtime. When completed and integrated, this will become
+  /// the default for Clang.
+  OMPRT_OMP,
+
+  /// The GNU OpenMP runtime. Clang doesn't support generating OpenMP code for
+  /// this runtime but can swallow the pragmas, and find and link against the
+  /// runtime library itself.
+  OMPRT_GOMP,
+
+  /// The legacy name for the LLVM OpenMP runtime from when it was the Intel
+  /// OpenMP runtime. We support this mode for users with existing dependencies
+  /// on this runtime library name.
+  OMPRT_IOMP5
+};
+}
+
+/// Compute the desired OpenMP runtime from the flag provided.
+static OpenMPRuntimeKind getOpenMPRuntime(const ToolChain &TC,
+                                          const ArgList &Args) {
+  StringRef RuntimeName(CLANG_DEFAULT_OPENMP_RUNTIME);
+
+  const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ);
+  if (A)
+    RuntimeName = A->getValue();
+
+  auto RT = llvm::StringSwitch<OpenMPRuntimeKind>(RuntimeName)
+      .Case("libomp", OMPRT_OMP)
+      .Case("libgomp", OMPRT_GOMP)
+      .Case("libiomp5", OMPRT_IOMP5)
+      .Default(OMPRT_Unknown);
+
+  if (RT == OMPRT_Unknown) {
+    if (A)
+      TC.getDriver().Diag(diag::err_drv_unsupported_option_argument)
+        << A->getOption().getName() << A->getValue();
+    else
+      // FIXME: We could use a nicer diagnostic here.
+      TC.getDriver().Diag(diag::err_drv_unsupported_opt) << "-fopenmp";
+  }
+
+  return RT;
 }
 
 static void addSanitizerRuntime(const ToolChain &TC, const ArgList &Args,
@@ -3804,10 +3854,23 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
 
   // Forward flags for OpenMP
-  if (Args.hasArg(options::OPT_fopenmp_EQ) ||
-      Args.hasArg(options::OPT_fopenmp)) {
-    CmdArgs.push_back("-fopenmp");
-  }
+  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                   options::OPT_fno_openmp, false))
+    switch (getOpenMPRuntime(getToolChain(), Args)) {
+    case OMPRT_OMP:
+    case OMPRT_IOMP5:
+      // Clang can generate useful OpenMP code for these two runtime libraries.
+      CmdArgs.push_back("-fopenmp");
+      break;
+    default:
+      // By default, if Clang doesn't know how to generate useful OpenMP code
+      // for a specific runtime library, we just don't pass the '-fopenmp' flag
+      // down to the actual compilation.
+      // FIXME: It would be better to have a mode which *only* omits IR
+      // generation based on the OpenMP support so that we get consistent
+      // semantic analysis, etc.
+      break;
+    }
 
   const SanitizerArgs &Sanitize = getToolChain().getSanitizerArgs();
   Sanitize.addArgs(Args, CmdArgs);
@@ -5545,7 +5608,7 @@ static void constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
   for (arg_iterator it = Args.filtered_begin(options::OPT_moslib_EQ),
          ie = Args.filtered_end(); it != ie; ++it) {
     (*it)->claim();
-    oslibs.push_back((*it)->getValue());
+    oslibs.emplace_back((*it)->getValue());
     hasStandalone = hasStandalone || (oslibs.back() == "standalone");
   }
   if (oslibs.empty()) {
@@ -5702,45 +5765,19 @@ StringRef arm::getARMTargetCPU(const ArgList &Args,
 
 /// getLLVMArchSuffixForARM - Get the LLVM arch name to use for a particular
 /// CPU  (or Arch, if CPU is generic).
-//
 // FIXME: This is redundant with -mcpu, why does LLVM use this.
-// FIXME: tblgen this, or kill it!
-// FIXME: Use ARMTargetParser.
 const char *arm::getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch) {
-  // FIXME: Use ARMTargetParser
   if (CPU == "generic") {
-    if (Arch == "armv8.1a" || Arch == "armv8.1-a" ||
-        Arch == "armebv8.1a" || Arch == "armebv8.1-a") {
+    unsigned ArchKind = llvm::ARMTargetParser::parseArch(
+                        llvm::ARMTargetParser::getCanonicalArchName(Arch));
+    if (ArchKind == llvm::ARM::AK_ARMV8_1A)
       return "v8.1a";
-    }
   }
 
-  // FIXME: Use ARMTargetParser
-  return llvm::StringSwitch<const char *>(CPU)
-    .Cases("arm8", "arm810", "v4")
-    .Cases("strongarm", "strongarm110", "strongarm1100", "strongarm1110", "v4")
-    .Cases("arm7tdmi", "arm7tdmi-s", "arm710t", "v4t")
-    .Cases("arm720t", "arm9", "arm9tdmi", "v4t")
-    .Cases("arm920", "arm920t", "arm922t", "v4t")
-    .Cases("arm940t", "ep9312","v4t")
-    .Cases("arm10tdmi",  "arm1020t", "v5")
-    .Cases("arm9e",  "arm926ej-s",  "arm946e-s", "v5e")
-    .Cases("arm966e-s",  "arm968e-s",  "arm10e", "v5e")
-    .Cases("arm1020e",  "arm1022e",  "xscale", "iwmmxt", "v5e")
-    .Cases("arm1136j-s",  "arm1136jf-s", "v6")
-    .Cases("arm1176jz-s", "arm1176jzf-s", "v6k")
-    .Cases("mpcorenovfp",  "mpcore", "v6k")
-    .Cases("arm1156t2-s",  "arm1156t2f-s", "v6t2")
-    .Cases("cortex-a5", "cortex-a7", "cortex-a8", "v7")
-    .Cases("cortex-a9", "cortex-a12", "cortex-a15", "cortex-a17", "krait", "v7")
-    .Cases("cortex-r4", "cortex-r4f", "cortex-r5", "cortex-r7", "v7r")
-    .Cases("sc000", "cortex-m0", "cortex-m0plus", "cortex-m1", "v6m")
-    .Cases("sc300", "cortex-m3", "v7m")
-    .Cases("cortex-m4", "cortex-m7", "v7em")
-    .Case("swift", "v7s")
-    .Case("cyclone", "v8")
-    .Cases("cortex-a53", "cortex-a57", "cortex-a72", "v8")
-    .Default("");
+  unsigned ArchKind = llvm::ARMTargetParser::parseCPUArch(CPU);
+  if (ArchKind == llvm::ARM::AK_INVALID)
+    return "";
+  return llvm::ARMTargetParser::getSubArch(ArchKind);
 }
 
 void arm::appendEBLinkFlags(const ArgList &Args, ArgStringList &CmdArgs, 
@@ -6238,33 +6275,6 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   Args.AddLastArg(CmdArgs, options::OPT_Mach);
 }
 
-enum LibOpenMP {
-  LibUnknown,
-  LibGOMP,
-  LibIOMP5
-};
-
-/// Map a -fopenmp=<blah> macro to the corresponding library.
-static LibOpenMP getOpenMPLibByName(StringRef Name) {
-  return llvm::StringSwitch<LibOpenMP>(Name).Case("libgomp", LibGOMP)
-                                            .Case("libiomp5", LibIOMP5)
-                                            .Default(LibUnknown);
-}
-
-/// Get the default -l<blah> flag to use for -fopenmp, if no library is
-/// specified. This can be overridden at configure time.
-static const char *getDefaultOpenMPLibFlag() {
-#ifndef OPENMP_DEFAULT_LIB
-#define OPENMP_DEFAULT_LIB iomp5
-#endif
-
-#define STR2(lib) #lib
-#define STR(lib) STR2(lib)
-  return "-l" STR(OPENMP_DEFAULT_LIB);
-#undef STR
-#undef STR2
-}
-
 void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                 const InputInfo &Output,
                                 const InputInfoList &Inputs,
@@ -6322,21 +6332,22 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
-  if (const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ)) {
-    switch (getOpenMPLibByName(A->getValue())) {
-    case LibGOMP:
+  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                   options::OPT_fno_openmp, false)) {
+    switch (getOpenMPRuntime(getToolChain(), Args)) {
+    case OMPRT_OMP:
+      CmdArgs.push_back("-lomp");
+      break;
+    case OMPRT_GOMP:
       CmdArgs.push_back("-lgomp");
       break;
-    case LibIOMP5:
+    case OMPRT_IOMP5:
       CmdArgs.push_back("-liomp5");
       break;
-    case LibUnknown:
-      getToolChain().getDriver().Diag(diag::err_drv_unsupported_option_argument)
-        << A->getOption().getName() << A->getValue();
+    case OMPRT_Unknown:
+      // Already diagnosed.
       break;
     }
-  } else if (Args.hasArg(options::OPT_fopenmp)) {
-    CmdArgs.push_back(getDefaultOpenMPLibFlag());
   }
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
@@ -8043,30 +8054,36 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       if (NeedsSanitizerDeps)
         linkSanitizerRuntimeDeps(ToolChain, CmdArgs);
 
-      bool WantPthread = true;
-      if (const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ)) {
-        switch (getOpenMPLibByName(A->getValue())) {
-        case LibGOMP:
+      bool WantPthread = Args.hasArg(options::OPT_pthread) ||
+                         Args.hasArg(options::OPT_pthreads);
+
+      if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                       options::OPT_fno_openmp, false)) {
+        // OpenMP runtimes implies pthreads when using the GNU toolchain.
+        // FIXME: Does this really make sense for all GNU toolchains?
+        WantPthread = true;
+
+        // Also link the particular OpenMP runtimes.
+        switch (getOpenMPRuntime(ToolChain, Args)) {
+        case OMPRT_OMP:
+          CmdArgs.push_back("-lomp");
+          break;
+        case OMPRT_GOMP:
           CmdArgs.push_back("-lgomp");
 
           // FIXME: Exclude this for platforms with libgomp that don't require
           // librt. Most modern Linux platforms require it, but some may not.
           CmdArgs.push_back("-lrt");
           break;
-        case LibIOMP5:
+        case OMPRT_IOMP5:
           CmdArgs.push_back("-liomp5");
           break;
-        case LibUnknown:
-          D.Diag(diag::err_drv_unsupported_option_argument)
-              << A->getOption().getName() << A->getValue();
+        case OMPRT_Unknown:
+          // Already diagnosed.
           break;
         }
-      } else if (Args.hasArg(options::OPT_fopenmp)) {
-        CmdArgs.push_back(getDefaultOpenMPLibFlag());
-      } else {
-        WantPthread = Args.hasArg(options::OPT_pthread) ||
-                      Args.hasArg(options::OPT_pthreads);
       }
+
       AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
 
       if (WantPthread && !isAndroid)

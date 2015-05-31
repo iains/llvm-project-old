@@ -28,9 +28,9 @@ static std::unique_ptr<TargetHandler> createTarget(llvm::Triple triple,
                                                    MipsLinkingContext &ctx) {
   switch (triple.getArch()) {
   case llvm::Triple::mipsel:
-    return createMips32ELTargetHandler(ctx);
+    return llvm::make_unique<MipsTargetHandler<ELF32LE>>(ctx);
   case llvm::Triple::mips64el:
-    return createMips64ELTargetHandler(ctx);
+    return llvm::make_unique<MipsTargetHandler<ELF64LE>>(ctx);
   default:
     llvm_unreachable("Unhandled arch");
   }
@@ -40,9 +40,8 @@ MipsLinkingContext::MipsLinkingContext(llvm::Triple triple)
     : ELFLinkingContext(triple, createTarget(triple, *this)),
       _flagsMerger(triple.isArch64Bit()) {}
 
-std::error_code MipsLinkingContext::mergeHeaderFlags(uint8_t fileClass,
-                                                     uint64_t flags) {
-  return _flagsMerger.mergeHeaderFlags(fileClass, flags);
+std::error_code MipsLinkingContext::mergeElfFlags(uint64_t flags) {
+  return _flagsMerger.mergeFlags(flags);
 }
 
 void MipsLinkingContext::mergeReginfoMask(const MipsReginfo &info) {
