@@ -11,7 +11,8 @@ LLD_LEVEL := ../..
 LIBRARYNAME := lldDriver
 
 BUILT_SOURCES = CoreOptions.inc UniversalDriverOptions.inc DarwinLdOptions.inc \
-                GnuLdOptions.inc WinLinkOptions.inc
+                GnuLdOptions.inc
+#WinLinkOptions.inc
 
 TABLEGEN_INC_FILES_COMMON = 1
 
@@ -33,6 +34,6 @@ $(ObjDir)/GnuLdOptions.inc.tmp : GnuLdOptions.td $(LLVM_TBLGEN) $(ObjDir)/.dir
 	$(Echo) "Building LLD Gnu ld Option tables with tblgen"
 	$(Verb) $(LLVMTableGen) -gen-opt-parser-defs -o $(call SYSPATH, $@) $<
 
-$(ObjDir)/WinLinkOptions.inc.tmp : WinLinkOptions.td $(LLVM_TBLGEN) $(ObjDir)/.dir
-	$(Echo) "Building LLD WinLinkOptions Option tables with tblgen"
-	$(Verb) $(LLVMTableGen) -gen-opt-parser-defs -o $(call SYSPATH, $@) $<
+#$(ObjDir)/WinLinkOptions.inc.tmp : WinLinkOptions.td $(LLVM_TBLGEN) $(ObjDir)/.dir
+#	$(Echo) "Building LLD WinLinkOptions Option tables with tblgen"
+#	$(Verb) $(LLVMTableGen) -gen-opt-parser-defs -o $(call SYSPATH, $@) $<

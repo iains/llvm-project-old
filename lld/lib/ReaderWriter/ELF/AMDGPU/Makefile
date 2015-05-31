@@ -1,4 +1,4 @@
-##===- lld/lib/ReaderWriter/ELF/Makefile --------------*- Makefile -*-===##
+##=====- lld/lib/ReaderWriter/ELF/AMDGPU/Makefile ----------*- Makefile -*-===##
 #
 #                     The LLVM Compiler Infrastructure
 #
@@ -7,12 +7,9 @@
 #
 ##===----------------------------------------------------------------------===##
 
-LLD_LEVEL := ../../..
-LIBRARYNAME := lldELF
-
-CPP.Flags += -I$(PROJ_SRC_DIR)/$(LLD_LEVEL)/lib/ReaderWriter/ELF
-
-# these link against this lib
-PARALLEL_DIRS := Hexagon X86 X86_64 Mips AArch64 ARM AMDGPU
+LLD_LEVEL := ../../../..
+LIBRARYNAME := lldAMDGPUELFTarget
+USEDLIBS = lldCore.a
+CPP.Flags += -I$(PROJ_SRC_DIR)/$(LLD_LEVEL)/lib/ReaderWriter/ELF/AMDGPU -I$(PROJ_SRC_DIR)/$(LLD_LEVEL)/lib/ReaderWriter/ELF
 
 include $(LLD_LEVEL)/Makefile

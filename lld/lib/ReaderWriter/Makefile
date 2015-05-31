@@ -11,6 +11,6 @@ LLD_LEVEL := ../..
 LIBRARYNAME := lldReaderWriter
 
 # these link against this lib
-PARALLEL_DIRS := ELF MachO PECOFF YAML
+PARALLEL_DIRS := ELF MachO YAML
 
 include $(LLD_LEVEL)/Makefile
