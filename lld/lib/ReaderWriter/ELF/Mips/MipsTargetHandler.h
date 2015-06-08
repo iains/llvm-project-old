@@ -9,6 +9,7 @@
 #ifndef LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_HANDLER_H
 
+#include "MipsAbiInfoHandler.h"
 #include "MipsLinkingContext.h"
 #include "MipsTargetLayout.h"
 #include "TargetHandler.h"
@@ -21,6 +22,8 @@ template <class ELFT> class MipsTargetHandler final : public TargetHandler {
 public:
   MipsTargetHandler(MipsLinkingContext &ctx);
 
+  MipsAbiInfoHandler<ELFT> &getAbiInfoHandler() { return _abiInfoHandler; }
+
   std::unique_ptr<Reader> getObjReader() override;
   std::unique_ptr<Reader> getDSOReader() override;
   const TargetRelocationHandler &getRelocationHandler() const override;
@@ -28,6 +31,7 @@ public:
 
 private:
   MipsLinkingContext &_ctx;
+  MipsAbiInfoHandler<ELFT> _abiInfoHandler;
   std::unique_ptr<MipsTargetLayout<ELFT>> _targetLayout;
   std::unique_ptr<TargetRelocationHandler> _relocationHandler;
 };

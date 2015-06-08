@@ -433,6 +433,7 @@ std::error_code AArch64TargetRelocationHandler::applyRelocation(
   case R_AARCH64_IRELATIVE:
   case R_AARCH64_JUMP_SLOT:
   case R_AARCH64_GLOB_DAT:
+  case R_AARCH64_TLS_TPREL64:
     break;
   case R_AARCH64_ADR_PREL_PG_HI21:
     return relocR_AARCH64_ADR_PREL_PG_HI21(loc, reloc, target, addend);
@@ -475,12 +476,12 @@ std::error_code AArch64TargetRelocationHandler::applyRelocation(
     break;
   case R_AARCH64_TLSLE_ADD_TPREL_HI12:
   case R_AARCH64_TLSLE_ADD_TPREL_LO12_NC: {
-    _tlsSize = _layout.getAlignedTLSSize();
+    auto tpoffset = _layout.getTPOffset();
     if (ref.kindValue() == R_AARCH64_TLSLE_ADD_TPREL_HI12)
-      return relocR_AARCH64_TLSLE_ADD_TPREL_HI12(loc, reloc, target + _tlsSize,
+      return relocR_AARCH64_TLSLE_ADD_TPREL_HI12(loc, reloc, target + tpoffset,
                                                  addend);
     else 
-      relocR_AARCH64_TLSLE_ADD_TPREL_LO12_NC(loc, reloc, target + _tlsSize,
+      relocR_AARCH64_TLSLE_ADD_TPREL_LO12_NC(loc, reloc, target + tpoffset,
                                              addend);
   }  break;
   default:

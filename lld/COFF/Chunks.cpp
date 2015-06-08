@@ -10,7 +10,6 @@
 #include "Chunks.h"
 #include "InputFiles.h"
 #include "Writer.h"
-#include "lld/Core/Error.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/COFF.h"
@@ -18,6 +17,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using namespace llvm::COFF;
@@ -38,9 +38,16 @@ SectionChunk::SectionChunk(ObjectFile *F, const coff_section *H, uint32_t SI)
 void SectionChunk::writeTo(uint8_t *Buf) {
   if (!hasData())
     return;
+  // Copy section contents from source object file to output file.
   ArrayRef<uint8_t> Data;
   File->getCOFFObj()->getSectionContents(Header, Data);
   memcpy(Buf + FileOff, Data.data(), Data.size());
+
+  // Apply relocations.
+  for (const auto &I : getSectionRef().relocations()) {
+    const coff_relocation *Rel = File->getCOFFObj()->getCOFFRelocation(I);
+    applyReloc(Buf, Rel);
+  }
 }
 
 // Returns true if this chunk should be considered as a GC root.
@@ -81,20 +88,12 @@ void SectionChunk::addAssociative(SectionChunk *Child) {
   AssocChildren.push_back(Child);
 }
 
-void SectionChunk::applyRelocations(uint8_t *Buf) {
-  for (const auto &I : getSectionRef().relocations()) {
-    const coff_relocation *Rel = File->getCOFFObj()->getCOFFRelocation(I);
-    applyReloc(Buf, Rel);
-  }
-}
-
-static void add16(uint8_t *P, int32_t V) { write16le(P, read16le(P) + V); }
+static void add16(uint8_t *P, int16_t V) { write16le(P, read16le(P) + V); }
 static void add32(uint8_t *P, int32_t V) { write32le(P, read32le(P) + V); }
 static void add64(uint8_t *P, int64_t V) { write64le(P, read64le(P) + V); }
 
 // Implements x64 PE/COFF relocations.
 void SectionChunk::applyReloc(uint8_t *Buf, const coff_relocation *Rel) {
-  using namespace llvm::COFF;
   uint8_t *Off = Buf + FileOff + Rel->VirtualAddress;
   SymbolBody *Body = File->getSymbolBody(Rel->SymbolTableIndex);
   uint64_t S = cast<Defined>(Body)->getRVA();
@@ -140,7 +139,7 @@ void SectionChunk::printDiscardedMessage() {
       continue;
     StringRef SymbolName;
     File->getCOFFObj()->getSymbolName(Sym, SymbolName);
-    llvm::dbgs() << "Discarded " << SymbolName << " from "
+    llvm::outs() << "Discarded " << SymbolName << " from "
                  << File->getShortName() << "\n";
     I += Sym.getNumberOfAuxSymbols();
   }
@@ -152,8 +151,14 @@ SectionRef SectionChunk::getSectionRef() {
   return SectionRef(Ref, File->getCOFFObj());
 }
 
+CommonChunk::CommonChunk(const COFFSymbolRef S) : Sym(S) {
+  // Alignment is a section attribute, but common symbols don't
+  // belong to any section. How do we know common data alignments?
+  // Needs investigating. For now, we set a large number as an alignment.
+  Align = 16;
+}
+
 uint32_t CommonChunk::getPermissions() const {
-  using namespace llvm::COFF;
   return IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_MEM_READ |
          IMAGE_SCN_MEM_WRITE;
 }
@@ -164,51 +169,9 @@ void StringChunk::writeTo(uint8_t *Buf) {
 
 void ImportThunkChunk::writeTo(uint8_t *Buf) {
   memcpy(Buf + FileOff, ImportThunkData, sizeof(ImportThunkData));
-}
-
-void ImportThunkChunk::applyRelocations(uint8_t *Buf) {
+  // The first two bytes is a JMP instruction. Fill its operand.
   uint32_t Operand = ImpSymbol->getRVA() - RVA - getSize();
-  // The first two bytes are a JMP instruction. Fill its operand.
   write32le(Buf + FileOff + 2, Operand);
-}
-
-HintNameChunk::HintNameChunk(StringRef N, uint16_t H)
-    : Name(N), Hint(H), Size(RoundUpToAlignment(Name.size() + 4, 2)) {}
-
-void HintNameChunk::writeTo(uint8_t *Buf) {
-  write16le(Buf + FileOff, Hint);
-  memcpy(Buf + FileOff + 2, Name.data(), Name.size());
-}
-
-void LookupChunk::applyRelocations(uint8_t *Buf) {
-  write32le(Buf + FileOff, HintName->getRVA());
-}
-
-void DirectoryChunk::applyRelocations(uint8_t *Buf) {
-  auto *E = (coff_import_directory_table_entry *)(Buf + FileOff);
-  E->ImportLookupTableRVA = LookupTab->getRVA();
-  E->NameRVA = DLLName->getRVA();
-  E->ImportAddressTableRVA = AddressTab->getRVA();
-}
-
-ImportTable::ImportTable(StringRef N,
-                         std::vector<DefinedImportData *> &Symbols) {
-  DLLName = new StringChunk(N);
-  DirTab = new DirectoryChunk(DLLName);
-  for (DefinedImportData *S : Symbols)
-    HintNameTables.push_back(
-        new HintNameChunk(S->getExportName(), S->getOrdinal()));
-
-  for (HintNameChunk *H : HintNameTables) {
-    LookupTables.push_back(new LookupChunk(H));
-    AddressTables.push_back(new LookupChunk(H));
-  }
-
-  for (int I = 0, E = Symbols.size(); I < E; ++I)
-    Symbols[I]->setLocation(AddressTables[I]);
-
-  DirTab->LookupTab = LookupTables[0];
-  DirTab->AddressTab = AddressTables[0];
 }
 
 } // namespace coff

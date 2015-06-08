@@ -17,8 +17,8 @@ namespace elf {
 template <class ELFT>
 MipsReginfoSection<ELFT>::MipsReginfoSection(
     const ELFLinkingContext &ctx, MipsTargetLayout<ELFT> &targetLayout,
-    const MipsReginfo &reginfo)
-    : Section<ELFT>(ctx, ".reginfo", "MipsReginfo"),
+    const Elf_Mips_RegInfo &reginfo)
+    : Section<ELFT>(ctx, ".reginfo", "MipsReginfo"), _reginfo(reginfo),
       _targetLayout(targetLayout) {
   this->setOrder(MipsTargetLayout<ELFT>::ORDER_MIPS_REGINFO);
   this->_entSize = sizeof(Elf_Mips_RegInfo);
@@ -27,13 +27,6 @@ MipsReginfoSection<ELFT>::MipsReginfoSection(
   this->_alignment = 4;
   this->_type = SHT_MIPS_REGINFO;
   this->_flags = SHF_ALLOC;
-
-  std::memset(&_reginfo, 0, sizeof(_reginfo));
-  _reginfo.ri_gprmask = reginfo._gpRegMask;
-  _reginfo.ri_cprmask[0] = reginfo._cpRegMask[0];
-  _reginfo.ri_cprmask[1] = reginfo._cpRegMask[1];
-  _reginfo.ri_cprmask[2] = reginfo._cpRegMask[2];
-  _reginfo.ri_cprmask[3] = reginfo._cpRegMask[3];
 }
 
 template <class ELFT>
@@ -57,8 +50,8 @@ template class MipsReginfoSection<ELF64LE>;
 template <class ELFT>
 MipsOptionsSection<ELFT>::MipsOptionsSection(
     const ELFLinkingContext &ctx, MipsTargetLayout<ELFT> &targetLayout,
-    const MipsReginfo &reginfo)
-    : Section<ELFT>(ctx, ".MIPS.options", "MipsOptions"),
+    const Elf_Mips_RegInfo &reginfo)
+    : Section<ELFT>(ctx, ".MIPS.options", "MipsOptions"), _reginfo(reginfo),
       _targetLayout(targetLayout) {
   this->setOrder(MipsTargetLayout<ELFT>::ORDER_MIPS_OPTIONS);
   this->_entSize = 1;
@@ -73,13 +66,6 @@ MipsOptionsSection<ELFT>::MipsOptionsSection(
   _header.size = this->_fsize;
   _header.section = 0;
   _header.info = 0;
-
-  std::memset(&_reginfo, 0, sizeof(_reginfo));
-  _reginfo.ri_gprmask = reginfo._gpRegMask;
-  _reginfo.ri_cprmask[0] = reginfo._cpRegMask[0];
-  _reginfo.ri_cprmask[1] = reginfo._cpRegMask[1];
-  _reginfo.ri_cprmask[2] = reginfo._cpRegMask[2];
-  _reginfo.ri_cprmask[3] = reginfo._cpRegMask[3];
 }
 
 template <class ELFT>
@@ -101,6 +87,37 @@ template <class ELFT> void MipsOptionsSection<ELFT>::finalize() {
 
 template class MipsOptionsSection<ELF32LE>;
 template class MipsOptionsSection<ELF64LE>;
+
+template <class ELFT>
+MipsAbiFlagsSection<ELFT>::MipsAbiFlagsSection(
+    const ELFLinkingContext &ctx, MipsTargetLayout<ELFT> &targetLayout,
+    const Elf_Mips_ABIFlags &abiFlags)
+    : Section<ELFT>(ctx, ".MIPS.abiflags", "MipsAbiFlags"), _abiFlags(abiFlags),
+      _targetLayout(targetLayout) {
+  this->setOrder(MipsTargetLayout<ELFT>::ORDER_MIPS_ABI_FLAGS);
+  this->_alignment = 8;
+  this->_fsize = llvm::RoundUpToAlignment(sizeof(_abiFlags), this->_alignment);
+  this->_msize = this->_fsize;
+  this->_entSize = this->_fsize;
+  this->_type = SHT_MIPS_ABIFLAGS;
+  this->_flags = SHF_ALLOC;
+}
+
+template <class ELFT>
+void MipsAbiFlagsSection<ELFT>::write(ELFWriter *writer,
+                                      TargetLayout<ELFT> &layout,
+                                      llvm::FileOutputBuffer &buffer) {
+  uint8_t *dest = buffer.getBufferStart() + this->fileOffset();
+  std::memcpy(dest, &_abiFlags, this->_fsize);
+}
+
+template <class ELFT> void MipsAbiFlagsSection<ELFT>::finalize() {
+  if (this->_outputSection)
+    this->_outputSection->setType(this->_type);
+}
+
+template class MipsAbiFlagsSection<ELF32LE>;
+template class MipsAbiFlagsSection<ELF64LE>;
 
 template <class ELFT>
 MipsGOTSection<ELFT>::MipsGOTSection(const MipsLinkingContext &ctx)

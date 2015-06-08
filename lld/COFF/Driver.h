@@ -11,35 +11,90 @@
 #define LLD_COFF_DRIVER_H
 
 #include "Memory.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include <memory>
+#include <set>
 #include <system_error>
 #include <vector>
 
 namespace lld {
 namespace coff {
 
+class LinkerDriver;
+extern LinkerDriver *Driver;
+
 using llvm::COFF::MachineTypes;
 using llvm::COFF::WindowsSubsystem;
+using llvm::Optional;
 class InputFile;
 
-ErrorOr<std::unique_ptr<llvm::opt::InputArgList>>
-parseArgs(int Argc, const char *Argv[]);
+// Entry point of the COFF linker.
+bool link(int Argc, const char *Argv[]);
 
-std::error_code parseDirectives(StringRef S,
-                                std::vector<std::unique_ptr<InputFile>> *Res,
-                                StringAllocator *Alloc);
+class ArgParser {
+public:
+  // Parses command line options.
+  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>> parse(int Argc,
+                                                          const char *Argv[]);
+
+  // Tokenizes a given string and then parses as command line options.
+  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>> parse(StringRef S) {
+    return parse(tokenize(S));
+  }
+
+private:
+  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>>
+  parse(std::vector<const char *> Argv);
+
+  std::vector<const char *> tokenize(StringRef S);
+
+  ErrorOr<std::vector<const char *>>
+  replaceResponseFiles(std::vector<const char *>);
+
+  StringAllocator Alloc;
+};
+
+class LinkerDriver {
+public:
+ LinkerDriver() : SearchPaths(getSearchPaths()) {}
+  bool link(int Argc, const char *Argv[]);
+
+  // Used by the resolver to parse .drectve section contents.
+  std::error_code
+  parseDirectives(StringRef S, std::vector<std::unique_ptr<InputFile>> *Res);
+
+private:
+  StringAllocator Alloc;
+  ArgParser Parser;
+
+  // Opens a file. Path has to be resolved already.
+  ErrorOr<std::unique_ptr<InputFile>> openFile(StringRef Path);
+
+  // Searches a file from search paths.
+  Optional<StringRef> findFile(StringRef Filename);
+  Optional<StringRef> findLib(StringRef Filename);
+  StringRef doFindFile(StringRef Filename);
+  StringRef doFindLib(StringRef Filename);
+
+  // Parses LIB environment which contains a list of search paths.
+  // The returned list always contains "." as the first element.
+  std::vector<StringRef> getSearchPaths();
+
+  std::vector<StringRef> SearchPaths;
+  std::set<std::string> VisitedFiles;
+
+  // Driver is the owner of all opened files.
+  // InputFiles have MemoryBufferRefs to them.
+  std::vector<std::unique_ptr<MemoryBuffer>> OwningMBs;
+};
 
 // Functions below this line are defined in DriverUtils.cpp.
 
 void printHelp(const char *Argv0);
-
-// "ENV" environment variable-aware file finders.
-std::string findLib(StringRef Filename);
-std::string findFile(StringRef Filename);
 
 // For /machine option.
 ErrorOr<MachineTypes> getMachineType(llvm::opt::InputArgList *Args);
@@ -55,6 +110,12 @@ std::error_code parseVersion(StringRef Arg, uint32_t *Major, uint32_t *Minor);
 // Parses a string in the form of "<subsystem>[,<integer>[.<integer>]]".
 std::error_code parseSubsystem(StringRef Arg, WindowsSubsystem *Sys,
                                uint32_t *Major, uint32_t *Minor);
+
+// Parses a string in the form of "key=value" and check
+// if value matches previous values for the key.
+// This feature used in the directive section to reject
+// incompatible objects.
+std::error_code checkFailIfMismatch(llvm::opt::InputArgList *Args);
 
 // Create enum with OPT_xxx values for each option in Options.td
 enum {

@@ -1497,6 +1497,8 @@ std::error_code BitcodeReader::ParseTypeTableBody() {
     case bitc::TYPE_CODE_VECTOR:    // VECTOR: [numelts, eltty]
       if (Record.size() < 2)
         return Error("Invalid record");
+      if (Record[0] == 0)
+        return Error("Invalid vector length");
       ResultTy = getTypeByID(Record[1]);
       if (!ResultTy || !StructType::isValidElementType(ResultTy))
         return Error("Invalid type");
@@ -2063,10 +2065,13 @@ std::error_code BitcodeReader::ResolveGlobalAndAliasInits() {
     if (ValID >= ValueList.size()) {
       AliasInits.push_back(AliasInitWorklist.back());
     } else {
-      if (Constant *C = dyn_cast_or_null<Constant>(ValueList[ValID]))
-        AliasInitWorklist.back().first->setAliasee(C);
-      else
+      Constant *C = dyn_cast_or_null<Constant>(ValueList[ValID]);
+      if (!C)
         return Error("Expected a constant");
+      GlobalAlias *Alias = AliasInitWorklist.back().first;
+      if (C->getType() != Alias->getType())
+        return Error("Alias and aliasee types don't match");
+      Alias->setAliasee(C);
     }
     AliasInitWorklist.pop_back();
   }

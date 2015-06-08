@@ -48,6 +48,7 @@ public:
     DefinedAbsoluteKind,
     DefinedImportDataKind,
     DefinedImportThunkKind,
+    DefinedBitcodeKind,
     DefinedLast,
     UndefinedKind,
     LazyKind,
@@ -67,7 +68,7 @@ public:
   // in the Symbol may be mutated by the resolver. If you have a
   // pointer P to a SymbolBody and are not sure whether the resolver
   // has chosen the object among other objects having the same name,
-  // you can access P->getSymbol()->Body to get the resolver's result.
+  // you can access P->Backref->Body to get the resolver's result.
   void setBackref(Symbol *P) { Backref = P; }
   SymbolBody *getReplacement() { return Backref ? Backref->Body : this; }
 
@@ -105,7 +106,7 @@ public:
   virtual uint64_t getFileOff() = 0;
 
   // Called by the garbage collector. All Defined subclasses should
-  // know how to call markLive to dependent symbols.
+  // know how to call depending symbols' markLive functions.
   virtual void markLive() {}
 
   int compare(SymbolBody *Other) override;
@@ -206,10 +207,10 @@ private:
 // table in an output. The former has "__imp_" prefix.
 class DefinedImportData : public Defined {
 public:
-  DefinedImportData(StringRef D, StringRef ImportName, StringRef ExportName,
+  DefinedImportData(StringRef D, StringRef Name, StringRef E,
                     const coff_import_header *H)
-      : Defined(DefinedImportDataKind, ImportName), DLLName(D),
-        ExpName(ExportName), Hdr(H) {}
+      : Defined(DefinedImportDataKind, Name), DLLName(D),
+        ExternalName(E), Hdr(H) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == DefinedImportDataKind;
@@ -218,13 +219,13 @@ public:
   uint64_t getRVA() override { return Location->getRVA(); }
   uint64_t getFileOff() override { return Location->getFileOff(); }
   StringRef getDLLName() { return DLLName; }
-  StringRef getExportName() { return ExpName; }
+  StringRef getExternalName() { return ExternalName; }
   void setLocation(Chunk *AddressTable) { Location = AddressTable; }
   uint16_t getOrdinal() { return Hdr->OrdinalHint; }
 
 private:
   StringRef DLLName;
-  StringRef ExpName;
+  StringRef ExternalName;
   const coff_import_header *Hdr;
   Chunk *Location = nullptr;
 };
@@ -249,6 +250,18 @@ public:
 
 private:
   ImportThunkChunk Data;
+};
+
+class DefinedBitcode : public Defined {
+public:
+  DefinedBitcode(StringRef Name) : Defined(DefinedBitcodeKind, Name) {}
+
+  static bool classof(const SymbolBody *S) {
+    return S->kind() == DefinedBitcodeKind;
+  }
+
+  uint64_t getRVA() override { llvm_unreachable("bitcode reached writer"); }
+  uint64_t getFileOff() override { llvm_unreachable("bitcode reached writer"); }
 };
 
 } // namespace coff

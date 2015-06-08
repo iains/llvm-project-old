@@ -44,10 +44,24 @@ public:
   // returned symbol actually has the same name (because of various
   // mechanisms to allow aliases, a name can be resolved to a
   // different symbol). Returns a nullptr if not found.
-  SymbolBody *find(StringRef Name);
+  Defined *find(StringRef Name);
+
+  // Windows specific -- `main` is not the only main function in Windows.
+  // You can choose one from these four -- {w,}{WinMain,main}.
+  // There are four different entry point functions for them,
+  // {w,}{WinMain,main}CRTStartup, respectively. The linker needs to
+  // choose the right one depending on which `main` function is defined.
+  // This function looks up the symbol table and resolve corresponding
+  // entry point name.
+  ErrorOr<StringRef> findDefaultEntry();
 
   // Dump contents of the symbol table to stderr.
   void dump();
+
+  // Build a COFF object representing the combined contents of BitcodeFiles
+  // and add it to the symbol table. Called after all files are added and
+  // before the writer writes results to a file.
+  std::error_code addCombinedLTOObject();
 
   // The writer needs to handle DLL import libraries specially in
   // order to create the import descriptor table.
@@ -56,20 +70,28 @@ public:
   // The writer needs to infer the machine type from the object files.
   std::vector<std::unique_ptr<ObjectFile>> ObjectFiles;
 
+  // Creates an Undefined symbol for a given name.
+  std::error_code addUndefined(StringRef Name);
+
+  // Rename From -> To in the symbol table.
+  std::error_code rename(StringRef From, StringRef To);
+
 private:
+  std::error_code addDirectives(InputFile *File);
+
   std::error_code addObject(ObjectFile *File);
   std::error_code addArchive(ArchiveFile *File);
   std::error_code addImport(ImportFile *File);
+  std::error_code addBitcode(BitcodeFile *File);
 
   std::error_code resolve(SymbolBody *Body);
   std::error_code addMemberFile(Lazy *Body);
-  void addInitialSymbol(SymbolBody *Body);
 
   std::unordered_map<StringRef, Symbol *> Symtab;
   std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
-  std::vector<std::unique_ptr<SymbolBody>> OwnedSymbols;
+  std::vector<std::unique_ptr<BitcodeFile>> BitcodeFiles;
+  std::unique_ptr<MemoryBuffer> LTOObjectFile;
   llvm::BumpPtrAllocator Alloc;
-  StringAllocator StringAlloc;
 };
 
 } // namespace pecoff

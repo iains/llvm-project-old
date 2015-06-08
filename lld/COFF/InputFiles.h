@@ -15,6 +15,7 @@
 #include "Symbols.h"
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/LTO/LTOModule.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/COFF.h"
 #include <memory>
@@ -24,18 +25,19 @@
 namespace lld {
 namespace coff {
 
+using llvm::LTOModule;
 using llvm::object::Archive;
 using llvm::object::COFFObjectFile;
 
 // The root class of input files.
 class InputFile {
 public:
-  enum Kind { ArchiveKind, ObjectKind, ImportKind };
+  enum Kind { ArchiveKind, ObjectKind, ImportKind, BitcodeKind };
   Kind kind() const { return FileKind; }
   virtual ~InputFile() {}
 
   // Returns the filename.
-  virtual StringRef getName() = 0;
+  StringRef getName() { return MB.getBufferIdentifier(); }
 
   // Returns symbols defined by this file.
   virtual std::vector<SymbolBody *> &getSymbols() = 0;
@@ -52,8 +54,12 @@ public:
   // Sets a parent filename if this file is created from an archive.
   void setParentName(StringRef N) { ParentName = N; }
 
+  // Returns .drectve section contents if exist.
+  virtual StringRef getDirectives() { return ""; }
+
 protected:
-  explicit InputFile(Kind K) : FileKind(K) {}
+  explicit InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
+  MemoryBufferRef MB;
 
 private:
   const Kind FileKind;
@@ -63,10 +69,9 @@ private:
 // .lib or .a file.
 class ArchiveFile : public InputFile {
 public:
-  explicit ArchiveFile(StringRef S) : InputFile(ArchiveKind), Filename(S) {}
+  explicit ArchiveFile(MemoryBufferRef M) : InputFile(ArchiveKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ArchiveKind; }
   std::error_code parse() override;
-  StringRef getName() override { return Filename; }
 
   // Returns a memory buffer for a given symbol. An empty memory buffer
   // is returned if we have already returned the same memory buffer.
@@ -79,7 +84,6 @@ public:
 private:
   std::unique_ptr<Archive> File;
   std::string Filename;
-  std::unique_ptr<MemoryBuffer> MB;
   std::vector<SymbolBody *> SymbolBodies;
   std::set<const char *> Seen;
   llvm::MallocAllocator Alloc;
@@ -88,13 +92,9 @@ private:
 // .obj or .o file. This may be a member of an archive file.
 class ObjectFile : public InputFile {
 public:
-  explicit ObjectFile(StringRef S) : InputFile(ObjectKind), Filename(S) {}
-  ObjectFile(StringRef S, MemoryBufferRef M)
-      : InputFile(ObjectKind), Filename(S), MBRef(M) {}
-
+  explicit ObjectFile(MemoryBufferRef M) : InputFile(ObjectKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ObjectKind; }
   std::error_code parse() override;
-  StringRef getName() override { return Filename; }
   std::vector<Chunk *> &getChunks() { return Chunks; }
   std::vector<SymbolBody *> &getSymbols() override { return SymbolBodies; }
 
@@ -102,11 +102,10 @@ public:
   // underlying object file.
   SymbolBody *getSymbolBody(uint32_t SymbolIndex);
 
-  // Returns .drectve section contents if exist.
-  StringRef getDirectives() { return Directives; }
-
   // Returns the underying COFF file.
   COFFObjectFile *getCOFFObj() { return COFFObj.get(); }
+
+  StringRef getDirectives() override { return Directives; }
 
 private:
   std::error_code initializeChunks();
@@ -115,10 +114,7 @@ private:
   SymbolBody *createSymbolBody(StringRef Name, COFFSymbolRef Sym,
                                const void *Aux, bool IsFirst);
 
-  std::string Filename;
   std::unique_ptr<COFFObjectFile> COFFObj;
-  std::unique_ptr<MemoryBuffer> MB;
-  MemoryBufferRef MBRef;
   StringRef Directives;
   llvm::BumpPtrAllocator Alloc;
 
@@ -148,18 +144,38 @@ private:
 // for details about the format.
 class ImportFile : public InputFile {
 public:
-  explicit ImportFile(MemoryBufferRef M) : InputFile(ImportKind), MBRef(M) {}
+  explicit ImportFile(MemoryBufferRef M) : InputFile(ImportKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ImportKind; }
-  StringRef getName() override { return MBRef.getBufferIdentifier(); }
   std::vector<SymbolBody *> &getSymbols() override { return SymbolBodies; }
 
 private:
   std::error_code parse() override;
 
-  MemoryBufferRef MBRef;
   std::vector<SymbolBody *> SymbolBodies;
   llvm::BumpPtrAllocator Alloc;
   StringAllocator StringAlloc;
+};
+
+// Used for LTO.
+class BitcodeFile : public InputFile {
+public:
+  explicit BitcodeFile(MemoryBufferRef M) : InputFile(BitcodeKind, M) {}
+  static bool classof(const InputFile *F) { return F->kind() == BitcodeKind; }
+  std::vector<SymbolBody *> &getSymbols() override { return SymbolBodies; }
+
+  LTOModule *getModule() const { return M.get(); }
+  LTOModule *releaseModule() { return M.release(); }
+
+  // Returns linker directives from module flags metadata if present.
+  StringRef getDirectives() override { return Directives; }
+
+private:
+  std::error_code parse() override;
+
+  std::vector<SymbolBody *> SymbolBodies;
+  llvm::BumpPtrAllocator Alloc;
+  std::unique_ptr<LTOModule> M;
+  std::string Directives;
 };
 
 } // namespace coff

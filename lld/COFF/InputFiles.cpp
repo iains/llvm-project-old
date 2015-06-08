@@ -8,10 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Chunks.h"
+#include "Error.h"
 #include "InputFiles.h"
 #include "Writer.h"
-#include "lld/Core/Error.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/LTO/LTOModule.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Debug.h"
@@ -21,6 +22,7 @@
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using llvm::COFF::ImportHeader;
+using llvm::COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE;
 using llvm::RoundUpToAlignment;
 using llvm::sys::fs::identify_magic;
 using llvm::sys::fs::file_magic;
@@ -46,14 +48,8 @@ std::string InputFile::getShortName() {
 }
 
 std::error_code ArchiveFile::parse() {
-  // Get a memory buffer.
-  auto MBOrErr = MemoryBuffer::getFile(Filename);
-  if (auto EC = MBOrErr.getError())
-    return EC;
-  MB = std::move(MBOrErr.get());
-
-  // Parse a memory buffer as an archive file.
-  auto ArchiveOrErr = Archive::create(MB->getMemBufferRef());
+  // Parse a MemoryBufferRef as an archive file.
+  auto ArchiveOrErr = Archive::create(MB);
   if (auto EC = ArchiveOrErr.getError())
     return EC;
   File = std::move(ArchiveOrErr.get());
@@ -89,17 +85,8 @@ ErrorOr<MemoryBufferRef> ArchiveFile::getMember(const Archive::Symbol *Sym) {
 }
 
 std::error_code ObjectFile::parse() {
-  // MBRef is not initialized if this is not an archive member.
-  if (MBRef.getBuffer().empty()) {
-    auto MBOrErr = MemoryBuffer::getFile(Filename);
-    if (auto EC = MBOrErr.getError())
-      return EC;
-    MB = std::move(MBOrErr.get());
-    MBRef = MB->getMemBufferRef();
-  }
-
   // Parse a memory buffer as a COFF file.
-  auto BinOrErr = createBinary(MBRef);
+  auto BinOrErr = createBinary(MB);
   if (auto EC = BinOrErr.getError())
     return EC;
   std::unique_ptr<Binary> Bin = std::move(BinOrErr.get());
@@ -108,7 +95,8 @@ std::error_code ObjectFile::parse() {
     Bin.release();
     COFFObj.reset(Obj);
   } else {
-    return make_dynamic_error_code(Twine(Filename) + " is not a COFF file.");
+    llvm::errs() << getName() << " is not a COFF file.\n";
+    return make_error_code(LLDError::InvalidFile);
   }
 
   // Read section and symbol tables.
@@ -128,16 +116,20 @@ std::error_code ObjectFile::initializeChunks() {
   for (uint32_t I = 1; I < NumSections + 1; ++I) {
     const coff_section *Sec;
     StringRef Name;
-    if (auto EC = COFFObj->getSection(I, Sec))
-      return make_dynamic_error_code(Twine("getSection failed: ") + Name +
-                                     ": " + EC.message());
-    if (auto EC = COFFObj->getSectionName(Sec, Name))
-      return make_dynamic_error_code(Twine("getSectionName failed: ") + Name +
-                                     ": " + EC.message());
+    if (auto EC = COFFObj->getSection(I, Sec)) {
+      llvm::errs() << "getSection failed: " << Name << ": "
+                   << EC.message() << "\n";
+      return make_error_code(LLDError::BrokenFile);
+    }
+    if (auto EC = COFFObj->getSectionName(Sec, Name)) {
+      llvm::errs() << "getSectionName failed: " << Name << ": "
+                   << EC.message() << "\n";
+      return make_error_code(LLDError::BrokenFile);
+    }
     if (Name == ".drectve") {
       ArrayRef<uint8_t> Data;
       COFFObj->getSectionContents(Sec, Data);
-      Directives = StringRef((char *)Data.data(), Data.size()).trim();
+      Directives = StringRef((const char *)Data.data(), Data.size()).trim();
       continue;
     }
     if (Name.startswith(".debug"))
@@ -159,16 +151,20 @@ std::error_code ObjectFile::initializeSymbols() {
   for (uint32_t I = 0; I < NumSymbols; ++I) {
     // Get a COFFSymbolRef object.
     auto SymOrErr = COFFObj->getSymbol(I);
-    if (auto EC = SymOrErr.getError())
-      return make_dynamic_error_code(Twine("broken object file: ") + Filename +
-                                     ": " + EC.message());
+    if (auto EC = SymOrErr.getError()) {
+      llvm::errs() << "broken object file: " << getName() << ": "
+                   << EC.message() << "\n";
+      return make_error_code(LLDError::BrokenFile);
+    }
     COFFSymbolRef Sym = SymOrErr.get();
 
     // Get a symbol name.
     StringRef SymbolName;
-    if (auto EC = COFFObj->getSymbolName(Sym, SymbolName))
-      return make_dynamic_error_code(Twine("broken object file: ") + Filename +
-                                     ": " + EC.message());
+    if (auto EC = COFFObj->getSymbolName(Sym, SymbolName)) {
+      llvm::errs() << "broken object file: " << getName() << ": "
+                   << EC.message() << "\n";
+      return make_error_code(LLDError::BrokenFile);
+    }
     // Skip special symbols.
     if (SymbolName == "@comp.id" || SymbolName == "@feat.00")
       continue;
@@ -192,7 +188,7 @@ std::error_code ObjectFile::initializeSymbols() {
 SymbolBody *ObjectFile::createSymbolBody(StringRef Name, COFFSymbolRef Sym,
                                          const void *AuxP, bool IsFirst) {
   if (Sym.isUndefined())
-    return new Undefined(Name);
+    return new (Alloc) Undefined(Name);
   if (Sym.isCommon()) {
     Chunk *C = new (Alloc) CommonChunk(Sym);
     Chunks.push_back(C);
@@ -205,13 +201,16 @@ SymbolBody *ObjectFile::createSymbolBody(StringRef Name, COFFSymbolRef Sym,
     auto *Aux = (const coff_aux_weak_external *)AuxP;
     return new (Alloc) Undefined(Name, &SparseSymbolBodies[Aux->TagIndex]);
   }
+  // Handle associative sections
   if (IsFirst && AuxP) {
     if (Chunk *C = SparseChunks[Sym.getSectionNumber()]) {
-      auto *Aux = (coff_aux_section_definition *)AuxP;
-      auto *Parent =
+      auto *Aux = reinterpret_cast<const coff_aux_section_definition *>(AuxP);
+      if (Aux->Selection == IMAGE_COMDAT_SELECT_ASSOCIATIVE) {
+        auto *Parent =
           (SectionChunk *)(SparseChunks[Aux->getNumber(Sym.isBigObj())]);
-      if (Parent)
-        Parent->addAssociative((SectionChunk *)C);
+        if (Parent)
+          Parent->addAssociative((SectionChunk *)C);
+      }
     }
   }
   if (Chunk *C = SparseChunks[Sym.getSectionNumber()])
@@ -220,19 +219,25 @@ SymbolBody *ObjectFile::createSymbolBody(StringRef Name, COFFSymbolRef Sym,
 }
 
 std::error_code ImportFile::parse() {
-  const char *Buf = MBRef.getBufferStart();
-  const char *End = MBRef.getBufferEnd();
+  const char *Buf = MB.getBufferStart();
+  const char *End = MB.getBufferEnd();
   const auto *Hdr = reinterpret_cast<const coff_import_header *>(Buf);
 
   // Check if the total size is valid.
-  if (End - Buf != sizeof(*Hdr) + Hdr->SizeOfData)
-    return make_dynamic_error_code("broken import library");
+  if ((size_t)(End - Buf) != (sizeof(*Hdr) + Hdr->SizeOfData)) {
+    llvm::errs() << "broken import library\n";
+    return make_error_code(LLDError::BrokenFile);
+  }
 
   // Read names and create an __imp_ symbol.
   StringRef Name = StringAlloc.save(StringRef(Buf + sizeof(*Hdr)));
   StringRef ImpName = StringAlloc.save(Twine("__imp_") + Name);
   StringRef DLLName(Buf + sizeof(coff_import_header) + Name.size() + 1);
-  auto *ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, Name, Hdr);
+  StringRef ExternalName = Name;
+  if (Hdr->getNameType() == llvm::COFF::IMPORT_ORDINAL)
+    ExternalName = "";
+  auto *ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, ExternalName,
+                                               Hdr);
   SymbolBodies.push_back(ImpSym);
 
   // If type is function, we need to create a thunk which jump to an
@@ -240,6 +245,45 @@ std::error_code ImportFile::parse() {
   // DLL functions just like regular non-DLL functions.)
   if (Hdr->getType() == llvm::COFF::IMPORT_CODE)
     SymbolBodies.push_back(new (Alloc) DefinedImportThunk(Name, ImpSym));
+  return std::error_code();
+}
+
+std::error_code BitcodeFile::parse() {
+  std::string Err;
+  M.reset(LTOModule::createFromBuffer(MB.getBufferStart(),
+                                      MB.getBufferSize(),
+                                      llvm::TargetOptions(), Err));
+  if (!Err.empty()) {
+    llvm::errs() << Err << '\n';
+    return make_error_code(LLDError::BrokenFile);
+  }
+
+  for (unsigned I = 0, E = M->getSymbolCount(); I != E; ++I) {
+    StringRef SymName = M->getSymbolName(I);
+    if ((M->getSymbolAttributes(I) & LTO_SYMBOL_DEFINITION_MASK) ==
+        LTO_SYMBOL_DEFINITION_UNDEFINED) {
+      SymbolBodies.push_back(new (Alloc) Undefined(SymName));
+    } else {
+      SymbolBodies.push_back(new (Alloc) DefinedBitcode(SymName));
+    }
+  }
+
+  // Extract any linker directives from the bitcode file, which are represented
+  // as module flags with the key "Linker Options".
+  llvm::SmallVector<llvm::Module::ModuleFlagEntry, 8> Flags;
+  M->getModule().getModuleFlagsMetadata(Flags);
+  for (auto &&Flag : Flags) {
+    if (Flag.Key->getString() != "Linker Options")
+      continue;
+
+    for (llvm::Metadata *Op : cast<llvm::MDNode>(Flag.Val)->operands()) {
+      for (llvm::Metadata *InnerOp : cast<llvm::MDNode>(Op)->operands()) {
+        Directives += " ";
+        Directives += cast<llvm::MDString>(InnerOp)->getString();
+      }
+    }
+  }
+
   return std::error_code();
 }
 

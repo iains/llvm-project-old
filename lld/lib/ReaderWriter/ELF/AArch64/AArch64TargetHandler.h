@@ -17,19 +17,45 @@
 
 namespace lld {
 namespace elf {
+
 class AArch64LinkingContext;
+class AArch64GOTSection;
 
 class AArch64TargetLayout final : public TargetLayout<ELF64LE> {
-public:
-  AArch64TargetLayout(ELFLinkingContext &ctx) : TargetLayout(ctx) {}
+  typedef llvm::object::Elf_Shdr_Impl<ELF64LE> Elf_Shdr;
 
-  uint64_t getAlignedTLSSize() const {
-    return llvm::RoundUpToAlignment(TCB_ALIGNMENT, this->getTLSSize());
+public:
+  AArch64TargetLayout(ELFLinkingContext &ctx);
+
+  AtomSection<ELF64LE> *
+  createSection(StringRef name, int32_t type,
+                DefinedAtom::ContentPermissions permissions,
+                TargetLayout<ELF64LE>::SectionOrder order) override;
+
+  const AArch64GOTSection &getGOTSection() const { return *_gotSection; }
+
+  uint64_t getTPOffset() {
+    std::call_once(_tpOffOnce, [this]() {
+      for (const auto &phdr : *_programHeader) {
+        if (phdr->p_type == llvm::ELF::PT_TLS) {
+          _tpOff = llvm::RoundUpToAlignment(TCB_SIZE, phdr->p_align);
+          break;
+        }
+      }
+      assert(_tpOff != 0 && "TLS segment not found");
+    });
+    return _tpOff;
   }
 
 private:
-  // Alignment requirement for TCB.
-  enum { TCB_ALIGNMENT = 0x10 };
+  enum {
+    TCB_SIZE = 16,
+  };
+
+private:
+  AArch64GOTSection *_gotSection;
+  uint64_t _tpOff = 0;
+  std::once_flag _tpOffOnce;
 };
 
 class AArch64TargetHandler final : public TargetHandler {

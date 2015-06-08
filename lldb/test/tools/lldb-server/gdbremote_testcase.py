@@ -395,7 +395,7 @@ class GdbRemoteTestCaseBase(TestBase):
                 inferior_exe_path = os.path.abspath("a.out")
 
             if lldb.remote_platform:
-                remote_path = lldbutil.append_to_remote_wd(os.path.basename(inferior_exe_path))
+                remote_path = lldbutil.append_to_process_working_directory(os.path.basename(inferior_exe_path))
                 remote_file_spec = lldb.SBFileSpec(remote_path, False)
                 err = lldb.remote_platform.Install(lldb.SBFileSpec(inferior_exe_path, True), remote_file_spec)
                 if err.Fail():
@@ -1065,6 +1065,9 @@ class GdbRemoteTestCaseBase(TestBase):
             # This is a 2-letter register name that ends in "s", like a segment register.
             # Don't try to bit flip these.
             return False
+        if re.match("^(c|)psr$", reg_info["name"]):
+            # This is an ARM program status register; don't flip it.
+            return False
         # Okay, this looks fine-enough.
         return True
 
@@ -1147,7 +1150,8 @@ class GdbRemoteTestCaseBase(TestBase):
             context = self.expect_gdbremote_sequence()
             self.assertIsNotNone(context)
             self.assertIsNotNone(context.get("stop_signo"))
-            self.assertEquals(int(context.get("stop_signo"), 16), signal.SIGTRAP)
+            self.assertEquals(int(context.get("stop_signo"), 16),
+                    lldbutil.get_signal_number('SIGTRAP'))
 
             single_step_count += 1
 

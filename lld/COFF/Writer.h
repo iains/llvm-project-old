@@ -10,6 +10,7 @@
 #ifndef LLD_COFF_WRITER_H
 #define LLD_COFF_WRITER_H
 
+#include "DLL.h"
 #include "InputFiles.h"
 #include "SymbolTable.h"
 #include "llvm/Support/FileOutputBuffer.h"
@@ -43,7 +44,7 @@ public:
   uint32_t getCharacteristics() { return Header.Characteristics; }
   uint64_t getRVA() { return Header.VirtualAddress; }
   uint64_t getFileOff() { return Header.PointerToRawData; }
-  void writeHeader(uint8_t *Buf);
+  void writeHeaderTo(uint8_t *Buf);
 
   // Returns the size of this section in an executable memory image.
   // This may be smaller than the raw size (the raw size is multiple
@@ -92,12 +93,10 @@ private:
 
   SymbolTable *Symtab;
   std::unique_ptr<llvm::FileOutputBuffer> Buffer;
-  std::vector<std::unique_ptr<OutputSection>> OutputSections;
-  Chunk *ImportAddressTable = nullptr;
-  uint32_t ImportDirectoryTableSize = 0;
-  uint32_t ImportAddressTableSize = 0;
+  llvm::SpecificBumpPtrAllocator<OutputSection> CAlloc;
+  std::vector<OutputSection *> OutputSections;
+  std::unique_ptr<IdataContents> Idata;
 
-  Defined *Entry;
   uint64_t FileSize;
   uint64_t SizeOfImage;
   uint64_t SizeOfHeaders;

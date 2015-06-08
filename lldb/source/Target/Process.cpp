@@ -1429,6 +1429,9 @@ Process::GetExitDescription ()
 bool
 Process::SetExitStatus (int status, const char *cstr)
 {
+    // Use a mutex to protect setting the exit status.
+    Mutex::Locker locker (m_exit_status_mutex);
+
     Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_STATE | LIBLLDB_LOG_PROCESS));
     if (log)
         log->Printf("Process::SetExitStatus (status=%i (0x%8.8x), description=%s%s%s)", 
@@ -1444,21 +1447,16 @@ Process::SetExitStatus (int status, const char *cstr)
             log->Printf("Process::SetExitStatus () ignoring exit status because state was already set to eStateExited");
         return false;
     }
-    
-    // use a mutex to protect the status and string during updating
-    {
-        Mutex::Locker locker (m_exit_status_mutex);
 
-        m_exit_status = status;
-        if (cstr)
-            m_exit_string = cstr;
-        else
-            m_exit_string.clear();
-    }
+    m_exit_status = status;
+    if (cstr)
+        m_exit_string = cstr;
+    else
+        m_exit_string.clear();
 
     // When we exit, we no longer need to the communication channel
-    m_stdio_communication.StopReadThread();
     m_stdio_communication.Disconnect();
+    m_stdio_communication.StopReadThread();
     m_stdin_forward = false;
 
     // And we don't need the input reader anymore as well
@@ -4038,8 +4036,8 @@ Process::Destroy (bool force_kill)
             DidDestroy();
             StopPrivateStateThread();
         }
-        m_stdio_communication.StopReadThread();
         m_stdio_communication.Disconnect();
+        m_stdio_communication.StopReadThread();
         m_stdin_forward = false;
 
         if (m_process_input_reader)

@@ -9,6 +9,7 @@
 #ifndef LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_LAYOUT_H
 #define LLD_READER_WRITER_ELF_MIPS_MIPS_TARGET_LAYOUT_H
 
+#include "MipsAbiInfoHandler.h"
 #include "MipsSectionChunks.h"
 #include "TargetLayout.h"
 
@@ -21,11 +22,12 @@ class MipsLinkingContext;
 template <class ELFT> class MipsTargetLayout final : public TargetLayout<ELFT> {
 public:
   enum MipsSectionOrder {
-    ORDER_MIPS_REGINFO = TargetLayout<ELFT>::ORDER_RO_NOTE + 1,
-    ORDER_MIPS_OPTIONS
+    ORDER_MIPS_ABI_FLAGS = TargetLayout<ELFT>::ORDER_RO_NOTE + 1,
+    ORDER_MIPS_REGINFO,
+    ORDER_MIPS_OPTIONS,
   };
 
-  MipsTargetLayout(MipsLinkingContext &ctx);
+  MipsTargetLayout(MipsLinkingContext &ctx, MipsAbiInfoHandler<ELFT> &abi);
 
   const MipsGOTSection<ELFT> &getGOTSection() const { return *_gotSection; }
   const MipsPLTSection<ELFT> &getPLTSection() const { return *_pltSection; }
@@ -53,8 +55,10 @@ protected:
   unique_bump_ptr<RelocationTable<ELFT>>
   createRelocationTable(StringRef name, int32_t order) override;
   uint64_t getLookupSectionFlags(const OutputSection<ELFT> *os) const override;
+  void sortSegments() override;
 
 private:
+  MipsAbiInfoHandler<ELFT> &_abiInfo;
   MipsGOTSection<ELFT> *_gotSection;
   MipsPLTSection<ELFT> *_pltSection;
   uint64_t _gpAddr = 0;

@@ -42,7 +42,10 @@ public:
   // Returns the size of this chunk (even if this is a common or BSS.)
   virtual size_t getSize() const = 0;
 
-  // Write this chunk to a mmap'ed file. Buf is pointing to beginning of file.
+  // Write this chunk to a mmap'ed file, assuming Buf is pointing to
+  // beginning of the file. Because this function may use RVA values
+  // of other chunks for relocations, you need to set them properly
+  // before calling this function.
   virtual void writeTo(uint8_t *Buf) {}
 
   // The writer sets and uses the addresses.
@@ -51,12 +54,6 @@ public:
   uint32_t getAlign() { return Align; }
   void setRVA(uint64_t V) { RVA = V; }
   void setFileOff(uint64_t V) { FileOff = V; }
-
-  // Applies relocations, assuming Buffer points to beginning of an
-  // mmap'ed output file. Because this function uses file offsets and
-  // RVA values of other chunks, you need to set them properly before
-  // calling this function.
-  virtual void applyRelocations(uint8_t *Buf) {}
 
   // Returns true if this has non-zero data. BSS chunks return
   // false. If false is returned, the space occupied by this chunk
@@ -73,7 +70,7 @@ public:
   }
 
   // Called if the garbage collector decides to not include this chunk
-  // in a final output. It's supposed to print out a log message to stderr.
+  // in a final output. It's supposed to print out a log message to stdout.
   // It is illegal to call this function on non-section chunks because
   // only section chunks are subject of garbage collection.
   virtual void printDiscardedMessage() {
@@ -116,7 +113,6 @@ public:
                uint32_t SectionIndex);
   size_t getSize() const override { return Header->SizeOfRawData; }
   void writeTo(uint8_t *Buf) override;
-  void applyRelocations(uint8_t *Buf) override;
   bool hasData() const override;
   uint32_t getPermissions() const override;
   StringRef getSectionName() const override { return SectionName; }
@@ -149,7 +145,7 @@ private:
 // A chunk for common symbols. Common chunks don't have actual data.
 class CommonChunk : public Chunk {
 public:
-  CommonChunk(const COFFSymbolRef S) : Sym(S) {}
+  CommonChunk(const COFFSymbolRef Sym);
   size_t getSize() const override { return Sym.getValue(); }
   bool hasData() const override { return false; }
   uint32_t getPermissions() const override;
@@ -170,14 +166,11 @@ private:
   StringRef Str;
 };
 
-// All chunks below are for the DLL import descriptor table and
-// Windows-specific. You may need to read the Microsoft PE/COFF spec
-// to understand details about the data structures.
-
 static const uint8_t ImportThunkData[] = {
     0xff, 0x25, 0x00, 0x00, 0x00, 0x00, // JMP *0x0
 };
 
+// Windows-specific.
 // A chunk for DLL import jump table entry. In a final output, it's
 // contents will be a JMP instruction to some __imp_ symbol.
 class ImportThunkChunk : public Chunk {
@@ -185,71 +178,9 @@ public:
   explicit ImportThunkChunk(Defined *S) : ImpSymbol(S) {}
   size_t getSize() const override { return sizeof(ImportThunkData); }
   void writeTo(uint8_t *Buf) override;
-  void applyRelocations(uint8_t *Buf) override;
 
 private:
   Defined *ImpSymbol;
-};
-
-// A chunk for the import descriptor table.
-class HintNameChunk : public Chunk {
-public:
-  HintNameChunk(StringRef Name, uint16_t Hint);
-  size_t getSize() const override { return Size; }
-  void writeTo(uint8_t *Buf) override;
-
-private:
-  StringRef Name;
-  uint16_t Hint;
-  size_t Size;
-};
-
-// A chunk for the import descriptor table.
-class LookupChunk : public Chunk {
-public:
-  explicit LookupChunk(HintNameChunk *H) : HintName(H) {}
-  bool hasData() const override { return false; }
-  size_t getSize() const override { return sizeof(uint64_t); }
-  void applyRelocations(uint8_t *Buf) override;
-  HintNameChunk *HintName;
-};
-
-// A chunk for the import descriptor table.
-class DirectoryChunk : public Chunk {
-public:
-  explicit DirectoryChunk(StringChunk *N) : DLLName(N) {}
-  bool hasData() const override { return false; }
-  size_t getSize() const override { return sizeof(ImportDirectoryTableEntry); }
-  void applyRelocations(uint8_t *Buf) override;
-
-  StringChunk *DLLName;
-  LookupChunk *LookupTab;
-  LookupChunk *AddressTab;
-};
-
-// A chunk for the import descriptor table representing.
-// Contents of this chunk is always null bytes.
-// This is used for terminating import tables.
-class NullChunk : public Chunk {
-public:
-  explicit NullChunk(size_t N) : Size(N) {}
-  bool hasData() const override { return false; }
-  size_t getSize() const override { return Size; }
-
-private:
-  size_t Size;
-};
-
-// ImportTable creates a set of import table chunks for a given
-// DLL-imported symbols.
-class ImportTable {
-public:
-  ImportTable(StringRef DLLName, std::vector<DefinedImportData *> &Symbols);
-  StringChunk *DLLName;
-  DirectoryChunk *DirTab;
-  std::vector<LookupChunk *> LookupTables;
-  std::vector<LookupChunk *> AddressTables;
-  std::vector<HintNameChunk *> HintNameTables;
 };
 
 } // namespace coff

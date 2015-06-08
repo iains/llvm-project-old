@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "MipsELFFile.h"
+#include "MipsTargetHandler.h"
+#include "llvm/ADT/StringExtras.h"
 
 namespace lld {
 namespace elf {
@@ -155,6 +157,31 @@ MipsELFFile<ELFT>::findRegInfoSec() const {
   return nullptr;
 }
 
+template <class ELFT>
+ErrorOr<const typename MipsELFFile<ELFT>::Elf_Mips_ABIFlags *>
+MipsELFFile<ELFT>::findAbiFlagsSec() const {
+  const Elf_Shdr *sec = findSectionByType(SHT_MIPS_ABIFLAGS);
+  if (!sec)
+    return nullptr;
+
+  auto contents = this->getSectionContents(sec);
+  if (std::error_code ec = contents.getError())
+    return ec;
+
+  ArrayRef<uint8_t> raw = contents.get();
+  if (raw.size() != sizeof(Elf_Mips_ABIFlags))
+    return make_dynamic_error_code(
+        StringRef("Invalid size of MIPS_ABIFLAGS section"));
+
+  const auto *abi = reinterpret_cast<const Elf_Mips_ABIFlags *>(raw.data());
+  if (abi->version != 0)
+    return make_dynamic_error_code(
+        StringRef(".MIPS.abiflags section has unsupported version '") +
+        llvm::utostr(abi->version) + "'");
+
+  return abi;
+}
+
 template <class ELFT> std::error_code MipsELFFile<ELFT>::readAuxData() {
   using namespace llvm::ELF;
   if (const Elf_Shdr *sec = findSectionByFlags(SHF_TLS)) {
@@ -162,18 +189,24 @@ template <class ELFT> std::error_code MipsELFFile<ELFT>::readAuxData() {
     _dtpOff = sec->sh_addr + DTP_OFFSET;
   }
 
-  auto &ctx = static_cast<MipsLinkingContext &>(this->_ctx);
+  auto &handler =
+      static_cast<MipsTargetHandler<ELFT> &>(this->_ctx.getTargetHandler());
+  auto &abi = handler.getAbiInfoHandler();
 
   ErrorOr<const Elf_Mips_RegInfo *> regInfoSec = findRegInfoSec();
   if (auto ec = regInfoSec.getError())
     return ec;
   if (const Elf_Mips_RegInfo *regInfo = regInfoSec.get()) {
-    ctx.mergeReginfoMask(*regInfo);
+    abi.mergeRegistersMask(*regInfo);
     _gp0 = regInfo->ri_gp_value;
   }
 
+  ErrorOr<const Elf_Mips_ABIFlags *> abiFlagsSec = findAbiFlagsSec();
+  if (auto ec = abiFlagsSec.getError())
+    return ec;
+
   const Elf_Ehdr *hdr = this->_objFile->getHeader();
-  if (std::error_code ec = ctx.mergeElfFlags(hdr->e_flags))
+  if (std::error_code ec = abi.mergeFlags(hdr->e_flags, abiFlagsSec.get()))
     return ec;
 
   return std::error_code();
