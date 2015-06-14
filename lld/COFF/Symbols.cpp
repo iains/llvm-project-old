@@ -21,14 +21,31 @@ using llvm::sys::fs::file_magic;
 namespace lld {
 namespace coff {
 
+// As an approximation, regular symbols win over bitcode symbols, but we
+// definitely have a conflict if the regular symbol is not replaceable and
+// neither is the bitcode symbol. We do not replicate the rest of the symbol
+// resolution logic here; symbol resolution will be done accurately after
+// lowering bitcode symbols to regular symbols in addCombinedLTOObject().
+static int compareRegularBitcode(DefinedRegular *R, DefinedBitcode *B) {
+  if (!R->isCommon() && !R->isCOMDAT() && !B->isReplaceable())
+    return 0;
+  return 1;
+}
+
 // Returns 1, 0 or -1 if this symbol should take precedence over the
 // Other in the symbol table, tie or lose, respectively.
 int Defined::compare(SymbolBody *Other) {
   if (!isa<Defined>(Other))
     return 1;
   auto *X = dyn_cast<DefinedRegular>(this);
+  if (!X)
+    return 0;
+
+  if (auto *B = dyn_cast<DefinedBitcode>(Other))
+    return compareRegularBitcode(X, B);
+
   auto *Y = dyn_cast<DefinedRegular>(Other);
-  if (!X || !Y)
+  if (!Y)
     return 0;
 
   // Common symbols are weaker than other types of defined symbols.
@@ -43,6 +60,22 @@ int Defined::compare(SymbolBody *Other) {
 
   if (X->isCOMDAT() && Y->isCOMDAT())
     return 1;
+  return 0;
+}
+
+int DefinedBitcode::compare(SymbolBody *Other) {
+  if (!isa<Defined>(Other))
+    return 1;
+
+  if (auto *R = dyn_cast<DefinedRegular>(Other))
+    return -compareRegularBitcode(R, this);
+
+  if (auto *B = dyn_cast<DefinedBitcode>(Other)) {
+    if (!isReplaceable() && !B->isReplaceable())
+      return 0;
+    // Non-replaceable symbols win.
+    return isReplaceable() ? -1 : 1;
+  }
   return 0;
 }
 
@@ -67,6 +100,20 @@ int Undefined::compare(SymbolBody *Other) {
   if (cast<Undefined>(Other)->getWeakAlias())
     return -1;
   return 1;
+}
+
+StringRef DefinedRegular::getName() {
+  // DefinedSymbol's name is read lazily for a performance reason.
+  // Non-external symbol names are never used by the linker
+  // except for logging or debugging.
+  // Their internal references are resolved not by name but by symbol index.
+  // And because they are not external, no one can refer them by name.
+  // Object files contain lots of non-external symbols, and creating
+  // StringRefs for them (which involves lots of strlen() on the string table)
+  // is a waste of time.
+  if (Name.empty())
+    COFFFile->getSymbolName(Sym, Name);
+  return Name;
 }
 
 ErrorOr<std::unique_ptr<InputFile>> Lazy::getMember() {

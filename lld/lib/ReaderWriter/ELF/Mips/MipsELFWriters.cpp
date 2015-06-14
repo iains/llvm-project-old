@@ -36,19 +36,19 @@ void MipsELFWriter<ELFT>::setELFHeader(ELFHeader<ELFT> &elfHeader) {
   elfHeader.e_version(1);
   elfHeader.e_ident(llvm::ELF::EI_VERSION, llvm::ELF::EV_CURRENT);
   elfHeader.e_ident(llvm::ELF::EI_OSABI, llvm::ELF::ELFOSABI_NONE);
-  if (_targetLayout.findOutputSection(".got.plt"))
-    elfHeader.e_ident(llvm::ELF::EI_ABIVERSION, 1);
-  else
-    elfHeader.e_ident(llvm::ELF::EI_ABIVERSION, 0);
 
+  unsigned char abiVer = 0;
+  if (_ctx.getOutputELFType() == ET_EXEC && _abiInfo.isCPicOnly())
+    abiVer = 1;
+  if (_abiInfo.isFp64())
+    abiVer = 3;
+
+  elfHeader.e_ident(llvm::ELF::EI_ABIVERSION, abiVer);
   elfHeader.e_flags(_abiInfo.getFlags());
 }
 
 template <class ELFT>
 void MipsELFWriter<ELFT>::finalizeMipsRuntimeAtomValues() {
-  if (!_ctx.isDynamic())
-    return;
-
   auto gotSection = _targetLayout.findOutputSection(".got");
   auto got = gotSection ? gotSection->virtualAddr() : 0;
   auto gp = gotSection ? got + _targetLayout.getGPOffset() : 0;
@@ -61,12 +61,11 @@ void MipsELFWriter<ELFT>::finalizeMipsRuntimeAtomValues() {
 template <class ELFT>
 std::unique_ptr<RuntimeFile<ELFT>> MipsELFWriter<ELFT>::createRuntimeFile() {
   auto file = llvm::make_unique<RuntimeFile<ELFT>>(_ctx, "Mips runtime file");
-  if (_ctx.isDynamic()) {
-    file->addAbsoluteAtom("_gp");
-    file->addAbsoluteAtom("_gp_disp");
-    file->addAbsoluteAtom("__gnu_local_gp");
+  file->addAbsoluteAtom("_gp");
+  file->addAbsoluteAtom("_gp_disp");
+  file->addAbsoluteAtom("__gnu_local_gp");
+  if (_ctx.isDynamic())
     file->addAtom(*new (file->allocator()) MipsDynamicAtom(*file));
-  }
   return file;
 }
 

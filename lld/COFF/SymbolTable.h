@@ -11,9 +11,12 @@
 #define LLD_COFF_SYMBOL_TABLE_H
 
 #include "InputFiles.h"
-#include "Memory.h"
 #include "llvm/Support/Allocator.h"
 #include <unordered_map>
+
+namespace llvm {
+struct LTOCodeGenerator;
+}
 
 namespace lld {
 namespace coff {
@@ -86,15 +89,16 @@ private:
 
   std::error_code resolve(SymbolBody *Body);
   std::error_code addMemberFile(Lazy *Body);
+  ErrorOr<ObjectFile *> createLTOObject(llvm::LTOCodeGenerator *CG);
 
   std::unordered_map<StringRef, Symbol *> Symtab;
   std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
   std::vector<std::unique_ptr<BitcodeFile>> BitcodeFiles;
-  std::unique_ptr<MemoryBuffer> LTOObjectFile;
+  std::unique_ptr<MemoryBuffer> LTOMB;
   llvm::BumpPtrAllocator Alloc;
 };
 
-} // namespace pecoff
+} // namespace coff
 } // namespace lld
 
 #endif

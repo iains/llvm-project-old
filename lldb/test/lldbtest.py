@@ -671,6 +671,12 @@ def expectedFailureOS(oslist, bugnumber=None, compilers=None):
                 self.expectedCompiler(compilers))
     return expectedFailure(fn, bugnumber)
 
+def expectedFailureHostOS(oslist, bugnumber=None, compilers=None):
+    def fn(self):
+        return (getHostPlatform() in oslist and
+                self.expectedCompiler(compilers))
+    return expectedFailure(fn, bugnumber)
+
 def expectedFailureDarwin(bugnumber=None, compilers=None):
     # For legacy reasons, we support both "darwin" and "macosx" as OS X triples.
     return expectedFailureOS(getDarwinOSTriples(), bugnumber, compilers)
@@ -683,6 +689,9 @@ def expectedFailureLinux(bugnumber=None, compilers=None):
 
 def expectedFailureWindows(bugnumber=None, compilers=None):
     return expectedFailureOS(['windows'], bugnumber, compilers)
+
+def expectedFailureHostWindows(bugnumber=None, compilers=None):
+    return expectedFailureHostOS(['windows'], bugnumber, compilers)
 
 def expectedFailureAndroid(bugnumber=None, api_levels=None):
     """ Mark a test as xfail for Android.
@@ -778,6 +787,10 @@ def skipIfWindows(func):
     """Decorate the item to skip tests that should be skipped on Windows."""
     return skipIfPlatform(["windows"])(func)
 
+def skipIfHostWindows(func):
+    """Decorate the item to skip tests that should be skipped on Windows."""
+    return skipIfHostPlatform(["windows"])(func)
+
 def skipUnlessDarwin(func):
     """Decorate the item to skip tests that should be skipped on any non Darwin platform."""
     return skipUnlessPlatform(getDarwinOSTriples())(func)
@@ -826,6 +839,16 @@ def skipIfHostIncompatibleWithRemote(func):
         else:
             func(*args, **kwargs)
     return wrapper
+
+def skipIfHostPlatform(oslist):
+    """Decorate the item to skip tests if running on one of the listed host platforms."""
+    return unittest2.skipIf(getHostPlatform() in oslist,
+                            "skip on %s" % (", ".join(oslist)))
+
+def skipUnlessHostPlatform(oslist):
+    """Decorate the item to skip tests unless running on one of the listed host platforms."""
+    return unittest2.skipUnless(getHostPlatform() in oslist,
+                                "requires on of %s" % (", ".join(oslist)))
 
 def skipIfPlatform(oslist):
     """Decorate the item to skip tests if running on one of the listed platforms."""
