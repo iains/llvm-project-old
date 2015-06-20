@@ -32,7 +32,7 @@ namespace coff {
 
 // Returns the last element of a path, which is supposed to be a filename.
 static StringRef getBasename(StringRef Path) {
-  size_t Pos = Path.rfind('\\');
+  size_t Pos = Path.find_last_of("\\/");
   if (Pos == StringRef::npos)
     return Path;
   return Path.substr(Pos + 1);
@@ -61,10 +61,10 @@ std::error_code ArchiveFile::parse() {
   // Read the symbol table to construct Lazy objects.
   uint32_t I = 0;
   for (const Archive::Symbol &Sym : File->symbols()) {
+    auto *B = new (&Buf[I++]) Lazy(this, Sym);
     // Skip special symbol exists in import library files.
-    if (Sym.getName() == "__NULL_IMPORT_DESCRIPTOR")
-      continue;
-    SymbolBodies.push_back(new (&Buf[I++]) Lazy(this, Sym));
+    if (B->getName() != "__NULL_IMPORT_DESCRIPTOR")
+      SymbolBodies.push_back(B);
   }
   return std::error_code();
 }
@@ -184,7 +184,7 @@ SymbolBody *ObjectFile::createSymbolBody(COFFSymbolRef Sym, const void *AuxP,
   if (Sym.isCommon()) {
     Chunk *C = new (Alloc) CommonChunk(Sym);
     Chunks.push_back(C);
-    return new (Alloc) DefinedRegular(COFFObj.get(), Sym, C);
+    return new (Alloc) DefinedCommon(COFFObj.get(), Sym, C);
   }
   if (Sym.isAbsolute()) {
     COFFObj->getSymbolName(Sym, Name);
@@ -256,12 +256,13 @@ std::error_code BitcodeFile::parse() {
     return make_error_code(LLDError::BrokenFile);
   }
 
+  llvm::BumpPtrStringSaver Saver(Alloc);
   for (unsigned I = 0, E = M->getSymbolCount(); I != E; ++I) {
     lto_symbol_attributes Attrs = M->getSymbolAttributes(I);
     if ((Attrs & LTO_SYMBOL_SCOPE_MASK) == LTO_SYMBOL_SCOPE_INTERNAL)
       continue;
 
-    StringRef SymName = M->getSymbolName(I);
+    StringRef SymName = Saver.save(M->getSymbolName(I));
     int SymbolDef = Attrs & LTO_SYMBOL_DEFINITION_MASK;
     if (SymbolDef == LTO_SYMBOL_DEFINITION_UNDEFINED) {
       SymbolBodies.push_back(new (Alloc) Undefined(SymName));
@@ -269,6 +270,14 @@ std::error_code BitcodeFile::parse() {
       bool Replaceable = (SymbolDef == LTO_SYMBOL_DEFINITION_TENTATIVE ||
                           (Attrs & LTO_SYMBOL_COMDAT));
       SymbolBodies.push_back(new (Alloc) DefinedBitcode(SymName, Replaceable));
+
+      const llvm::GlobalValue *GV = M->getSymbolGV(I);
+      if (GV && GV->hasDLLExportStorageClass()) {
+        Directives += " /export:";
+        Directives += SymName;
+        if (!GV->getValueType()->isFunctionTy())
+          Directives += ",data";
+      }
     }
   }
 

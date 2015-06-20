@@ -128,6 +128,7 @@ std::error_code SymbolTable::resolve(SymbolBody *New) {
   if (!Sym) {
     Sym = new (Alloc) Symbol(New);
     New->setBackref(Sym);
+    ++Version;
     return std::error_code();
   }
   New->setBackref(Sym);
@@ -136,8 +137,10 @@ std::error_code SymbolTable::resolve(SymbolBody *New) {
   // equivalent (conflicting), or more preferable, respectively.
   SymbolBody *Existing = Sym->Body;
   int comp = Existing->compare(New);
-  if (comp < 0)
+  if (comp < 0) {
     Sym->Body = New;
+    ++Version;
+  }
   if (comp == 0) {
     llvm::errs() << "duplicate symbol: " << Name << "\n";
     return make_error_code(LLDError::DuplicateSymbols);
@@ -187,8 +190,24 @@ Defined *SymbolTable::find(StringRef Name) {
   return nullptr;
 }
 
+std::error_code SymbolTable::resolveLazy(StringRef Name) {
+  auto It = Symtab.find(Name);
+  if (It != Symtab.end())
+    if (auto *B = dyn_cast<Lazy>(It->second->Body))
+      return addMemberFile(B);
+  return std::error_code();
+}
+
 // Windows specific -- Link default entry point name.
 ErrorOr<StringRef> SymbolTable::findDefaultEntry() {
+  // If it's DLL, the rule is easy.
+  if (Config->DLL) {
+    StringRef Sym = "_DllMainCRTStartup";
+    if (auto EC = resolve(new (Alloc) Undefined(Sym)))
+      return EC;
+    return Sym;
+  }
+
   // User-defined main functions and their corresponding entry points.
   static const char *Entries[][2] = {
       {"main", "mainCRTStartup"},
@@ -197,6 +216,7 @@ ErrorOr<StringRef> SymbolTable::findDefaultEntry() {
       {"wWinMain", "wWinMainCRTStartup"},
   };
   for (auto E : Entries) {
+    resolveLazy(E[1]);
     if (find(E[1]))
       return StringRef(E[1]);
     if (!find(E[0]))
@@ -215,10 +235,20 @@ std::error_code SymbolTable::addUndefined(StringRef Name) {
 
 // Resolve To, and make From an alias to To.
 std::error_code SymbolTable::rename(StringRef From, StringRef To) {
+  // If From is not undefined, do nothing.
+  // Otherwise, rename it to see if To can be resolved instead.
+  auto It = Symtab.find(From);
+  if (It == Symtab.end())
+    return std::error_code();
+  Symbol *Sym = It->second;
+  if (!isa<Undefined>(Sym->Body))
+    return std::error_code();
   SymbolBody *Body = new (Alloc) Undefined(To);
   if (auto EC = resolve(Body))
     return EC;
-  Symtab[From]->Body = Body->getReplacement();
+  Sym->Body = Body->getReplacement();
+  Body->setBackref(Sym);
+  ++Version;
   return std::error_code();
 }
 

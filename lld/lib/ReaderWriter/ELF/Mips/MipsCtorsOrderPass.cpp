@@ -49,8 +49,8 @@ static int32_t getSectionPriority(StringRef path, StringRef sectionName) {
   return priority;
 }
 
-void MipsCtorsOrderPass::perform(std::unique_ptr<SimpleFile> &f) {
-  auto definedAtoms = f->definedAtoms();
+std::error_code MipsCtorsOrderPass::perform(SimpleFile &f) {
+  auto definedAtoms = f.definedAtoms();
 
   auto last = std::stable_partition(definedAtoms.begin(), definedAtoms.end(),
                                     [](const DefinedAtom *atom) {
@@ -71,4 +71,6 @@ void MipsCtorsOrderPass::perform(std::unique_ptr<SimpleFile> &f) {
 
     return leftPriority < rightPriority;
   });
+
+  return std::error_code();
 }

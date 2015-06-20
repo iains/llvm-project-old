@@ -14,6 +14,7 @@
 #include "lld/Core/Simple.h"
 #include "lld/ReaderWriter/CoreLinkingContext.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace lld;
 
@@ -22,9 +23,10 @@ namespace {
 class OrderPass : public Pass {
 public:
   /// Sorts atoms by position
-  void perform(std::unique_ptr<SimpleFile> &file) override {
-    SimpleFile::DefinedAtomRange defined = file->definedAtoms();
+  std::error_code perform(SimpleFile &file) override {
+    SimpleFile::DefinedAtomRange defined = file.definedAtoms();
     std::sort(defined.begin(), defined.end(), DefinedAtom::compareByPosition);
+    return std::error_code();
   }
 };
 
@@ -39,10 +41,9 @@ bool CoreLinkingContext::validateImpl(raw_ostream &) {
 
 void CoreLinkingContext::addPasses(PassManager &pm) {
   for (StringRef name : _passNames) {
-    if (name.equals("order"))
-      pm.add(std::unique_ptr<Pass>(new OrderPass()));
-    else
-      llvm_unreachable("bad pass name");
+    (void)name;
+    assert(name == "order" && "bad pass name");
+    pm.add(llvm::make_unique<OrderPass>());
   }
 }
 

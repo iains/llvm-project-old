@@ -34,8 +34,8 @@ namespace coff {
 class SymbolTable {
 public:
   SymbolTable();
-
   std::error_code addFile(std::unique_ptr<InputFile> File);
+  size_t getVersion() { return Version; }
 
   // Print an error message on undefined symbols.
   bool reportRemainingUndefines();
@@ -88,6 +88,7 @@ private:
   std::error_code addBitcode(BitcodeFile *File);
 
   std::error_code resolve(SymbolBody *Body);
+  std::error_code resolveLazy(StringRef Name);
   std::error_code addMemberFile(Lazy *Body);
   ErrorOr<ObjectFile *> createLTOObject(llvm::LTOCodeGenerator *CG);
 
@@ -96,6 +97,9 @@ private:
   std::vector<std::unique_ptr<BitcodeFile>> BitcodeFiles;
   std::unique_ptr<MemoryBuffer> LTOMB;
   llvm::BumpPtrAllocator Alloc;
+
+  // This variable is incremented every time Symtab is updated.
+  size_t Version = 0;
 };
 
 } // namespace coff

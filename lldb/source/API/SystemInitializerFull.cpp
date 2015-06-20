@@ -22,6 +22,8 @@
 #include "Plugins/ABI/SysV-x86_64/ABISysV_x86_64.h"
 #include "Plugins/ABI/SysV-ppc/ABISysV_ppc.h"
 #include "Plugins/ABI/SysV-ppc64/ABISysV_ppc64.h"
+#include "Plugins/ABI/SysV-mips/ABISysV_mips.h"
+#include "Plugins/ABI/SysV-mips64/ABISysV_mips64.h"
 #include "Plugins/Disassembler/llvm/DisassemblerLLVMC.h"
 #include "Plugins/DynamicLoader/Static/DynamicLoaderStatic.h"
 #include "Plugins/Instruction/ARM64/EmulateInstructionARM64.h"
@@ -241,6 +243,8 @@ SystemInitializerFull::Initialize()
     ABISysV_x86_64::Initialize();
     ABISysV_ppc::Initialize();
     ABISysV_ppc64::Initialize();
+    ABISysV_mips::Initialize();
+    ABISysV_mips64::Initialize();
     DisassemblerLLVMC::Initialize();
 
     JITLoaderGDB::Initialize();
@@ -346,6 +350,8 @@ SystemInitializerFull::Terminate()
     ABISysV_x86_64::Terminate();
     ABISysV_ppc::Terminate();
     ABISysV_ppc64::Terminate();
+    ABISysV_mips::Terminate();
+    ABISysV_mips64::Terminate();
     DisassemblerLLVMC::Terminate();
 
     JITLoaderGDB::Terminate();

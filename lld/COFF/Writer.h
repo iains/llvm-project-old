@@ -20,9 +20,9 @@
 namespace lld {
 namespace coff {
 
-// Mask for section types (code, data or bss) and permissions
-// (writable, readable or executable).
-const uint32_t PermMask = 0xF00000F0;
+// Mask for section types (code, data, bss, disacardable, etc.)
+// and permissions (writable, readable or executable).
+const uint32_t PermMask = 0xFF0000F0;
 
 // OutputSection represents a section in an output file. It's a
 // container of chunks. OutputSection and Chunk are 1:N relationship.
@@ -78,6 +78,7 @@ private:
   void markLive();
   void createSections();
   void createImportTables();
+  void createExportTable();
   void assignAddresses();
   void removeEmptySections();
   std::error_code openFile(StringRef OutputPath);
@@ -87,6 +88,8 @@ private:
 
   OutputSection *findSection(StringRef Name);
   OutputSection *createSection(StringRef Name);
+  void addBaserels(OutputSection *Dest);
+  void addBaserelBlocks(OutputSection *Dest, std::vector<uint32_t> &V);
 
   uint32_t getSizeOfInitializedData();
   std::map<StringRef, std::vector<DefinedImportData *>> binImports();
@@ -94,8 +97,10 @@ private:
   SymbolTable *Symtab;
   std::unique_ptr<llvm::FileOutputBuffer> Buffer;
   llvm::SpecificBumpPtrAllocator<OutputSection> CAlloc;
+  llvm::SpecificBumpPtrAllocator<BaserelChunk> BAlloc;
   std::vector<OutputSection *> OutputSections;
   std::unique_ptr<IdataContents> Idata;
+  std::unique_ptr<EdataContents> Edata;
 
   uint64_t FileSize;
   uint64_t SizeOfImage;

@@ -10,6 +10,7 @@
 #ifndef LLD_COFF_DRIVER_H
 #define LLD_COFF_DRIVER_H
 
+#include "Config.h"
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
@@ -63,7 +64,7 @@ private:
 
 class LinkerDriver {
 public:
-  LinkerDriver() : Alloc(AllocAux), SearchPaths(getSearchPaths()) {}
+  LinkerDriver() : Alloc(AllocAux) {}
   bool link(int Argc, const char *Argv[]);
 
   // Used by the resolver to parse .drectve section contents.
@@ -76,7 +77,7 @@ private:
   ArgParser Parser;
 
   // Opens a file. Path has to be resolved already.
-  ErrorOr<std::unique_ptr<InputFile>> openFile(StringRef Path);
+  ErrorOr<MemoryBufferRef> openFile(StringRef Path);
 
   // Searches a file from search paths.
   Optional<StringRef> findFile(StringRef Filename);
@@ -85,16 +86,20 @@ private:
   StringRef doFindLib(StringRef Filename);
 
   // Parses LIB environment which contains a list of search paths.
-  // The returned list always contains "." as the first element.
-  std::vector<StringRef> getSearchPaths();
+  void addLibSearchPaths();
 
+  // Library search path. The first element is always "" (current directory).
   std::vector<StringRef> SearchPaths;
+
   std::set<std::string> VisitedFiles;
 
   // Driver is the owner of all opened files.
   // InputFiles have MemoryBufferRefs to them.
   std::vector<std::unique_ptr<MemoryBuffer>> OwningMBs;
 };
+
+std::error_code parseModuleDefs(MemoryBufferRef MB);
+std::error_code writeImportLibrary();
 
 // Functions below this line are defined in DriverUtils.cpp.
 
@@ -115,11 +120,32 @@ std::error_code parseVersion(StringRef Arg, uint32_t *Major, uint32_t *Minor);
 std::error_code parseSubsystem(StringRef Arg, WindowsSubsystem *Sys,
                                uint32_t *Major, uint32_t *Minor);
 
+std::error_code parseAlternateName(StringRef);
+
+// Parses a string in the form of "EMBED[,=<integer>]|NO".
+std::error_code parseManifest(StringRef Arg);
+
+// Parses a string in the form of "level=<string>|uiAccess=<string>"
+std::error_code parseManifestUAC(StringRef Arg);
+
+// Create a resource file containing a manifest XML.
+ErrorOr<std::unique_ptr<MemoryBuffer>> createManifestRes();
+std::error_code createSideBySideManifest();
+
+// Used for dllexported symbols.
+ErrorOr<Export> parseExport(StringRef Arg);
+std::error_code fixupExports();
+
 // Parses a string in the form of "key=value" and check
 // if value matches previous values for the key.
 // This feature used in the directive section to reject
 // incompatible objects.
-std::error_code checkFailIfMismatch(llvm::opt::InputArgList *Args);
+std::error_code checkFailIfMismatch(StringRef Arg);
+
+// Convert Windows resource files (.res files) to a .obj file
+// using cvtres.exe.
+ErrorOr<std::unique_ptr<MemoryBuffer>>
+convertResToCOFF(const std::vector<MemoryBufferRef> &MBs);
 
 // Create enum with OPT_xxx values for each option in Options.td
 enum {

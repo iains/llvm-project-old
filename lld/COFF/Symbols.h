@@ -45,14 +45,15 @@ class SymbolBody {
 public:
   enum Kind {
     DefinedFirst,
-    DefinedRegularKind,
+    DefinedBitcodeKind,
     DefinedAbsoluteKind,
     DefinedImportDataKind,
     DefinedImportThunkKind,
-    DefinedBitcodeKind,
+    DefinedCommonKind,
+    DefinedRegularKind,
     DefinedLast,
-    UndefinedKind,
     LazyKind,
+    UndefinedKind,
   };
 
   Kind kind() const { return SymbolKind; }
@@ -128,12 +129,34 @@ public:
   void markLive() override { Data->markLive(); }
   uint64_t getFileOff() override { return Data->getFileOff() + Sym.getValue(); }
   bool isCOMDAT() const { return Data->isCOMDAT(); }
-
-  // Returns true if this is a common symbol.
-  bool isCommon() const { return Sym.isCommon(); }
-  uint32_t getCommonSize() const { return Sym.getValue(); }
+  int compare(SymbolBody *Other) override;
 
 private:
+  StringRef Name;
+  COFFObjectFile *COFFFile;
+  COFFSymbolRef Sym;
+  Chunk *Data;
+};
+
+class DefinedCommon : public Defined {
+public:
+  DefinedCommon(COFFObjectFile *F, COFFSymbolRef S, Chunk *C)
+      : Defined(DefinedCommonKind), COFFFile(F), Sym(S), Data(C) {}
+
+  static bool classof(const SymbolBody *S) {
+    return S->kind() == DefinedCommonKind;
+  }
+
+  StringRef getName() override;
+  uint64_t getRVA() override { return Data->getRVA(); }
+  bool isExternal() override { return Sym.isExternal(); }
+  void markLive() override { Data->markLive(); }
+  uint64_t getFileOff() override { return Data->getFileOff(); }
+  int compare(SymbolBody *Other) override;
+
+private:
+  uint64_t getSize() { return Sym.getValue(); }
+
   StringRef Name;
   COFFObjectFile *COFFFile;
   COFFSymbolRef Sym;
@@ -278,7 +301,6 @@ public:
   uint64_t getRVA() override { llvm_unreachable("bitcode reached writer"); }
   uint64_t getFileOff() override { llvm_unreachable("bitcode reached writer"); }
   int compare(SymbolBody *Other) override;
-  bool isReplaceable() const { return Replaceable; }
 
 private:
   StringRef Name;

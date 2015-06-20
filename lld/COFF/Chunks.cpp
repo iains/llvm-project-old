@@ -16,12 +16,12 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 
 using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using namespace llvm::COFF;
-using llvm::RoundUpToAlignment;
 
 namespace lld {
 namespace coff {
@@ -31,9 +31,10 @@ SectionChunk::SectionChunk(ObjectFile *F, const coff_section *H, uint32_t SI)
   // Initialize SectionName.
   File->getCOFFObj()->getSectionName(Header, SectionName);
 
-  // Bit [20:24] contains section alignment.
-  unsigned Shift = ((Header->Characteristics & 0xF00000) >> 20) - 1;
-  Align = uint32_t(1) << Shift;
+  // Bit [20:24] contains section alignment. Both 0 and 1 mean alignment 1.
+  unsigned Shift = (Header->Characteristics >> 20) & 0xF;
+  if (Shift > 0)
+    Align = uint32_t(1) << (Shift - 1);
 
   // When a new chunk is created, we don't if if it's going to make it
   // to the final output. Initially all sections are unmarked in terms
@@ -63,8 +64,7 @@ void SectionChunk::writeTo(uint8_t *Buf) {
 }
 
 void SectionChunk::mark() {
-  if (Live)
-    return;
+  assert(!Live);
   Live = true;
 
   // Mark all symbols listed in the relocation table for this section.
@@ -114,6 +114,25 @@ void SectionChunk::applyReloc(uint8_t *Buf, const coff_relocation *Rel) {
   }
 }
 
+// Windows-specific.
+// Collect all locations that contain absolute 64-bit addresses,
+// which need to be fixed by the loader if load-time relocation is needed.
+// Only called when base relocation is enabled.
+void SectionChunk::getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) {
+  for (const auto &I : getSectionRef().relocations()) {
+    // ADDR64 relocations contain absolute addresses.
+    // Symbol __ImageBase is special -- it's an absolute symbol, but its
+    // address never changes even if image is relocated.
+    const coff_relocation *Rel = File->getCOFFObj()->getCOFFRelocation(I);
+    if (Rel->Type != IMAGE_REL_AMD64_ADDR64)
+      continue;
+    SymbolBody *Body = File->getSymbolBody(Rel->SymbolTableIndex);
+    if (Body == ImageBase)
+      continue;
+    Res->push_back(RVA + Rel->VirtualAddress);
+  }
+}
+
 bool SectionChunk::hasData() const {
   return !(Header->Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA);
 }
@@ -151,10 +170,9 @@ SectionRef SectionChunk::getSectionRef() {
 }
 
 CommonChunk::CommonChunk(const COFFSymbolRef S) : Sym(S) {
-  // Alignment is a section attribute, but common symbols don't
-  // belong to any section. How do we know common data alignments?
-  // Needs investigating. For now, we set a large number as an alignment.
-  Align = 16;
+  // Common symbols are aligned on natural boundaries up to 32 bytes.
+  // This is what MSVC link.exe does.
+  Align = std::min(uint64_t(32), NextPowerOf2(Sym.getValue()));
 }
 
 uint32_t CommonChunk::getPermissions() const {
@@ -171,6 +189,26 @@ void ImportThunkChunk::writeTo(uint8_t *Buf) {
   // The first two bytes is a JMP instruction. Fill its operand.
   uint32_t Operand = ImpSymbol->getRVA() - RVA - getSize();
   write32le(Buf + FileOff + 2, Operand);
+}
+
+// Windows-specific.
+// This class represents a block in .reloc section.
+BaserelChunk::BaserelChunk(uint32_t Page, uint32_t *Begin, uint32_t *End) {
+  // Block header consists of 4 byte page RVA and 4 byte block size.
+  // Each entry is 2 byte. Last entry may be padding.
+  Data.resize(RoundUpToAlignment((End - Begin) * 2 + 8, 4));
+  uint8_t *P = Data.data();
+  write32le(P, Page);
+  write32le(P + 4, Data.size());
+  P += 8;
+  for (uint32_t *I = Begin; I != End; ++I) {
+    write16le(P, (IMAGE_REL_BASED_DIR64 << 12) | (*I - Page));
+    P += 2;
+  }
+}
+
+void BaserelChunk::writeTo(uint8_t *Buf) {
+  memcpy(Buf + FileOff, Data.data(), Data.size());
 }
 
 } // namespace coff

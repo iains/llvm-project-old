@@ -42,6 +42,9 @@ std::error_code Writer::write(StringRef OutputPath) {
   markLive();
   createSections();
   createImportTables();
+  createExportTable();
+  if (Config->Relocatable)
+    createSection(".reloc");
   assignAddresses();
   removeEmptySections();
   if (auto EC = openFile(OutputPath))
@@ -70,6 +73,7 @@ void OutputSection::setFileOffset(uint64_t Off) {
 
 void OutputSection::addChunk(Chunk *C) {
   Chunks.push_back(C);
+  C->setOutputSection(this);
   uint64_t Off = Header.VirtualSize;
   Off = RoundUpToAlignment(Off, C->getAlign());
   C->setRVA(Off);
@@ -81,7 +85,7 @@ void OutputSection::addChunk(Chunk *C) {
 }
 
 void OutputSection::addPermissions(uint32_t C) {
-  Header.Characteristics = Header.Characteristics | (C & PermMask);
+  Header.Characteristics |= C & PermMask;
 }
 
 // Write the section header to a given buffer.
@@ -140,7 +144,6 @@ void Writer::createSections() {
     }
     std::vector<Chunk *> &Chunks = P.second;
     for (Chunk *C : Chunks) {
-      C->setOutputSection(Sec);
       Sec->addChunk(C);
       Sec->addPermissions(C->getPermissions());
     }
@@ -172,6 +175,15 @@ void Writer::createImportTables() {
     Sec->addChunk(C);
 }
 
+void Writer::createExportTable() {
+  if (Config->Exports.empty())
+    return;
+  Edata.reset(new EdataContents());
+  OutputSection *Sec = createSection(".edata");
+  for (std::unique_ptr<Chunk> &C : Edata->Chunks)
+    Sec->addChunk(C.get());
+}
+
 // The Windows loader doesn't seem to like empty sections,
 // so we remove them if any.
 void Writer::removeEmptySections() {
@@ -192,6 +204,8 @@ void Writer::assignAddresses() {
   uint64_t RVA = 0x1000; // The first page is kept unmapped.
   uint64_t FileOff = SizeOfHeaders;
   for (OutputSection *Sec : OutputSections) {
+    if (Sec->getName() == ".reloc")
+      addBaserels(Sec);
     Sec->setRVA(RVA);
     Sec->setFileOffset(FileOff);
     RVA += RoundUpToAlignment(Sec->getVirtualSize(), PageSize);
@@ -237,9 +251,12 @@ void Writer::writeHeader() {
   Buf += sizeof(*COFF);
   COFF->Machine = MachineType;
   COFF->NumberOfSections = OutputSections.size();
-  COFF->Characteristics =
-      (IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_RELOCS_STRIPPED |
-       IMAGE_FILE_LARGE_ADDRESS_AWARE);
+  COFF->Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE;
+  COFF->Characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
+  if (Config->DLL)
+    COFF->Characteristics |= IMAGE_FILE_DLL;
+  if (!Config->Relocatable)
+    COFF->Characteristics |= IMAGE_FILE_RELOCS_STRIPPED;
   COFF->SizeOfOptionalHeader =
       sizeof(pe32plus_header) + sizeof(data_directory) * NumberfOfDataDirectory;
 
@@ -265,6 +282,18 @@ void Writer::writeHeader() {
   PE->SizeOfStackCommit = Config->StackCommit;
   PE->SizeOfHeapReserve = Config->HeapReserve;
   PE->SizeOfHeapCommit = Config->HeapCommit;
+  if (Config->DynamicBase)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE;
+  if (Config->HighEntropyVA)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_HIGH_ENTROPY_VA;
+  if (!Config->AllowBind)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_NO_BIND;
+  if (Config->NxCompat)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_NX_COMPAT;
+  if (!Config->AllowIsolation)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_NO_ISOLATION;
+  if (Config->TerminalServerAware)
+    PE->DLLCharacteristics |= IMAGE_DLL_CHARACTERISTICS_TERMINAL_SERVER_AWARE;
   PE->NumberOfRvaAndSize = NumberfOfDataDirectory;
   if (OutputSection *Text = findSection(".text")) {
     PE->BaseOfCode = Text->getRVA();
@@ -275,11 +304,23 @@ void Writer::writeHeader() {
   // Write data directory
   auto *DataDirectory = reinterpret_cast<data_directory *>(Buf);
   Buf += sizeof(*DataDirectory) * NumberfOfDataDirectory;
+  if (OutputSection *Sec = findSection(".edata")) {
+    DataDirectory[EXPORT_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    DataDirectory[EXPORT_TABLE].Size = Sec->getVirtualSize();
+  }
   if (Idata) {
     DataDirectory[IMPORT_TABLE].RelativeVirtualAddress = Idata->getDirRVA();
     DataDirectory[IMPORT_TABLE].Size = Idata->getDirSize();
     DataDirectory[IAT].RelativeVirtualAddress = Idata->getIATRVA();
     DataDirectory[IAT].Size = Idata->getIATSize();
+  }
+  if (OutputSection *Sec = findSection(".rsrc")) {
+    DataDirectory[RESOURCE_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    DataDirectory[RESOURCE_TABLE].Size = Sec->getVirtualSize();
+  }
+  if (OutputSection *Sec = findSection(".reloc")) {
+    DataDirectory[BASE_RELOCATION_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    DataDirectory[BASE_RELOCATION_TABLE].Size = Sec->getVirtualSize();
   }
 
   // Section table
@@ -364,16 +405,19 @@ OutputSection *Writer::createSection(StringRef Name) {
   const auto DATA = IMAGE_SCN_CNT_INITIALIZED_DATA;
   const auto BSS = IMAGE_SCN_CNT_UNINITIALIZED_DATA;
   const auto CODE = IMAGE_SCN_CNT_CODE;
+  const auto DISCARDABLE = IMAGE_SCN_MEM_DISCARDABLE;
   const auto R = IMAGE_SCN_MEM_READ;
   const auto W = IMAGE_SCN_MEM_WRITE;
-  const auto E = IMAGE_SCN_MEM_EXECUTE;
+  const auto X = IMAGE_SCN_MEM_EXECUTE;
   uint32_t Perms = StringSwitch<uint32_t>(Name)
                        .Case(".bss", BSS | R | W)
                        .Case(".data", DATA | R | W)
                        .Case(".didat", DATA | R)
+                       .Case(".edata", DATA | R)
                        .Case(".idata", DATA | R)
                        .Case(".rdata", DATA | R)
-                       .Case(".text", CODE | R | E)
+                       .Case(".reloc", DATA | DISCARDABLE | R)
+                       .Case(".text", CODE | R | X)
                        .Default(0);
   if (!Perms)
     llvm_unreachable("unknown section name");
@@ -382,6 +426,43 @@ OutputSection *Writer::createSection(StringRef Name) {
   Sec->addPermissions(Perms);
   OutputSections.push_back(Sec);
   return Sec;
+}
+
+// Dest is .reloc section. Add contents to that section.
+void Writer::addBaserels(OutputSection *Dest) {
+  std::vector<uint32_t> V;
+  Defined *ImageBase = cast<Defined>(Symtab->find("__ImageBase"));
+  for (OutputSection *Sec : OutputSections) {
+    if (Sec == Dest)
+      continue;
+    // Collect all locations for base relocations.
+    for (Chunk *C : Sec->getChunks())
+      C->getBaserels(&V, ImageBase);
+    // Add the addresses to .reloc section.
+    if (!V.empty())
+      addBaserelBlocks(Dest, V);
+    V.clear();
+  }
+}
+
+// Add addresses to .reloc section. Note that addresses are grouped by page.
+void Writer::addBaserelBlocks(OutputSection *Dest, std::vector<uint32_t> &V) {
+  const uint32_t Mask = ~uint32_t(PageSize - 1);
+  uint32_t Page = V[0] & Mask;
+  size_t I = 0, J = 1;
+  for (size_t E = V.size(); J < E; ++J) {
+    uint32_t P = V[J] & Mask;
+    if (P == Page)
+      continue;
+    BaserelChunk *Buf = BAlloc.Allocate();
+    Dest->addChunk(new (Buf) BaserelChunk(Page, &V[I], &V[0] + J));
+    I = J;
+    Page = P;
+  }
+  if (I == J)
+    return;
+  BaserelChunk *Buf = BAlloc.Allocate();
+  Dest->addChunk(new (Buf) BaserelChunk(Page, &V[I], &V[0] + J));
 }
 
 } // namespace coff

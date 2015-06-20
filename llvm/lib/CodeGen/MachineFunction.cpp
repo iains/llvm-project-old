@@ -19,6 +19,7 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunctionInitializer.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
@@ -40,6 +41,8 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "codegen"
+
+void MachineFunctionInitializer::anchor() {}
 
 //===----------------------------------------------------------------------===//
 // MachineFunction implementation
@@ -401,7 +404,7 @@ namespace llvm {
       return OutStr;
     }
   };
-}
+} // namespace llvm
 
 void MachineFunction::viewCFG() const
 {

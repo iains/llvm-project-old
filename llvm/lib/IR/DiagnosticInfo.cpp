@@ -84,7 +84,7 @@ PassRemarksAnalysis(
         "the given regular expression"),
     cl::Hidden, cl::location(PassRemarksAnalysisOptLoc), cl::ValueRequired,
     cl::ZeroOrMore);
-}
+} // namespace
 
 int llvm::getNextAvailablePluginDiagnosticKind() {
   static std::atomic<int> PluginKindID(DK_FirstPluginKind);
@@ -168,6 +168,10 @@ bool DiagnosticInfoOptimizationRemarkMissed::isEnabled() const {
 bool DiagnosticInfoOptimizationRemarkAnalysis::isEnabled() const {
   return PassRemarksAnalysisOptLoc.Pattern &&
          PassRemarksAnalysisOptLoc.Pattern->match(getPassName());
+}
+
+void DiagnosticInfoMIRParser::print(DiagnosticPrinter &DP) const {
+  DP << Diagnostic;
 }
 
 void llvm::emitOptimizationRemark(LLVMContext &Ctx, const char *PassName,

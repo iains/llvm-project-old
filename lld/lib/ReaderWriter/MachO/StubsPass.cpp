@@ -209,13 +209,13 @@ public:
       : _ctx(context), _archHandler(_ctx.archHandler()),
         _stubInfo(_archHandler.stubInfo()), _file("<mach-o Stubs pass>") {}
 
-  void perform(std::unique_ptr<SimpleFile> &mergedFile) override {
+  std::error_code perform(SimpleFile &mergedFile) override {
     // Skip this pass if output format uses text relocations instead of stubs.
     if (!this->noTextRelocs())
-      return;
+      return std::error_code();
 
     // Scan all references in all atoms.
-    for (const DefinedAtom *atom : mergedFile->defined()) {
+    for (const DefinedAtom *atom : mergedFile.defined()) {
       for (const Reference *ref : *atom) {
         // Look at call-sites.
         if (!this->isCallSite(*ref))
@@ -239,7 +239,7 @@ public:
 
     // Exit early if no stubs needed.
     if (_targetToUses.empty())
-      return;
+      return std::error_code();
 
     // First add help-common and GOT slots used by lazy binding.
     SimpleDefinedAtom *helperCommonAtom =
@@ -258,17 +258,18 @@ public:
     addOptReference(
         helperCommonAtom, _stubInfo.stubHelperCommonReferenceToBinder,
         _stubInfo.optStubHelperCommonReferenceToBinder, helperBinderNLPAtom);
-    mergedFile->addAtom(*helperCommonAtom);
-    mergedFile->addAtom(*helperBinderNLPAtom);
-    mergedFile->addAtom(*helperCacheNLPAtom);
+    mergedFile.addAtom(*helperCommonAtom);
+    mergedFile.addAtom(*helperBinderNLPAtom);
+    mergedFile.addAtom(*helperCacheNLPAtom);
 
     // Add reference to dyld_stub_binder in libSystem.dylib
     auto I = std::find_if(
-        mergedFile->sharedLibrary().begin(), mergedFile->sharedLibrary().end(),
+        mergedFile.sharedLibrary().begin(), mergedFile.sharedLibrary().end(),
         [&](const SharedLibraryAtom *atom) {
           return atom->name().equals(_stubInfo.binderSymbolName);
         });
-    assert(I != mergedFile->sharedLibrary().end() && "dyld_stub_binder not found");
+    assert(I != mergedFile.sharedLibrary().end() &&
+           "dyld_stub_binder not found");
     addReference(helperBinderNLPAtom, _stubInfo.nonLazyPointerReferenceToBinder, *I);
 
     // Sort targets by name, so stubs and lazy pointers are consistent
@@ -300,9 +301,9 @@ public:
       addReference(helper, _stubInfo.stubHelperReferenceToHelperCommon,
                    helperCommonAtom);
 
-      mergedFile->addAtom(*stub);
-      mergedFile->addAtom(*lp);
-      mergedFile->addAtom(*helper);
+      mergedFile.addAtom(*stub);
+      mergedFile.addAtom(*lp);
+      mergedFile.addAtom(*helper);
 
       // Update each reference to use stub.
       for (const Reference *ref : _targetToUses[target]) {
@@ -314,6 +315,8 @@ public:
       // Calculate new offset
       lazyOffset += target->name().size() + 12;
     }
+
+    return std::error_code();
   }
 
 private:

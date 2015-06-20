@@ -19,7 +19,7 @@ This is a list of important data types in this linker.
 
 * SymbolBody
 
-  SymbolBody is a class for symbols, which may be created for symbols
+  SymbolBody is a class for symbols. They may be created for symbols
   in object files or in archive file headers. The linker may create
   them out of nothing.
 
@@ -55,10 +55,10 @@ This is a list of important data types in this linker.
 * Chunk
 
   Chunk represents a chunk of data that will occupy space in an
-  output. They may be backed by sections of input files, but can be
-  created for something different, if they are for common or BSS
-  symbols. The linker may also create chunks out of nothing to append
-  additional data to an output.
+  output. Each regular section becomes a chunk.
+  Chunks created for common or BSS symbols are not backed by sections.
+  The linker may create chunks out of nothing to append additional
+  data to an output.
 
   Chunks know about their size, how to copy their data to mmap'ed
   outputs, and how to apply relocations to them. Specifically,
@@ -70,8 +70,8 @@ This is a list of important data types in this linker.
   SymbolTable is basically a hash table from strings to Symbols, with
   a logic to resolve symbol conflicts. It resolves conflicts by symbol
   type. For example, if we add Undefined and Defined symbols, the
-  symbol table will keep the latter. If we add Undefined and Lazy
-  symbols, it will keep the latter. If we add Lazy and Undefined, it
+  symbol table will keep the latter. If we add Defined and Lazy
+  symbols, it will keep the former. If we add Lazy and Undefined, it
   will keep the former, but it will also trigger the Lazy symbol to
   load the archive member to actually resolve the symbol.
 
@@ -84,7 +84,7 @@ There are mainly three actors in this linker.
 
 * InputFile
 
-  InputFile is a superclass for file readers. We have a different
+  InputFile is a superclass of file readers. We have a different
   subclass for each input file type, such as regular object file,
   archive file, etc. They are responsible for creating and owning
   SymbolBodies and Chunks.
@@ -191,6 +191,20 @@ We created an experimental multi-threaded linker using the Microsoft
 ConcRT concurrency library, and it was able to link itself in 0.5
 seconds, so we think the design is promising.
 
+Link-Time Optimization
+----------------------
+
+LTO is implemented by handling LLVM bitcode files as object files.
+The linker resolves symbols in bitcode files normally. If all symbols
+are successfully resolved, it then calls an LLVM libLTO function
+with all bitcode files to convert them to one big regular COFF file.
+Finally, the linker replaces bitcode symbols with COFF symbols,
+so that we can link the input files as if they were in the native
+format from the beginning.
+
+The details are described in this document.
+http://llvm.org/docs/LinkTimeOptimization.html
+
 Glossary
 --------
 
@@ -222,12 +236,8 @@ Glossary
   locations containing addresses. The loader adds a difference between
   RVA and actual load address to all locations listed there.
 
-  Note 1: This run-time relocation mechanism is very simple compared
-  to ELF. There's no PLT or GOT. Images are relocated as a whole just
+  Note that this run-time relocation mechanism is much simpler than ELF.
+  There's no PLT or GOT. Images are relocated as a whole just
   by shifting entire images in memory by some offsets. Although doing
   this breaks text sharing, I think this mechanism is not actually bad
   on today's computers.
-
-  Note 2: We do not support base relocations yet. But if you were
-  wondering how Windows manages to load two images having conflicting
-  addresses into the same memory space, this is how it works.

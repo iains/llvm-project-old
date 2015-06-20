@@ -21,6 +21,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -53,7 +54,7 @@ public:
   LibOptTable() : OptTable(infoTable, llvm::array_lengthof(infoTable), true) {}
 };
 
-}
+} // namespace
 
 static std::string getOutputPath(llvm::opt::InputArgList *Args) {
   if (auto *Arg = Args->getLastArg(OPT_out))
@@ -66,6 +67,40 @@ static std::string getOutputPath(llvm::opt::InputArgList *Args) {
     return Val.str();
   }
   llvm_unreachable("internal error");
+}
+
+static std::vector<StringRef> getSearchPaths(llvm::opt::InputArgList *Args,
+                                             StringSaver &Saver) {
+  std::vector<StringRef> Ret;
+  // Add current directory as first item of the search path.
+  Ret.push_back("");
+
+  // Add /libpath flags.
+  for (auto *Arg : Args->filtered(OPT_libpath))
+    Ret.push_back(Arg->getValue());
+
+  // Add $LIB.
+  Optional<std::string> EnvOpt = sys::Process::GetEnv("LIB");
+  if (!EnvOpt.hasValue())
+    return Ret;
+  StringRef Env = Saver.save(*EnvOpt);
+  while (!Env.empty()) {
+    StringRef Path;
+    std::tie(Path, Env) = Env.split(';');
+    Ret.push_back(Path);
+  }
+  return Ret;
+}
+
+static Optional<std::string> findInputFile(StringRef File,
+                                           ArrayRef<StringRef> Paths) {
+  for (auto Dir : Paths) {
+    SmallString<128> Path = Dir;
+    sys::path::append(Path, File);
+    if (sys::fs::exists(Path))
+      return Path.str().str();
+  }
+  return Optional<std::string>();
 }
 
 int llvm::libDriverMain(int Argc, const char **Argv) {
@@ -96,10 +131,18 @@ int llvm::libDriverMain(int Argc, const char **Argv) {
     return 1;
   }
 
+  std::vector<StringRef> SearchPaths = getSearchPaths(Args.get(), Saver);
+
   std::vector<llvm::NewArchiveIterator> Members;
-  for (auto *Arg : Args->filtered(OPT_INPUT))
-    Members.emplace_back(Arg->getValue(),
+  for (auto *Arg : Args->filtered(OPT_INPUT)) {
+    Optional<std::string> Path = findInputFile(Arg->getValue(), SearchPaths);
+    if (!Path.hasValue()) {
+      llvm::errs() << Arg->getValue() << ": no such file or directory\n";
+      return 1;
+    }
+    Members.emplace_back(Saver.save(*Path),
                          llvm::sys::path::filename(Arg->getValue()));
+  }
 
   std::pair<StringRef, std::error_code> Result = llvm::writeArchive(
       getOutputPath(Args.get()), Members, /*WriteSymtab=*/true);
