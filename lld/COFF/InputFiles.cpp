@@ -23,6 +23,8 @@ using namespace llvm::object;
 using namespace llvm::support::endian;
 using llvm::COFF::ImportHeader;
 using llvm::COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE;
+using llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
+using llvm::COFF::IMAGE_FILE_MACHINE_UNKNOWN;
 using llvm::RoundUpToAlignment;
 using llvm::sys::fs::identify_magic;
 using llvm::sys::fs::file_magic;
@@ -55,8 +57,10 @@ std::error_code ArchiveFile::parse() {
   File = std::move(ArchiveOrErr.get());
 
   // Allocate a buffer for Lazy objects.
-  size_t BufSize = File->getNumberOfSymbols() * sizeof(Lazy);
+  size_t NumSyms = File->getNumberOfSymbols();
+  size_t BufSize = NumSyms * sizeof(Lazy);
   Lazy *Buf = (Lazy *)Alloc.Allocate(BufSize, llvm::alignOf<Lazy>());
+  SymbolBodies.reserve(NumSyms);
 
   // Read the symbol table to construct Lazy objects.
   uint32_t I = 0;
@@ -98,15 +102,16 @@ std::error_code ObjectFile::parse() {
     llvm::errs() << getName() << " is not a COFF file.\n";
     return make_error_code(LLDError::InvalidFile);
   }
+  if (COFFObj->getMachine() != IMAGE_FILE_MACHINE_AMD64 &&
+      COFFObj->getMachine() != IMAGE_FILE_MACHINE_UNKNOWN) {
+    llvm::errs() << getName() << " is not an x64 object file.\n";
+    return make_error_code(LLDError::InvalidFile);
+  }
 
   // Read section and symbol tables.
   if (auto EC = initializeChunks())
     return EC;
   return initializeSymbols();
-}
-
-SymbolBody *ObjectFile::getSymbolBody(uint32_t SymbolIndex) {
-  return SparseSymbolBodies[SymbolIndex]->getReplacement();
 }
 
 std::error_code ObjectFile::initializeChunks() {
@@ -129,14 +134,14 @@ std::error_code ObjectFile::initializeChunks() {
     if (Name == ".drectve") {
       ArrayRef<uint8_t> Data;
       COFFObj->getSectionContents(Sec, Data);
-      Directives = StringRef((const char *)Data.data(), Data.size()).trim();
+      Directives = std::string((const char *)Data.data(), Data.size());
       continue;
     }
     if (Name.startswith(".debug"))
       continue;
     if (Sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
       continue;
-    auto *C = new (Alloc) SectionChunk(this, Sec, I);
+    auto *C = new (Alloc) SectionChunk(this, Sec);
     Chunks.push_back(C);
     SparseChunks[I] = C;
   }
@@ -182,17 +187,19 @@ SymbolBody *ObjectFile::createSymbolBody(COFFSymbolRef Sym, const void *AuxP,
     return new (Alloc) Undefined(Name);
   }
   if (Sym.isCommon()) {
-    Chunk *C = new (Alloc) CommonChunk(Sym);
+    auto *C = new (Alloc) CommonChunk(Sym);
     Chunks.push_back(C);
-    return new (Alloc) DefinedCommon(COFFObj.get(), Sym, C);
+    return new (Alloc) DefinedCommon(this, Sym, C);
   }
   if (Sym.isAbsolute()) {
     COFFObj->getSymbolName(Sym, Name);
     // Skip special symbols.
     if (Name == "@comp.id" || Name == "@feat.00")
       return nullptr;
-    return new (Alloc) DefinedAbsolute(Name, Sym.getValue());
+    return new (Alloc) DefinedAbsolute(Name, Sym);
   }
+  if (Sym.getSectionNumber() == llvm::COFF::IMAGE_SYM_DEBUG)
+    return nullptr;
   // TODO: Handle IMAGE_WEAK_EXTERN_SEARCH_ALIAS
   if (Sym.isWeakExternal()) {
     COFFObj->getSymbolName(Sym, Name);
@@ -211,8 +218,13 @@ SymbolBody *ObjectFile::createSymbolBody(COFFSymbolRef Sym, const void *AuxP,
       }
     }
   }
-  if (Chunk *C = SparseChunks[Sym.getSectionNumber()])
-    return new (Alloc) DefinedRegular(COFFObj.get(), Sym, C);
+  Chunk *C = SparseChunks[Sym.getSectionNumber()];
+  if (auto *SC = cast_or_null<SectionChunk>(C)) {
+    auto *B = new (Alloc) DefinedRegular(this, Sym, SC);
+    if (SC->isCOMDAT() && Sym.getValue() == 0 && !AuxP)
+      SC->setSymbol(B);
+    return B;
+  }
   return nullptr;
 }
 

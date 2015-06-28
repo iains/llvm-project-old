@@ -26,12 +26,12 @@ namespace coff {
 int DefinedRegular::compare(SymbolBody *Other) {
   if (Other->kind() < kind())
     return -Other->compare(this);
-  auto *R = dyn_cast<DefinedRegular>(Other);
-  if (!R)
-    return 1;
-  if (isCOMDAT() && R->isCOMDAT())
-    return 1;
-  return 0;
+  if (auto *D = dyn_cast<DefinedRegular>(Other)) {
+    if (isCOMDAT() && D->isCOMDAT())
+      return 1;
+    return 0;
+  }
+  return 1;
 }
 
 int DefinedCommon::compare(SymbolBody *Other) {
@@ -39,9 +39,9 @@ int DefinedCommon::compare(SymbolBody *Other) {
     return -Other->compare(this);
   if (auto *D = dyn_cast<DefinedCommon>(Other))
     return getSize() > D->getSize() ? 1 : -1;
-  if (isa<DefinedRegular>(Other))
-    return -1;
-  return 1;
+  if (isa<Lazy>(Other) || isa<Undefined>(Other))
+    return 1;
+  return -1;
 }
 
 int DefinedBitcode::compare(SymbolBody *Other) {
@@ -62,10 +62,10 @@ int DefinedBitcode::compare(SymbolBody *Other) {
   // replicate the rest of the symbol resolution logic here; symbol
   // resolution will be done accurately after lowering bitcode symbols
   // to regular symbols in addCombinedLTOObject().
-  if (auto *R = dyn_cast<DefinedRegular>(Other)) {
-    if (!R->isCOMDAT() && !Replaceable)
-      return 0;
-    return -1;
+  if (auto *D = dyn_cast<DefinedRegular>(Other)) {
+    if (Replaceable || D->isCOMDAT())
+      return -1;
+    return 0;
   }
   if (isa<DefinedCommon>(Other))
     return -1;
@@ -111,14 +111,22 @@ StringRef DefinedRegular::getName() {
   // StringRefs for them (which involves lots of strlen() on the string table)
   // is a waste of time.
   if (Name.empty())
-    COFFFile->getSymbolName(Sym, Name);
+    File->getCOFFObj()->getSymbolName(Sym, Name);
   return Name;
 }
 
 StringRef DefinedCommon::getName() {
   if (Name.empty())
-    COFFFile->getSymbolName(Sym, Name);
+    File->getCOFFObj()->getSymbolName(Sym, Name);
   return Name;
+}
+
+std::string DefinedRegular::getDebugName() {
+  return (getName() + " " + File->getShortName()).str();
+}
+
+std::string DefinedCommon::getDebugName() {
+  return (getName() + " " + File->getShortName()).str();
 }
 
 ErrorOr<std::unique_ptr<InputFile>> Lazy::getMember() {

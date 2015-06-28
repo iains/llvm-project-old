@@ -33,6 +33,7 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/StringConvert.h"
 #include "lldb/Host/TimeValue.h"
+#include "lldb/Symbol/Symbol.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/UnixSignals.h"
@@ -98,6 +99,8 @@ GDBRemoteCommunicationClient::GDBRemoteCommunicationClient() :
     m_supports_z4 (true),
     m_supports_QEnvironment (true),
     m_supports_QEnvironmentHexEncoded (true),
+    m_supports_qSymbol (true),
+    m_supports_jThreadsInfo (true),
     m_curr_pid (LLDB_INVALID_PROCESS_ID),
     m_curr_tid (LLDB_INVALID_THREAD_ID),
     m_curr_tid_run (LLDB_INVALID_THREAD_ID),
@@ -370,6 +373,7 @@ GDBRemoteCommunicationClient::ResetDiscoverableSettings()
     m_supports_z4 = true;
     m_supports_QEnvironment = true;
     m_supports_QEnvironmentHexEncoded = true;
+    m_supports_qSymbol = true;
     
     m_host_arch.Clear();
     m_process_arch.Clear();
@@ -600,6 +604,32 @@ GDBRemoteCommunicationClient::GetpPacketSupported (lldb::tid_t tid)
     }
     return m_supports_p;
 }
+
+StructuredData::ObjectSP
+GDBRemoteCommunicationClient::GetThreadsInfo()
+{
+    // Get information on all threads at one using the "jThreadsInfo" packet
+    StructuredData::ObjectSP object_sp;
+
+    if (m_supports_jThreadsInfo)
+    {
+        StringExtractorGDBRemote response;
+        m_supports_jThreadExtendedInfo = eLazyBoolNo;
+        if (SendPacketAndWaitForResponse("jThreadsInfo", response, false) == PacketResult::Success)
+        {
+            if (response.IsUnsupportedResponse())
+            {
+                m_supports_jThreadsInfo = false;
+            }
+            else if (!response.Empty())
+            {
+                object_sp = StructuredData::ParseJSON (response.GetStringRef());
+            }
+        }
+    }
+    return object_sp;
+}
+
 
 bool
 GDBRemoteCommunicationClient::GetThreadExtendedInfoSupported ()
@@ -927,6 +957,57 @@ GDBRemoteCommunicationClient::HarmonizeThreadIdsForProfileData
     m_thread_id_to_used_usec_map = new_thread_id_to_used_usec_map;
     
     return final_output.str();
+}
+
+bool
+GDBRemoteCommunicationClient::SendvContPacket
+(
+    ProcessGDBRemote *process,
+    const char *payload,
+    size_t packet_length,
+    StringExtractorGDBRemote &response
+)
+{
+
+    m_curr_tid = LLDB_INVALID_THREAD_ID;
+    Log *log(ProcessGDBRemoteLog::GetLogIfAllCategoriesSet(GDBR_LOG_PROCESS));
+    if (log)
+        log->Printf("GDBRemoteCommunicationClient::%s ()", __FUNCTION__);
+
+    // we want to lock down packet sending while we continue
+    Mutex::Locker locker(m_sequence_mutex);
+
+    // here we broadcast this before we even send the packet!!
+    // this signals doContinue() to exit
+    BroadcastEvent(eBroadcastBitRunPacketSent, NULL);
+
+    // set the public state to running
+    m_public_is_running.SetValue(true, eBroadcastNever);
+
+    // Set the starting continue packet into "continue_packet". This packet
+    // may change if we are interrupted and we continue after an async packet...
+    std::string continue_packet(payload, packet_length);
+
+    if (log)
+        log->Printf("GDBRemoteCommunicationClient::%s () sending vCont packet: %s", __FUNCTION__, continue_packet.c_str());
+
+    if (SendPacketNoLock(continue_packet.c_str(), continue_packet.size()) != PacketResult::Success)
+         return false;
+
+    // set the private state to running and broadcast this
+    m_private_is_running.SetValue(true, eBroadcastAlways);
+
+    if (log)
+        log->Printf("GDBRemoteCommunicationClient::%s () ReadPacket(%s)", __FUNCTION__, continue_packet.c_str());
+
+    // wait for the response to the vCont
+    if (ReadPacket(response, UINT32_MAX, false) == PacketResult::Success)
+    {
+        if (response.IsOKResponse())
+            return true;
+    }
+
+    return false;
 }
 
 StateType
@@ -4143,8 +4224,8 @@ GDBRemoteCommunicationClient::ReadExtFeature (const lldb_private::ConstString ob
         // send query extended feature packet
         std::stringstream packet;
         packet << "qXfer:" 
-               << object.AsCString( ) << ":read:" 
-               << annex.AsCString( )  << ":" 
+               << object.AsCString("") << ":read:" 
+               << annex.AsCString("")  << ":" 
                << std::hex << offset  << "," 
                << std::hex << size;
 
@@ -4190,3 +4271,128 @@ GDBRemoteCommunicationClient::ReadExtFeature (const lldb_private::ConstString ob
     err.Success( );
     return true;
 }
+
+// Notify the target that gdb is prepared to serve symbol lookup requests.
+//  packet: "qSymbol::"
+//  reply:
+//  OK                  The target does not need to look up any (more) symbols.
+//  qSymbol:<sym_name>  The target requests the value of symbol sym_name (hex encoded).
+//                      LLDB may provide the value by sending another qSymbol packet
+//                      in the form of"qSymbol:<sym_value>:<sym_name>".
+
+void
+GDBRemoteCommunicationClient::ServeSymbolLookups(lldb_private::Process *process)
+{
+    if (m_supports_qSymbol)
+    {
+        Mutex::Locker locker;
+        if (GetSequenceMutex(locker, "GDBRemoteCommunicationClient::ServeSymbolLookups() failed due to not getting the sequence mutex"))
+        {
+            StreamString packet;
+            packet.PutCString ("qSymbol::");
+            while (1)
+            {
+                StringExtractorGDBRemote response;
+                if (SendPacketAndWaitForResponseNoLock(packet.GetData(), packet.GetSize(), response) == PacketResult::Success)
+                {
+                    if (response.IsOKResponse())
+                    {
+                        // We are done serving symbols requests
+                        return;
+                    }
+
+                    if (response.IsUnsupportedResponse())
+                    {
+                        // qSymbol is not supported by the current GDB server we are connected to
+                        m_supports_qSymbol = false;
+                        return;
+                    }
+                    else
+                    {
+                        llvm::StringRef response_str(response.GetStringRef());
+                        if (response_str.startswith("qSymbol:"))
+                        {
+                            response.SetFilePos(strlen("qSymbol:"));
+                            std::string symbol_name;
+                            if (response.GetHexByteString(symbol_name))
+                            {
+                                if (symbol_name.empty())
+                                    return;
+
+                                addr_t symbol_load_addr = LLDB_INVALID_ADDRESS;
+                                lldb_private::SymbolContextList sc_list;
+                                if (process->GetTarget().GetImages().FindSymbolsWithNameAndType(ConstString(symbol_name), eSymbolTypeAny, sc_list))
+                                {
+                                    const size_t num_scs = sc_list.GetSize();
+                                    for (size_t sc_idx=0; sc_idx<num_scs && symbol_load_addr == LLDB_INVALID_ADDRESS; ++sc_idx)
+                                    {
+                                        SymbolContext sc;
+                                        if (sc_list.GetContextAtIndex(sc_idx, sc))
+                                        {
+                                            if (sc.symbol)
+                                            {
+                                                switch (sc.symbol->GetType())
+                                                {
+                                                case eSymbolTypeInvalid:
+                                                case eSymbolTypeAbsolute:
+                                                case eSymbolTypeUndefined:
+                                                case eSymbolTypeSourceFile:
+                                                case eSymbolTypeHeaderFile:
+                                                case eSymbolTypeObjectFile:
+                                                case eSymbolTypeCommonBlock:
+                                                case eSymbolTypeBlock:
+                                                case eSymbolTypeLocal:
+                                                case eSymbolTypeParam:
+                                                case eSymbolTypeVariable:
+                                                case eSymbolTypeVariableType:
+                                                case eSymbolTypeLineEntry:
+                                                case eSymbolTypeLineHeader:
+                                                case eSymbolTypeScopeBegin:
+                                                case eSymbolTypeScopeEnd:
+                                                case eSymbolTypeAdditional:
+                                                case eSymbolTypeCompiler:
+                                                case eSymbolTypeInstrumentation:
+                                                case eSymbolTypeTrampoline:
+                                                    break;
+
+                                                case eSymbolTypeCode:
+                                                case eSymbolTypeResolver:
+                                                case eSymbolTypeData:
+                                                case eSymbolTypeRuntime:
+                                                case eSymbolTypeException:
+                                                case eSymbolTypeObjCClass:
+                                                case eSymbolTypeObjCMetaClass:
+                                                case eSymbolTypeObjCIVar:
+                                                case eSymbolTypeReExported:
+                                                    symbol_load_addr = sc.symbol->GetLoadAddress(&process->GetTarget());
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // This is the normal path where our symbol lookup was successful and we want
+                                // to send a packet with the new symbol value and see if another lookup needs to be
+                                // done.
+
+                                // Change "packet" to contain the requested symbol value and name
+                                packet.Clear();
+                                packet.PutCString("qSymbol:");
+                                if (symbol_load_addr != LLDB_INVALID_ADDRESS)
+                                    packet.Printf("%" PRIx64, symbol_load_addr);
+                                packet.PutCString(":");
+                                packet.PutBytesAsRawHex8(symbol_name.data(), symbol_name.size());
+                                continue; // go back to the while loop and send "packet" and wait for another response
+                            }
+                        }
+                    }
+                }
+            }
+            // If we make it here, the symbol request packet response wasn't valid or
+            // our symbol lookup failed so we must abort
+            return;
+
+        }
+    }
+}
+

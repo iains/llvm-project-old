@@ -233,6 +233,20 @@ public:
   };
   CGCapturedStmtInfo *CapturedStmtInfo;
 
+  /// \brief RAII for correct setting/restoring of CapturedStmtInfo.
+  class CGCapturedStmtRAII {
+  private:
+    CodeGenFunction &CGF;
+    CGCapturedStmtInfo *PrevCapturedStmtInfo;
+  public:
+    CGCapturedStmtRAII(CodeGenFunction &CGF,
+                       CGCapturedStmtInfo *NewCapturedStmtInfo)
+        : CGF(CGF), PrevCapturedStmtInfo(CGF.CapturedStmtInfo) {
+      CGF.CapturedStmtInfo = NewCapturedStmtInfo;
+    }
+    ~CGCapturedStmtRAII() { CGF.CapturedStmtInfo = PrevCapturedStmtInfo; }
+  };
+
   /// BoundsChecking - Emit run-time bounds checks. Higher values mean
   /// potentially higher performance penalties.
   unsigned char BoundsChecking;
@@ -2586,6 +2600,7 @@ public:
   llvm::Value *EmitPPCBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitAMDGPUBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitSystemZBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
+  llvm::Value *EmitNVPTXBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
 
   llvm::Value *EmitObjCProtocolExpr(const ObjCProtocolExpr *E);
   llvm::Value *EmitObjCStringLiteral(const ObjCStringLiteral *E);

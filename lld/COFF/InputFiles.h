@@ -55,11 +55,12 @@ public:
   void setParentName(StringRef N) { ParentName = N; }
 
   // Returns .drectve section contents if exist.
-  virtual StringRef getDirectives() { return ""; }
+  StringRef getDirectives() { return StringRef(Directives).trim(); }
 
 protected:
-  explicit InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
+  InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
   MemoryBufferRef MB;
+  std::string Directives;
 
 private:
   const Kind FileKind;
@@ -100,12 +101,12 @@ public:
 
   // Returns a SymbolBody object for the SymbolIndex'th symbol in the
   // underlying object file.
-  SymbolBody *getSymbolBody(uint32_t SymbolIndex);
+  SymbolBody *getSymbolBody(uint32_t SymbolIndex) {
+    return SparseSymbolBodies[SymbolIndex]->getReplacement();
+  }
 
   // Returns the underying COFF file.
   COFFObjectFile *getCOFFObj() { return COFFObj.get(); }
-
-  StringRef getDirectives() override { return Directives; }
 
 private:
   std::error_code initializeChunks();
@@ -115,7 +116,6 @@ private:
                                bool IsFirst);
 
   std::unique_ptr<COFFObjectFile> COFFObj;
-  StringRef Directives;
   llvm::BumpPtrAllocator Alloc;
 
   // List of all chunks defined by this file. This includes both section
@@ -168,16 +168,12 @@ public:
   LTOModule *getModule() const { return M.get(); }
   LTOModule *releaseModule() { return M.release(); }
 
-  // Returns linker directives from module flags metadata if present.
-  StringRef getDirectives() override { return Directives; }
-
 private:
   std::error_code parse() override;
 
   std::vector<SymbolBody *> SymbolBodies;
   llvm::BumpPtrAllocator Alloc;
   std::unique_ptr<LTOModule> M;
-  std::string Directives;
 };
 
 } // namespace coff

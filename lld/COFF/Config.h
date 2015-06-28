@@ -53,13 +53,14 @@ struct Configuration {
   std::set<StringRef> NoDefaultLibs;
   bool NoDefaultLibAll = false;
 
-  // Used for /include.
-  std::set<StringRef> Includes;
-
   // True if we are creating a DLL.
   bool DLL = false;
   StringRef Implib;
   std::vector<Export> Exports;
+  std::set<StringRef> DelayLoads;
+
+  // Used for /opt:icf
+  bool ICF = false;
 
   // Options for manifest files.
   ManifestKind Manifest = SideBySide;

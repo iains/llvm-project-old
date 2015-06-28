@@ -2246,6 +2246,24 @@ ClangASTType::GetEncoding (uint64_t &count) const
             case clang::BuiltinType::ObjCSel:       return lldb::eEncodingUint;
                 
             case clang::BuiltinType::NullPtr:       return lldb::eEncodingUint;
+                
+            case clang::BuiltinType::Kind::ARCUnbridgedCast:
+            case clang::BuiltinType::Kind::BoundMember:
+            case clang::BuiltinType::Kind::BuiltinFn:
+            case clang::BuiltinType::Kind::Dependent:
+            case clang::BuiltinType::Kind::Half:
+            case clang::BuiltinType::Kind::OCLEvent:
+            case clang::BuiltinType::Kind::OCLImage1d:
+            case clang::BuiltinType::Kind::OCLImage1dArray:
+            case clang::BuiltinType::Kind::OCLImage1dBuffer:
+            case clang::BuiltinType::Kind::OCLImage2d:
+            case clang::BuiltinType::Kind::OCLImage2dArray:
+            case clang::BuiltinType::Kind::OCLImage3d:
+            case clang::BuiltinType::Kind::OCLSampler:
+            case clang::BuiltinType::Kind::Overload:
+            case clang::BuiltinType::Kind::PseudoObject:
+            case clang::BuiltinType::Kind::UnknownAny:
+                break;
         }
             break;
             // All pointer types are represented as unsigned integer encodings.
@@ -5380,7 +5398,7 @@ ClangASTType::AddObjCClassProperty (const char *property_name,
                                                                                       &m_ast->Idents.get(property_name),
                                                                                       clang::SourceLocation(), //Source Location for AT
                                                                                       clang::SourceLocation(), //Source location for (
-                                                                                      ivar_decl->getType(),
+                                                                                      ivar_decl ? ivar_decl->getType() : property_clang_type.GetQualType(),
                                                                                       prop_type_source);
             
             if (property_decl)

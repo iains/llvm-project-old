@@ -116,7 +116,7 @@ private:
   StackTy Stack;
   /// \brief true, if check for DSA must be from parent directive, false, if
   /// from current directive.
-  bool FromParent;
+  OpenMPClauseKind ClauseKindMode;
   Sema &SemaRef;
 
   typedef SmallVector<SharingMapTy, 8>::reverse_iterator reverse_iterator;
@@ -127,10 +127,11 @@ private:
   bool isOpenMPLocal(VarDecl *D, StackTy::reverse_iterator Iter);
 
 public:
-  explicit DSAStackTy(Sema &S) : Stack(1), FromParent(false), SemaRef(S) {}
+  explicit DSAStackTy(Sema &S)
+      : Stack(1), ClauseKindMode(OMPC_unknown), SemaRef(S) {}
 
-  bool isFromParent() const { return FromParent; }
-  void setFromParent(bool Flag) { FromParent = Flag; }
+  bool isClauseParsingMode() const { return ClauseKindMode != OMPC_unknown; }
+  void setClauseParsingMode(OpenMPClauseKind K) { ClauseKindMode = K; }
 
   void push(OpenMPDirectiveKind DKind, const DeclarationNameInfo &DirName,
             Scope *CurScope, SourceLocation Loc) {
@@ -175,6 +176,12 @@ public:
   DSAVarData hasInnermostDSA(VarDecl *D, ClausesPredicate CPred,
                              DirectivesPredicate DPred,
                              bool FromParent);
+  /// \brief Checks if the specified variables has explicit data-sharing
+  /// attributes which match specified \a CPred predicate at the specified
+  /// OpenMP region.
+  bool hasExplicitDSA(VarDecl *D,
+                      const llvm::function_ref<bool(OpenMPClauseKind)> &CPred,
+                      unsigned Level);
   /// \brief Finds a directive which matches specified \a DPred predicate.
   template <class NamedDirectivesPredicate>
   bool hasDirective(NamedDirectivesPredicate DPred, bool FromParent);
@@ -589,6 +596,23 @@ DSAStackTy::hasInnermostDSA(VarDecl *D, ClausesPredicate CPred,
   return DSAVarData();
 }
 
+bool DSAStackTy::hasExplicitDSA(
+    VarDecl *D, const llvm::function_ref<bool(OpenMPClauseKind)> &CPred,
+    unsigned Level) {
+  if (CPred(ClauseKindMode))
+    return true;
+  if (isClauseParsingMode())
+    ++Level;
+  D = D->getCanonicalDecl();
+  auto StartI = Stack.rbegin();
+  auto EndI = std::prev(Stack.rend());
+  if (std::distance(StartI, EndI) <= (int)Level)
+    return false;
+  std::advance(StartI, Level);
+  return (StartI->SharingMap.count(D) > 0) && StartI->SharingMap[D].RefExpr &&
+         CPred(StartI->SharingMap[D].Attributes);
+}
+
 template <class NamedDirectivesPredicate>
 bool DSAStackTy::hasDirective(NamedDirectivesPredicate DPred, bool FromParent) {
   auto StartI = std::next(Stack.rbegin());
@@ -617,14 +641,20 @@ bool Sema::IsOpenMPCapturedVar(VarDecl *VD) {
         (VD->hasLocalStorage() &&
          isParallelOrTaskRegion(DSAStack->getCurrentDirective())))
       return true;
-    auto DVarPrivate = DSAStack->getTopDSA(VD, DSAStack->isFromParent());
+    auto DVarPrivate = DSAStack->getTopDSA(VD, DSAStack->isClauseParsingMode());
     if (DVarPrivate.CKind != OMPC_unknown && isOpenMPPrivate(DVarPrivate.CKind))
       return true;
     DVarPrivate = DSAStack->hasDSA(VD, isOpenMPPrivate, MatchesAlways(),
-                                   DSAStack->isFromParent());
+                                   DSAStack->isClauseParsingMode());
     return DVarPrivate.CKind != OMPC_unknown;
   }
   return false;
+}
+
+bool Sema::isOpenMPPrivateVar(VarDecl *VD, unsigned Level) {
+  assert(LangOpts.OpenMP && "OpenMP is not allowed");
+  return DSAStack->hasExplicitDSA(
+      VD, [](OpenMPClauseKind K) -> bool { return K == OMPC_private; }, Level);
 }
 
 void Sema::DestroyDataSharingAttributesStack() { delete DSAStack; }
@@ -636,12 +666,12 @@ void Sema::StartOpenMPDSABlock(OpenMPDirectiveKind DKind,
   PushExpressionEvaluationContext(PotentiallyEvaluated);
 }
 
-void Sema::StartOpenMPClauses() {
-  DSAStack->setFromParent(/*Flag=*/true);
+void Sema::StartOpenMPClause(OpenMPClauseKind K) {
+  DSAStack->setClauseParsingMode(K);
 }
 
-void Sema::EndOpenMPClauses() {
-  DSAStack->setFromParent(/*Flag=*/false);
+void Sema::EndOpenMPClause() {
+  DSAStack->setClauseParsingMode(/*K=*/OMPC_unknown);
 }
 
 void Sema::EndOpenMPDSABlock(Stmt *CurDirective) {
@@ -4218,6 +4248,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_depend:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -4432,6 +4463,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_depend:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -4552,6 +4584,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_depend:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -4674,6 +4707,7 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_proc_bind:
   case OMPC_threadprivate:
   case OMPC_flush:
+  case OMPC_depend:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -4730,7 +4764,8 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
     OpenMPClauseKind Kind, ArrayRef<Expr *> VarList, Expr *TailExpr,
     SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation ColonLoc,
     SourceLocation EndLoc, CXXScopeSpec &ReductionIdScopeSpec,
-    const DeclarationNameInfo &ReductionId) {
+    const DeclarationNameInfo &ReductionId, OpenMPDependClauseKind DepKind,
+    SourceLocation DepLoc) {
   OMPClause *Res = nullptr;
   switch (Kind) {
   case OMPC_private:
@@ -4765,6 +4800,10 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
     break;
   case OMPC_flush:
     Res = ActOnOpenMPFlushClause(VarList, StartLoc, LParenLoc, EndLoc);
+    break;
+  case OMPC_depend:
+    Res = ActOnOpenMPDependClause(DepKind, DepLoc, ColonLoc, VarList, StartLoc,
+                                  LParenLoc, EndLoc);
     break;
   case OMPC_if:
   case OMPC_final:
@@ -6314,5 +6353,68 @@ OMPClause *Sema::ActOnOpenMPFlushClause(ArrayRef<Expr *> VarList,
     return nullptr;
 
   return OMPFlushClause::Create(Context, StartLoc, LParenLoc, EndLoc, VarList);
+}
+
+OMPClause *
+Sema::ActOnOpenMPDependClause(OpenMPDependClauseKind DepKind,
+                              SourceLocation DepLoc, SourceLocation ColonLoc,
+                              ArrayRef<Expr *> VarList, SourceLocation StartLoc,
+                              SourceLocation LParenLoc, SourceLocation EndLoc) {
+  if (DepKind == OMPC_DEPEND_unknown) {
+    std::string Values;
+    std::string Sep(", ");
+    for (unsigned i = 0; i < OMPC_DEPEND_unknown; ++i) {
+      Values += "'";
+      Values += getOpenMPSimpleClauseTypeName(OMPC_depend, i);
+      Values += "'";
+      switch (i) {
+      case OMPC_DEPEND_unknown - 2:
+        Values += " or ";
+        break;
+      case OMPC_DEPEND_unknown - 1:
+        break;
+      default:
+        Values += Sep;
+        break;
+      }
+    }
+    Diag(DepLoc, diag::err_omp_unexpected_clause_value)
+        << Values << getOpenMPClauseName(OMPC_depend);
+    return nullptr;
+  }
+  SmallVector<Expr *, 8> Vars;
+  for (auto &RefExpr : VarList) {
+    assert(RefExpr && "NULL expr in OpenMP shared clause.");
+    if (isa<DependentScopeDeclRefExpr>(RefExpr)) {
+      // It will be analyzed later.
+      Vars.push_back(RefExpr);
+      continue;
+    }
+
+    SourceLocation ELoc = RefExpr->getExprLoc();
+    // OpenMP  [2.11.1.1, Restrictions, p.3]
+    //  A variable that is part of another variable (such as a field of a
+    //  structure) but is not an array element or an array section cannot appear
+    //  in a depend clause.
+    auto *SimpleExpr = RefExpr->IgnoreParenCasts();
+    DeclRefExpr *DE = dyn_cast<DeclRefExpr>(SimpleExpr);
+    ArraySubscriptExpr *ASE = dyn_cast<ArraySubscriptExpr>(SimpleExpr);
+    if (!RefExpr->IgnoreParenImpCasts()->isLValue() || (!ASE && !DE) ||
+        (DE && !isa<VarDecl>(DE->getDecl())) ||
+        (ASE && !ASE->getBase()->getType()->isAnyPointerType() &&
+         !ASE->getBase()->getType()->isArrayType())) {
+      Diag(ELoc, diag::err_omp_expected_var_name_or_array_item)
+          << RefExpr->getSourceRange();
+      continue;
+    }
+
+    Vars.push_back(RefExpr->IgnoreParenImpCasts());
+  }
+
+  if (Vars.empty())
+    return nullptr;
+
+  return OMPDependClause::Create(Context, StartLoc, LParenLoc, EndLoc, DepKind,
+                                 DepLoc, ColonLoc, Vars);
 }
 

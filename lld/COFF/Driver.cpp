@@ -34,6 +34,7 @@ using llvm::COFF::IMAGE_SUBSYSTEM_UNKNOWN;
 using llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI;
 using llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_GUI;
 using llvm::sys::Process;
+using llvm::sys::fs::OpenFlags;
 using llvm::sys::fs::file_magic;
 using llvm::sys::fs::identify_magic;
 
@@ -43,12 +44,12 @@ namespace coff {
 Configuration *Config;
 LinkerDriver *Driver;
 
-bool link(int Argc, const char *Argv[]) {
+bool link(llvm::ArrayRef<const char *> Args) {
   auto C = make_unique<Configuration>();
   Config = C.get();
   auto D = make_unique<LinkerDriver>();
   Driver = D.get();
-  return Driver->link(Argc, Argv);
+  return Driver->link(Args);
 }
 
 // Drop directory components and replace extension with ".exe".
@@ -85,14 +86,13 @@ static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
 // Parses .drectve section contents and returns a list of files
 // specified by /defaultlib.
 std::error_code
-LinkerDriver::parseDirectives(StringRef S,
-                              std::vector<std::unique_ptr<InputFile>> *Res) {
+LinkerDriver::parseDirectives(StringRef S) {
   auto ArgsOrErr = Parser.parse(S);
   if (auto EC = ArgsOrErr.getError())
     return EC;
-  std::unique_ptr<llvm::opt::InputArgList> Args = std::move(ArgsOrErr.get());
+  llvm::opt::InputArgList Args = std::move(ArgsOrErr.get());
 
-  for (auto *Arg : *Args) {
+  for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
     case OPT_alternatename:
       if (auto EC = parseAlternateName(Arg->getValue()))
@@ -103,8 +103,7 @@ LinkerDriver::parseDirectives(StringRef S,
         ErrorOr<MemoryBufferRef> MBOrErr = openFile(*Path);
         if (auto EC = MBOrErr.getError())
           return EC;
-        std::unique_ptr<InputFile> File = createFile(MBOrErr.get());
-        Res->push_back(std::move(File));
+        Symtab.addFile(createFile(MBOrErr.get()));
       }
       break;
     case OPT_export: {
@@ -119,7 +118,7 @@ LinkerDriver::parseDirectives(StringRef S,
         return EC;
       break;
     case OPT_incl:
-      Config->Includes.insert(Arg->getValue());
+      addUndefined(Arg->getValue());
       break;
     case OPT_merge:
       // Ignore /merge for now.
@@ -203,6 +202,11 @@ void LinkerDriver::addLibSearchPaths() {
   }
 }
 
+void LinkerDriver::addUndefined(StringRef Sym) {
+  Symtab.addUndefined(Sym);
+  Config->GCRoots.insert(Sym);
+}
+
 static WindowsSubsystem inferSubsystem() {
   if (Config->DLL)
     return IMAGE_SUBSYSTEM_WINDOWS_GUI;
@@ -214,7 +218,7 @@ static WindowsSubsystem inferSubsystem() {
       .Default(IMAGE_SUBSYSTEM_UNKNOWN);
 }
 
-bool LinkerDriver::link(int Argc, const char *Argv[]) {
+bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Needed for LTO.
   llvm::InitializeAllTargetInfos();
   llvm::InitializeAllTargets();
@@ -225,55 +229,61 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
 
   // If the first command line argument is "/lib", link.exe acts like lib.exe.
   // We call our own implementation of lib.exe that understands bitcode files.
-  if (Argc > 1 && StringRef(Argv[1]).equals_lower("/lib"))
-    return llvm::libDriverMain(Argc - 1, Argv + 1) == 0;
+  if (ArgsArr.size() > 1 && StringRef(ArgsArr[1]).equals_lower("/lib"))
+    return llvm::libDriverMain(ArgsArr.slice(1)) == 0;
 
   // Parse command line options.
-  auto ArgsOrErr = Parser.parse(Argc, Argv);
+  auto ArgsOrErr = Parser.parseLINK(ArgsArr.slice(1));
   if (auto EC = ArgsOrErr.getError()) {
     llvm::errs() << EC.message() << "\n";
     return false;
   }
-  std::unique_ptr<llvm::opt::InputArgList> Args = std::move(ArgsOrErr.get());
+  llvm::opt::InputArgList Args = std::move(ArgsOrErr.get());
 
   // Handle /help
-  if (Args->hasArg(OPT_help)) {
-    printHelp(Argv[0]);
+  if (Args.hasArg(OPT_help)) {
+    printHelp(ArgsArr[0]);
     return true;
   }
 
-  if (Args->filtered_begin(OPT_INPUT) == Args->filtered_end()) {
+  if (Args.filtered_begin(OPT_INPUT) == Args.filtered_end()) {
     llvm::errs() << "no input files.\n";
     return false;
   }
 
   // Construct search path list.
   SearchPaths.push_back("");
-  for (auto *Arg : Args->filtered(OPT_libpath))
+  for (auto *Arg : Args.filtered(OPT_libpath))
     SearchPaths.push_back(Arg->getValue());
   addLibSearchPaths();
 
   // Handle /out
-  if (auto *Arg = Args->getLastArg(OPT_out))
+  if (auto *Arg = Args.getLastArg(OPT_out))
     Config->OutputFile = Arg->getValue();
 
   // Handle /verbose
-  if (Args->hasArg(OPT_verbose))
+  if (Args.hasArg(OPT_verbose))
     Config->Verbose = true;
 
-  // Handle /dll
-  if (Args->hasArg(OPT_dll)) {
-    Config->DLL = true;
-    Config->ManifestID = 2;
+  // Handle /entry
+  if (auto *Arg = Args.getLastArg(OPT_entry)) {
+    Config->EntryName = Arg->getValue();
+    addUndefined(Config->EntryName);
   }
 
-  // Handle /entry
-  if (auto *Arg = Args->getLastArg(OPT_entry))
-    Config->EntryName = Arg->getValue();
+  // Handle /dll
+  if (Args.hasArg(OPT_dll)) {
+    Config->DLL = true;
+    Config->ManifestID = 2;
+    if (Config->EntryName.empty()) {
+      Config->EntryName = "_DllMainCRTStartup";
+      addUndefined("_DllMainCRTStartup");
+    }
+  }
 
   // Handle /fixed
-  if (Args->hasArg(OPT_fixed)) {
-    if (Args->hasArg(OPT_dynamicbase)) {
+  if (Args.hasArg(OPT_fixed)) {
+    if (Args.hasArg(OPT_dynamicbase)) {
       llvm::errs() << "/fixed must not be specified with /dynamicbase\n";
       return false;
     }
@@ -282,7 +292,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /machine
-  auto MTOrErr = getMachineType(Args.get());
+  auto MTOrErr = getMachineType(&Args);
   if (auto EC = MTOrErr.getError()) {
     llvm::errs() << EC.message() << "\n";
     return false;
@@ -290,15 +300,15 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   Config->MachineType = MTOrErr.get();
 
   // Handle /nodefaultlib:<filename>
-  for (auto *Arg : Args->filtered(OPT_nodefaultlib))
+  for (auto *Arg : Args.filtered(OPT_nodefaultlib))
     Config->NoDefaultLibs.insert(doFindLib(Arg->getValue()));
 
   // Handle /nodefaultlib
-  if (Args->hasArg(OPT_nodefaultlib_all))
+  if (Args.hasArg(OPT_nodefaultlib_all))
     Config->NoDefaultLibAll = true;
 
   // Handle /base
-  if (auto *Arg = Args->getLastArg(OPT_base)) {
+  if (auto *Arg = Args.getLastArg(OPT_base)) {
     if (auto EC = parseNumbers(Arg->getValue(), &Config->ImageBase)) {
       llvm::errs() << "/base: " << EC.message() << "\n";
       return false;
@@ -306,7 +316,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /stack
-  if (auto *Arg = Args->getLastArg(OPT_stack)) {
+  if (auto *Arg = Args.getLastArg(OPT_stack)) {
     if (auto EC = parseNumbers(Arg->getValue(), &Config->StackReserve,
                                &Config->StackCommit)) {
       llvm::errs() << "/stack: " << EC.message() << "\n";
@@ -315,7 +325,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /heap
-  if (auto *Arg = Args->getLastArg(OPT_heap)) {
+  if (auto *Arg = Args.getLastArg(OPT_heap)) {
     if (auto EC = parseNumbers(Arg->getValue(), &Config->HeapReserve,
                                &Config->HeapCommit)) {
       llvm::errs() << "/heap: " << EC.message() << "\n";
@@ -324,7 +334,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /version
-  if (auto *Arg = Args->getLastArg(OPT_version)) {
+  if (auto *Arg = Args.getLastArg(OPT_version)) {
     if (auto EC = parseVersion(Arg->getValue(), &Config->MajorImageVersion,
                                &Config->MinorImageVersion)) {
       llvm::errs() << "/version: " << EC.message() << "\n";
@@ -333,7 +343,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /subsystem
-  if (auto *Arg = Args->getLastArg(OPT_subsystem)) {
+  if (auto *Arg = Args.getLastArg(OPT_subsystem)) {
     if (auto EC = parseSubsystem(Arg->getValue(), &Config->Subsystem,
                                  &Config->MajorOSVersion,
                                  &Config->MinorOSVersion)) {
@@ -343,23 +353,27 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /alternatename
-  for (auto *Arg : Args->filtered(OPT_alternatename))
+  for (auto *Arg : Args.filtered(OPT_alternatename))
     if (parseAlternateName(Arg->getValue()))
       return false;
 
   // Handle /include
-  for (auto *Arg : Args->filtered(OPT_incl))
-    Config->Includes.insert(Arg->getValue());
+  for (auto *Arg : Args.filtered(OPT_incl))
+    addUndefined(Arg->getValue());
 
   // Handle /implib
-  if (auto *Arg = Args->getLastArg(OPT_implib))
+  if (auto *Arg = Args.getLastArg(OPT_implib))
     Config->Implib = Arg->getValue();
 
   // Handle /opt
-  for (auto *Arg : Args->filtered(OPT_opt)) {
+  for (auto *Arg : Args.filtered(OPT_opt)) {
     std::string S = StringRef(Arg->getValue()).lower();
     if (S == "noref") {
       Config->DoGC = false;
+      continue;
+    }
+    if (S == "lldicf") {
+      Config->ICF = true;
       continue;
     }
     if (S != "ref" && S != "icf" && S != "noicf" &&
@@ -371,20 +385,26 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /export
-  for (auto *Arg : Args->filtered(OPT_export)) {
+  for (auto *Arg : Args.filtered(OPT_export)) {
     ErrorOr<Export> E = parseExport(Arg->getValue());
     if (E.getError())
       return false;
     Config->Exports.push_back(E.get());
   }
 
+  // Handle /delayload
+  for (auto *Arg : Args.filtered(OPT_delayload)) {
+    Config->DelayLoads.insert(Arg->getValue());
+    addUndefined("__delayLoadHelper2");
+  }
+
   // Handle /failifmismatch
-  for (auto *Arg : Args->filtered(OPT_failifmismatch))
+  for (auto *Arg : Args.filtered(OPT_failifmismatch))
     if (checkFailIfMismatch(Arg->getValue()))
       return false;
 
   // Handle /def
-  if (auto *Arg = Args->getLastArg(OPT_deffile)) {
+  if (auto *Arg = Args.getLastArg(OPT_deffile)) {
     ErrorOr<MemoryBufferRef> MBOrErr = openFile(Arg->getValue());
     if (auto EC = MBOrErr.getError()) {
       llvm::errs() << "/def: " << EC.message() << "\n";
@@ -396,7 +416,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /manifest
-  if (auto *Arg = Args->getLastArg(OPT_manifest_colon)) {
+  if (auto *Arg = Args.getLastArg(OPT_manifest_colon)) {
     if (auto EC = parseManifest(Arg->getValue())) {
       llvm::errs() << "/manifest: " << EC.message() << "\n";
       return false;
@@ -404,7 +424,7 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /manifestuac
-  if (auto *Arg = Args->getLastArg(OPT_manifestuac)) {
+  if (auto *Arg = Args.getLastArg(OPT_manifestuac)) {
     if (auto EC = parseManifestUAC(Arg->getValue())) {
       llvm::errs() << "/manifestuac: " << EC.message() << "\n";
       return false;
@@ -412,29 +432,35 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   }
 
   // Handle /manifestdependency
-  if (auto *Arg = Args->getLastArg(OPT_manifestdependency))
+  if (auto *Arg = Args.getLastArg(OPT_manifestdependency))
     Config->ManifestDependency = Arg->getValue();
 
   // Handle /manifestfile
-  if (auto *Arg = Args->getLastArg(OPT_manifestfile))
+  if (auto *Arg = Args.getLastArg(OPT_manifestfile))
     Config->ManifestFile = Arg->getValue();
 
   // Handle miscellaneous boolean flags.
-  if (Args->hasArg(OPT_allowbind_no))      Config->AllowBind = false;
-  if (Args->hasArg(OPT_allowisolation_no)) Config->AllowIsolation = false;
-  if (Args->hasArg(OPT_dynamicbase_no))    Config->DynamicBase = false;
-  if (Args->hasArg(OPT_highentropyva_no))  Config->HighEntropyVA = false;
-  if (Args->hasArg(OPT_nxcompat_no))       Config->NxCompat = false;
-  if (Args->hasArg(OPT_tsaware_no))        Config->TerminalServerAware = false;
+  if (Args.hasArg(OPT_allowbind_no))
+    Config->AllowBind = false;
+  if (Args.hasArg(OPT_allowisolation_no))
+    Config->AllowIsolation = false;
+  if (Args.hasArg(OPT_dynamicbase_no))
+    Config->DynamicBase = false;
+  if (Args.hasArg(OPT_highentropyva_no))
+    Config->HighEntropyVA = false;
+  if (Args.hasArg(OPT_nxcompat_no))
+    Config->NxCompat = false;
+  if (Args.hasArg(OPT_tsaware_no))
+    Config->TerminalServerAware = false;
 
   // Create a list of input files. Files can be given as arguments
   // for /defaultlib option.
   std::vector<StringRef> InputPaths;
   std::vector<MemoryBufferRef> Inputs;
-  for (auto *Arg : Args->filtered(OPT_INPUT))
+  for (auto *Arg : Args.filtered(OPT_INPUT))
     if (Optional<StringRef> Path = findFile(Arg->getValue()))
       InputPaths.push_back(*Path);
-  for (auto *Arg : Args->filtered(OPT_defaultlib))
+  for (auto *Arg : Args.filtered(OPT_defaultlib))
     if (Optional<StringRef> Path = findLib(Arg->getValue()))
       InputPaths.push_back(*Path);
   for (StringRef Path : InputPaths) {
@@ -445,9 +471,6 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
     }
     Inputs.push_back(MBOrErr.get());
   }
-
-  // Create a symbol table.
-  SymbolTable Symtab;
 
   // Windows specific -- Create a resource file containing a manifest file.
   if (Config->Manifest == Configuration::Embed) {
@@ -462,31 +485,28 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   // Windows specific -- Input files can be Windows resource files (.res files).
   // We invoke cvtres.exe to convert resource files to a regular COFF file
   // then link the result file normally.
-  auto IsResource = [](MemoryBufferRef MB) {
-    return identify_magic(MB.getBuffer()) == file_magic::windows_resource;
+  auto NotResource = [](MemoryBufferRef MB) {
+    return identify_magic(MB.getBuffer()) != file_magic::windows_resource;
   };
-  auto It = std::stable_partition(Inputs.begin(), Inputs.end(), IsResource);
-  if (It != Inputs.begin()) {
-    std::vector<MemoryBufferRef> Files(Inputs.begin(), It);
+  auto It = std::stable_partition(Inputs.begin(), Inputs.end(), NotResource);
+  if (It != Inputs.end()) {
+    std::vector<MemoryBufferRef> Files(It, Inputs.end());
     auto MBOrErr = convertResToCOFF(Files);
     if (MBOrErr.getError())
       return false;
     std::unique_ptr<MemoryBuffer> MB = std::move(MBOrErr.get());
-    Inputs = std::vector<MemoryBufferRef>(It, Inputs.end());
+    Inputs.erase(It, Inputs.end());
     Inputs.push_back(MB->getMemBufferRef());
     OwningMBs.push_back(std::move(MB)); // take ownership
   }
 
   // Parse all input files and put all symbols to the symbol table.
   // The symbol table will take care of name resolution.
-  for (MemoryBufferRef MB : Inputs) {
-    std::unique_ptr<InputFile> File = createFile(MB);
-    if (Config->Verbose)
-      llvm::outs() << "Reading " << File->getName() << "\n";
-    if (auto EC = Symtab.addFile(std::move(File))) {
-      llvm::errs() << File->getName() << ": " << EC.message() << "\n";
-      return false;
-    }
+  for (MemoryBufferRef MB : Inputs)
+    Symtab.addFile(createFile(MB));
+  if (auto EC = Symtab.run()) {
+    llvm::errs() << EC.message() << "\n";
+    return false;
   }
 
   // Resolve auxiliary symbols until converge.
@@ -496,13 +516,9 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   for (;;) {
     size_t Ver = Symtab.getVersion();
 
-    // Add undefined symbols specified by /include.
-    for (StringRef Sym : Config->Includes)
-      Symtab.addUndefined(Sym);
-
     // Windows specific -- Make sure we resolve all dllexported symbols.
     for (Export &E : Config->Exports)
-      Symtab.addUndefined(E.Name);
+      addUndefined(E.Name);
 
     // Add weak aliases. Weak aliases is a mechanism to give remaining
     // undefined symbols final chance to be resolved successfully.
@@ -527,6 +543,12 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
       }
       Config->EntryName = EntryOrErr.get();
     }
+    addUndefined(Config->EntryName);
+
+    if (auto EC = Symtab.run()) {
+      llvm::errs() << EC.message() << "\n";
+      return false;
+    }
     if (Ver == Symtab.getVersion())
       break;
   }
@@ -534,13 +556,6 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
   // Make sure we have resolved all symbols.
   if (Symtab.reportRemainingUndefines())
     return false;
-
-  // Initialize a list of GC root.
-  for (StringRef Sym : Config->Includes)
-    Config->GCRoots.insert(Sym);
-  for (Export &E : Config->Exports)
-    Config->GCRoots.insert(E.Name);
-  Config->GCRoots.insert(Config->EntryName);
 
   // Do LTO by compiling bitcode input files to a native COFF file
   // then link that file.
@@ -583,6 +598,17 @@ bool LinkerDriver::link(int Argc, const char *Argv[]) {
     llvm::errs() << EC.message() << "\n";
     return false;
   }
+
+  if (auto *Arg = Args.getLastArg(OPT_lldmap)) {
+    std::error_code EC;
+    llvm::raw_fd_ostream Out(Arg->getValue(), EC, OpenFlags::F_Text);
+    if (EC) {
+      llvm::errs() << EC.message() << "\n";
+      return false;
+    }
+    Symtab.printMap(Out);
+  }
+
   return true;
 }
 

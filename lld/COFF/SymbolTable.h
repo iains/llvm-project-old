@@ -11,8 +11,10 @@
 #define LLD_COFF_SYMBOL_TABLE_H
 
 #include "InputFiles.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/Support/Allocator.h"
-#include <unordered_map>
+#include "llvm/Support/raw_ostream.h"
 
 namespace llvm {
 struct LTOCodeGenerator;
@@ -34,7 +36,8 @@ namespace coff {
 class SymbolTable {
 public:
   SymbolTable();
-  std::error_code addFile(std::unique_ptr<InputFile> File);
+  void addFile(std::unique_ptr<InputFile> File);
+  std::error_code run();
   size_t getVersion() { return Version; }
 
   // Print an error message on undefined symbols.
@@ -58,8 +61,8 @@ public:
   // entry point name.
   ErrorOr<StringRef> findDefaultEntry();
 
-  // Dump contents of the symbol table to stderr.
-  void dump();
+  // Print a layout map to OS.
+  void printMap(llvm::raw_ostream &OS);
 
   // Build a COFF object representing the combined contents of BitcodeFiles
   // and add it to the symbol table. Called after all files are added and
@@ -68,10 +71,10 @@ public:
 
   // The writer needs to handle DLL import libraries specially in
   // order to create the import descriptor table.
-  std::vector<std::unique_ptr<ImportFile>> ImportFiles;
+  std::vector<ImportFile *> ImportFiles;
 
   // The writer needs to infer the machine type from the object files.
-  std::vector<std::unique_ptr<ObjectFile>> ObjectFiles;
+  std::vector<ObjectFile *> ObjectFiles;
 
   // Creates an Undefined symbol for a given name.
   std::error_code addUndefined(StringRef Name);
@@ -79,22 +82,20 @@ public:
   // Rename From -> To in the symbol table.
   std::error_code rename(StringRef From, StringRef To);
 
+  // A list of chunks which to be added to .rdata.
+  std::vector<Chunk *> LocalImportChunks;
+
 private:
-  std::error_code addDirectives(InputFile *File);
-
-  std::error_code addObject(ObjectFile *File);
-  std::error_code addArchive(ArchiveFile *File);
-  std::error_code addImport(ImportFile *File);
-  std::error_code addBitcode(BitcodeFile *File);
-
   std::error_code resolve(SymbolBody *Body);
   std::error_code resolveLazy(StringRef Name);
   std::error_code addMemberFile(Lazy *Body);
   ErrorOr<ObjectFile *> createLTOObject(llvm::LTOCodeGenerator *CG);
 
-  std::unordered_map<StringRef, Symbol *> Symtab;
-  std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
-  std::vector<std::unique_ptr<BitcodeFile>> BitcodeFiles;
+  llvm::DenseMap<StringRef, Symbol *> Symtab;
+  std::vector<std::unique_ptr<InputFile>> Files;
+  size_t FileIdx = 0;
+  std::vector<ArchiveFile *> ArchiveFiles;
+  std::vector<BitcodeFile *> BitcodeFiles;
   std::unique_ptr<MemoryBuffer> LTOMB;
   llvm::BumpPtrAllocator Alloc;
 

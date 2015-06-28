@@ -1262,6 +1262,8 @@ def ext_mutable_reference : ExtWarn<
 def err_mutable_const : Error<"'mutable' and 'const' cannot be mixed">;
 def err_mutable_nonmember : Error<
   "'mutable' can only be applied to member variables">;
+def err_virtual_in_union : Error<
+  "unions cannot have virtual functions">;
 def err_virtual_non_function : Error<
   "'virtual' can only appear on non-static member functions">;
 def err_virtual_out_of_class : Error<
@@ -2081,12 +2083,16 @@ def err_attr_objc_ownership_redundant : Error<
   "the type %0 is already explicitly ownership-qualified">;
 def err_undeclared_nsnumber : Error<
   "NSNumber must be available to use Objective-C literals">;
+def err_undeclared_nsvalue : Error<
+  "NSValue must be available to use Objective-C boxed expressions">;
 def err_invalid_nsnumber_type : Error<
   "%0 is not a valid literal type for NSNumber">;
 def err_undeclared_nsstring : Error<
   "cannot box a string value because NSString has not been declared">;
 def err_objc_illegal_boxed_expression_type : Error<
   "illegal type %0 used in a boxed expression">;
+def err_objc_non_trivially_copyable_boxed_expression_type : Error<
+  "non-trivially copyable type %0 cannot be used in a boxed expression">;
 def err_objc_incomplete_boxed_expression_type : Error<
   "incomplete type %0 used in a boxed expression">;
 def err_undeclared_nsarray : Error<
@@ -2190,7 +2196,7 @@ def err_attribute_invalid_on_stmt : Error<
   "%0 attribute cannot be applied to a statement">;
 def warn_declspec_attribute_ignored : Warning<
   "attribute %0 is ignored, place it after "
-  "\"%select{class|struct|union|interface|enum}1\" to apply attribute to "
+  "\"%select{class|struct|interface|union|enum}1\" to apply attribute to "
   "type declaration">, InGroup<IgnoredAttributes>;
 def warn_attribute_precede_definition : Warning<
   "attribute declaration must precede definition">,
@@ -7413,6 +7419,8 @@ def err_omp_unexpected_clause_value : Error<
   "expected %0 in OpenMP clause '%1'">;
 def err_omp_expected_var_name : Error<
   "expected variable name">;
+def err_omp_expected_var_name_or_array_item : Error<
+  "expected variable name, array element or array section">;
 def note_omp_task_predetermined_firstprivate_here : Note<
   "predetermined as a firstprivate in a task construct here">;
 def err_omp_clause_ref_type_arg : Error<
@@ -7677,28 +7685,21 @@ def warn_profile_data_unprofiled : Warning<
 let CategoryName = "Nullability Issue" in {
 
 def warn_mismatched_nullability_attr : Warning<
-  "nullability specifier "
-  "'%select{__|}1%select{nonnull|nullable|null_unspecified}0' "
-  "conflicts with existing specifier "
-  "'%select{__|}3%select{nonnull|nullable|null_unspecified}2'">,
+  "nullability specifier %0 conflicts with existing specifier %1">,
   InGroup<Nullability>;
 
 def warn_nullability_declspec : Warning<
-  "nullability specifier "
-  "'%select{__nonnull|__nullable|__null_unspecified}0' cannot be applied "
+  "nullability specifier %0 cannot be applied "
   "to non-pointer type %1; did you mean to apply the specifier to the "
   "%select{pointer|block pointer|member pointer|function pointer|"
   "member function pointer}2?">,
   InGroup<NullabilityDeclSpec>,
   DefaultError;
 
-def note_nullability_here : Note<
-  "'%select{__nonnull|__nullable|__null_unspecified}0' specified here">;
+def note_nullability_here : Note<"%0 specified here">;
 
 def err_nullability_nonpointer : Error<
-  "nullability specifier "
-  "'%select{__|}1%select{nonnull|nullable|null_unspecified}0' cannot be applied "
-  "to non-pointer type %2">;
+  "nullability specifier %0 cannot be applied to non-pointer type %1">;
 
 def warn_nullability_lost : Warning<
   "implicit conversion from nullable pointer %0 to non-nullable pointer "
@@ -7706,12 +7707,9 @@ def warn_nullability_lost : Warning<
   InGroup<NullableToNonNullConversion>, DefaultIgnore;
 
 def err_nullability_cs_multilevel : Error<
-  "nullability keyword "
-  "'%select{nonnull|nullable|null_unspecified}0' cannot be applied to "
-  "multi-level pointer type %1">;
+  "nullability keyword %0 cannot be applied to multi-level pointer type %1">;
 def note_nullability_type_specifier : Note<
-  "use nullability type specifier "
-  "'%select{__nonnull|__nullable|__null_unspecified}0' to affect the innermost "
+  "use nullability type specifier %0 to affect the innermost "
   "pointer type of %1">;
 
 def warn_null_resettable_setter : Warning<
@@ -7720,7 +7718,7 @@ def warn_null_resettable_setter : Warning<
 
 def warn_nullability_missing : Warning<
   "%select{pointer|block pointer|member pointer}0 is missing a nullability "
-  "type specifier (__nonnull, __nullable, or __null_unspecified)">,
+  "type specifier (_Nonnull, _Nullable, or _Null_unspecified)">,
   InGroup<NullabilityCompleteness>;
 
 }

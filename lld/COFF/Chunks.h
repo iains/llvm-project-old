@@ -12,6 +12,7 @@
 
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Object/COFF.h"
 #include <map>
 #include <vector>
@@ -27,6 +28,7 @@ using llvm::object::coff_section;
 using llvm::sys::fs::file_magic;
 
 class Defined;
+class DefinedRegular;
 class DefinedImportData;
 class ObjectFile;
 class OutputSection;
@@ -37,6 +39,8 @@ class OutputSection;
 // doesn't even have actual data (if common or bss).
 class Chunk {
 public:
+  enum Kind { SectionKind, OtherKind };
+  Kind kind() const { return ChunkKind; }
   virtual ~Chunk() = default;
 
   // Returns the size of this chunk (even if this is a common or BSS.)
@@ -69,24 +73,6 @@ public:
     llvm_unreachable("unimplemented getSectionName");
   }
 
-  // Called if the garbage collector decides to not include this chunk
-  // in a final output. It's supposed to print out a log message to stdout.
-  // It is illegal to call this function on non-section chunks because
-  // only section chunks are subject of garbage collection.
-  virtual void printDiscardedMessage() {
-    llvm_unreachable("unimplemented printDiscardedMessage");
-  }
-
-  // Returns true if this is a COMDAT section. Usually, it is an error
-  // if there are more than one defined symbols having the same name,
-  // but symbols at begining of COMDAT sections allowed to duplicate.
-  virtual bool isCOMDAT() const { return false; }
-
-  // Used by the garbage collector.
-  bool isRoot() { return Root; }
-  bool isLive() { return Live; }
-  void markLive() { if (!Live) mark(); }
-
   // An output section has pointers to chunks in the section, and each
   // chunk has a back pointer to an output section.
   void setOutputSection(OutputSection *O) { Out = O; }
@@ -96,7 +82,14 @@ public:
   // Collect all locations that contain absolute addresses for base relocations.
   virtual void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) {}
 
+  // Returns a human-readable name of this chunk. Chunks are unnamed chunks of
+  // bytes, so this is used only for logging or debugging.
+  virtual StringRef getDebugName() { return ""; }
+
 protected:
+  Chunk(Kind K = OtherKind) : ChunkKind(K) {}
+  const Kind ChunkKind;
+
   // The RVA of this chunk in the output. The writer sets a value.
   uint64_t RVA = 0;
 
@@ -108,43 +101,68 @@ protected:
 
   // The alignment of this chunk. The writer uses the value.
   uint32_t Align = 1;
-
-  // Used by the garbage collector.
-  virtual void mark() {}
-  bool Live = true;
-  bool Root = false;
 };
 
 // A chunk corresponding a section of an input file.
 class SectionChunk : public Chunk {
 public:
-  SectionChunk(ObjectFile *File, const coff_section *Header,
-               uint32_t SectionIndex);
+  SectionChunk(ObjectFile *File, const coff_section *Header);
+  static bool classof(const Chunk *C) { return C->kind() == SectionKind; }
   size_t getSize() const override { return Header->SizeOfRawData; }
   void writeTo(uint8_t *Buf) override;
   bool hasData() const override;
   uint32_t getPermissions() const override;
   StringRef getSectionName() const override { return SectionName; }
-  void printDiscardedMessage() override;
-  bool isCOMDAT() const override;
   void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) override;
+  bool isCOMDAT() const;
+
+  // Called if the garbage collector decides to not include this chunk
+  // in a final output. It's supposed to print out a log message to stdout.
+  void printDiscardedMessage() const;
 
   // Adds COMDAT associative sections to this COMDAT section. A chunk
   // and its children are treated as a group by the garbage collector.
   void addAssociative(SectionChunk *Child);
 
+  StringRef getDebugName() override;
+  void setSymbol(DefinedRegular *S) { if (!Sym) Sym = S; }
+
+  // Used by the garbage collector.
+  bool isRoot() { return Root; }
+  bool isLive() { return Live; }
+  void markLive() { if (!Live) mark(); }
+
+  // Used for ICF (Identical COMDAT Folding)
+  void replaceWith(SectionChunk *Other);
+  uint64_t getHash() const;
+  bool equals(const SectionChunk *Other) const;
+
+  // A pointer pointing to a replacement for this chunk.
+  // Initially it points to "this" object. If this chunk is merged
+  // with other chunk by ICF, it points to another chunk,
+  // and this chunk is considrered as dead.
+  SectionChunk *Ptr;
+
 private:
-  void mark() override;
-  SectionRef getSectionRef();
-  void applyReloc(uint8_t *Buf, const coff_relocation *Rel);
+  ArrayRef<uint8_t> getContents() const;
 
   // A file this chunk was created from.
   ObjectFile *File;
 
   const coff_section *Header;
-  uint32_t SectionIndex;
   StringRef SectionName;
-  std::vector<Chunk *> AssocChildren;
+  std::vector<SectionChunk *> AssocChildren;
+  llvm::iterator_range<const coff_relocation *> Relocs;
+  size_t NumRelocs;
+
+  // Used by the garbage collector.
+  void mark();
+  bool Live = false;
+  bool Root;
+
+  // Chunks are basically unnamed chunks of bytes.
+  // Symbols are associated for debugging and logging purposs only.
+  DefinedRegular *Sym = nullptr;
 };
 
 // A chunk for common symbols. Common chunks don't have actual data.
@@ -180,12 +198,24 @@ static const uint8_t ImportThunkData[] = {
 // contents will be a JMP instruction to some __imp_ symbol.
 class ImportThunkChunk : public Chunk {
 public:
-  explicit ImportThunkChunk(Defined *S) : ImpSymbol(S) {}
+  explicit ImportThunkChunk(Defined *ImpSymbol);
   size_t getSize() const override { return sizeof(ImportThunkData); }
   void writeTo(uint8_t *Buf) override;
 
 private:
   Defined *ImpSymbol;
+};
+
+// Windows-specific.
+// See comments for DefinedLocalImport class.
+class LocalImportChunk : public Chunk {
+public:
+  explicit LocalImportChunk(Defined *S) : Sym(S) {}
+  size_t getSize() const override { return 4; }
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  Defined *Sym;
 };
 
 // Windows-specific.

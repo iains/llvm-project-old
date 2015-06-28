@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <unordered_set>
 #include <utility>
 
 using namespace llvm;
@@ -40,7 +41,9 @@ namespace coff {
 // The main function of the writer.
 std::error_code Writer::write(StringRef OutputPath) {
   markLive();
+  dedupCOMDATs();
   createSections();
+  createMiscChunks();
   createImportTables();
   createExportTable();
   if (Config->Relocatable)
@@ -51,6 +54,7 @@ std::error_code Writer::write(StringRef OutputPath) {
     return EC;
   writeHeader();
   writeSections();
+  sortExceptionTable();
   return Buffer->commit();
 }
 
@@ -108,10 +112,18 @@ void Writer::markLive() {
   if (!Config->DoGC)
     return;
   for (StringRef Name : Config->GCRoots)
-    cast<Defined>(Symtab->find(Name))->markLive();
+    if (auto *D = dyn_cast<DefinedRegular>(Symtab->find(Name)))
+      D->markLive();
   for (Chunk *C : Symtab->getChunks())
-    if (C->isRoot())
-      C->markLive();
+    if (auto *SC = dyn_cast<SectionChunk>(C))
+      if (SC->isRoot())
+        SC->markLive();
+}
+
+// Merge identical COMDAT sections.
+void Writer::dedupCOMDATs() {
+  if (Config->ICF)
+    doICF(Symtab->getChunks());
 }
 
 // Create output section objects and add them to OutputSections.
@@ -119,10 +131,13 @@ void Writer::createSections() {
   // First, bin chunks by name.
   std::map<StringRef, std::vector<Chunk *>> Map;
   for (Chunk *C : Symtab->getChunks()) {
-    if (Config->DoGC && !C->isLive()) {
-      if (Config->Verbose)
-        C->printDiscardedMessage();
-      continue;
+    if (Config->DoGC) {
+      auto *SC = dyn_cast<SectionChunk>(C);
+      if (SC && !SC->isLive()) {
+        if (Config->Verbose)
+          SC->printDiscardedMessage();
+        continue;
+      }
     }
     Map[C->getSectionName()].push_back(C);
   }
@@ -150,6 +165,14 @@ void Writer::createSections() {
   }
 }
 
+void Writer::createMiscChunks() {
+  if (Symtab->LocalImportChunks.empty())
+    return;
+  OutputSection *Sec = createSection(".rdata");
+  for (Chunk *C : Symtab->LocalImportChunks)
+    Sec->addChunk(C);
+}
+
 // Create .idata section for the DLL-imported symbol table.
 // The format of this section is inherently Windows-specific.
 // IdataContents class abstracted away the details for us,
@@ -158,29 +181,46 @@ void Writer::createImportTables() {
   if (Symtab->ImportFiles.empty())
     return;
   OutputSection *Text = createSection(".text");
-  Idata.reset(new IdataContents());
-  for (std::unique_ptr<ImportFile> &File : Symtab->ImportFiles) {
-    for (SymbolBody *Body : File->getSymbols()) {
-      if (auto *Import = dyn_cast<DefinedImportData>(Body)) {
-        Idata->add(Import);
+  for (ImportFile *File : Symtab->ImportFiles) {
+    for (SymbolBody *B : File->getSymbols()) {
+      auto *Import = dyn_cast<DefinedImportData>(B);
+      if (!Import) {
+        // Linker-created function thunks for DLL symbols are added to
+        // .text section.
+        Text->addChunk(cast<DefinedImportThunk>(B)->getChunk());
         continue;
       }
-      // Linker-created function thunks for DLL symbols are added to
-      // .text section.
-      Text->addChunk(cast<DefinedImportThunk>(Body)->getChunk());
+      if (Config->DelayLoads.count(Import->getDLLName())) {
+        DelayIdata.add(Import);
+      } else {
+        Idata.add(Import);
+      }
     }
   }
-  OutputSection *Sec = createSection(".idata");
-  for (Chunk *C : Idata->getChunks())
-    Sec->addChunk(C);
+  if (!Idata.empty()) {
+    OutputSection *Sec = createSection(".idata");
+    for (Chunk *C : Idata.getChunks())
+      Sec->addChunk(C);
+  }
+  if (!DelayIdata.empty()) {
+    DelayIdata.create(Symtab->find("__delayLoadHelper2"));
+    OutputSection *Sec = createSection(".didat");
+    for (Chunk *C : DelayIdata.getChunks())
+      Sec->addChunk(C);
+    Sec = createSection(".data");
+    for (Chunk *C : DelayIdata.getDataChunks())
+      Sec->addChunk(C);
+    Sec = createSection(".text");
+    for (std::unique_ptr<Chunk> &C : DelayIdata.getCodeChunks())
+      Sec->addChunk(C.get());
+  }
 }
 
 void Writer::createExportTable() {
   if (Config->Exports.empty())
     return;
-  Edata.reset(new EdataContents());
   OutputSection *Sec = createSection(".edata");
-  for (std::unique_ptr<Chunk> &C : Edata->Chunks)
+  for (std::unique_ptr<Chunk> &C : Edata.Chunks)
     Sec->addChunk(C.get());
 }
 
@@ -217,10 +257,10 @@ void Writer::assignAddresses() {
 }
 
 static MachineTypes
-inferMachineType(std::vector<std::unique_ptr<ObjectFile>> &ObjectFiles) {
-  for (std::unique_ptr<ObjectFile> &File : ObjectFiles) {
+inferMachineType(const std::vector<ObjectFile *> &Files) {
+  for (ObjectFile *F : Files) {
     // Try to infer machine type from the magic byte of the object file.
-    auto MT = static_cast<MachineTypes>(File->getCOFFObj()->getMachine());
+    auto MT = static_cast<MachineTypes>(F->getCOFFObj()->getMachine());
     if (MT != IMAGE_FILE_MACHINE_UNKNOWN)
       return MT;
   }
@@ -302,25 +342,34 @@ void Writer::writeHeader() {
   PE->SizeOfInitializedData = getSizeOfInitializedData();
 
   // Write data directory
-  auto *DataDirectory = reinterpret_cast<data_directory *>(Buf);
-  Buf += sizeof(*DataDirectory) * NumberfOfDataDirectory;
+  auto *Dir = reinterpret_cast<data_directory *>(Buf);
+  Buf += sizeof(*Dir) * NumberfOfDataDirectory;
   if (OutputSection *Sec = findSection(".edata")) {
-    DataDirectory[EXPORT_TABLE].RelativeVirtualAddress = Sec->getRVA();
-    DataDirectory[EXPORT_TABLE].Size = Sec->getVirtualSize();
+    Dir[EXPORT_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    Dir[EXPORT_TABLE].Size = Sec->getVirtualSize();
   }
-  if (Idata) {
-    DataDirectory[IMPORT_TABLE].RelativeVirtualAddress = Idata->getDirRVA();
-    DataDirectory[IMPORT_TABLE].Size = Idata->getDirSize();
-    DataDirectory[IAT].RelativeVirtualAddress = Idata->getIATRVA();
-    DataDirectory[IAT].Size = Idata->getIATSize();
+  if (!Idata.empty()) {
+    Dir[IMPORT_TABLE].RelativeVirtualAddress = Idata.getDirRVA();
+    Dir[IMPORT_TABLE].Size = Idata.getDirSize();
+    Dir[IAT].RelativeVirtualAddress = Idata.getIATRVA();
+    Dir[IAT].Size = Idata.getIATSize();
+  }
+  if (!DelayIdata.empty()) {
+    Dir[DELAY_IMPORT_DESCRIPTOR].RelativeVirtualAddress =
+        DelayIdata.getDirRVA();
+    Dir[DELAY_IMPORT_DESCRIPTOR].Size = DelayIdata.getDirSize();
   }
   if (OutputSection *Sec = findSection(".rsrc")) {
-    DataDirectory[RESOURCE_TABLE].RelativeVirtualAddress = Sec->getRVA();
-    DataDirectory[RESOURCE_TABLE].Size = Sec->getVirtualSize();
+    Dir[RESOURCE_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    Dir[RESOURCE_TABLE].Size = Sec->getVirtualSize();
   }
   if (OutputSection *Sec = findSection(".reloc")) {
-    DataDirectory[BASE_RELOCATION_TABLE].RelativeVirtualAddress = Sec->getRVA();
-    DataDirectory[BASE_RELOCATION_TABLE].Size = Sec->getVirtualSize();
+    Dir[BASE_RELOCATION_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    Dir[BASE_RELOCATION_TABLE].Size = Sec->getVirtualSize();
+  }
+  if (OutputSection *Sec = findSection(".pdata")) {
+    Dir[EXCEPTION_TABLE].RelativeVirtualAddress = Sec->getRVA();
+    Dir[EXCEPTION_TABLE].Size = Sec->getVirtualSize();
   }
 
   // Section table
@@ -380,6 +429,18 @@ void Writer::writeSections() {
       memset(Buf + Sec->getFileOff(), 0xCC, Sec->getRawSize());
     for (Chunk *C : Sec->getChunks())
       C->writeTo(Buf);
+  }
+}
+
+// Sort .pdata section contents according to PE/COFF spec 5.5.
+void Writer::sortExceptionTable() {
+  if (auto *Sec = findSection(".pdata")) {
+    // We assume .pdata contains function table entries only.
+    struct Entry { ulittle32_t Begin, End, Unwind; };
+    uint8_t *Buf = Buffer->getBufferStart() + Sec->getFileOff();
+    std::sort(reinterpret_cast<Entry *>(Buf),
+              reinterpret_cast<Entry *>(Buf + Sec->getVirtualSize()),
+              [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
   }
 }
 

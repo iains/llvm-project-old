@@ -17,6 +17,7 @@
 // Other libraries and framework includes
 // Project includes
 #include "lldb/Core/ArchSpec.h"
+#include "lldb/Core/StructuredData.h"
 #include "lldb/Target/Process.h"
 
 #include "GDBRemoteCommunication.h"
@@ -78,6 +79,11 @@ public:
                                           const char *packet_payload,
                                           size_t packet_length,
                                           StringExtractorGDBRemote &response);
+    bool
+    SendvContPacket (ProcessGDBRemote *process,
+                     const char *payload,
+                     size_t packet_length,
+                     StringExtractorGDBRemote &response);
 
     bool
     GetThreadSuffixSupported () override;
@@ -537,6 +543,9 @@ public:
     bool
     AvoidGPackets(ProcessGDBRemote *process);
 
+    StructuredData::ObjectSP
+    GetThreadsInfo();
+
     bool
     GetThreadExtendedInfoSupported();
 
@@ -550,6 +559,9 @@ public:
                     const lldb_private::ConstString annex,
                     std::string & out,
                     lldb_private::Error & err);
+
+    void
+    ServeSymbolLookups(lldb_private::Process *process);
 
 protected:
 
@@ -615,7 +627,9 @@ protected:
         m_supports_z3:1,
         m_supports_z4:1,
         m_supports_QEnvironment:1,
-        m_supports_QEnvironmentHexEncoded:1;
+        m_supports_QEnvironmentHexEncoded:1,
+        m_supports_qSymbol:1,
+        m_supports_jThreadsInfo:1;
     
     lldb::pid_t m_curr_pid;
     lldb::tid_t m_curr_tid;         // Current gdb remote protocol thread index for all other operations

@@ -251,6 +251,7 @@ def STDFp3SrcRm : SDTypeProfile<1, 4, [SDTCisSameAs<0,1>,
 
 def X86PAlignr : SDNode<"X86ISD::PALIGNR", SDTShuff3OpI>;
 def X86VAlign  : SDNode<"X86ISD::VALIGN", SDTShuff3OpI>;
+def X86Abs     : SDNode<"X86ISD::ABS", SDTIntUnaryOp>;
 
 def X86PShufd  : SDNode<"X86ISD::PSHUFD", SDTShuff2OpI>;
 def X86PShufhw : SDNode<"X86ISD::PSHUFHW", SDTShuff2OpI>;
@@ -347,12 +348,10 @@ def SDT_PCMPESTRI : SDTypeProfile<2, 5, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 def X86pcmpistri : SDNode<"X86ISD::PCMPISTRI", SDT_PCMPISTRI>;
 def X86pcmpestri : SDNode<"X86ISD::PCMPESTRI", SDT_PCMPESTRI>;
 
-def X86compress: SDNode<"X86ISD::COMPRESS", SDTypeProfile<1, 3,
-                              [SDTCisSameAs<0, 2>, SDTCisSameAs<0, 3>,
-                               SDTCisVec<3>, SDTCisVec<1>, SDTCisInt<1>]>, []>;
-def X86expand  : SDNode<"X86ISD::EXPAND", SDTypeProfile<1, 3,
-                              [SDTCisSameAs<0, 3>,
-                               SDTCisVec<3>, SDTCisVec<1>, SDTCisInt<1>]>, []>;
+def X86compress: SDNode<"X86ISD::COMPRESS", SDTypeProfile<1, 1,
+                              [SDTCisSameAs<0, 1>, SDTCisVec<1>]>, []>;
+def X86expand  : SDNode<"X86ISD::EXPAND", SDTypeProfile<1, 1,
+                              [SDTCisSameAs<0, 1>, SDTCisVec<1>]>, []>;
 
 def SDTintToFPRound: SDTypeProfile<1, 3, [SDTCisVec<0>, SDTCisFP<0>,
                                SDTCisSameAs<0,1>, SDTCisInt<2>, SDTCisInt<3>]>;
@@ -561,6 +560,14 @@ def unalignednontemporalstore : PatFrag<(ops node:$val, node:$ptr),
   return false;
 }]>;
 
+def mgatherv4i32 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
+  (masked_gather node:$src1, node:$src2, node:$src3) , [{
+  if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
+    return (Mgt->getIndex().getValueType() == MVT::v4i32 ||
+            Mgt->getBasePtr().getValueType() == MVT::v4i32);
+  return false;
+}]>;
+
 def mgatherv8i32 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   (masked_gather node:$src1, node:$src2, node:$src3) , [{
   if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
@@ -569,6 +576,20 @@ def mgatherv8i32 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   return false;
 }]>;
 
+def mgatherv2i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
+  (masked_gather node:$src1, node:$src2, node:$src3) , [{
+  if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
+    return (Mgt->getIndex().getValueType() == MVT::v2i64 ||
+            Mgt->getBasePtr().getValueType() == MVT::v2i64);
+  return false;
+}]>;
+def mgatherv4i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
+  (masked_gather node:$src1, node:$src2, node:$src3) , [{
+  if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
+    return (Mgt->getIndex().getValueType() == MVT::v4i64 ||
+            Mgt->getBasePtr().getValueType() == MVT::v4i64);
+  return false;
+}]>;
 def mgatherv8i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   (masked_gather node:$src1, node:$src2, node:$src3) , [{
   if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))

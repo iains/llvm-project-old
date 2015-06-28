@@ -19,6 +19,7 @@
 #include "Plugins/ABI/MacOSX-arm64/ABIMacOSX_arm64.h"
 #include "Plugins/ABI/SysV-arm/ABISysV_arm.h"
 #include "Plugins/ABI/SysV-arm64/ABISysV_arm64.h"
+#include "Plugins/ABI/SysV-i386/ABISysV_i386.h"
 #include "Plugins/ABI/SysV-x86_64/ABISysV_x86_64.h"
 #include "Plugins/ABI/SysV-ppc/ABISysV_ppc.h"
 #include "Plugins/ABI/SysV-ppc64/ABISysV_ppc64.h"
@@ -53,10 +54,6 @@
 
 #if defined(__FreeBSD__)
 #include "Plugins/Process/FreeBSD/ProcessFreeBSD.h"
-#endif
-
-#if defined(__linux__)
-#include "Plugins/Process/Linux/ProcessLinux.h"
 #endif
 
 #if defined(_MSC_VER)
@@ -240,6 +237,7 @@ SystemInitializerFull::Initialize()
     ABIMacOSX_arm64::Initialize();
     ABISysV_arm::Initialize();
     ABISysV_arm64::Initialize();
+    ABISysV_i386::Initialize();
     ABISysV_x86_64::Initialize();
     ABISysV_ppc::Initialize();
     ABISysV_ppc64::Initialize();
@@ -265,12 +263,6 @@ SystemInitializerFull::Initialize()
     SystemRuntimeMacOSX::Initialize();
     RenderScriptRuntime::Initialize();
 
-#if defined(__linux__)
-    //----------------------------------------------------------------------
-    // Linux hosted plugins
-    //----------------------------------------------------------------------
-    process_linux::ProcessLinux::Initialize();
-#endif
 #if defined(_MSC_VER)
     DynamicLoaderWindows::Initialize();
     ProcessWindows::Initialize();
@@ -347,6 +339,7 @@ SystemInitializerFull::Terminate()
     ABIMacOSX_arm64::Terminate();
     ABISysV_arm::Terminate();
     ABISysV_arm64::Terminate();
+    ABISysV_i386::Terminate();
     ABISysV_x86_64::Terminate();
     ABISysV_ppc::Terminate();
     ABISysV_ppc64::Terminate();
@@ -378,10 +371,6 @@ SystemInitializerFull::Terminate()
 #endif
 #if defined(_MSC_VER)
     DynamicLoaderWindows::Terminate();
-#endif
-
-#if defined(__linux__)
-    process_linux::ProcessLinux::Terminate();
 #endif
 
 #if defined(__FreeBSD__)

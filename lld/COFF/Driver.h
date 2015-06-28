@@ -11,6 +11,7 @@
 #define LLD_COFF_DRIVER_H
 
 #include "Config.h"
+#include "SymbolTable.h"
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
@@ -35,24 +36,23 @@ using llvm::Optional;
 class InputFile;
 
 // Entry point of the COFF linker.
-bool link(int Argc, const char *Argv[]);
+bool link(llvm::ArrayRef<const char *> Args);
 
 class ArgParser {
 public:
   ArgParser() : Alloc(AllocAux) {}
   // Parses command line options.
-  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>> parse(int Argc,
-                                                          const char *Argv[]);
+  ErrorOr<llvm::opt::InputArgList> parse(llvm::ArrayRef<const char *> Args);
+
+  // Concatenate LINK environment varirable and given arguments and parse them.
+  ErrorOr<llvm::opt::InputArgList> parseLINK(llvm::ArrayRef<const char *> Args);
 
   // Tokenizes a given string and then parses as command line options.
-  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>> parse(StringRef S) {
+  ErrorOr<llvm::opt::InputArgList> parse(StringRef S) {
     return parse(tokenize(S));
   }
 
 private:
-  ErrorOr<std::unique_ptr<llvm::opt::InputArgList>>
-  parse(std::vector<const char *> Argv);
-
   std::vector<const char *> tokenize(StringRef S);
 
   ErrorOr<std::vector<const char *>>
@@ -65,16 +65,16 @@ private:
 class LinkerDriver {
 public:
   LinkerDriver() : Alloc(AllocAux) {}
-  bool link(int Argc, const char *Argv[]);
+  bool link(llvm::ArrayRef<const char *> Args);
 
   // Used by the resolver to parse .drectve section contents.
-  std::error_code
-  parseDirectives(StringRef S, std::vector<std::unique_ptr<InputFile>> *Res);
+  std::error_code parseDirectives(StringRef S);
 
 private:
   llvm::BumpPtrAllocator AllocAux;
   llvm::BumpPtrStringSaver Alloc;
   ArgParser Parser;
+  SymbolTable Symtab;
 
   // Opens a file. Path has to be resolved already.
   ErrorOr<MemoryBufferRef> openFile(StringRef Path);
@@ -90,8 +90,9 @@ private:
 
   // Library search path. The first element is always "" (current directory).
   std::vector<StringRef> SearchPaths;
-
   std::set<std::string> VisitedFiles;
+
+  void addUndefined(StringRef Sym);
 
   // Driver is the owner of all opened files.
   // InputFiles have MemoryBufferRefs to them.
