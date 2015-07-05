@@ -111,19 +111,61 @@ void OutputSection::writeHeaderTo(uint8_t *Buf) {
 void Writer::markLive() {
   if (!Config->DoGC)
     return;
-  for (StringRef Name : Config->GCRoots)
-    if (auto *D = dyn_cast<DefinedRegular>(Symtab->find(Name)))
-      D->markLive();
-  for (Chunk *C : Symtab->getChunks())
-    if (auto *SC = dyn_cast<SectionChunk>(C))
-      if (SC->isRoot())
-        SC->markLive();
+
+  // We build up a worklist of sections which have been marked as live. We only
+  // push into the worklist when we discover an unmarked section, and we mark
+  // as we push, so sections never appear twice in the list.
+  SmallVector<SectionChunk *, 256> Worklist;
+
+  for (Undefined *U : Config->GCRoot) {
+    auto *D = dyn_cast<DefinedRegular>(U->repl());
+    if (!D || D->isLive())
+      continue;
+    D->markLive();
+    Worklist.push_back(D->getChunk());
+  }
+  for (Chunk *C : Symtab->getChunks()) {
+    auto *SC = dyn_cast<SectionChunk>(C);
+    if (!SC || !SC->isRoot() || SC->isLive())
+      continue;
+    SC->markLive();
+    Worklist.push_back(SC);
+  }
+  while (!Worklist.empty()) {
+    SectionChunk *SC = Worklist.pop_back_val();
+    assert(SC->isLive() && "We mark as live when pushing onto the worklist!");
+
+    // Mark all symbols listed in the relocation table for this section.
+    for (SymbolBody *S : SC->symbols())
+      if (auto *D = dyn_cast<DefinedRegular>(S->repl()))
+        if (!D->isLive()) {
+          D->markLive();
+          Worklist.push_back(D->getChunk());
+        }
+
+    // Mark associative sections if any.
+    for (SectionChunk *ChildSC : SC->children())
+      if (!ChildSC->isLive()) {
+        ChildSC->markLive();
+        Worklist.push_back(ChildSC);
+      }
+  }
 }
 
 // Merge identical COMDAT sections.
 void Writer::dedupCOMDATs() {
   if (Config->ICF)
     doICF(Symtab->getChunks());
+}
+
+static StringRef getOutputSection(StringRef Name) {
+  StringRef S = Name.split('$').first;
+  if (Config->Debug)
+    return S;
+  auto It = Config->Merge.find(S);
+  if (It == Config->Merge.end())
+    return S;
+  return It->second;
 }
 
 // Create output section objects and add them to OutputSections.
@@ -146,18 +188,16 @@ void Writer::createSections() {
   // '$' and all following characters in input section names are
   // discarded when determining output section. So, .text$foo
   // contributes to .text, for example. See PE/COFF spec 3.2.
-  StringRef Name = Map.begin()->first.split('$').first;
-  auto Sec = new (CAlloc.Allocate()) OutputSection(Name, 0);
-  OutputSections.push_back(Sec);
-  for (auto &P : Map) {
-    StringRef SectionName = P.first;
-    StringRef Base = SectionName.split('$').first;
-    if (Base != Sec->getName()) {
+  std::map<StringRef, OutputSection *> Sections;
+  for (auto Pair : Map) {
+    StringRef Name = getOutputSection(Pair.first);
+    OutputSection *&Sec = Sections[Name];
+    if (!Sec) {
       size_t SectIdx = OutputSections.size();
-      Sec = new (CAlloc.Allocate()) OutputSection(Base, SectIdx);
+      Sec = new (CAlloc.Allocate()) OutputSection(Name, SectIdx);
       OutputSections.push_back(Sec);
     }
-    std::vector<Chunk *> &Chunks = P.second;
+    std::vector<Chunk *> &Chunks = Pair.second;
     for (Chunk *C : Chunks) {
       Sec->addChunk(C);
       Sec->addPermissions(C->getPermissions());
@@ -190,7 +230,7 @@ void Writer::createImportTables() {
         Text->addChunk(cast<DefinedImportThunk>(B)->getChunk());
         continue;
       }
-      if (Config->DelayLoads.count(Import->getDLLName())) {
+      if (Config->DelayLoads.count(Import->getDLLName().lower())) {
         DelayIdata.add(Import);
       } else {
         Idata.add(Import);
@@ -203,7 +243,8 @@ void Writer::createImportTables() {
       Sec->addChunk(C);
   }
   if (!DelayIdata.empty()) {
-    DelayIdata.create(Symtab->find("__delayLoadHelper2"));
+    Defined *Helper = cast<Defined>(Symtab->find("__delayLoadHelper2")->Body);
+    DelayIdata.create(Helper);
     OutputSection *Sec = createSection(".didat");
     for (Chunk *C : DelayIdata.getChunks())
       Sec->addChunk(C);
@@ -316,8 +357,10 @@ void Writer::writeHeader() {
   PE->Subsystem = Config->Subsystem;
   PE->SizeOfImage = SizeOfImage;
   PE->SizeOfHeaders = SizeOfHeaders;
-  Defined *Entry = cast<Defined>(Symtab->find(Config->EntryName));
-  PE->AddressOfEntryPoint = Entry->getRVA();
+  if (!Config->NoEntry) {
+    Defined *Entry = cast<Defined>(Config->Entry->repl());
+    PE->AddressOfEntryPoint = Entry->getRVA();
+  }
   PE->SizeOfStackReserve = Config->StackReserve;
   PE->SizeOfStackCommit = Config->StackCommit;
   PE->SizeOfHeapReserve = Config->HeapReserve;
@@ -492,7 +535,7 @@ OutputSection *Writer::createSection(StringRef Name) {
 // Dest is .reloc section. Add contents to that section.
 void Writer::addBaserels(OutputSection *Dest) {
   std::vector<uint32_t> V;
-  Defined *ImageBase = cast<Defined>(Symtab->find("__ImageBase"));
+  Defined *ImageBase = cast<Defined>(Symtab->find("__ImageBase")->Body);
   for (OutputSection *Sec : OutputSections) {
     if (Sec == Dest)
       continue;

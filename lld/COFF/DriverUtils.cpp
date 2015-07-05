@@ -172,6 +172,26 @@ std::error_code parseAlternateName(StringRef S) {
   return std::error_code();
 }
 
+// Parse a string of the form of "<from>=<to>".
+// Results are directly written to Config.
+std::error_code parseMerge(StringRef S) {
+  StringRef From, To;
+  std::tie(From, To) = S.split('=');
+  if (From.empty() || To.empty()) {
+    llvm::errs() << "/merge: invalid argument: " << S << "\n";
+    return make_error_code(LLDError::InvalidOption);
+  }
+  auto Pair = Config->Merge.insert(std::make_pair(From, To));
+  bool Inserted = Pair.second;
+  if (!Inserted) {
+    StringRef Existing = Pair.first->second;
+    if (Existing != To)
+      llvm::errs() << "warning: " << S << ": already merged into "
+                   << Existing << "\n";
+  }
+  return std::error_code();
+}
+
 // Parses a string in the form of "EMBED[,=<integer>]|NO".
 // Results are directly written to Config.
 std::error_code parseManifest(StringRef Arg) {
@@ -396,14 +416,20 @@ std::error_code fixupExports() {
   }
 
   // Uniquefy by name.
-  std::set<StringRef> Names;
+  std::map<StringRef, Export *> Map;
   std::vector<Export> V;
   for (Export &E : Config->Exports) {
-    if (!Names.insert(E.Name).second) {
-      llvm::errs() << "warning: duplicate /export option: " << E.Name << "\n";
+    auto Pair = Map.insert(std::make_pair(E.Name, &E));
+    bool Inserted = Pair.second;
+    if (Inserted) {
+      V.push_back(E);
       continue;
     }
-    V.push_back(E);
+    Export *Existing = Pair.first->second;
+    if (E == *Existing)
+      continue;
+    llvm::errs() << "warning: duplicate /export option: " << E.Name << "\n";
+    continue;
   }
   Config->Exports = std::move(V);
 
@@ -515,6 +541,13 @@ std::error_code writeImportLibrary() {
     E.add("/out:" + Config->Implib);
   }
   return E.run();
+}
+
+void touchFile(StringRef Path) {
+  int FD;
+  if (sys::fs::openFileForWrite(Path, FD, sys::fs::F_Append))
+    report_fatal_error("failed to create a file");
+  sys::Process::SafelyCloseFileDescriptor(FD);
 }
 
 // Create OptTable

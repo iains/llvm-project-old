@@ -22,17 +22,23 @@ namespace coff {
 
 using llvm::COFF::WindowsSubsystem;
 using llvm::StringRef;
-class Defined;
+class Undefined;
 
 // Represents an /export option.
 struct Export {
   StringRef Name;
   StringRef ExtName;
-  Defined *Sym = nullptr;
+  Undefined *Sym = nullptr;
   uint16_t Ordinal = 0;
   bool Noname = false;
   bool Data = false;
   bool Private = false;
+
+  bool operator==(const Export &E) {
+    return (Name == E.Name && ExtName == E.ExtName &&
+            Ordinal == E.Ordinal && Noname == E.Noname &&
+            Data == E.Data && Private == E.Private);
+  }
 };
 
 // Global configuration.
@@ -42,13 +48,16 @@ struct Configuration {
   llvm::COFF::MachineTypes MachineType = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
   bool Verbose = false;
   WindowsSubsystem Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_UNKNOWN;
-  StringRef EntryName;
+  Undefined *Entry = nullptr;
+  bool NoEntry = false;
   std::string OutputFile;
   bool DoGC = true;
   bool Relocatable = true;
+  bool Force = false;
+  bool Debug = false;
 
   // Symbols in this set are considered as live by the garbage collector.
-  std::set<StringRef> GCRoots;
+  std::set<Undefined *> GCRoot;
 
   std::set<StringRef> NoDefaultLibs;
   bool NoDefaultLibAll = false;
@@ -57,10 +66,13 @@ struct Configuration {
   bool DLL = false;
   StringRef Implib;
   std::vector<Export> Exports;
-  std::set<StringRef> DelayLoads;
+  std::set<std::string> DelayLoads;
 
   // Used for /opt:icf
   bool ICF = false;
+
+  // Used for /merge:from=to (e.g. /merge:.rdata=.text)
+  std::map<StringRef, StringRef> Merge;
 
   // Options for manifest files.
   ManifestKind Manifest = SideBySide;
@@ -77,7 +89,7 @@ struct Configuration {
   // Used for /alternatename.
   std::map<StringRef, StringRef> AlternateNames;
 
-  uint64_t ImageBase = 0x140000000;
+  uint64_t ImageBase = 0x140000000U;
   uint64_t StackReserve = 1024 * 1024;
   uint64_t StackCommit = 4096;
   uint64_t HeapReserve = 1024 * 1024;
