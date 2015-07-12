@@ -93,6 +93,7 @@ private:
   std::set<std::string> VisitedFiles;
 
   Undefined *addUndefined(StringRef Sym);
+  StringRef mangle(StringRef Sym);
 
   // Windows specific -- "main" is not the only main function in Windows.
   // You can choose one from these four -- {w,}{WinMain,main}.
@@ -109,7 +110,8 @@ private:
   std::vector<std::unique_ptr<MemoryBuffer>> OwningMBs;
 };
 
-std::error_code parseModuleDefs(MemoryBufferRef MB);
+std::error_code parseModuleDefs(MemoryBufferRef MB,
+                                llvm::BumpPtrStringSaver *Alloc);
 std::error_code writeImportLibrary();
 
 // Functions below this line are defined in DriverUtils.cpp.
@@ -117,7 +119,8 @@ std::error_code writeImportLibrary();
 void printHelp(const char *Argv0);
 
 // For /machine option.
-ErrorOr<MachineTypes> getMachineType(llvm::opt::InputArgList *Args);
+ErrorOr<MachineTypes> getMachineType(StringRef Arg);
+StringRef machineTypeToStr(MachineTypes MT);
 
 // Parses a string in the form of "<integer>[,<integer>]".
 std::error_code parseNumbers(StringRef Arg, uint64_t *Addr,

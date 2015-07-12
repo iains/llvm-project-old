@@ -209,6 +209,14 @@ uint64_t Defined::getFileOff() {
   llvm_unreachable("unknown symbol kind");
 }
 
+COFFSymbolRef DefinedCOFF::getCOFFSymbol() {
+  size_t SymSize = File->getCOFFObj()->getSymbolTableEntrySize();
+  if (SymSize == sizeof(coff_symbol16))
+    return COFFSymbolRef(reinterpret_cast<const coff_symbol16 *>(Sym));
+  assert(SymSize == sizeof(coff_symbol32));
+  return COFFSymbolRef(reinterpret_cast<const coff_symbol32 *>(Sym));
+}
+
 ErrorOr<std::unique_ptr<InputFile>> Lazy::getMember() {
   auto MBRefOrErr = File->getMember(&Sym);
   if (auto EC = MBRefOrErr.getError())
@@ -221,17 +229,19 @@ ErrorOr<std::unique_ptr<InputFile>> Lazy::getMember() {
     return std::unique_ptr<InputFile>(nullptr);
 
   file_magic Magic = identify_magic(MBRef.getBuffer());
-  if (Magic == file_magic::bitcode)
-    return std::unique_ptr<InputFile>(new BitcodeFile(MBRef));
   if (Magic == file_magic::coff_import_library)
     return std::unique_ptr<InputFile>(new ImportFile(MBRef));
 
-  if (Magic != file_magic::coff_object) {
+  std::unique_ptr<InputFile> Obj;
+  if (Magic == file_magic::coff_object) {
+    Obj.reset(new ObjectFile(MBRef));
+  } else if (Magic == file_magic::bitcode) {
+    Obj.reset(new BitcodeFile(MBRef));
+  } else {
     llvm::errs() << File->getName() << ": unknown file type\n";
     return make_error_code(LLDError::InvalidFile);
   }
 
-  std::unique_ptr<InputFile> Obj(new ObjectFile(MBRef));
   Obj->setParentName(File->getName());
   return std::move(Obj);
 }

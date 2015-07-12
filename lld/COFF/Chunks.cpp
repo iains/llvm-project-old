@@ -48,6 +48,39 @@ static void add16(uint8_t *P, int16_t V) { write16le(P, read16le(P) + V); }
 static void add32(uint8_t *P, int32_t V) { write32le(P, read32le(P) + V); }
 static void add64(uint8_t *P, int64_t V) { write64le(P, read64le(P) + V); }
 
+void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S,
+                               uint64_t P) {
+  switch (Type) {
+  case IMAGE_REL_AMD64_ADDR32:   add32(Off, S + Config->ImageBase); break;
+  case IMAGE_REL_AMD64_ADDR64:   add64(Off, S + Config->ImageBase); break;
+  case IMAGE_REL_AMD64_ADDR32NB: add32(Off, S); break;
+  case IMAGE_REL_AMD64_REL32:    add32(Off, S - P - 4); break;
+  case IMAGE_REL_AMD64_REL32_1:  add32(Off, S - P - 5); break;
+  case IMAGE_REL_AMD64_REL32_2:  add32(Off, S - P - 6); break;
+  case IMAGE_REL_AMD64_REL32_3:  add32(Off, S - P - 7); break;
+  case IMAGE_REL_AMD64_REL32_4:  add32(Off, S - P - 8); break;
+  case IMAGE_REL_AMD64_REL32_5:  add32(Off, S - P - 9); break;
+  case IMAGE_REL_AMD64_SECTION:  add16(Off, Out->SectionIndex); break;
+  case IMAGE_REL_AMD64_SECREL:   add32(Off, S - Out->getRVA()); break;
+  default:
+    llvm::report_fatal_error("Unsupported relocation type");
+  }
+}
+
+void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, uint64_t S,
+                               uint64_t P) {
+  switch (Type) {
+  case IMAGE_REL_I386_ABSOLUTE: break;
+  case IMAGE_REL_I386_DIR32:    add32(Off, S + Config->ImageBase); break;
+  case IMAGE_REL_I386_DIR32NB:  add32(Off, S); break;
+  case IMAGE_REL_I386_REL32:    add32(Off, S - P - 4); break;
+  case IMAGE_REL_I386_SECTION:  add16(Off, Out->SectionIndex); break;
+  case IMAGE_REL_I386_SECREL:   add32(Off, S - Out->getRVA()); break;
+  default:
+    llvm::report_fatal_error("Unsupported relocation type");
+  }
+}
+
 void SectionChunk::writeTo(uint8_t *Buf) {
   if (!hasData())
     return;
@@ -61,20 +94,15 @@ void SectionChunk::writeTo(uint8_t *Buf) {
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
     uint64_t S = cast<Defined>(Body)->getRVA();
     uint64_t P = RVA + Rel.VirtualAddress;
-    switch (Rel.Type) {
-    case IMAGE_REL_AMD64_ADDR32:   add32(Off, S + Config->ImageBase); break;
-    case IMAGE_REL_AMD64_ADDR64:   add64(Off, S + Config->ImageBase); break;
-    case IMAGE_REL_AMD64_ADDR32NB: add32(Off, S); break;
-    case IMAGE_REL_AMD64_REL32:    add32(Off, S - P - 4); break;
-    case IMAGE_REL_AMD64_REL32_1:  add32(Off, S - P - 5); break;
-    case IMAGE_REL_AMD64_REL32_2:  add32(Off, S - P - 6); break;
-    case IMAGE_REL_AMD64_REL32_3:  add32(Off, S - P - 7); break;
-    case IMAGE_REL_AMD64_REL32_4:  add32(Off, S - P - 8); break;
-    case IMAGE_REL_AMD64_REL32_5:  add32(Off, S - P - 9); break;
-    case IMAGE_REL_AMD64_SECTION:  add16(Off, Out->getSectionIndex()); break;
-    case IMAGE_REL_AMD64_SECREL:   add32(Off, S - Out->getRVA()); break;
+    switch (Config->MachineType) {
+    case IMAGE_FILE_MACHINE_AMD64:
+      applyRelX64(Off, Rel.Type, S, P);
+      break;
+    case IMAGE_FILE_MACHINE_I386:
+      applyRelX86(Off, Rel.Type, S, P);
+      break;
     default:
-      llvm::report_fatal_error("Unsupported relocation type");
+      llvm_unreachable("unknown machine type");
     }
   }
 }
@@ -86,16 +114,26 @@ void SectionChunk::addAssociative(SectionChunk *Child) {
   Child->Root = false;
 }
 
+static bool isAbs(const coff_relocation &Rel) {
+  switch (Config->MachineType) {
+  case IMAGE_FILE_MACHINE_AMD64:
+    return Rel.Type == IMAGE_REL_AMD64_ADDR64;
+  case IMAGE_FILE_MACHINE_I386:
+    return Rel.Type == IMAGE_REL_I386_DIR32;
+  default:
+    llvm_unreachable("unknown machine type");
+  }
+}
+
 // Windows-specific.
-// Collect all locations that contain absolute 64-bit addresses,
-// which need to be fixed by the loader if load-time relocation is needed.
+// Collect all locations that contain absolute addresses, which need to be
+// fixed by the loader if load-time relocation is needed.
 // Only called when base relocation is enabled.
 void SectionChunk::getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) {
   for (const coff_relocation &Rel : Relocs) {
-    // ADDR64 relocations contain absolute addresses.
     // Symbol __ImageBase is special -- it's an absolute symbol, but its
     // address never changes even if image is relocated.
-    if (Rel.Type != IMAGE_REL_AMD64_ADDR64)
+    if (!isAbs(Rel))
       continue;
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
     if (Body == ImageBase)
@@ -217,17 +255,27 @@ ImportThunkChunk::ImportThunkChunk(Defined *S) : ImpSymbol(S) {
 void ImportThunkChunk::writeTo(uint8_t *Buf) {
   memcpy(Buf + FileOff, ImportThunkData, sizeof(ImportThunkData));
   // The first two bytes is a JMP instruction. Fill its operand.
-  uint32_t Operand = ImpSymbol->getRVA() - RVA - getSize();
+  uint32_t Operand = Config->is64()
+      ? ImpSymbol->getRVA() - RVA - getSize()
+      : ImpSymbol->getRVA() + Config->ImageBase;
   write32le(Buf + FileOff + 2, Operand);
 }
 
 void LocalImportChunk::getBaserels(std::vector<uint32_t> *Res,
                                    Defined *ImageBase) {
-  Res->push_back(getRVA() + Config->ImageBase);
+  Res->push_back(getRVA());
+}
+
+size_t LocalImportChunk::getSize() const {
+  return Config->is64() ? 8 : 4;
 }
 
 void LocalImportChunk::writeTo(uint8_t *Buf) {
-  write64le(Buf + FileOff, Sym->getRVA() + Config->ImageBase);
+  if (Config->is64()) {
+    write64le(Buf + FileOff, Sym->getRVA() + Config->ImageBase);
+  } else {
+    write32le(Buf + FileOff, Sym->getRVA() + Config->ImageBase);
+  }
 }
 
 // Windows-specific.

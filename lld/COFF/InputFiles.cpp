@@ -18,16 +18,15 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
+#include <mutex>
 
+using namespace llvm::COFF;
 using namespace llvm::object;
 using namespace llvm::support::endian;
-using llvm::COFF::ImportHeader;
-using llvm::COFF::IMAGE_COMDAT_SELECT_ASSOCIATIVE;
-using llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
-using llvm::COFF::IMAGE_FILE_MACHINE_UNKNOWN;
 using llvm::RoundUpToAlignment;
-using llvm::sys::fs::identify_magic;
+using llvm::Triple;
 using llvm::sys::fs::file_magic;
+using llvm::sys::fs::identify_magic;
 
 namespace lld {
 namespace coff {
@@ -72,10 +71,17 @@ std::error_code ArchiveFile::parse() {
     if (B->getName() != "__NULL_IMPORT_DESCRIPTOR")
       LazySymbols.push_back(B);
   }
+
+  // Seen is a map from member files to boolean values. Initially
+  // all members are mapped to false, which indicates all these files
+  // are not read yet.
+  for (const Archive::Child &Child : File->children())
+    Seen[Child.getBuffer().data()].clear();
   return std::error_code();
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.
+// This function is thread-safe.
 ErrorOr<MemoryBufferRef> ArchiveFile::getMember(const Archive::Symbol *Sym) {
   auto ItOrErr = Sym->getMember();
   if (auto EC = ItOrErr.getError())
@@ -84,8 +90,7 @@ ErrorOr<MemoryBufferRef> ArchiveFile::getMember(const Archive::Symbol *Sym) {
 
   // Return an empty buffer if we have already returned the same buffer.
   const char *StartAddr = It->getBuffer().data();
-  auto Pair = Seen.insert(StartAddr);
-  if (!Pair.second)
+  if (Seen[StartAddr].test_and_set())
     return MemoryBufferRef();
   return It->getMemoryBufferRef();
 }
@@ -102,11 +107,6 @@ std::error_code ObjectFile::parse() {
     COFFObj.reset(Obj);
   } else {
     llvm::errs() << getName() << " is not a COFF file.\n";
-    return make_error_code(LLDError::InvalidFile);
-  }
-  if (COFFObj->getMachine() != IMAGE_FILE_MACHINE_AMD64 &&
-      COFFObj->getMachine() != IMAGE_FILE_MACHINE_UNKNOWN) {
-    llvm::errs() << getName() << " is not an x64 object file.\n";
     return make_error_code(LLDError::InvalidFile);
   }
 
@@ -139,7 +139,8 @@ std::error_code ObjectFile::initializeChunks() {
       Directives = std::string((const char *)Data.data(), Data.size());
       continue;
     }
-    if (Name.startswith(".debug"))
+    // We want to preserve DWARF debug sections only when /debug is on.
+    if (!Config->Debug && Name.startswith(".debug"))
       continue;
     if (Sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
       continue;
@@ -242,6 +243,18 @@ Defined *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
   return B;
 }
 
+MachineTypes ObjectFile::getMachineType() {
+  if (COFFObj)
+    return static_cast<MachineTypes>(COFFObj->getMachine());
+  return IMAGE_FILE_MACHINE_UNKNOWN;
+}
+
+StringRef ltrim1(StringRef S, const char *Chars) {
+  if (!S.empty() && strchr(Chars, S[0]))
+    return S.substr(1);
+  return S;
+}
+
 std::error_code ImportFile::parse() {
   const char *Buf = MB.getBufferStart();
   const char *End = MB.getBufferEnd();
@@ -257,11 +270,23 @@ std::error_code ImportFile::parse() {
   StringRef Name = StringAlloc.save(StringRef(Buf + sizeof(*Hdr)));
   StringRef ImpName = StringAlloc.save(Twine("__imp_") + Name);
   StringRef DLLName(Buf + sizeof(coff_import_header) + Name.size() + 1);
-  StringRef ExternalName = Name;
-  if (Hdr->getNameType() == llvm::COFF::IMPORT_ORDINAL)
-    ExternalName = "";
-  auto *ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, ExternalName,
-                                               Hdr);
+  StringRef ExtName;
+  switch (Hdr->getNameType()) {
+  case IMPORT_ORDINAL:
+    ExtName = "";
+    break;
+  case IMPORT_NAME:
+    ExtName = Name;
+    break;
+  case IMPORT_NAME_NOPREFIX:
+    ExtName = ltrim1(Name, "?@_");
+    break;
+  case IMPORT_NAME_UNDECORATE:
+    ExtName = ltrim1(Name, "?@_");
+    ExtName = ExtName.substr(0, ExtName.find('@'));
+    break;
+  }
+  auto *ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, ExtName, Hdr);
   SymbolBodies.push_back(ImpSym);
 
   // If type is function, we need to create a thunk which jump to an
@@ -305,6 +330,21 @@ std::error_code BitcodeFile::parse() {
 
   Directives = M->getLinkerOpts();
   return std::error_code();
+}
+
+MachineTypes BitcodeFile::getMachineType() {
+  if (!M)
+    return IMAGE_FILE_MACHINE_UNKNOWN;
+  switch (Triple(M->getTargetTriple()).getArch()) {
+  case Triple::x86_64:
+    return IMAGE_FILE_MACHINE_AMD64;
+  case Triple::x86:
+    return IMAGE_FILE_MACHINE_I386;
+  case Triple::arm:
+    return IMAGE_FILE_MACHINE_ARMNT;
+  default:
+    return IMAGE_FILE_MACHINE_UNKNOWN;
+  }
 }
 
 } // namespace coff

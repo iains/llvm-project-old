@@ -16,6 +16,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/COFF.h"
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -26,6 +27,8 @@ using llvm::object::Archive;
 using llvm::object::COFFSymbolRef;
 using llvm::object::coff_import_header;
 using llvm::object::coff_symbol_generic;
+using llvm::object::coff_symbol16;
+using llvm::object::coff_symbol32;
 
 class ArchiveFile;
 class BitcodeFile;
@@ -38,7 +41,7 @@ class SymbolBody;
 // The resolver updates SymbolBody pointers as it resolves symbols.
 struct Symbol {
   explicit Symbol(SymbolBody *P) : Body(P) {}
-  SymbolBody *Body;
+  std::atomic<SymbolBody *> Body;
 };
 
 // The base class for real symbol classes.
@@ -80,7 +83,7 @@ public:
   // has chosen the object among other objects having the same name,
   // you can access P->Backref->Body to get the resolver's result.
   void setBackref(Symbol *P) { Backref = P; }
-  SymbolBody *repl() { return Backref ? Backref->Body : this; }
+  SymbolBody *repl() { return Backref ? Backref->Body.load() : this; }
 
   // Decides which symbol should "win" in the symbol table, this or
   // the Other. Returns 1 if this wins, -1 if the Other wins, or 0 if
@@ -140,6 +143,8 @@ public:
   }
 
   int getFileIndex() { return File->Index; }
+
+  COFFSymbolRef getCOFFSymbol();
 
 protected:
   ObjectFile *File;
@@ -357,5 +362,14 @@ private:
 
 } // namespace coff
 } // namespace lld
+
+// Support isa<>, cast<> and dyn_cast<> for Symbol::Body.
+namespace llvm {
+template <typename T>
+struct simplify_type<std::atomic<T *>> {
+  typedef T *SimpleType;
+  static T *getSimplifiedValue(std::atomic<T *> &A) { return A.load(); }
+};
+}
 
 #endif

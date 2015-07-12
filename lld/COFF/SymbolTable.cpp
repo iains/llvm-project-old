@@ -123,7 +123,7 @@ bool SymbolTable::queueEmpty() {
 }
 
 bool SymbolTable::reportRemainingUndefines(bool Resolve) {
-  bool Ret = false;
+  llvm::SmallPtrSet<SymbolBody *, 8> Undefs;
   for (auto &I : Symtab) {
     Symbol *Sym = I.second;
     auto *Undef = dyn_cast<Undefined>(Sym->Body);
@@ -150,29 +150,44 @@ bool SymbolTable::reportRemainingUndefines(bool Resolve) {
         continue;
       }
     }
-    llvm::errs() << "undefined symbol: " << Name << "\n";
     // Remaining undefined symbols are not fatal if /force is specified.
     // They are replaced with dummy defined symbols.
-    if (Config->Force) {
-      if (Resolve)
-        Sym->Body = new (Alloc) DefinedAbsolute(Name, 0);
-      continue;
-    }
-    Ret = true;
+    if (Config->Force && Resolve)
+      Sym->Body = new (Alloc) DefinedAbsolute(Name, 0);
+    Undefs.insert(Sym->Body);
   }
-  return Ret;
+  if (Undefs.empty())
+    return false;
+  for (Undefined *U : Config->GCRoot)
+    if (Undefs.count(U->repl()))
+      llvm::errs() << "<root>: undefined symbol: " << U->getName() << "\n";
+  for (std::unique_ptr<InputFile> &File : Files)
+    if (!isa<ArchiveFile>(File.get()))
+      for (SymbolBody *Sym : File->getSymbols())
+        if (Undefs.count(Sym->repl()))
+          llvm::errs() << File->getShortName() << ": undefined symbol: "
+                       << Sym->getName() << "\n";
+  return !Config->Force;
 }
 
 void SymbolTable::addLazy(Lazy *New, std::vector<Symbol *> *Accum) {
   Symbol *Sym = insert(New);
   if (Sym->Body == New)
     return;
-  SymbolBody *Existing = Sym->Body;
-  if (!isa<Undefined>(Existing))
+  for (;;) {
+    SymbolBody *Existing = Sym->Body;
+    if (isa<Defined>(Existing))
+      return;
+    if (Lazy *L = dyn_cast<Lazy>(Existing))
+      if (L->getFileIndex() < New->getFileIndex())
+        return;
+    if (!Sym->Body.compare_exchange_strong(Existing, New))
+      continue;
+    New->setBackref(Sym);
+    if (isa<Undefined>(Existing))
+      Accum->push_back(Sym);
     return;
-  Sym->Body = New;
-  New->setBackref(Sym);
-  Accum->push_back(Sym);
+  }
 }
 
 std::error_code SymbolTable::addSymbol(SymbolBody *New) {
@@ -181,32 +196,37 @@ std::error_code SymbolTable::addSymbol(SymbolBody *New) {
   Symbol *Sym = insert(New);
   if (Sym->Body == New)
     return std::error_code();
-  SymbolBody *Existing = Sym->Body;
 
-  // If we have an undefined symbol and a lazy symbol,
-  // let the lazy symbol to read a member file.
-  if (auto *L = dyn_cast<Lazy>(Existing)) {
-    // Undefined symbols with weak aliases need not to be resolved,
-    // since they would be replaced with weak aliases if they remain
-    // undefined.
-    if (auto *U = dyn_cast<Undefined>(New))
-      if (!U->WeakAlias)
-        return addMemberFile(L);
-    Sym->Body = New;
+  for (;;) {
+    SymbolBody *Existing = Sym->Body;
+
+    // If we have an undefined symbol and a lazy symbol,
+    // let the lazy symbol to read a member file.
+    if (auto *L = dyn_cast<Lazy>(Existing)) {
+      // Undefined symbols with weak aliases need not to be resolved,
+      // since they would be replaced with weak aliases if they remain
+      // undefined.
+      if (auto *U = dyn_cast<Undefined>(New))
+        if (!U->WeakAlias)
+          return addMemberFile(L);
+      if (!Sym->Body.compare_exchange_strong(Existing, New))
+        continue;
+      return std::error_code();
+    }
+
+    // compare() returns -1, 0, or 1 if the lhs symbol is less preferable,
+    // equivalent (conflicting), or more preferable, respectively.
+    int Comp = Existing->compare(New);
+    if (Comp == 0) {
+      llvm::errs() << "duplicate symbol: " << Existing->getDebugName()
+                   << " and " << New->getDebugName() << "\n";
+      return make_error_code(LLDError::DuplicateSymbols);
+    }
+    if (Comp < 0)
+      if (!Sym->Body.compare_exchange_strong(Existing, New))
+        continue;
     return std::error_code();
   }
-
-  // compare() returns -1, 0, or 1 if the lhs symbol is less preferable,
-  // equivalent (conflicting), or more preferable, respectively.
-  int Comp = Existing->compare(New);
-  if (Comp == 0) {
-    llvm::errs() << "duplicate symbol: " << Existing->getDebugName()
-                 << " and " << New->getDebugName() << "\n";
-    return make_error_code(LLDError::DuplicateSymbols);
-  }
-  if (Comp < 0)
-    Sym->Body = New;
-  return std::error_code();
 }
 
 Symbol *SymbolTable::insert(SymbolBody *New) {
@@ -261,7 +281,14 @@ void SymbolTable::mangleMaybe(Undefined *U) {
     return;
 
   // In Microsoft ABI, a non-member function name is mangled this way.
-  std::string Prefix = ("?" + U->getName() + "@@Y").str();
+  std::string Prefix;
+  if (Config->is64()) {
+    Prefix = ("?" + U->getName() + "@@Y").str();
+  } else {
+    if (!U->getName().startswith("_"))
+      return;
+    Prefix = ("?" + U->getName().substr(1) + "@@Y").str();
+  }
   for (auto Pair : Symtab) {
     StringRef Name = Pair.first;
     if (!Name.startswith(Prefix))
