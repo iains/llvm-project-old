@@ -397,6 +397,9 @@ protected:
     const DispatchQueueOffsets *
     GetDispatchQueueOffsets();
 
+    JSONGenerator::ObjectSP
+    GetJSONThreadsInfo (bool threads_with_valid_stop_info_only);
+
     RNBContext      m_ctx;              // process context
     RNBSocket       m_comm;             // communication port
     std::string     m_arch;

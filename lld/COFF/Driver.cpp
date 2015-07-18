@@ -227,8 +227,8 @@ StringRef LinkerDriver::findDefaultEntry() {
       {"wWinMain", "wWinMainCRTStartup"},
   };
   for (auto E : Entries) {
-    Symbol *Sym = Symtab.find(mangle(E[0]));
-    if (Sym && !isa<Undefined>(Sym->Body))
+    StringRef Entry = Symtab.findMangle(mangle(E[0]));
+    if (!Entry.empty() && !isa<Undefined>(Symtab.find(Entry)->Body))
       return mangle(E[1]);
   }
   return "";
@@ -418,12 +418,6 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     }
   }
 
-  // Handle /delayload
-  for (auto *Arg : Args.filtered(OPT_delayload)) {
-    Config->DelayLoads.insert(StringRef(Arg->getValue()).lower());
-    addUndefined("__delayLoadHelper2");
-  }
-
   // Handle /failifmismatch
   for (auto *Arg : Args.filtered(OPT_failifmismatch))
     if (checkFailIfMismatch(Arg->getValue()))
@@ -598,6 +592,16 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
       return false;
   }
 
+  // Handle /delayload
+  for (auto *Arg : Args.filtered(OPT_delayload)) {
+    Config->DelayLoads.insert(StringRef(Arg->getValue()).lower());
+    if (Config->is64()) {
+      Config->DelayLoadHelper = addUndefined("__delayLoadHelper2");
+    } else {
+      Config->DelayLoadHelper = addUndefined("___delayLoadHelper2@8");
+    }
+  }
+
   Symtab.addAbsolute(mangle("__ImageBase"), Config->ImageBase);
 
   // Read as much files as we can from directives sections.
@@ -666,13 +670,12 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
 
   // Windows specific -- when we are creating a .dll file, we also
   // need to create a .lib file.
-  if (!Config->Exports.empty())
-    writeImportLibrary();
-
-  // Windows specific -- fix up dllexported symbols.
-  if (!Config->Exports.empty())
+  if (!Config->Exports.empty()) {
     if (fixupExports())
       return false;
+    writeImportLibrary();
+    assignExportOrdinals();
+  }
 
   // Windows specific -- Create a side-by-side manifest file.
   if (Config->Manifest == Configuration::SideBySide)

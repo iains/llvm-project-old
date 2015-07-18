@@ -276,7 +276,7 @@ PlatformLinux::ResolveExecutable (const ModuleSpec &ms,
     {
         if (m_remote_platform_sp)
         {
-            error = GetCachedExecutable (resolved_module_spec, exe_module_sp, nullptr, *m_remote_platform_sp);
+            error = GetCachedExecutable (resolved_module_spec, exe_module_sp, module_search_paths_ptr, *m_remote_platform_sp);
         }
         else
         {
@@ -753,9 +753,6 @@ PlatformLinux::DebugProcess (ProcessLaunchInfo &launch_info,
         if (log)
             log->Printf ("PlatformLinux::%s successfully created process", __FUNCTION__);
     }
-
-    // Set the unix signals properly.
-    process_sp->SetUnixSignals (Host::GetUnixSignals ());
 
     // Adjust launch for a hijacker.
     ListenerSP listener_sp;
