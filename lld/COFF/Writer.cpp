@@ -58,6 +58,7 @@ std::error_code Writer::write(StringRef OutputPath) {
   } else {
     writeHeader<pe32_header>();
   }
+  fixSafeSEHSymbols();
   writeSections();
   sortExceptionTable();
   return Buffer->commit();
@@ -211,11 +212,25 @@ void Writer::createSections() {
 }
 
 void Writer::createMiscChunks() {
-  if (Symtab->LocalImportChunks.empty())
+  // Create thunks for locally-dllimported symbols.
+  if (!Symtab->LocalImportChunks.empty()) {
+    OutputSection *Sec = createSection(".rdata");
+    for (Chunk *C : Symtab->LocalImportChunks)
+      Sec->addChunk(C);
+  }
+
+  // Create SEH table. x86-only.
+  if (Config->Machine != I386)
     return;
-  OutputSection *Sec = createSection(".rdata");
-  for (Chunk *C : Symtab->LocalImportChunks)
-    Sec->addChunk(C);
+  std::set<Defined *> Handlers;
+  for (ObjectFile *File : Symtab->ObjectFiles) {
+    if (!File->SEHCompat)
+      return;
+    for (SymbolBody *B : File->SEHandlers)
+      Handlers.insert(cast<Defined>(B->repl()));
+  }
+  SEHTable.reset(new SEHTableChunk(Handlers));
+  createSection(".rdata")->addChunk(SEHTable.get());
 }
 
 // Create .idata section for the DLL-imported symbol table.
@@ -391,7 +406,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   // Write COFF header
   auto *COFF = reinterpret_cast<coff_file_header *>(Buf);
   Buf += sizeof(*COFF);
-  COFF->Machine = Config->MachineType;
+  COFF->Machine = Config->Machine;
   COFF->NumberOfSections = OutputSections.size();
   COFF->Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE;
   if (Config->is64()) {
@@ -425,6 +440,9 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   if (!Config->NoEntry) {
     Defined *Entry = cast<Defined>(Config->Entry->repl());
     PE->AddressOfEntryPoint = Entry->getRVA();
+    // Pointer to thumb code must have the LSB set, so adjust it.
+    if (Config->Machine == ARMNT)
+      PE->AddressOfEntryPoint |= 1;
   }
   PE->SizeOfStackReserve = Config->StackReserve;
   PE->SizeOfStackCommit = Config->StackCommit;
@@ -524,6 +542,13 @@ std::error_code Writer::openFile(StringRef Path) {
   return std::error_code();
 }
 
+void Writer::fixSafeSEHSymbols() {
+  if (!SEHTable)
+    return;
+  Config->SEHTable->setRVA(SEHTable->getRVA());
+  Config->SEHCount->setVA(SEHTable->getSize() / 4);
+}
+
 // Write section contents to a mmap'ed file.
 void Writer::writeSections() {
   uint8_t *Buf = Buffer->getBufferStart();
@@ -596,15 +621,13 @@ OutputSection *Writer::createSection(StringRef Name) {
 
 // Dest is .reloc section. Add contents to that section.
 void Writer::addBaserels(OutputSection *Dest) {
-  std::vector<uint32_t> V;
-  StringRef Name = Config->is64() ? "__ImageBase" : "___ImageBase";
-  Defined *ImageBase = cast<Defined>(Symtab->find(Name)->Body);
+  std::vector<Baserel> V;
   for (OutputSection *Sec : OutputSections) {
     if (Sec == Dest)
       continue;
     // Collect all locations for base relocations.
     for (Chunk *C : Sec->getChunks())
-      C->getBaserels(&V, ImageBase);
+      C->getBaserels(&V);
     // Add the addresses to .reloc section.
     if (!V.empty())
       addBaserelBlocks(Dest, V);
@@ -613,12 +636,12 @@ void Writer::addBaserels(OutputSection *Dest) {
 }
 
 // Add addresses to .reloc section. Note that addresses are grouped by page.
-void Writer::addBaserelBlocks(OutputSection *Dest, std::vector<uint32_t> &V) {
+void Writer::addBaserelBlocks(OutputSection *Dest, std::vector<Baserel> &V) {
   const uint32_t Mask = ~uint32_t(PageSize - 1);
-  uint32_t Page = V[0] & Mask;
+  uint32_t Page = V[0].RVA & Mask;
   size_t I = 0, J = 1;
   for (size_t E = V.size(); J < E; ++J) {
-    uint32_t P = V[J] & Mask;
+    uint32_t P = V[J].RVA & Mask;
     if (P == Page)
       continue;
     BaserelChunk *Buf = BAlloc.Allocate();

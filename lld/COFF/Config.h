@@ -20,11 +20,17 @@
 namespace lld {
 namespace coff {
 
-using llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
 using llvm::COFF::IMAGE_FILE_MACHINE_UNKNOWN;
 using llvm::COFF::WindowsSubsystem;
 using llvm::StringRef;
+class DefinedAbsolute;
+class DefinedRelative;
 class Undefined;
+
+// Short aliases.
+static const auto AMD64 = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
+static const auto ARMNT = llvm::COFF::IMAGE_FILE_MACHINE_ARMNT;
+static const auto I386 = llvm::COFF::IMAGE_FILE_MACHINE_I386;
 
 // Represents an /export option.
 struct Export {
@@ -46,9 +52,9 @@ struct Export {
 // Global configuration.
 struct Configuration {
   enum ManifestKind { SideBySide, Embed, No };
-  bool is64() { return MachineType == IMAGE_FILE_MACHINE_AMD64; }
+  bool is64() { return Machine == AMD64; }
 
-  llvm::COFF::MachineTypes MachineType = IMAGE_FILE_MACHINE_UNKNOWN;
+  llvm::COFF::MachineTypes Machine = IMAGE_FILE_MACHINE_UNKNOWN;
   bool Verbose = false;
   WindowsSubsystem Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_UNKNOWN;
   Undefined *Entry = nullptr;
@@ -72,6 +78,10 @@ struct Configuration {
   std::set<std::string> DelayLoads;
   Undefined *DelayLoadHelper = nullptr;
 
+  // Used for SafeSEH.
+  DefinedRelative *SEHTable = nullptr;
+  DefinedAbsolute *SEHCount = nullptr;
+
   // Used for /opt:icf
   bool ICF = false;
 
@@ -93,7 +103,7 @@ struct Configuration {
   // Used for /alternatename.
   std::map<StringRef, StringRef> AlternateNames;
 
-  uint64_t ImageBase = 0x140000000U;
+  uint64_t ImageBase = -1;
   uint64_t StackReserve = 1024 * 1024;
   uint64_t StackCommit = 4096;
   uint64_t HeapReserve = 1024 * 1024;

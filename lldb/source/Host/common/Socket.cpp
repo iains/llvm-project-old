@@ -139,7 +139,7 @@ Error Socket::TcpConnect(llvm::StringRef host_and_port, bool child_processes_inh
     NativeSocket sock = kInvalidSocketValue;
     Error error;
 
-    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_HOST));
+    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_COMMUNICATION));
     if (log)
         log->Printf ("Socket::TcpConnect (host/port = %s)", host_and_port.data());
 
@@ -201,12 +201,12 @@ Error Socket::TcpConnect(llvm::StringRef host_and_port, bool child_processes_inh
     return error;
 }
 
-Error Socket::TcpListen(
-    llvm::StringRef host_and_port,
-    bool child_processes_inherit,
-    Socket *&socket,
-    Predicate<uint16_t>* predicate,
-    int backlog)
+Error
+Socket::TcpListen (llvm::StringRef host_and_port,
+                   bool child_processes_inherit,
+                   Socket *&socket,
+                   Predicate<uint16_t>* predicate,
+                   int backlog)
 {
     std::unique_ptr<Socket> listen_socket;
     NativeSocket listen_sock = kInvalidSocketValue;
@@ -237,10 +237,19 @@ Error Socket::TcpListen(
     if (!DecodeHostAndPort (host_and_port, host_str, port_str, port, &error))
         return error;
 
-    SocketAddress anyaddr;
-    if (anyaddr.SetToAnyAddress (family, port))
+    SocketAddress bind_addr;
+    bool bind_addr_success = false;
+
+    // Only bind to the loopback address if we are expecting a connection from
+    // localhost to avoid any firewall issues.
+    if (host_str == "127.0.0.1")
+        bind_addr_success = bind_addr.SetToLocalhost (family, port);
+    else
+        bind_addr_success = bind_addr.SetToAnyAddress (family, port);
+
+    if (bind_addr_success)
     {
-        int err = ::bind (listen_sock, anyaddr, anyaddr.GetLength());
+        int err = ::bind (listen_sock, bind_addr, bind_addr.GetLength());
         if (err == -1)
         {
             SetLastError (error);
@@ -623,7 +632,7 @@ Error Socket::Read (void *buf, size_t &num_bytes)
     else
         num_bytes = bytes_received;
 
-    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_HOST | LIBLLDB_LOG_COMMUNICATION)); 
+    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_COMMUNICATION)); 
     if (log)
     {
         log->Printf ("%p Socket::Read() (socket = %" PRIu64 ", src = %p, src_len = %" PRIu64 ", flags = 0) => %" PRIi64 " (error = %s)",
@@ -665,7 +674,7 @@ Error Socket::Write (const void *buf, size_t &num_bytes)
     else
         num_bytes = bytes_sent;
 
-    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_HOST));
+    Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_COMMUNICATION));
     if (log)
     {
         log->Printf ("%p Socket::Write() (socket = %" PRIu64 ", src = %p, src_len = %" PRIu64 ", flags = 0) => %" PRIi64 " (error = %s)",

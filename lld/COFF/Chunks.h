@@ -29,9 +29,10 @@ using llvm::object::coff_relocation;
 using llvm::object::coff_section;
 using llvm::sys::fs::file_magic;
 
+class Baserel;
 class Defined;
-class DefinedRegular;
 class DefinedImportData;
+class DefinedRegular;
 class ObjectFile;
 class OutputSection;
 class SymbolBody;
@@ -83,7 +84,7 @@ public:
 
   // Windows-specific.
   // Collect all locations that contain absolute addresses for base relocations.
-  virtual void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) {}
+  virtual void getBaserels(std::vector<Baserel> *Res) {}
 
   // Returns a human-readable name of this chunk. Chunks are unnamed chunks of
   // bytes, so this is used only for logging or debugging.
@@ -134,10 +135,11 @@ public:
   bool hasData() const override;
   uint32_t getPermissions() const override;
   StringRef getSectionName() const override { return SectionName; }
-  void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) override;
+  void getBaserels(std::vector<Baserel> *Res) override;
   bool isCOMDAT() const;
   void applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
   void applyRelX86(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
+  void applyRelARM(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
 
   // Called if the garbage collector decides to not include this chunk
   // in a final output. It's supposed to print out a log message to stdout.
@@ -223,18 +225,45 @@ private:
   StringRef Str;
 };
 
-static const uint8_t ImportThunkData[] = {
+static const uint8_t ImportThunkX86[] = {
     0xff, 0x25, 0x00, 0x00, 0x00, 0x00, // JMP *0x0
+};
+
+static const uint8_t ImportThunkARM[] = {
+    0x40, 0xf2, 0x00, 0x0c, // mov.w ip, #0
+    0xc0, 0xf2, 0x00, 0x0c, // mov.t ip, #0
+    0xdc, 0xf8, 0x00, 0xf0, // ldr.w pc, [ip]
 };
 
 // Windows-specific.
 // A chunk for DLL import jump table entry. In a final output, it's
 // contents will be a JMP instruction to some __imp_ symbol.
-class ImportThunkChunk : public Chunk {
+class ImportThunkChunkX64 : public Chunk {
 public:
-  explicit ImportThunkChunk(Defined *ImpSymbol);
-  size_t getSize() const override { return sizeof(ImportThunkData); }
-  void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) override;
+  explicit ImportThunkChunkX64(Defined *S);
+  size_t getSize() const override { return sizeof(ImportThunkX86); }
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  Defined *ImpSymbol;
+};
+
+class ImportThunkChunkX86 : public Chunk {
+public:
+  explicit ImportThunkChunkX86(Defined *S) : ImpSymbol(S) {}
+  size_t getSize() const override { return sizeof(ImportThunkX86); }
+  void getBaserels(std::vector<Baserel> *Res) override;
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  Defined *ImpSymbol;
+};
+
+class ImportThunkChunkARM : public Chunk {
+public:
+  explicit ImportThunkChunkARM(Defined *S) : ImpSymbol(S) {}
+  size_t getSize() const override { return sizeof(ImportThunkARM); }
+  void getBaserels(std::vector<Baserel> *Res) override;
   void writeTo(uint8_t *Buf) override;
 
 private:
@@ -247,7 +276,7 @@ class LocalImportChunk : public Chunk {
 public:
   explicit LocalImportChunk(Defined *S) : Sym(S) {}
   size_t getSize() const override;
-  void getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) override;
+  void getBaserels(std::vector<Baserel> *Res) override;
   void writeTo(uint8_t *Buf) override;
 
 private:
@@ -255,16 +284,39 @@ private:
 };
 
 // Windows-specific.
+// A chunk for SEH table which contains RVAs of safe exception handler
+// functions. x86-only.
+class SEHTableChunk : public Chunk {
+public:
+  explicit SEHTableChunk(std::set<Defined *> S) : Syms(S) {}
+  size_t getSize() const override { return Syms.size() * 4; }
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  std::set<Defined *> Syms;
+};
+
+// Windows-specific.
 // This class represents a block in .reloc section.
 // See the PE/COFF spec 5.6 for details.
 class BaserelChunk : public Chunk {
 public:
-  BaserelChunk(uint32_t Page, uint32_t *Begin, uint32_t *End);
+  BaserelChunk(uint32_t Page, Baserel *Begin, Baserel *End);
   size_t getSize() const override { return Data.size(); }
   void writeTo(uint8_t *Buf) override;
 
 private:
   std::vector<uint8_t> Data;
+};
+
+class Baserel {
+public:
+  Baserel(uint32_t V, uint8_t Ty) : RVA(V), Type(Ty) {}
+  explicit Baserel(uint32_t V) : Baserel(V, getDefaultType()) {}
+  uint8_t getDefaultType();
+
+  uint32_t RVA;
+  uint8_t Type;
 };
 
 } // namespace coff

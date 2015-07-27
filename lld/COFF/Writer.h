@@ -89,6 +89,7 @@ private:
   void createSymbolAndStringTable();
   std::error_code openFile(StringRef OutputPath);
   template <typename PEHeaderTy> void writeHeader();
+  void fixSafeSEHSymbols();
   void writeSections();
   void sortExceptionTable();
   void applyRelocations();
@@ -99,7 +100,7 @@ private:
   OutputSection *findSection(StringRef Name);
   OutputSection *createSection(StringRef Name);
   void addBaserels(OutputSection *Dest);
-  void addBaserelBlocks(OutputSection *Dest, std::vector<uint32_t> &V);
+  void addBaserelBlocks(OutputSection *Dest, std::vector<Baserel> &V);
 
   uint32_t getSizeOfInitializedData();
   std::map<StringRef, std::vector<DefinedImportData *>> binImports();
@@ -114,6 +115,7 @@ private:
   IdataContents Idata;
   DelayLoadContents DelayIdata;
   EdataContents Edata;
+  std::unique_ptr<SEHTableChunk> SEHTable;
 
   bool Is64;
   uint64_t FileSize;

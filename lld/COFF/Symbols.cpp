@@ -143,6 +143,7 @@ int SymbolBody::compare(SymbolBody *Other) {
   case DefinedImportThunkKind:
   case DefinedImportDataKind:
   case DefinedAbsoluteKind:
+  case DefinedRelativeKind:
     // These all simply tie.
     return 0;
   }
@@ -178,6 +179,8 @@ uint64_t Defined::getFileOff() {
     llvm_unreachable("There is no file offset for a bitcode symbol.");
   case DefinedAbsoluteKind:
     llvm_unreachable("Cannot get a file offset for an absolute symbol.");
+  case DefinedRelativeKind:
+    llvm_unreachable("Cannot get a file offset for a relative symbol.");
   case LazyKind:
   case UndefinedKind:
     llvm_unreachable("Cannot get a file offset for an undefined symbol.");
@@ -191,6 +194,21 @@ COFFSymbolRef DefinedCOFF::getCOFFSymbol() {
     return COFFSymbolRef(reinterpret_cast<const coff_symbol16 *>(Sym));
   assert(SymSize == sizeof(coff_symbol32));
   return COFFSymbolRef(reinterpret_cast<const coff_symbol32 *>(Sym));
+}
+
+DefinedImportThunk::DefinedImportThunk(StringRef Name, DefinedImportData *S,
+                                       uint16_t Machine)
+    : Defined(DefinedImportThunkKind, Name) {
+  switch (Machine) {
+  case AMD64:
+    Data.reset(new ImportThunkChunkX64(S));
+    return;
+  case I386:
+    Data.reset(new ImportThunkChunkX86(S));
+    return;
+  default:
+    llvm_unreachable("unknown machine type");
+  }
 }
 
 ErrorOr<std::unique_ptr<InputFile>> Lazy::getMember() {

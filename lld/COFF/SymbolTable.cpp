@@ -287,7 +287,7 @@ StringRef SymbolTable::findMangle(StringRef Name) {
   if (Symbol *Sym = find(Name))
     if (!isa<Undefined>(Sym->Body))
       return Name;
-  if (Config->is64())
+  if (Config->Machine != I386)
     return findByPrefix(("?" + Name + "@@Y").str());
   if (!Name.startswith("_"))
     return "";
@@ -317,8 +317,16 @@ Undefined *SymbolTable::addUndefined(StringRef Name) {
   return New;
 }
 
-void SymbolTable::addAbsolute(StringRef Name, uint64_t VA) {
-  addSymbol(new (Alloc) DefinedAbsolute(Name, VA));
+DefinedRelative *SymbolTable::addRelative(StringRef Name, uint64_t VA) {
+  auto *New = new (Alloc) DefinedRelative(Name, VA);
+  addSymbol(New);
+  return New;
+}
+
+DefinedAbsolute *SymbolTable::addAbsolute(StringRef Name, uint64_t VA) {
+  auto *New = new (Alloc) DefinedAbsolute(Name, VA);
+  addSymbol(New);
+  return New;
 }
 
 void SymbolTable::printMap(llvm::raw_ostream &OS) {

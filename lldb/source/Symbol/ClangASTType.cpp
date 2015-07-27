@@ -4080,8 +4080,9 @@ ClangASTType::GetIndexOfChildMemberWithName (const char *name,
                         clang::DeclarationName decl_name(&ident_ref);
                         
                         clang::CXXBasePaths paths;
-                        if (cxx_record_decl->lookupInBases(clang::CXXRecordDecl::FindOrdinaryMember,
-                                                           decl_name.getAsOpaquePtr(),
+                        if (cxx_record_decl->lookupInBases([decl_name](const clang::CXXBaseSpecifier *specifier, clang::CXXBasePath &path) {
+                                                               return clang::CXXRecordDecl::FindOrdinaryMember(specifier, path, decl_name);
+                                                           },
                                                            paths))
                         {
                             clang::CXXBasePaths::const_paths_iterator path, path_end = paths.end();
@@ -5920,7 +5921,7 @@ ClangASTType::CompleteTagDeclarationDefinition ()
         {
             clang::EnumDecl *enum_decl = enum_type->getDecl();
             
-            if (enum_decl)
+            if (enum_decl && !enum_decl->isCompleteDefinition())
             {
                 /// TODO This really needs to be fixed.
                 

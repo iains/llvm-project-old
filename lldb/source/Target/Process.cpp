@@ -2843,6 +2843,7 @@ Process::WriteMemory (addr_t addr, const void *buf, size_t size, Error &error)
                     size_t intersect_size;
                     size_t opcode_offset;
                     const bool intersects = bp->IntersectsRange(addr, size, &intersect_addr, &intersect_size, &opcode_offset);
+                    UNUSED_IF_ASSERT_DISABLED(intersects);
                     assert(intersects);
                     assert(addr <= intersect_addr && intersect_addr < addr + size);
                     assert(addr < intersect_addr + intersect_size && intersect_addr + intersect_size <= addr + size);
@@ -3048,6 +3049,11 @@ Process::ReadModuleFromMemory (const FileSpec& file_spec,
                                lldb::addr_t header_addr,
                                size_t size_to_read)
 {
+    Log *log = lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_HOST);
+    if (log)
+    {
+        log->Printf ("Process::ReadModuleFromMemory reading %s binary from memory", file_spec.GetPath().c_str());
+    }
     ModuleSP module_sp (new Module (file_spec, ArchSpec()));
     if (module_sp)
     {

@@ -222,9 +222,9 @@ template <class ELFT> std::error_code MipsELFFile<ELFT>::readAuxData() {
 }
 
 template <class ELFT>
-void MipsELFFile<ELFT>::createRelocationReferences(const Elf_Sym *symbol,
-                                                   ArrayRef<uint8_t> content,
-                                                   range<Elf_Rela_Iter> rels) {
+void MipsELFFile<ELFT>::createRelocationReferences(
+    const Elf_Sym *symbol, ArrayRef<uint8_t> content,
+    range<const Elf_Rela *> rels) {
   const auto value = this->getSymbolValue(symbol);
   for (const auto &rel : rels) {
     if (rel.r_offset < value || value + content.size() <= rel.r_offset)
@@ -239,9 +239,12 @@ template <class ELFT>
 void MipsELFFile<ELFT>::createRelocationReferences(const Elf_Sym *symbol,
                                                    ArrayRef<uint8_t> symContent,
                                                    ArrayRef<uint8_t> secContent,
-                                                   range<Elf_Rel_Iter> rels) {
+                                                   const Elf_Shdr *relSec) {
+  const Elf_Shdr *symtab = *this->_objFile->getSection(relSec->sh_link);
+  auto rels = this->_objFile->rels(relSec);
   const auto value = this->getSymbolValue(symbol);
-  for (Elf_Rel_Iter rit = rels.begin(), eit = rels.end(); rit != eit; ++rit) {
+  for (const Elf_Rel *rit = rels.begin(), *eit = rels.end(); rit != eit;
+       ++rit) {
     if (rit->r_offset < value || value + symContent.size() <= rit->r_offset)
       continue;
 
@@ -250,7 +253,7 @@ void MipsELFFile<ELFT>::createRelocationReferences(const Elf_Sym *symbol,
     this->_references.push_back(r);
 
     auto addend = readAddend(*rit, secContent);
-    auto pairRelType = getPairRelocation(*rit);
+    auto pairRelType = getPairRelocation(symtab, *rit);
     if (pairRelType != llvm::ELF::R_MIPS_NONE) {
       addend <<= 16;
       auto mit = findMatchingRelocation(pairRelType, rit, eit);
@@ -279,20 +282,21 @@ MipsELFFile<ELFT>::readAddend(const Elf_Rel &ri,
 }
 
 template <class ELFT>
-uint32_t MipsELFFile<ELFT>::getPairRelocation(const Elf_Rel &rel) const {
+uint32_t MipsELFFile<ELFT>::getPairRelocation(const Elf_Shdr *symtab,
+                                              const Elf_Rel &rel) const {
   switch (getPrimaryType(rel)) {
   case llvm::ELF::R_MIPS_HI16:
     return llvm::ELF::R_MIPS_LO16;
   case llvm::ELF::R_MIPS_PCHI16:
     return llvm::ELF::R_MIPS_PCLO16;
   case llvm::ELF::R_MIPS_GOT16:
-    if (isLocalBinding(rel))
+    if (isLocalBinding(symtab, rel))
       return llvm::ELF::R_MIPS_LO16;
     break;
   case llvm::ELF::R_MICROMIPS_HI16:
     return llvm::ELF::R_MICROMIPS_LO16;
   case llvm::ELF::R_MICROMIPS_GOT16:
-    if (isLocalBinding(rel))
+    if (isLocalBinding(symtab, rel))
       return llvm::ELF::R_MICROMIPS_LO16;
     break;
   default:
@@ -303,10 +307,10 @@ uint32_t MipsELFFile<ELFT>::getPairRelocation(const Elf_Rel &rel) const {
 }
 
 template <class ELFT>
-typename MipsELFFile<ELFT>::Elf_Rel_Iter
+const typename MipsELFFile<ELFT>::Elf_Rel *
 MipsELFFile<ELFT>::findMatchingRelocation(uint32_t pairRelType,
-                                          Elf_Rel_Iter rit,
-                                          Elf_Rel_Iter eit) const {
+                                          const Elf_Rel *rit,
+                                          const Elf_Rel *eit) const {
   return std::find_if(rit, eit, [&](const Elf_Rel &rel) {
     return getPrimaryType(rel) == pairRelType &&
            rel.getSymbol(isMips64EL<ELFT>()) ==
@@ -315,8 +319,9 @@ MipsELFFile<ELFT>::findMatchingRelocation(uint32_t pairRelType,
 }
 
 template <class ELFT>
-bool MipsELFFile<ELFT>::isLocalBinding(const Elf_Rel &rel) const {
-  return this->_objFile->getSymbol(rel.getSymbol(isMips64EL<ELFT>()))
+bool MipsELFFile<ELFT>::isLocalBinding(const Elf_Shdr *symtab,
+                                       const Elf_Rel &rel) const {
+  return this->_objFile->getSymbol(symtab, rel.getSymbol(isMips64EL<ELFT>()))
              ->getBinding() == llvm::ELF::STB_LOCAL;
 }
 

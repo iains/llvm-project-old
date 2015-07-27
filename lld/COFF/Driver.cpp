@@ -108,7 +108,7 @@ LinkerDriver::parseDirectives(StringRef S) {
       ErrorOr<Export> E = parseExport(Arg->getValue());
       if (auto EC = E.getError())
         return EC;
-      if (!Config->is64() && E->ExtName.startswith("_"))
+      if (Config->Machine == I386 && E->ExtName.startswith("_"))
         E->ExtName = E->ExtName.substr(1);
       Config->Exports.push_back(E.get());
       break;
@@ -211,8 +211,8 @@ Undefined *LinkerDriver::addUndefined(StringRef Name) {
 
 // Symbol names are mangled by appending "_" prefix on x86.
 StringRef LinkerDriver::mangle(StringRef Sym) {
-  assert(Config->MachineType != IMAGE_FILE_MACHINE_UNKNOWN);
-  if (Config->MachineType == IMAGE_FILE_MACHINE_I386)
+  assert(Config->Machine != IMAGE_FILE_MACHINE_UNKNOWN);
+  if (Config->Machine == I386)
     return Alloc.save("_" + Sym);
   return Sym;
 }
@@ -242,6 +242,12 @@ WindowsSubsystem LinkerDriver::inferSubsystem() {
   if (Symtab.find(mangle("WinMain")) || Symtab.find(mangle("wWinMain")))
     return IMAGE_SUBSYSTEM_WINDOWS_GUI;
   return IMAGE_SUBSYSTEM_UNKNOWN;
+}
+
+static uint64_t getDefaultImageBase() {
+  if (Config->is64())
+    return Config->DLL ? 0x180000000 : 0x140000000;
+  return Config->DLL ? 0x10000000 : 0x400000;
 }
 
 bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
@@ -311,7 +317,6 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Handle /dll
   if (Args.hasArg(OPT_dll)) {
     Config->DLL = true;
-    Config->ImageBase = 0x180000000U;
     Config->ManifestID = 2;
   }
 
@@ -330,7 +335,7 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     ErrorOr<MachineTypes> MTOrErr = getMachineType(Arg->getValue());
     if (MTOrErr.getError())
       return false;
-    Config->MachineType = MTOrErr.get();
+    Config->Machine = MTOrErr.get();
   }
 
   // Handle /nodefaultlib:<filename>
@@ -524,20 +529,20 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     MachineTypes MT = File->getMachineType();
     if (MT == IMAGE_FILE_MACHINE_UNKNOWN)
       continue;
-    if (Config->MachineType == IMAGE_FILE_MACHINE_UNKNOWN) {
-      Config->MachineType = MT;
+    if (Config->Machine == IMAGE_FILE_MACHINE_UNKNOWN) {
+      Config->Machine = MT;
       continue;
     }
-    if (Config->MachineType != MT) {
+    if (Config->Machine != MT) {
       llvm::errs() << File->getShortName() << ": machine type "
-                   << machineTypeToStr(MT) << " conflicts with "
-                   << machineTypeToStr(Config->MachineType) << "\n";
+                   << machineToStr(MT) << " conflicts with "
+                   << machineToStr(Config->Machine) << "\n";
       return false;
     }
   }
-  if (Config->MachineType == IMAGE_FILE_MACHINE_UNKNOWN) {
+  if (Config->Machine == IMAGE_FILE_MACHINE_UNKNOWN) {
     llvm::errs() << "warning: /machine is not specified. x64 is assumed.\n";
-    Config->MachineType = IMAGE_FILE_MACHINE_AMD64;
+    Config->Machine = AMD64;
   }
 
   // Windows specific -- Convert Windows resource files to a COFF file.
@@ -554,8 +559,8 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   if (auto *Arg = Args.getLastArg(OPT_entry)) {
     Config->Entry = addUndefined(mangle(Arg->getValue()));
   } else if (Args.hasArg(OPT_dll) && !Config->NoEntry) {
-    StringRef S =
-        Config->is64() ? "_DllMainCRTStartup" : "__DllMainCRTStartup@12";
+    StringRef S = (Config->Machine == I386) ? "__DllMainCRTStartup@12"
+                                            : "_DllMainCRTStartup";
     Config->Entry = addUndefined(S);
   } else if (!Config->NoEntry) {
     // Windows specific -- If entry point name is not given, we need to
@@ -575,7 +580,7 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     ErrorOr<Export> E = parseExport(Arg->getValue());
     if (E.getError())
       return false;
-    if (!Config->is64() && !E->Name.startswith("_@?"))
+    if (Config->Machine == I386 && !E->Name.startswith("_@?"))
       E->Name = mangle(E->Name);
     Config->Exports.push_back(E.get());
   }
@@ -595,14 +600,22 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Handle /delayload
   for (auto *Arg : Args.filtered(OPT_delayload)) {
     Config->DelayLoads.insert(StringRef(Arg->getValue()).lower());
-    if (Config->is64()) {
-      Config->DelayLoadHelper = addUndefined("__delayLoadHelper2");
-    } else {
+    if (Config->Machine == I386) {
       Config->DelayLoadHelper = addUndefined("___delayLoadHelper2@8");
+    } else {
+      Config->DelayLoadHelper = addUndefined("__delayLoadHelper2");
     }
   }
 
-  Symtab.addAbsolute(mangle("__ImageBase"), Config->ImageBase);
+  // Set default image base if /base is not given.
+  if (Config->ImageBase == uint64_t(-1))
+    Config->ImageBase = getDefaultImageBase();
+
+  Symtab.addRelative(mangle("__ImageBase"), 0);
+  if (Config->Machine == I386) {
+    Config->SEHTable = Symtab.addRelative("___safe_se_handler_table", 0);
+    Config->SEHCount = Symtab.addAbsolute("___safe_se_handler_count", 0);
+  }
 
   // Read as much files as we can from directives sections.
   if (auto EC = Symtab.run()) {
@@ -638,6 +651,12 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
         if (!U->WeakAlias)
           U->WeakAlias = Symtab.addUndefined(To);
     }
+
+    // Windows specific -- if __load_config_used can be resolved, resolve it.
+    if (Config->Machine == I386)
+      if (Symbol *Sym = Symtab.find("__load_config_used"))
+        if (isa<Lazy>(Sym->Body))
+          Symtab.addUndefined("__load_config_used");
 
     if (Symtab.queueEmpty())
       break;

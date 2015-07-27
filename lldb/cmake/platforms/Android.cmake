@@ -43,7 +43,7 @@ set( __ANDROID_NDK__ True )
 # a non-pie shim on API 16-, but that requires lldb-server to dynamically export
 # its symbols, which significantly increases the binary size. Static linking, on
 # the other hand, has little to no effect on the binary size.
-if ( NOT DEFINED LLVM_BUILD_STATIC )
+if( NOT DEFINED LLVM_BUILD_STATIC )
  set( LLVM_BUILD_STATIC True )
 endif()
 
@@ -102,13 +102,13 @@ elseif( ANDROID_ABI STREQUAL "armeabi" )
  # 64 bit atomic operations used in c++ libraries require armv7-a instructions
  # armv5te and armv6 were tried but do not work.
  set( ANDROID_CXX_FLAGS "${ANDROID_CXX_FLAGS} -march=armv7-a" )
- if ( LLVM_BUILD_STATIC )
+ if( LLVM_BUILD_STATIC )
   # Temporary workaround for static linking with the latest API.
   set( ANDROID_CXX_FLAGS "${ANDROID_CXX_FLAGS} -DANDROID_ARM_BUILD_STATIC" )
  endif()
 endif()
 
-if ( NOT LLVM_BUILD_STATIC )
+if( NOT LLVM_BUILD_STATIC )
  # PIE is required for API 21+ so we enable it if we're not statically linking
  # unfortunately, it is not supported before API 16 so we need to do something
  # else there see http://llvm.org/pr23457
@@ -125,17 +125,19 @@ set( ANDROID_LINKER_FLAGS "${ANDROID_LINKER_FLAGS} -Wl,--gc-sections" )
 # Therefore, in order to statically link lldb-server, we need a temporary
 # workaround. This creates a dummy libdl.a stub until the actual
 # libdl.a can be implemented in the toolchain.
-set( ANDROID_LIBDL_STUB "${CMAKE_BINARY_DIR}/libdl_stub" )
-file( MAKE_DIRECTORY ${ANDROID_LIBDL_STUB} )
-file( WRITE "${ANDROID_LIBDL_STUB}/libdl.c" "
+if( LLVM_BUILD_STATIC )
+ set( ANDROID_LIBDL_STUB "${CMAKE_BINARY_DIR}/libdl_stub" )
+ file( MAKE_DIRECTORY ${ANDROID_LIBDL_STUB} )
+ file( WRITE "${ANDROID_LIBDL_STUB}/libdl.c" "
 #include <dlfcn.h>
 void *       dlopen  (const char *filename, int flag)   { return 0; }
 const char * dlerror (void)                             { return 0; }
 void *       dlsym   (void *handle, const char *symbol) { return 0; }
 int          dlclose (void *handle)                     { return 0; }")
-execute_process( COMMAND ${CMAKE_C_COMPILER} -c ${ANDROID_LIBDL_STUB}/libdl.c -o ${ANDROID_LIBDL_STUB}/libdl.o )
-execute_process( COMMAND ${CMAKE_AR} rcs ${ANDROID_LIBDL_STUB}/libdl.a ${ANDROID_LIBDL_STUB}/libdl.o )
-set( ANDROID_LINKER_FLAGS "${ANDROID_LINKER_FLAGS} -L${ANDROID_LIBDL_STUB}" )
+ execute_process( COMMAND ${CMAKE_C_COMPILER} -c ${ANDROID_LIBDL_STUB}/libdl.c -o ${ANDROID_LIBDL_STUB}/libdl.o )
+ execute_process( COMMAND ${CMAKE_AR} rcs ${ANDROID_LIBDL_STUB}/libdl.a ${ANDROID_LIBDL_STUB}/libdl.o )
+ set( ANDROID_LINKER_FLAGS "${ANDROID_LINKER_FLAGS} -L${ANDROID_LIBDL_STUB}" )
+endif()
 ################# END EVIL HACK ##################
 
 # cache flags

@@ -23,6 +23,7 @@ using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using namespace llvm::COFF;
+using llvm::support::ulittle32_t;
 
 namespace lld {
 namespace coff {
@@ -47,6 +48,7 @@ SectionChunk::SectionChunk(ObjectFile *F, const coff_section *H)
 static void add16(uint8_t *P, int16_t V) { write16le(P, read16le(P) + V); }
 static void add32(uint8_t *P, int32_t V) { write32le(P, read32le(P) + V); }
 static void add64(uint8_t *P, int64_t V) { write64le(P, read64le(P) + V); }
+static void or16(uint8_t *P, uint16_t V) { write16le(P, read16le(P) | V); }
 
 void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S,
                                uint64_t P) {
@@ -81,6 +83,36 @@ void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, uint64_t S,
   }
 }
 
+static void applyMOV32T(uint8_t *Off, uint32_t V) {
+  uint16_t X = V;
+  or16(Off, ((X & 0x800) >> 1) | ((X >> 12) & 0xf));
+  or16(Off + 2, ((X & 0x700) << 4) | (X & 0xff));
+  X = V >> 16;
+  or16(Off + 4, ((X & 0x800) >> 1) | ((X >> 12) & 0xf));
+  or16(Off + 6, ((X & 0x700) << 4) | (X & 0xff));
+}
+
+static void applyBranchImm(uint8_t *Off, int32_t V) {
+  uint32_t S = V < 0 ? 1 : 0;
+  uint32_t J1 = ((~V >> 23) & 1) ^ S;
+  uint32_t J2 = ((~V >> 22) & 1) ^ S;
+  or16(Off, ((V >> 12) & 0x3ff) | (S << 10));
+  or16(Off + 2, ((V >> 1) & 0x7ff) | (J2 << 11) | (J1 << 13));
+}
+
+void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, uint64_t S,
+                               uint64_t P) {
+  switch (Type) {
+  case IMAGE_REL_ARM_ADDR32:    add32(Off, S + Config->ImageBase); break;
+  case IMAGE_REL_ARM_ADDR32NB:  add32(Off, S); break;
+  case IMAGE_REL_ARM_MOV32T:    applyMOV32T(Off, S + Config->ImageBase); break;
+  case IMAGE_REL_ARM_BRANCH24T: applyBranchImm(Off, S - P - 4); break;
+  case IMAGE_REL_ARM_BLX23T:    applyBranchImm(Off, S - P - 4); break;
+  default:
+    llvm::report_fatal_error("Unsupported relocation type");
+  }
+}
+
 void SectionChunk::writeTo(uint8_t *Buf) {
   if (!hasData())
     return;
@@ -94,12 +126,15 @@ void SectionChunk::writeTo(uint8_t *Buf) {
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
     uint64_t S = cast<Defined>(Body)->getRVA();
     uint64_t P = RVA + Rel.VirtualAddress;
-    switch (Config->MachineType) {
-    case IMAGE_FILE_MACHINE_AMD64:
+    switch (Config->Machine) {
+    case AMD64:
       applyRelX64(Off, Rel.Type, S, P);
       break;
-    case IMAGE_FILE_MACHINE_I386:
+    case I386:
       applyRelX86(Off, Rel.Type, S, P);
+      break;
+    case ARMNT:
+      applyRelARM(Off, Rel.Type, S, P);
       break;
     default:
       llvm_unreachable("unknown machine type");
@@ -114,12 +149,22 @@ void SectionChunk::addAssociative(SectionChunk *Child) {
   Child->Root = false;
 }
 
-static bool isAbs(const coff_relocation &Rel) {
-  switch (Config->MachineType) {
-  case IMAGE_FILE_MACHINE_AMD64:
-    return Rel.Type == IMAGE_REL_AMD64_ADDR64;
-  case IMAGE_FILE_MACHINE_I386:
-    return Rel.Type == IMAGE_REL_I386_DIR32;
+static uint8_t getBaserelType(const coff_relocation &Rel) {
+  switch (Config->Machine) {
+  case AMD64:
+    if (Rel.Type == IMAGE_REL_AMD64_ADDR64)
+      return IMAGE_REL_BASED_DIR64;
+    return IMAGE_REL_BASED_ABSOLUTE;
+  case I386:
+    if (Rel.Type == IMAGE_REL_I386_DIR32)
+      return IMAGE_REL_BASED_HIGHLOW;
+    return IMAGE_REL_BASED_ABSOLUTE;
+  case ARMNT:
+    if (Rel.Type == IMAGE_REL_ARM_ADDR32)
+      return IMAGE_REL_BASED_HIGHLOW;
+    if (Rel.Type == IMAGE_REL_ARM_MOV32T)
+      return IMAGE_REL_BASED_ARM_MOV32T;
+    return IMAGE_REL_BASED_ABSOLUTE;
   default:
     llvm_unreachable("unknown machine type");
   }
@@ -129,16 +174,15 @@ static bool isAbs(const coff_relocation &Rel) {
 // Collect all locations that contain absolute addresses, which need to be
 // fixed by the loader if load-time relocation is needed.
 // Only called when base relocation is enabled.
-void SectionChunk::getBaserels(std::vector<uint32_t> *Res, Defined *ImageBase) {
+void SectionChunk::getBaserels(std::vector<Baserel> *Res) {
   for (const coff_relocation &Rel : Relocs) {
-    // Symbol __ImageBase is special -- it's an absolute symbol, but its
-    // address never changes even if image is relocated.
-    if (!isAbs(Rel))
+    uint8_t Ty = getBaserelType(Rel);
+    if (Ty == IMAGE_REL_BASED_ABSOLUTE)
       continue;
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
-    if (Body == ImageBase)
+    if (isa<DefinedAbsolute>(Body))
       continue;
-    Res->push_back(RVA + Rel.VirtualAddress);
+    Res->emplace_back(RVA + Rel.VirtualAddress, Ty);
   }
 }
 
@@ -246,30 +290,40 @@ void StringChunk::writeTo(uint8_t *Buf) {
   memcpy(Buf + FileOff, Str.data(), Str.size());
 }
 
-ImportThunkChunk::ImportThunkChunk(Defined *S) : ImpSymbol(S) {
+ImportThunkChunkX64::ImportThunkChunkX64(Defined *S) : ImpSymbol(S) {
   // Intel Optimization Manual says that all branch targets
   // should be 16-byte aligned. MSVC linker does this too.
   Align = 16;
 }
 
-void ImportThunkChunk::getBaserels(std::vector<uint32_t> *Res,
-                                   Defined *ImageBase) {
-  if (!Config->is64())
-    Res->push_back(getRVA() + 2);
-}
-
-void ImportThunkChunk::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, ImportThunkData, sizeof(ImportThunkData));
+void ImportThunkChunkX64::writeTo(uint8_t *Buf) {
+  memcpy(Buf + FileOff, ImportThunkX86, sizeof(ImportThunkX86));
   // The first two bytes is a JMP instruction. Fill its operand.
-  uint32_t Operand = Config->is64()
-      ? ImpSymbol->getRVA() - RVA - getSize()
-      : ImpSymbol->getRVA() + Config->ImageBase;
-  write32le(Buf + FileOff + 2, Operand);
+  write32le(Buf + FileOff + 2, ImpSymbol->getRVA() - RVA - getSize());
 }
 
-void LocalImportChunk::getBaserels(std::vector<uint32_t> *Res,
-                                   Defined *ImageBase) {
-  Res->push_back(getRVA());
+void ImportThunkChunkX86::getBaserels(std::vector<Baserel> *Res) {
+  Res->emplace_back(getRVA() + 2);
+}
+
+void ImportThunkChunkX86::writeTo(uint8_t *Buf) {
+  memcpy(Buf + FileOff, ImportThunkX86, sizeof(ImportThunkX86));
+  // The first two bytes is a JMP instruction. Fill its operand.
+  write32le(Buf + FileOff + 2, ImpSymbol->getRVA() + Config->ImageBase);
+}
+
+void ImportThunkChunkARM::getBaserels(std::vector<Baserel> *Res) {
+  Res->emplace_back(getRVA(), IMAGE_REL_BASED_ARM_MOV32T);
+}
+
+void ImportThunkChunkARM::writeTo(uint8_t *Buf) {
+  memcpy(Buf + FileOff, ImportThunkARM, sizeof(ImportThunkARM));
+  // Fix mov.w and mov.t operands.
+  applyMOV32T(Buf + FileOff, ImpSymbol->getRVA() + Config->ImageBase);
+}
+
+void LocalImportChunk::getBaserels(std::vector<Baserel> *Res) {
+  Res->emplace_back(getRVA());
 }
 
 size_t LocalImportChunk::getSize() const {
@@ -284,9 +338,17 @@ void LocalImportChunk::writeTo(uint8_t *Buf) {
   }
 }
 
+void SEHTableChunk::writeTo(uint8_t *Buf) {
+  ulittle32_t *Begin = reinterpret_cast<ulittle32_t *>(Buf + FileOff);
+  size_t Cnt = 0;
+  for (Defined *D : Syms)
+    Begin[Cnt++] = D->getRVA();
+  std::sort(Begin, Begin + Cnt);
+}
+
 // Windows-specific.
 // This class represents a block in .reloc section.
-BaserelChunk::BaserelChunk(uint32_t Page, uint32_t *Begin, uint32_t *End) {
+BaserelChunk::BaserelChunk(uint32_t Page, Baserel *Begin, Baserel *End) {
   // Block header consists of 4 byte page RVA and 4 byte block size.
   // Each entry is 2 byte. Last entry may be padding.
   Data.resize(RoundUpToAlignment((End - Begin) * 2 + 8, 4));
@@ -294,14 +356,25 @@ BaserelChunk::BaserelChunk(uint32_t Page, uint32_t *Begin, uint32_t *End) {
   write32le(P, Page);
   write32le(P + 4, Data.size());
   P += 8;
-  for (uint32_t *I = Begin; I != End; ++I) {
-    write16le(P, (IMAGE_REL_BASED_DIR64 << 12) | (*I - Page));
+  for (Baserel *I = Begin; I != End; ++I) {
+    write16le(P, (I->Type << 12) | (I->RVA - Page));
     P += 2;
   }
 }
 
 void BaserelChunk::writeTo(uint8_t *Buf) {
   memcpy(Buf + FileOff, Data.data(), Data.size());
+}
+
+uint8_t Baserel::getDefaultType() {
+  switch (Config->Machine) {
+  case AMD64:
+    return IMAGE_REL_BASED_DIR64;
+  case I386:
+    return IMAGE_REL_BASED_HIGHLOW;
+  default:
+    llvm_unreachable("unknown machine type");
+  }
 }
 
 } // namespace coff

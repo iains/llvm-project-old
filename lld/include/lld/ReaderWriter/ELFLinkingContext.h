@@ -282,7 +282,7 @@ public:
   void addSearchPath(StringRef ref) { _inputSearchPaths.push_back(ref); }
 
   // Retrieve search path list.
-  StringRefVector getSearchPaths() { return _inputSearchPaths; };
+  StringRefVector getSearchPaths() { return _inputSearchPaths; }
 
   // By default, the linker would merge sections that are read only with
   // segments that have read and execute permissions. When the user specifies a
@@ -336,8 +336,8 @@ public:
   void addWrapForSymbol(StringRef sym) { _wrapCalls.insert(sym); }
 
   // \brief Set DT_FLAGS flag.
-  void setDTFlag(DTFlag f) { _dtFlags |= f; };
-  bool getDTFlag(DTFlag f) { return (_dtFlags & f); };
+  void setDTFlag(DTFlag f) { _dtFlags |= f; }
+  bool getDTFlag(DTFlag f) { return (_dtFlags & f); }
 
   const llvm::StringSet<> &wrapCalls() const { return _wrapCalls; }
 
@@ -408,6 +408,7 @@ protected:
   std::map<std::string, uint64_t> _absoluteSymbols;
   llvm::StringSet<> _dynamicallyExportedSymbols;
   std::unique_ptr<File> _resolver;
+  std::mutex _cidentMutex;
   llvm::StringSet<> _cidentSections;
 
   // The linker script semantic object, which owns all script ASTs, is stored
