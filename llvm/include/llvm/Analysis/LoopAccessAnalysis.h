@@ -384,6 +384,15 @@ public:
   void groupChecks(MemoryDepChecker::DepCandidates &DepCands,
                    bool UseDependencies);
 
+  /// Generate the checks and return them.
+  ///
+  /// \p PtrToPartition contains the partition number for pointers.  If passed,
+  /// omit checks between pointers belonging to the same partition.  Partition
+  /// number -1 means that the pointer is used in multiple partitions.  In this
+  /// case we can't safely omit the check.
+  SmallVector<PointerCheck, 4>
+  generateChecks(const SmallVectorImpl<int> *PtrPartition = nullptr) const;
+
   /// \brief Decide if we need to add a check between two groups of pointers,
   /// according to needsChecking.
   bool needsChecking(const CheckingPtrGroup &M, const CheckingPtrGroup &N,
@@ -405,6 +414,10 @@ public:
   void print(raw_ostream &OS, unsigned Depth = 0,
              const SmallVectorImpl<int> *PtrPartition = nullptr) const;
 
+  /// Print \p Checks.
+  void printChecks(raw_ostream &OS, const SmallVectorImpl<PointerCheck> &Checks,
+                   unsigned Depth = 0) const;
+
   /// This flag indicates if we need to add the runtime check.
   bool Need;
 
@@ -422,7 +435,6 @@ public:
   arePointersInSamePartition(const SmallVectorImpl<int> &PtrToPartition,
                              unsigned PtrIdx1, unsigned PtrIdx2);
 
-private:
   /// \brief Decide whether we need to issue a run-time check for pointer at
   /// index \p I and \p J to prove their independence.
   ///
@@ -430,8 +442,9 @@ private:
   /// pointers (-1 if the pointer belongs to multiple partitions).  In this
   /// case omit checks between pointers belonging to the same partition.
   bool needsChecking(unsigned I, unsigned J,
-                     const SmallVectorImpl<int> *PtrPartition) const;
+                     const SmallVectorImpl<int> *PtrPartition = nullptr) const;
 
+private:
   /// Holds a pointer to the ScalarEvolution analysis.
   ScalarEvolution *SE;
 };

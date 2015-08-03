@@ -90,7 +90,7 @@ ErrorOr<MachineTypes> getMachineType(StringRef S) {
                         .Default(IMAGE_FILE_MACHINE_UNKNOWN);
   if (MT != IMAGE_FILE_MACHINE_UNKNOWN)
     return MT;
-  llvm::errs() << "unknown /machine argument" << S << "\n";
+  llvm::errs() << "unknown /machine argument: " << S << "\n";
   return make_error_code(LLDError::InvalidOption);
 }
 
@@ -425,36 +425,43 @@ std::error_code fixupExports() {
   }
 
   for (Export &E : Config->Exports) {
-    if (!E.ExtName.empty())
+    if (!E.ExtName.empty()) {
+      E.ExtDLLName = E.ExtName;
+      E.ExtLibName = E.ExtName;
       continue;
+    }
     StringRef S = E.Sym->repl()->getName();
-    if (Config->Machine == I386 && S.startswith("_"))
-      S = S.substr(1);
-    E.ExtName = S;
+    if (Config->Machine == I386 && S.startswith("_")) {
+      E.ExtDLLName = S.substr(1).split('@').first;
+      E.ExtLibName = S.substr(1);
+      continue;
+    }
+    E.ExtDLLName = S;
+    E.ExtLibName = S;
   }
 
   // Uniquefy by name.
   std::map<StringRef, Export *> Map;
   std::vector<Export> V;
   for (Export &E : Config->Exports) {
-    auto Pair = Map.insert(std::make_pair(E.Name, &E));
+    auto Pair = Map.insert(std::make_pair(E.ExtLibName, &E));
     bool Inserted = Pair.second;
     if (Inserted) {
       V.push_back(E);
       continue;
     }
     Export *Existing = Pair.first->second;
-    if (E == *Existing)
+    if (E == *Existing || E.Name != Existing->Name)
       continue;
     llvm::errs() << "warning: duplicate /export option: " << E.Name << "\n";
-    continue;
   }
   Config->Exports = std::move(V);
 
   // Sort by name.
-  std::sort(
-      Config->Exports.begin(), Config->Exports.end(),
-      [](const Export &A, const Export &B) { return A.ExtName < B.ExtName; });
+  std::sort(Config->Exports.begin(), Config->Exports.end(),
+            [](const Export &A, const Export &B) {
+              return A.ExtDLLName < B.ExtDLLName;
+            });
   return std::error_code();
 }
 
@@ -528,7 +535,7 @@ static std::string createModuleDefinitionFile() {
   OS << "LIBRARY \"" << llvm::sys::path::filename(Config->OutputFile) << "\"\n"
      << "EXPORTS\n";
   for (Export &E : Config->Exports) {
-    OS << "  " << E.ExtName;
+    OS << "  " << E.ExtLibName;
     if (E.Ordinal > 0)
       OS << " @" << E.Ordinal;
     if (E.Noname)

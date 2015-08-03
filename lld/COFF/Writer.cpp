@@ -10,17 +10,16 @@
 #include "Config.h"
 #include "Writer.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstdio>
-#include <functional>
 #include <map>
-#include <unordered_set>
 #include <utility>
 
 using namespace llvm;
@@ -133,7 +132,7 @@ void Writer::markLive() {
   }
   for (Chunk *C : Symtab->getChunks()) {
     auto *SC = dyn_cast<SectionChunk>(C);
-    if (!SC || !SC->isRoot() || SC->isLive())
+    if (!SC || SC->isCOMDAT() || SC->isLive())
       continue;
     SC->markLive();
     Worklist.push_back(SC);
@@ -167,8 +166,6 @@ void Writer::dedupCOMDATs() {
 
 static StringRef getOutputSection(StringRef Name) {
   StringRef S = Name.split('$').first;
-  if (Config->Debug)
-    return S;
   auto It = Config->Merge.find(S);
   if (It == Config->Merge.end())
     return S;
@@ -195,7 +192,7 @@ void Writer::createSections() {
   // '$' and all following characters in input section names are
   // discarded when determining output section. So, .text$foo
   // contributes to .text, for example. See PE/COFF spec 3.2.
-  std::map<StringRef, OutputSection *> Sections;
+  SmallDenseMap<StringRef, OutputSection *> Sections;
   for (auto Pair : Map) {
     StringRef Name = getOutputSection(Pair.first);
     OutputSection *&Sec = Sections[Name];
@@ -305,17 +302,13 @@ size_t Writer::addEntryToStringTable(StringRef Str) {
   return OffsetOfEntry;
 }
 
-coff_symbol16 Writer::createSymbol(DefinedRegular *D) {
-  uint64_t RVA = D->getRVA();
-  OutputSection *Sec = nullptr;
-  for (OutputSection *S : OutputSections) {
-    if (S->getRVA() > RVA)
-      break;
-    Sec = S;
-  }
+Optional<coff_symbol16> Writer::createSymbol(Defined *Def) {
+  if (auto *D = dyn_cast<DefinedRegular>(Def))
+    if (!D->isLive())
+      return None;
 
   coff_symbol16 Sym;
-  StringRef Name = D->getName();
+  StringRef Name = Def->getName();
   if (Name.size() > COFF::NameSize) {
     Sym.Name.Offset.Zeroes = 0;
     Sym.Name.Offset.Offset = addEntryToStringTable(Name);
@@ -323,12 +316,36 @@ coff_symbol16 Writer::createSymbol(DefinedRegular *D) {
     memset(Sym.Name.ShortName, 0, COFF::NameSize);
     memcpy(Sym.Name.ShortName, Name.data(), Name.size());
   }
-  COFFSymbolRef DSymRef = D->getCOFFSymbol();
-  Sym.Value = RVA - Sec->getRVA();
-  Sym.SectionNumber = Sec->SectionIndex;
-  Sym.Type = DSymRef.getType();
-  Sym.StorageClass = DSymRef.getStorageClass();
+
+  if (auto *D = dyn_cast<DefinedCOFF>(Def)) {
+    COFFSymbolRef Ref = D->getCOFFSymbol();
+    Sym.Type = Ref.getType();
+    Sym.StorageClass = Ref.getStorageClass();
+  } else {
+    Sym.Type = IMAGE_SYM_TYPE_NULL;
+    Sym.StorageClass = IMAGE_SYM_CLASS_EXTERNAL;
+  }
   Sym.NumberOfAuxSymbols = 0;
+
+  switch (Def->kind()) {
+  case SymbolBody::DefinedAbsoluteKind:
+  case SymbolBody::DefinedRelativeKind:
+    Sym.Value = Def->getRVA();
+    Sym.SectionNumber = IMAGE_SYM_ABSOLUTE;
+    break;
+  default: {
+    uint64_t RVA = Def->getRVA();
+    OutputSection *Sec = nullptr;
+    for (OutputSection *S : OutputSections) {
+      if (S->getRVA() > RVA)
+        break;
+      Sec = S;
+    }
+    Sym.Value = RVA - Sec->getRVA();
+    Sym.SectionNumber = Sec->SectionIndex;
+    break;
+  }
+  }
   return Sym;
 }
 
@@ -346,9 +363,14 @@ void Writer::createSymbolAndStringTable() {
 
   for (ObjectFile *File : Symtab->ObjectFiles)
     for (SymbolBody *B : File->getSymbols())
-      if (auto *D = dyn_cast<DefinedRegular>(B))
-        if (D->isLive())
-          OutputSymtab.push_back(createSymbol(D));
+      if (auto *D = dyn_cast<Defined>(B))
+        if (Optional<coff_symbol16> Sym = createSymbol(D))
+          OutputSymtab.push_back(*Sym);
+
+  for (ImportFile *File : Symtab->ImportFiles)
+    for (SymbolBody *B : File->getSymbols())
+      if (Optional<coff_symbol16> Sym = createSymbol(cast<Defined>(B)))
+        OutputSymtab.push_back(*Sym);
 
   OutputSection *LastSection = OutputSections.back();
   // We position the symbol table to be adjacent to the end of the last section.
@@ -376,6 +398,12 @@ void Writer::assignAddresses() {
   SizeOfHeaders = RoundUpToAlignment(SizeOfHeaders, PageSize);
   uint64_t RVA = 0x1000; // The first page is kept unmapped.
   uint64_t FileOff = SizeOfHeaders;
+  // Move DISCARDABLE (or non-memory-mapped) sections to the end of file because
+  // the loader cannot handle holes.
+  std::stable_partition(
+      OutputSections.begin(), OutputSections.end(), [](OutputSection *S) {
+        return (S->getPermissions() & IMAGE_SCN_MEM_DISCARDABLE) == 0;
+      });
   for (OutputSection *Sec : OutputSections) {
     if (Sec->getName() == ".reloc")
       addBaserels(Sec);
@@ -409,11 +437,10 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   COFF->Machine = Config->Machine;
   COFF->NumberOfSections = OutputSections.size();
   COFF->Characteristics = IMAGE_FILE_EXECUTABLE_IMAGE;
-  if (Config->is64()) {
+  if (Config->LargeAddressAware)
     COFF->Characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
-  } else {
+  if (!Config->is64())
     COFF->Characteristics |= IMAGE_FILE_32BIT_MACHINE;
-  }
   if (Config->DLL)
     COFF->Characteristics |= IMAGE_FILE_DLL;
   if (!Config->Relocatable)
@@ -497,16 +524,16 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
     Dir[EXCEPTION_TABLE].RelativeVirtualAddress = Sec->getRVA();
     Dir[EXCEPTION_TABLE].Size = Sec->getVirtualSize();
   }
-  if (Symbol *Sym = Symtab->find("_tls_used")) {
+  if (Symbol *Sym = Symtab->findUnderscore("_tls_used")) {
     if (Defined *B = dyn_cast<Defined>(Sym->Body)) {
       Dir[TLS_TABLE].RelativeVirtualAddress = B->getRVA();
       Dir[TLS_TABLE].Size = 40;
     }
   }
-  if (Symbol *Sym = Symtab->find("__load_config_used")) {
+  if (Symbol *Sym = Symtab->find(Config->LoadConfigUsed)) {
     if (Defined *B = dyn_cast<Defined>(Sym->Body)) {
       Dir[LOAD_CONFIG_TABLE].RelativeVirtualAddress = B->getRVA();
-      Dir[LOAD_CONFIG_TABLE].Size = 64;
+      Dir[LOAD_CONFIG_TABLE].Size = Config->is64() ? 112 : 64;
     }
   }
 
@@ -653,6 +680,25 @@ void Writer::addBaserelBlocks(OutputSection *Dest, std::vector<Baserel> &V) {
     return;
   BaserelChunk *Buf = BAlloc.Allocate();
   Dest->addChunk(new (Buf) BaserelChunk(Page, &V[I], &V[0] + J));
+}
+
+uint64_t Defined::getSecrel() {
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return getRVA() - D->getChunk()->getOutputSection()->getRVA();
+  llvm::report_fatal_error("SECREL relocation points to a non-regular symbol");
+}
+
+uint64_t Defined::getSectionIndex() {
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return D->getChunk()->getOutputSection()->SectionIndex;
+  llvm::report_fatal_error("SECTION relocation points to a non-regular symbol");
+}
+
+bool Defined::isExecutable() {
+  const auto X = IMAGE_SCN_MEM_EXECUTE;
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return D->getChunk()->getOutputSection()->getPermissions() & X;
+  return isa<DefinedImportThunk>(this);
 }
 
 } // namespace coff

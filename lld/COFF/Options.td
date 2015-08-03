@@ -59,8 +59,8 @@ def incl : Joined<["/", "-"], "include:">,
 def deffile : Joined<["/", "-"], "def:">,
     HelpText<"Use module-definition file">;
 
-def debug : F<"debug">;
-def dll : F<"dll">;
+def debug : F<"debug">, HelpText<"Embed a symbol table in the image">;
+def dll : F<"dll">, HelpText<"Create a DLL">;
 def nodefaultlib_all : F<"nodefaultlib">;
 def noentry : F<"noentry">;
 def profile : F<"profile">;
@@ -86,8 +86,6 @@ defm tsaware  : B<"tsaware", "Create non-Terminal Server aware executable">;
 def help : F<"help">;
 def help_q : Flag<["/?", "-?"], "">, Alias<help>;
 
-def DASH_DASH : Option<["--"], "", KIND_REMAINING_ARGS>;
-
 // Flags for debugging
 def lldmap : Joined<["/", "-"], "lldmap:">;
 
@@ -107,6 +105,7 @@ def ignoreidl : F<"ignoreidl">;
 def incremental : F<"incremental">;
 def no_incremental : F<"incremental:no">;
 def nologo : F<"nologo">;
+def throwingnew : F<"throwingnew">;
 
 def delay : QF<"delay">;
 def errorreport : QF<"errorreport">;

@@ -127,6 +127,8 @@ LinkerDriver::parseDirectives(StringRef S) {
     case OPT_nodefaultlib:
       Config->NoDefaultLibs.insert(doFindLib(Arg->getValue()));
       break;
+    case OPT_throwingnew:
+      break;
     default:
       llvm::errs() << Arg->getSpelling() << " is not allowed in .drectve\n";
       return make_error_code(LLDError::InvalidOption);
@@ -464,8 +466,6 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Config->AllowIsolation = false;
   if (Args.hasArg(OPT_dynamicbase_no))
     Config->DynamicBase = false;
-  if (Args.hasArg(OPT_highentropyva_no))
-    Config->HighEntropyVA = false;
   if (Args.hasArg(OPT_nxcompat_no))
     Config->NxCompat = false;
   if (Args.hasArg(OPT_tsaware_no))
@@ -555,6 +555,14 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     OwningMBs.push_back(std::move(MB)); // take ownership
   }
 
+  // Handle /largeaddressaware
+  if (Config->is64() || Args.hasArg(OPT_largeaddressaware))
+    Config->LargeAddressAware = true;
+
+  // Handle /highentropyva
+  if (Config->is64() && !Args.hasArg(OPT_highentropyva_no))
+    Config->HighEntropyVA = true;
+
   // Handle /entry and /dll
   if (auto *Arg = Args.getLastArg(OPT_entry)) {
     Config->Entry = addUndefined(mangle(Arg->getValue()));
@@ -616,6 +624,7 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Config->SEHTable = Symtab.addRelative("___safe_se_handler_table", 0);
     Config->SEHCount = Symtab.addAbsolute("___safe_se_handler_count", 0);
   }
+  Config->LoadConfigUsed = mangle("_load_config_used");
 
   // Read as much files as we can from directives sections.
   if (auto EC = Symtab.run()) {
@@ -653,10 +662,8 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     }
 
     // Windows specific -- if __load_config_used can be resolved, resolve it.
-    if (Config->Machine == I386)
-      if (Symbol *Sym = Symtab.find("__load_config_used"))
-        if (isa<Lazy>(Sym->Body))
-          Symtab.addUndefined("__load_config_used");
+    if (Symtab.find(Config->LoadConfigUsed))
+      addUndefined(Config->LoadConfigUsed);
 
     if (Symtab.queueEmpty())
       break;
@@ -683,6 +690,17 @@ bool LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Config->Subsystem = inferSubsystem();
     if (Config->Subsystem == IMAGE_SUBSYSTEM_UNKNOWN) {
       llvm::errs() << "subsystem must be defined\n";
+      return false;
+    }
+  }
+
+  // Handle /safeseh.
+  if (Args.hasArg(OPT_safeseh)) {
+    for (ObjectFile *File : Symtab.ObjectFiles) {
+      if (File->SEHCompat)
+        continue;
+      llvm::errs() << "/safeseh: " << File->getName()
+                   << " is not compatible with SEH\n";
       return false;
     }
   }

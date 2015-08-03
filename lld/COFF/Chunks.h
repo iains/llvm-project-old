@@ -137,9 +137,9 @@ public:
   StringRef getSectionName() const override { return SectionName; }
   void getBaserels(std::vector<Baserel> *Res) override;
   bool isCOMDAT() const;
-  void applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
-  void applyRelX86(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
-  void applyRelARM(uint8_t *Off, uint16_t Type, uint64_t S, uint64_t P);
+  void applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
+  void applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
+  void applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
 
   // Called if the garbage collector decides to not include this chunk
   // in a final output. It's supposed to print out a log message to stdout.
@@ -153,7 +153,6 @@ public:
   void setSymbol(DefinedRegular *S) { if (!Sym) Sym = S; }
 
   // Used by the garbage collector.
-  bool isRoot() { return Root; }
   bool isLive() { return Live; }
   void markLive() {
     assert(!Live && "Cannot mark an already live section!");
@@ -194,7 +193,6 @@ private:
 
   // Used by the garbage collector.
   bool Live = false;
-  bool Root;
 
   // Chunks are basically unnamed chunks of bytes.
   // Symbols are associated for debugging and logging purposs only.

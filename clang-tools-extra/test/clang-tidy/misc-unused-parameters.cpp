@@ -1,5 +1,11 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-unused-parameters %t
+// RUN: echo "static void staticFunctionHeader(int i) {}" > %T/header.h
+// RUN: echo "static void staticFunctionHeader(int  /*i*/) {}" > %T/header-fixed.h
+// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-unused-parameters %t -header-filter='.*' -- -fno-delayed-template-parsing
+// RUN: diff %T/header.h %T/header-fixed.h
 // REQUIRES: shell
+
+#include "header.h"
+// CHECK-MESSAGES: header.h:1:38: warning
 
 // Basic removal
 // =============
@@ -57,6 +63,12 @@ static void someCallSites() {
   staticFunctionE();
 }
 
+class SomeClass {
+  static void f(int i) {}
+// CHECK-MESSAGES: :[[@LINE-1]]:21: warning
+// CHECK-FIXES: static void f(int  /*i*/) {}
+};
+
 namespace {
 class C {
 public:
@@ -101,3 +113,8 @@ template <typename T> void someFunctionTemplateAllUnusedParams(T b, T e) {}
 // CHECK-FIXES: {{^}}template <typename T> void someFunctionTemplateAllUnusedParams(T  /*b*/, T  /*e*/) {}
 
 static void dontGetConfusedByParametersInFunctionTypes() { void (*F)(int i); }
+
+template <typename T> class Function {};
+static Function<void(int, int i)> dontGetConfusedByFunctionReturnTypes() {
+  return Function<void(int, int)>();
+}

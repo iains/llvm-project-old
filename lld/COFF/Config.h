@@ -34,8 +34,10 @@ static const auto I386 = llvm::COFF::IMAGE_FILE_MACHINE_I386;
 
 // Represents an /export option.
 struct Export {
-  StringRef Name;
-  StringRef ExtName;
+  StringRef Name;       // N in /export:N or /export:E=N
+  StringRef ExtName;    // E in /export:E=N
+  StringRef ExtDLLName; // Symbol name written to a DLL export table
+  StringRef ExtLibName; // Symbol name written to a import library
   Undefined *Sym = nullptr;
   uint16_t Ordinal = 0;
   bool Noname = false;
@@ -77,6 +79,7 @@ struct Configuration {
   std::vector<Export> Exports;
   std::set<std::string> DelayLoads;
   Undefined *DelayLoadHelper = nullptr;
+  StringRef LoadConfigUsed;
 
   // Used for SafeSEH.
   DefinedRelative *SEHTable = nullptr;
@@ -113,11 +116,12 @@ struct Configuration {
   uint32_t MajorOSVersion = 6;
   uint32_t MinorOSVersion = 0;
   bool DynamicBase = true;
-  bool HighEntropyVA = true;
   bool AllowBind = true;
   bool NxCompat = true;
   bool AllowIsolation = true;
   bool TerminalServerAware = true;
+  bool LargeAddressAware = false;
+  bool HighEntropyVA = false;
 };
 
 extern Configuration *Config;

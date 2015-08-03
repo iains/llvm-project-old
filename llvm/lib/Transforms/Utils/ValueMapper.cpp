@@ -205,8 +205,8 @@ static bool remap(const MDNode *OldNode, MDNode *NewNode,
     assert(NewNode->getOperand(I) == Old &&
            "Expected old operands to already be in place");
 
-    Metadata *New = mapMetadataOp(OldNode->getOperand(I), Cycles, VM, Flags,
-                                  TypeMapper, Materializer);
+    Metadata *New =
+        mapMetadataOp(Old, Cycles, VM, Flags, TypeMapper, Materializer);
     if (Old != New) {
       AnyChanged = true;
       NewNode->replaceOperandWith(I, New);
@@ -227,13 +227,14 @@ static Metadata *mapDistinctNode(const MDNode *Node,
   assert(Node->isDistinct() && "Expected distinct node");
 
   MDNode *NewMD = MDNode::replaceWithDistinct(Node->clone());
-  remap(Node, NewMD, Cycles, VM, Flags, TypeMapper, Materializer);
 
-  // Track any cycles beneath this node.
-  for (Metadata *Op : NewMD->operands())
-    if (auto *Node = dyn_cast_or_null<MDNode>(Op))
-      if (!Node->isResolved())
-        Cycles.push_back(Node);
+  // Remap the operands.  If any change, track those that could be involved in
+  // uniquing cycles.
+  if (remap(Node, NewMD, Cycles, VM, Flags, TypeMapper, Materializer))
+    for (Metadata *Op : NewMD->operands())
+      if (auto *Node = dyn_cast_or_null<MDNode>(Op))
+        if (!Node->isResolved())
+          Cycles.push_back(Node);
 
   return NewMD;
 }
@@ -374,14 +375,11 @@ void llvm::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap,
   // Remap attached metadata.
   SmallVector<std::pair<unsigned, MDNode *>, 4> MDs;
   I->getAllMetadata(MDs);
-  for (SmallVectorImpl<std::pair<unsigned, MDNode *>>::iterator
-           MI = MDs.begin(),
-           ME = MDs.end();
-       MI != ME; ++MI) {
-    MDNode *Old = MI->second;
+  for (const auto &MI : MDs) {
+    MDNode *Old = MI.second;
     MDNode *New = MapMetadata(Old, VMap, Flags, TypeMapper, Materializer);
     if (New != Old)
-      I->setMetadata(MI->first, New);
+      I->setMetadata(MI.first, New);
   }
   
   if (!TypeMapper)

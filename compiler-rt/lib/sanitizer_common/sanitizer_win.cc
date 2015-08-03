@@ -170,7 +170,7 @@ void *MapFileToMemory(const char *file_name, uptr *buff_size) {
   UNIMPLEMENTED();
 }
 
-void *MapWritableFileToMemory(void *addr, uptr size, fd_t fd, uptr offset) {
+void *MapWritableFileToMemory(void *addr, uptr size, fd_t fd, OFF_T offset) {
   UNIMPLEMENTED();
 }
 
@@ -663,6 +663,10 @@ uptr ReadBinaryName(/*out*/char *buf, uptr buf_len) {
   CHECK_GT(buf_len, 0);
   buf[0] = 0;
   return 0;
+}
+
+uptr ReadLongProcessName(/*out*/char *buf, uptr buf_len) {
+  return ReadBinaryName(buf, buf_len);
 }
 
 }  // namespace __sanitizer

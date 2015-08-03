@@ -10,8 +10,6 @@
 #include "Chunks.h"
 #include "InputFiles.h"
 #include "Writer.h"
-#include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Debug.h"
@@ -39,10 +37,6 @@ SectionChunk::SectionChunk(ObjectFile *F, const coff_section *H)
   unsigned Shift = (Header->Characteristics >> 20) & 0xF;
   if (Shift > 0)
     Align = uint32_t(1) << (Shift - 1);
-
-  // COMDAT sections are not GC root. Non-text sections are not
-  // subject of garbage collection (thus they are root).
-  Root = !isCOMDAT() && !(Header->Characteristics & IMAGE_SCN_CNT_CODE);
 }
 
 static void add16(uint8_t *P, int16_t V) { write16le(P, read16le(P) + V); }
@@ -50,8 +44,9 @@ static void add32(uint8_t *P, int32_t V) { write32le(P, read32le(P) + V); }
 static void add64(uint8_t *P, int64_t V) { write64le(P, read64le(P) + V); }
 static void or16(uint8_t *P, uint16_t V) { write16le(P, read16le(P) | V); }
 
-void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S,
+void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym,
                                uint64_t P) {
+  uint64_t S = Sym->getRVA();
   switch (Type) {
   case IMAGE_REL_AMD64_ADDR32:   add32(Off, S + Config->ImageBase); break;
   case IMAGE_REL_AMD64_ADDR64:   add64(Off, S + Config->ImageBase); break;
@@ -62,22 +57,23 @@ void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, uint64_t S,
   case IMAGE_REL_AMD64_REL32_3:  add32(Off, S - P - 7); break;
   case IMAGE_REL_AMD64_REL32_4:  add32(Off, S - P - 8); break;
   case IMAGE_REL_AMD64_REL32_5:  add32(Off, S - P - 9); break;
-  case IMAGE_REL_AMD64_SECTION:  add16(Off, Out->SectionIndex); break;
-  case IMAGE_REL_AMD64_SECREL:   add32(Off, S - Out->getRVA()); break;
+  case IMAGE_REL_AMD64_SECTION:  add16(Off, Sym->getSectionIndex()); break;
+  case IMAGE_REL_AMD64_SECREL:   add32(Off, Sym->getSecrel()); break;
   default:
     llvm::report_fatal_error("Unsupported relocation type");
   }
 }
 
-void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, uint64_t S,
+void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym,
                                uint64_t P) {
+  uint64_t S = Sym->getRVA();
   switch (Type) {
   case IMAGE_REL_I386_ABSOLUTE: break;
   case IMAGE_REL_I386_DIR32:    add32(Off, S + Config->ImageBase); break;
   case IMAGE_REL_I386_DIR32NB:  add32(Off, S); break;
   case IMAGE_REL_I386_REL32:    add32(Off, S - P - 4); break;
-  case IMAGE_REL_I386_SECTION:  add16(Off, Out->SectionIndex); break;
-  case IMAGE_REL_I386_SECREL:   add32(Off, S - Out->getRVA()); break;
+  case IMAGE_REL_I386_SECTION:  add16(Off, Sym->getSectionIndex()); break;
+  case IMAGE_REL_I386_SECREL:   add32(Off, Sym->getSecrel()); break;
   default:
     llvm::report_fatal_error("Unsupported relocation type");
   }
@@ -100,8 +96,12 @@ static void applyBranchImm(uint8_t *Off, int32_t V) {
   or16(Off + 2, ((V >> 1) & 0x7ff) | (J2 << 11) | (J1 << 13));
 }
 
-void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, uint64_t S,
+void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym,
                                uint64_t P) {
+  uint64_t S = Sym->getRVA();
+  // Pointer to thumb code must have the LSB set.
+  if (Sym->isExecutable())
+    S |= 1;
   switch (Type) {
   case IMAGE_REL_ARM_ADDR32:    add32(Off, S + Config->ImageBase); break;
   case IMAGE_REL_ARM_ADDR32NB:  add32(Off, S); break;
@@ -124,17 +124,17 @@ void SectionChunk::writeTo(uint8_t *Buf) {
   for (const coff_relocation &Rel : Relocs) {
     uint8_t *Off = Buf + FileOff + Rel.VirtualAddress;
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
-    uint64_t S = cast<Defined>(Body)->getRVA();
+    Defined *Sym = cast<Defined>(Body);
     uint64_t P = RVA + Rel.VirtualAddress;
     switch (Config->Machine) {
     case AMD64:
-      applyRelX64(Off, Rel.Type, S, P);
+      applyRelX64(Off, Rel.Type, Sym, P);
       break;
     case I386:
-      applyRelX86(Off, Rel.Type, S, P);
+      applyRelX86(Off, Rel.Type, Sym, P);
       break;
     case ARMNT:
-      applyRelARM(Off, Rel.Type, S, P);
+      applyRelARM(Off, Rel.Type, Sym, P);
       break;
     default:
       llvm_unreachable("unknown machine type");
@@ -144,9 +144,6 @@ void SectionChunk::writeTo(uint8_t *Buf) {
 
 void SectionChunk::addAssociative(SectionChunk *Child) {
   AssocChildren.push_back(Child);
-  // Associative sections are live if their parent COMDATs are live,
-  // and vice versa, so they are not considered live by themselves.
-  Child->Root = false;
 }
 
 static uint8_t getBaserelType(const coff_relocation &Rel) {
@@ -210,58 +207,6 @@ void SectionChunk::printDiscardedMessage() const {
 
 StringRef SectionChunk::getDebugName() {
   return Sym->getName();
-}
-
-uint64_t SectionChunk::getHash() const {
-  ArrayRef<uint8_t> A = getContents();
-  return hash_combine(getPermissions(),
-                      llvm::hash_value(SectionName),
-                      NumRelocs,
-                      uint32_t(Header->SizeOfRawData),
-                      std::distance(Relocs.end(), Relocs.begin()),
-                      hash_combine_range(A.data(), A.data() + A.size()));
-}
-
-// Returns true if this and a given chunk are identical COMDAT sections.
-bool SectionChunk::equals(const SectionChunk *X) const {
-  // Compare headers
-  if (getPermissions() != X->getPermissions())
-    return false;
-  if (SectionName != X->SectionName)
-    return false;
-  if (Header->SizeOfRawData != X->Header->SizeOfRawData)
-    return false;
-  if (NumRelocs != X->NumRelocs)
-    return false;
-
-  // Compare data
-  if (getContents() != X->getContents())
-    return false;
-
-  // Compare associative sections
-  if (AssocChildren.size() != X->AssocChildren.size())
-    return false;
-  for (size_t I = 0, E = AssocChildren.size(); I != E; ++I)
-    if (AssocChildren[I]->Ptr != X->AssocChildren[I]->Ptr)
-      return false;
-
-  // Compare relocations
-  auto Eq = [&](const coff_relocation &R1, const coff_relocation &R2) {
-    if (R1.Type != R2.Type)
-      return false;
-    if (R1.VirtualAddress != R2.VirtualAddress)
-      return false;
-    SymbolBody *B1 = File->getSymbolBody(R1.SymbolTableIndex)->repl();
-    SymbolBody *B2 = X->File->getSymbolBody(R2.SymbolTableIndex)->repl();
-    if (B1 == B2)
-      return true;
-    auto *D1 = dyn_cast<DefinedRegular>(B1);
-    auto *D2 = dyn_cast<DefinedRegular>(B2);
-    return (D1 && D2 &&
-            D1->getValue() == D2->getValue() &&
-            D1->getChunk() == D2->getChunk());
-  };
-  return std::equal(Relocs.begin(), Relocs.end(), X->Relocs.begin(), Eq);
 }
 
 ArrayRef<uint8_t> SectionChunk::getContents() const {
