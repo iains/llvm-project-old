@@ -1,4 +1,4 @@
-; REQUIRES: object-emission
+; REQUIRES: object-emission, native
 ;
 ; RUN: llvm-link %s %p/type-unique-simple2-b.ll -S -o - | %llc_dwarf -filetype=obj -O0 | llvm-dwarfdump -debug-dump=info - | FileCheck %s
 ;
@@ -18,7 +18,8 @@
 ;     return A().getFoo();
 ; }
 ;
-; CHECK: _ZN1A6setFooEv
+; CHECK: DW_AT_name {{.*}} "setFoo"
+; CHECK-NOT: DW_TAG
 ; CHECK: DW_AT_accessibility [DW_FORM_data1]   (DW_ACCESS_public)
 ; CHECK-NOT: DW_AT_accessibility
 ; CHECK: DW_TAG
@@ -80,7 +81,7 @@ attributes #4 = { nounwind readnone }
 !llvm.module.flags = !{!35, !36}
 !llvm.ident = !{!37}
 
-!0 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5 ", isOptimized: false, emissionKind: 0, file: !1, enums: !2, retainedTypes: !3, subprograms: !26, globals: !2, imports: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5 ", isOptimized: false, emissionKind: 0, file: !1, enums: !2, retainedTypes: !3, subprograms: !26, globals: !2, imports: !2)
 !1 = !DIFile(filename: "<unknown>", directory: "")
 !2 = !{}
 !3 = !{!4}

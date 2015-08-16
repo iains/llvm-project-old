@@ -29,10 +29,10 @@ using namespace llvm;
 using namespace llvm::object;
 using namespace llvm::support::endian;
 using namespace llvm::COFF;
-using llvm::RoundUpToAlignment;
 
 namespace lld {
 namespace coff {
+namespace {
 
 // Import table
 
@@ -50,8 +50,8 @@ public:
   }
 
   void writeTo(uint8_t *Buf) override {
-    write16le(Buf + FileOff, Hint);
-    memcpy(Buf + FileOff + 2, Name.data(), Name.size());
+    write16le(Buf + OutputSectionOff, Hint);
+    memcpy(Buf + OutputSectionOff + 2, Name.data(), Name.size());
   }
 
 private:
@@ -66,7 +66,7 @@ public:
   size_t getSize() const override { return ptrSize(); }
 
   void writeTo(uint8_t *Buf) override {
-    write32le(Buf + FileOff, HintName->getRVA());
+    write32le(Buf + OutputSectionOff, HintName->getRVA());
   }
 
   Chunk *HintName;
@@ -84,9 +84,9 @@ public:
     // An import-by-ordinal slot has MSB 1 to indicate that
     // this is import-by-ordinal (and not import-by-name).
     if (Config->is64()) {
-      write64le(Buf + FileOff, (1ULL << 63) | Ordinal);
+      write64le(Buf + OutputSectionOff, (1ULL << 63) | Ordinal);
     } else {
-      write32le(Buf + FileOff, (1ULL << 31) | Ordinal);
+      write32le(Buf + OutputSectionOff, (1ULL << 31) | Ordinal);
     }
   }
 
@@ -100,7 +100,7 @@ public:
   size_t getSize() const override { return sizeof(ImportDirectoryTableEntry); }
 
   void writeTo(uint8_t *Buf) override {
-    auto *E = (coff_import_directory_table_entry *)(Buf + FileOff);
+    auto *E = (coff_import_directory_table_entry *)(Buf + OutputSectionOff);
     E->ImportLookupTableRVA = LookupTab->getRVA();
     E->NameRVA = DLLName->getRVA();
     E->ImportAddressTableRVA = AddressTab->getRVA();
@@ -124,36 +124,6 @@ private:
   size_t Size;
 };
 
-uint64_t IdataContents::getDirSize() {
-  return Dirs.size() * sizeof(ImportDirectoryTableEntry);
-}
-
-uint64_t IdataContents::getIATSize() {
-  return Addresses.size() * ptrSize();
-}
-
-// Returns a list of .idata contents.
-// See Microsoft PE/COFF spec 5.4 for details.
-std::vector<Chunk *> IdataContents::getChunks() {
-  create();
-  std::vector<Chunk *> V;
-  // The loader assumes a specific order of data.
-  // Add each type in the correct order.
-  for (std::unique_ptr<Chunk> &C : Dirs)
-    V.push_back(C.get());
-  for (std::unique_ptr<Chunk> &C : Lookups)
-    V.push_back(C.get());
-  for (std::unique_ptr<Chunk> &C : Addresses)
-    V.push_back(C.get());
-  for (std::unique_ptr<Chunk> &C : Hints)
-    V.push_back(C.get());
-  for (auto &P : DLLNames) {
-    std::unique_ptr<Chunk> &C = P.second;
-    V.push_back(C.get());
-  }
-  return V;
-}
-
 static std::map<StringRef, std::vector<DefinedImportData *>>
 binImports(const std::vector<DefinedImportData *> &Imports) {
   // Group DLL-imported symbols by DLL name because that's how
@@ -173,51 +143,6 @@ binImports(const std::vector<DefinedImportData *> &Imports) {
   return M;
 }
 
-void IdataContents::create() {
-  std::map<StringRef, std::vector<DefinedImportData *>> Map =
-      binImports(Imports);
-
-  // Create .idata contents for each DLL.
-  for (auto &P : Map) {
-    StringRef Name = P.first;
-    std::vector<DefinedImportData *> &Syms = P.second;
-
-    // Create lookup and address tables. If they have external names,
-    // we need to create HintName chunks to store the names.
-    // If they don't (if they are import-by-ordinals), we store only
-    // ordinal values to the table.
-    size_t Base = Lookups.size();
-    for (DefinedImportData *S : Syms) {
-      uint16_t Ord = S->getOrdinal();
-      if (S->getExternalName().empty()) {
-        Lookups.push_back(make_unique<OrdinalOnlyChunk>(Ord));
-        Addresses.push_back(make_unique<OrdinalOnlyChunk>(Ord));
-        continue;
-      }
-      auto C = make_unique<HintNameChunk>(S->getExternalName(), Ord);
-      Lookups.push_back(make_unique<LookupChunk>(C.get()));
-      Addresses.push_back(make_unique<LookupChunk>(C.get()));
-      Hints.push_back(std::move(C));
-    }
-    // Terminate with null values.
-    Lookups.push_back(make_unique<NullChunk>(ptrSize()));
-    Addresses.push_back(make_unique<NullChunk>(ptrSize()));
-
-    for (int I = 0, E = Syms.size(); I < E; ++I)
-      Syms[I]->setLocation(Addresses[Base + I].get());
-
-    // Create the import table header.
-    if (!DLLNames.count(Name))
-      DLLNames[Name] = make_unique<StringChunk>(Name);
-    auto Dir = make_unique<ImportDirectoryChunk>(DLLNames[Name].get());
-    Dir->LookupTab = Lookups[Base].get();
-    Dir->AddressTab = Addresses[Base].get();
-    Dirs.push_back(std::move(Dir));
-  }
-  // Add null terminator.
-  Dirs.push_back(make_unique<NullChunk>(sizeof(ImportDirectoryTableEntry)));
-}
-
 // Export table
 // See Microsoft PE/COFF spec 4.3 for details.
 
@@ -231,7 +156,7 @@ public:
   }
 
   void writeTo(uint8_t *Buf) override {
-    auto *E = (delay_import_directory_table_entry *)(Buf + FileOff);
+    auto *E = (delay_import_directory_table_entry *)(Buf + OutputSectionOff);
     E->Attributes = 1;
     E->Name = DLLName->getRVA();
     E->ModuleHandle = ModuleHandle->getRVA();
@@ -294,10 +219,10 @@ public:
   size_t getSize() const override { return sizeof(ThunkX64); }
 
   void writeTo(uint8_t *Buf) override {
-    memcpy(Buf + FileOff, ThunkX64, sizeof(ThunkX64));
-    write32le(Buf + FileOff + 36, Imp->getRVA() - RVA - 40);
-    write32le(Buf + FileOff + 43, Desc->getRVA() - RVA - 47);
-    write32le(Buf + FileOff + 48, Helper->getRVA() - RVA - 52);
+    memcpy(Buf + OutputSectionOff, ThunkX64, sizeof(ThunkX64));
+    write32le(Buf + OutputSectionOff + 36, Imp->getRVA() - RVA - 40);
+    write32le(Buf + OutputSectionOff + 43, Desc->getRVA() - RVA - 47);
+    write32le(Buf + OutputSectionOff + 48, Helper->getRVA() - RVA - 52);
   }
 
   Defined *Imp = nullptr;
@@ -313,10 +238,10 @@ public:
   size_t getSize() const override { return sizeof(ThunkX86); }
 
   void writeTo(uint8_t *Buf) override {
-    memcpy(Buf + FileOff, ThunkX86, sizeof(ThunkX86));
-    write32le(Buf + FileOff + 3, Imp->getRVA() + Config->ImageBase);
-    write32le(Buf + FileOff + 8, Desc->getRVA() + Config->ImageBase);
-    write32le(Buf + FileOff + 13, Helper->getRVA() - RVA - 17);
+    memcpy(Buf + OutputSectionOff, ThunkX86, sizeof(ThunkX86));
+    write32le(Buf + OutputSectionOff + 3, Imp->getRVA() + Config->ImageBase);
+    write32le(Buf + OutputSectionOff + 8, Desc->getRVA() + Config->ImageBase);
+    write32le(Buf + OutputSectionOff + 13, Helper->getRVA() - RVA - 17);
   }
 
   void getBaserels(std::vector<Baserel> *Res) override {
@@ -328,6 +253,189 @@ public:
   Chunk *Desc = nullptr;
   Defined *Helper = nullptr;
 };
+
+// A chunk for the import descriptor table.
+class DelayAddressChunk : public Chunk {
+public:
+  explicit DelayAddressChunk(Chunk *C) : Thunk(C) {}
+  size_t getSize() const override { return ptrSize(); }
+
+  void writeTo(uint8_t *Buf) override {
+    if (Config->is64()) {
+      write64le(Buf + OutputSectionOff, Thunk->getRVA() + Config->ImageBase);
+    } else {
+      write32le(Buf + OutputSectionOff, Thunk->getRVA() + Config->ImageBase);
+    }
+  }
+
+  void getBaserels(std::vector<Baserel> *Res) override {
+    Res->emplace_back(RVA);
+  }
+
+  Chunk *Thunk;
+};
+
+// Export table
+// Read Microsoft PE/COFF spec 5.3 for details.
+
+// A chunk for the export descriptor table.
+class ExportDirectoryChunk : public Chunk {
+public:
+  ExportDirectoryChunk(int I, int J, Chunk *D, Chunk *A, Chunk *N, Chunk *O)
+      : MaxOrdinal(I), NameTabSize(J), DLLName(D), AddressTab(A), NameTab(N),
+        OrdinalTab(O) {}
+
+  size_t getSize() const override {
+    return sizeof(export_directory_table_entry);
+  }
+
+  void writeTo(uint8_t *Buf) override {
+    auto *E = (export_directory_table_entry *)(Buf + OutputSectionOff);
+    E->NameRVA = DLLName->getRVA();
+    E->OrdinalBase = 0;
+    E->AddressTableEntries = MaxOrdinal + 1;
+    E->NumberOfNamePointers = NameTabSize;
+    E->ExportAddressTableRVA = AddressTab->getRVA();
+    E->NamePointerRVA = NameTab->getRVA();
+    E->OrdinalTableRVA = OrdinalTab->getRVA();
+  }
+
+  uint16_t MaxOrdinal;
+  uint16_t NameTabSize;
+  Chunk *DLLName;
+  Chunk *AddressTab;
+  Chunk *NameTab;
+  Chunk *OrdinalTab;
+};
+
+class AddressTableChunk : public Chunk {
+public:
+  explicit AddressTableChunk(size_t MaxOrdinal) : Size(MaxOrdinal + 1) {}
+  size_t getSize() const override { return Size * 4; }
+
+  void writeTo(uint8_t *Buf) override {
+    for (Export &E : Config->Exports) {
+      auto *D = cast<Defined>(E.Sym->repl());
+      write32le(Buf + OutputSectionOff + E.Ordinal * 4, D->getRVA());
+    }
+  }
+
+private:
+  size_t Size;
+};
+
+class NamePointersChunk : public Chunk {
+public:
+  explicit NamePointersChunk(std::vector<Chunk *> &V) : Chunks(V) {}
+  size_t getSize() const override { return Chunks.size() * 4; }
+
+  void writeTo(uint8_t *Buf) override {
+    uint8_t *P = Buf + OutputSectionOff;
+    for (Chunk *C : Chunks) {
+      write32le(P, C->getRVA());
+      P += 4;
+    }
+  }
+
+private:
+  std::vector<Chunk *> Chunks;
+};
+
+class ExportOrdinalChunk : public Chunk {
+public:
+  explicit ExportOrdinalChunk(size_t I) : Size(I) {}
+  size_t getSize() const override { return Size * 2; }
+
+  void writeTo(uint8_t *Buf) override {
+    uint8_t *P = Buf + OutputSectionOff;
+    for (Export &E : Config->Exports) {
+      if (E.Noname)
+        continue;
+      write16le(P, E.Ordinal);
+      P += 2;
+    }
+  }
+
+private:
+  size_t Size;
+};
+
+} // anonymous namespace
+
+uint64_t IdataContents::getDirSize() {
+  return Dirs.size() * sizeof(ImportDirectoryTableEntry);
+}
+
+uint64_t IdataContents::getIATSize() {
+  return Addresses.size() * ptrSize();
+}
+
+// Returns a list of .idata contents.
+// See Microsoft PE/COFF spec 5.4 for details.
+std::vector<Chunk *> IdataContents::getChunks() {
+  create();
+  std::vector<Chunk *> V;
+  // The loader assumes a specific order of data.
+  // Add each type in the correct order.
+  for (std::unique_ptr<Chunk> &C : Dirs)
+    V.push_back(C.get());
+  for (std::unique_ptr<Chunk> &C : Lookups)
+    V.push_back(C.get());
+  for (std::unique_ptr<Chunk> &C : Addresses)
+    V.push_back(C.get());
+  for (std::unique_ptr<Chunk> &C : Hints)
+    V.push_back(C.get());
+  for (auto &P : DLLNames) {
+    std::unique_ptr<Chunk> &C = P.second;
+    V.push_back(C.get());
+  }
+  return V;
+}
+
+void IdataContents::create() {
+  std::map<StringRef, std::vector<DefinedImportData *>> Map =
+      binImports(Imports);
+
+  // Create .idata contents for each DLL.
+  for (auto &P : Map) {
+    StringRef Name = P.first;
+    std::vector<DefinedImportData *> &Syms = P.second;
+
+    // Create lookup and address tables. If they have external names,
+    // we need to create HintName chunks to store the names.
+    // If they don't (if they are import-by-ordinals), we store only
+    // ordinal values to the table.
+    size_t Base = Lookups.size();
+    for (DefinedImportData *S : Syms) {
+      uint16_t Ord = S->getOrdinal();
+      if (S->getExternalName().empty()) {
+        Lookups.push_back(make_unique<OrdinalOnlyChunk>(Ord));
+        Addresses.push_back(make_unique<OrdinalOnlyChunk>(Ord));
+        continue;
+      }
+      auto C = make_unique<HintNameChunk>(S->getExternalName(), Ord);
+      Lookups.push_back(make_unique<LookupChunk>(C.get()));
+      Addresses.push_back(make_unique<LookupChunk>(C.get()));
+      Hints.push_back(std::move(C));
+    }
+    // Terminate with null values.
+    Lookups.push_back(make_unique<NullChunk>(ptrSize()));
+    Addresses.push_back(make_unique<NullChunk>(ptrSize()));
+
+    for (int I = 0, E = Syms.size(); I < E; ++I)
+      Syms[I]->setLocation(Addresses[Base + I].get());
+
+    // Create the import table header.
+    if (!DLLNames.count(Name))
+      DLLNames[Name] = make_unique<StringChunk>(Name);
+    auto Dir = make_unique<ImportDirectoryChunk>(DLLNames[Name].get());
+    Dir->LookupTab = Lookups[Base].get();
+    Dir->AddressTab = Addresses[Base].get();
+    Dirs.push_back(std::move(Dir));
+  }
+  // Add null terminator.
+  Dirs.push_back(make_unique<NullChunk>(sizeof(ImportDirectoryTableEntry)));
+}
 
 std::vector<Chunk *> DelayLoadContents::getChunks() {
   std::vector<Chunk *> V;
@@ -356,27 +464,6 @@ std::vector<Chunk *> DelayLoadContents::getDataChunks() {
 uint64_t DelayLoadContents::getDirSize() {
   return Dirs.size() * sizeof(delay_import_directory_table_entry);
 }
-
-// A chunk for the import descriptor table.
-class DelayAddressChunk : public Chunk {
-public:
-  explicit DelayAddressChunk(Chunk *C) : Thunk(C) {}
-  size_t getSize() const override { return ptrSize(); }
-
-  void writeTo(uint8_t *Buf) override {
-    if (Config->is64()) {
-      write64le(Buf + FileOff, Thunk->getRVA() + Config->ImageBase);
-    } else {
-      write32le(Buf + FileOff, Thunk->getRVA() + Config->ImageBase);
-    }
-  }
-
-  void getBaserels(std::vector<Baserel> *Res) override {
-    Res->emplace_back(RVA);
-  }
-
-  Chunk *Thunk;
-};
 
 void DelayLoadContents::create(Defined *H) {
   Helper = H;
@@ -439,91 +526,6 @@ Chunk *DelayLoadContents::newThunkChunk(DefinedImportData *S, Chunk *Dir) {
     llvm_unreachable("unsupported machine type");
   }
 }
-
-// Export table
-// Read Microsoft PE/COFF spec 5.3 for details.
-
-// A chunk for the export descriptor table.
-class ExportDirectoryChunk : public Chunk {
-public:
-  ExportDirectoryChunk(int I, int J, Chunk *D, Chunk *A, Chunk *N, Chunk *O)
-      : MaxOrdinal(I), NameTabSize(J), DLLName(D), AddressTab(A), NameTab(N),
-        OrdinalTab(O) {}
-
-  size_t getSize() const override {
-    return sizeof(export_directory_table_entry);
-  }
-
-  void writeTo(uint8_t *Buf) override {
-    auto *E = (export_directory_table_entry *)(Buf + FileOff);
-    E->NameRVA = DLLName->getRVA();
-    E->OrdinalBase = 0;
-    E->AddressTableEntries = MaxOrdinal + 1;
-    E->NumberOfNamePointers = NameTabSize;
-    E->ExportAddressTableRVA = AddressTab->getRVA();
-    E->NamePointerRVA = NameTab->getRVA();
-    E->OrdinalTableRVA = OrdinalTab->getRVA();
-  }
-
-  uint16_t MaxOrdinal;
-  uint16_t NameTabSize;
-  Chunk *DLLName;
-  Chunk *AddressTab;
-  Chunk *NameTab;
-  Chunk *OrdinalTab;
-};
-
-class AddressTableChunk : public Chunk {
-public:
-  explicit AddressTableChunk(size_t MaxOrdinal) : Size(MaxOrdinal + 1) {}
-  size_t getSize() const override { return Size * 4; }
-
-  void writeTo(uint8_t *Buf) override {
-    for (Export &E : Config->Exports) {
-      auto *D = cast<Defined>(E.Sym->repl());
-      write32le(Buf + FileOff + E.Ordinal * 4, D->getRVA());
-    }
-  }
-
-private:
-  size_t Size;
-};
-
-class NamePointersChunk : public Chunk {
-public:
-  explicit NamePointersChunk(std::vector<Chunk *> &V) : Chunks(V) {}
-  size_t getSize() const override { return Chunks.size() * 4; }
-
-  void writeTo(uint8_t *Buf) override {
-    uint8_t *P = Buf + FileOff;
-    for (Chunk *C : Chunks) {
-      write32le(P, C->getRVA());
-      P += 4;
-    }
-  }
-
-private:
-  std::vector<Chunk *> Chunks;
-};
-
-class ExportOrdinalChunk : public Chunk {
-public:
-  explicit ExportOrdinalChunk(size_t I) : Size(I) {}
-  size_t getSize() const override { return Size * 2; }
-
-  void writeTo(uint8_t *Buf) override {
-    uint8_t *P = Buf + FileOff;
-    for (Export &E : Config->Exports) {
-      if (E.Noname)
-        continue;
-      write16le(P, E.Ordinal);
-      P += 2;
-    }
-  }
-
-private:
-  size_t Size;
-};
 
 EdataContents::EdataContents() {
   uint16_t MaxOrdinal = 0;

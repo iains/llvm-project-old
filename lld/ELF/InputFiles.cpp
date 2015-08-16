@@ -9,14 +9,22 @@
 
 #include "InputFiles.h"
 #include "Chunks.h"
+#include "Error.h"
 #include "Symbols.h"
-#include "Driver.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace llvm::ELF;
 
 using namespace lld;
 using namespace lld::elf2;
+
+template <class ELFT>
+bool ObjectFile<ELFT>::isCompatibleWith(const ObjectFileBase &Other) const {
+  if (kind() != Other.kind())
+    return false;
+  return getObj()->getHeader()->e_machine ==
+         cast<ObjectFile<ELFT>>(Other).getObj()->getHeader()->e_machine;
+}
 
 template <class ELFT> void elf2::ObjectFile<ELFT>::parse() {
   // Parse a memory buffer as a ELF file.
@@ -33,28 +41,38 @@ template <class ELFT> void elf2::ObjectFile<ELFT>::initializeChunks() {
   uint64_t Size = ELFObj->getNumSections();
   Chunks.reserve(Size);
   for (const Elf_Shdr &Sec : ELFObj->sections()) {
-    if (Sec.sh_flags & SHF_ALLOC) {
+    switch (Sec.sh_type) {
+    case SHT_SYMTAB:
+      Symtab = &Sec;
+      break;
+    case SHT_STRTAB:
+    case SHT_NULL:
+    case SHT_RELA:
+    case SHT_REL:
+      break;
+    default:
       auto *C = new (Alloc) SectionChunk<ELFT>(this->getObj(), &Sec);
       Chunks.push_back(C);
+      break;
     }
   }
 }
 
 template <class ELFT> void elf2::ObjectFile<ELFT>::initializeSymbols() {
-  const Elf_Shdr *Symtab = ELFObj->getDotSymtabSec();
   ErrorOr<StringRef> StringTableOrErr =
       ELFObj->getStringTableForSymtab(*Symtab);
   error(StringTableOrErr.getError());
   StringRef StringTable = *StringTableOrErr;
 
-  Elf_Sym_Range Syms = ELFObj->symbols();
-  Syms = Elf_Sym_Range(Syms.begin() + 1, Syms.end());
-  auto NumSymbols = std::distance(Syms.begin(), Syms.end());
+  Elf_Sym_Range Syms = ELFObj->symbols(Symtab);
+  uint32_t NumSymbols = std::distance(Syms.begin(), Syms.end());
+  uint32_t FirstNonLocal = Symtab->sh_info;
+  if (FirstNonLocal > NumSymbols)
+    error("Invalid sh_info in symbol table");
+  Syms = llvm::make_range(Syms.begin() + FirstNonLocal, Syms.end());
   SymbolBodies.reserve(NumSymbols);
-  for (const Elf_Sym &Sym : Syms) {
-    if (SymbolBody *Body = createSymbolBody(StringTable, &Sym))
-      SymbolBodies.push_back(Body);
-  }
+  for (const Elf_Sym &Sym : Syms)
+    SymbolBodies.push_back(createSymbolBody(StringTable, &Sym));
 }
 
 template <class ELFT>
@@ -63,9 +81,18 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   ErrorOr<StringRef> NameOrErr = Sym->getName(StringTable);
   error(NameOrErr.getError());
   StringRef Name = *NameOrErr;
-  if (Sym->isUndefined())
-    return new (Alloc) Undefined(Name);
-  return new (Alloc) DefinedRegular<ELFT>(this, Sym);
+  switch (Sym->getBinding()) {
+  default:
+    error("unexpected binding");
+  case STB_GLOBAL:
+    if (Sym->isUndefined())
+      return new (Alloc) Undefined<ELFT>(Name, *Sym);
+    return new (Alloc) DefinedRegular<ELFT>(Name, *Sym);
+  case STB_WEAK:
+    if (Sym->isUndefined())
+      return new (Alloc) UndefinedWeak<ELFT>(Name, *Sym);
+    return new (Alloc) DefinedWeak<ELFT>(Name, *Sym);
+  }
 }
 
 namespace lld {

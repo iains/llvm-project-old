@@ -1,4 +1,4 @@
-//===- Chunks.h -----------------------------------------------------------===//
+//===- Chunks.h -------------------------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -37,6 +37,10 @@ class ObjectFile;
 class OutputSection;
 class SymbolBody;
 
+// Mask for section types (code, data, bss, disacardable, etc.)
+// and permissions (writable, readable or executable).
+const uint32_t PermMask = 0xFF0000F0;
+
 // A Chunk represents a chunk of data that will occupy space in the
 // output (if the resolver chose that). It may or may not be backed by
 // a section of an input file. It could be linker-created data, or
@@ -58,10 +62,10 @@ public:
 
   // The writer sets and uses the addresses.
   uint64_t getRVA() { return RVA; }
-  uint64_t getFileOff() { return FileOff; }
+  uint64_t getOutputSectionOff() { return OutputSectionOff; }
   uint32_t getAlign() { return Align; }
   void setRVA(uint64_t V) { RVA = V; }
-  void setFileOff(uint64_t V) { FileOff = V; }
+  void setOutputSectionOff(uint64_t V) { OutputSectionOff = V; }
 
   // Returns true if this has non-zero data. BSS chunks return
   // false. If false is returned, the space occupied by this chunk
@@ -97,8 +101,8 @@ protected:
   // The RVA of this chunk in the output. The writer sets a value.
   uint64_t RVA = 0;
 
-  // The offset from beginning of the output file. The writer sets a value.
-  uint64_t FileOff = 0;
+  // The offset from beginning of the output section. The writer sets a value.
+  uint64_t OutputSectionOff = 0;
 
   // The output section for this chunk.
   OutputSection *Out = nullptr;

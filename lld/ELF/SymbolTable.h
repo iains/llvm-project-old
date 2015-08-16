@@ -1,4 +1,4 @@
-//===- SymbolTable.h ------------------------------------------------------===//
+//===- SymbolTable.h --------------------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -13,10 +13,10 @@
 #include "InputFiles.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/MC/StringTableBuilder.h"
 
 namespace lld {
 namespace elf2 {
-class Defined;
 struct Symbol;
 
 // SymbolTable is a bucket of all known symbols, including defined,
@@ -29,7 +29,7 @@ struct Symbol;
 // an undefined symbol. Or, if there's a conflict between a lazy and a
 // undefined, it'll read an archive member to read a real definition
 // to replace the lazy symbol. The logic is implemented in resolve().
-template <class ELFT> class SymbolTable {
+class SymbolTable {
 public:
   SymbolTable();
 
@@ -38,19 +38,24 @@ public:
   // Print an error message on undefined symbols.
   void reportRemainingUndefines();
 
-  // Returns a list of chunks of selected symbols.
-  std::vector<Chunk *> getChunks();
-
   // The writer needs to infer the machine type from the object files.
-  std::vector<std::unique_ptr<ObjectFile<ELFT>>> ObjectFiles;
+  std::vector<std::unique_ptr<ObjectFileBase>> ObjectFiles;
+
+  unsigned getNumSymbols() { return Symtab.size(); }
+  llvm::StringTableBuilder &getStringBuilder() { return Builder; };
+
+  const llvm::DenseMap<StringRef, Symbol *> &getSymbols() const {
+    return Symtab;
+  }
 
 private:
-  void addObject(ObjectFile<ELFT> *File);
+  void addObject(ObjectFileBase *File);
 
   void resolve(SymbolBody *Body);
 
   llvm::DenseMap<StringRef, Symbol *> Symtab;
   llvm::BumpPtrAllocator Alloc;
+  llvm::StringTableBuilder Builder;
 };
 
 } // namespace elf2

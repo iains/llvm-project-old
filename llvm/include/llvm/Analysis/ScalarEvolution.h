@@ -210,7 +210,7 @@ namespace llvm {
   private:
     /// SCEVCallbackVH - A CallbackVH to arrange for ScalarEvolution to be
     /// notified whenever a Value is deleted.
-    class SCEVCallbackVH : public CallbackVH {
+    class SCEVCallbackVH final : public CallbackVH {
       ScalarEvolution *SE;
       void deleted() override;
       void allUsesReplacedWith(Value *New) override;
@@ -712,7 +712,8 @@ namespace llvm {
 
     /// getNegativeSCEV - Return the SCEV object corresponding to -V.
     ///
-    const SCEV *getNegativeSCEV(const SCEV *V);
+    const SCEV *getNegativeSCEV(const SCEV *V,
+                                SCEV::NoWrapFlags Flags = SCEV::FlagAnyWrap);
 
     /// getNotSCEV - Return the SCEV object corresponding to ~V.
     ///

@@ -8,8 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Chunks.h"
+#include "Error.h"
 #include "InputFiles.h"
-#include "Writer.h"
+#include "Symbols.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Debug.h"
@@ -60,7 +61,7 @@ void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym,
   case IMAGE_REL_AMD64_SECTION:  add16(Off, Sym->getSectionIndex()); break;
   case IMAGE_REL_AMD64_SECREL:   add32(Off, Sym->getSecrel()); break;
   default:
-    llvm::report_fatal_error("Unsupported relocation type");
+    error("Unsupported relocation type");
   }
 }
 
@@ -75,25 +76,34 @@ void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym,
   case IMAGE_REL_I386_SECTION:  add16(Off, Sym->getSectionIndex()); break;
   case IMAGE_REL_I386_SECREL:   add32(Off, Sym->getSecrel()); break;
   default:
-    llvm::report_fatal_error("Unsupported relocation type");
+    error("Unsupported relocation type");
   }
 }
 
-static void applyMOV32T(uint8_t *Off, uint32_t V) {
-  uint16_t X = V;
-  or16(Off, ((X & 0x800) >> 1) | ((X >> 12) & 0xf));
-  or16(Off + 2, ((X & 0x700) << 4) | (X & 0xff));
-  X = V >> 16;
-  or16(Off + 4, ((X & 0x800) >> 1) | ((X >> 12) & 0xf));
-  or16(Off + 6, ((X & 0x700) << 4) | (X & 0xff));
+static void applyMOV(uint8_t *Off, uint16_t V) {
+  or16(Off, ((V & 0x800) >> 1) | ((V >> 12) & 0xf));
+  or16(Off + 2, ((V & 0x700) << 4) | (V & 0xff));
 }
 
-static void applyBranchImm(uint8_t *Off, int32_t V) {
+static void applyMOV32T(uint8_t *Off, uint32_t V) {
+  applyMOV(Off, V);           // set MOVW operand
+  applyMOV(Off + 4, V >> 16); // set MOVT operand
+}
+
+static void applyBranch20T(uint8_t *Off, int32_t V) {
+  uint32_t S = V < 0 ? 1 : 0;
+  uint32_t J1 = (V >> 19) & 1;
+  uint32_t J2 = (V >> 18) & 1;
+  or16(Off, (S << 10) | ((V >> 12) & 0x3f));
+  or16(Off + 2, (J1 << 13) | (J2 << 11) | ((V >> 1) & 0x7ff));
+}
+
+static void applyBranch24T(uint8_t *Off, int32_t V) {
   uint32_t S = V < 0 ? 1 : 0;
   uint32_t J1 = ((~V >> 23) & 1) ^ S;
   uint32_t J2 = ((~V >> 22) & 1) ^ S;
-  or16(Off, ((V >> 12) & 0x3ff) | (S << 10));
-  or16(Off + 2, ((V >> 1) & 0x7ff) | (J2 << 11) | (J1 << 13));
+  or16(Off, (S << 10) | ((V >> 12) & 0x3ff));
+  or16(Off + 2, (J1 << 13) | (J2 << 11) | ((V >> 1) & 0x7ff));
 }
 
 void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym,
@@ -106,10 +116,11 @@ void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym,
   case IMAGE_REL_ARM_ADDR32:    add32(Off, S + Config->ImageBase); break;
   case IMAGE_REL_ARM_ADDR32NB:  add32(Off, S); break;
   case IMAGE_REL_ARM_MOV32T:    applyMOV32T(Off, S + Config->ImageBase); break;
-  case IMAGE_REL_ARM_BRANCH24T: applyBranchImm(Off, S - P - 4); break;
-  case IMAGE_REL_ARM_BLX23T:    applyBranchImm(Off, S - P - 4); break;
+  case IMAGE_REL_ARM_BRANCH20T: applyBranch20T(Off, S - P - 4); break;
+  case IMAGE_REL_ARM_BRANCH24T: applyBranch24T(Off, S - P - 4); break;
+  case IMAGE_REL_ARM_BLX23T:    applyBranch24T(Off, S - P - 4); break;
   default:
-    llvm::report_fatal_error("Unsupported relocation type");
+    error("Unsupported relocation type");
   }
 }
 
@@ -118,11 +129,11 @@ void SectionChunk::writeTo(uint8_t *Buf) {
     return;
   // Copy section contents from source object file to output file.
   ArrayRef<uint8_t> A = getContents();
-  memcpy(Buf + FileOff, A.data(), A.size());
+  memcpy(Buf + OutputSectionOff, A.data(), A.size());
 
   // Apply relocations.
   for (const coff_relocation &Rel : Relocs) {
-    uint8_t *Off = Buf + FileOff + Rel.VirtualAddress;
+    uint8_t *Off = Buf + OutputSectionOff + Rel.VirtualAddress;
     SymbolBody *Body = File->getSymbolBody(Rel.SymbolTableIndex)->repl();
     Defined *Sym = cast<Defined>(Body);
     uint64_t P = RVA + Rel.VirtualAddress;
@@ -232,7 +243,7 @@ uint32_t CommonChunk::getPermissions() const {
 }
 
 void StringChunk::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, Str.data(), Str.size());
+  memcpy(Buf + OutputSectionOff, Str.data(), Str.size());
 }
 
 ImportThunkChunkX64::ImportThunkChunkX64(Defined *S) : ImpSymbol(S) {
@@ -242,9 +253,9 @@ ImportThunkChunkX64::ImportThunkChunkX64(Defined *S) : ImpSymbol(S) {
 }
 
 void ImportThunkChunkX64::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, ImportThunkX86, sizeof(ImportThunkX86));
+  memcpy(Buf + OutputSectionOff, ImportThunkX86, sizeof(ImportThunkX86));
   // The first two bytes is a JMP instruction. Fill its operand.
-  write32le(Buf + FileOff + 2, ImpSymbol->getRVA() - RVA - getSize());
+  write32le(Buf + OutputSectionOff + 2, ImpSymbol->getRVA() - RVA - getSize());
 }
 
 void ImportThunkChunkX86::getBaserels(std::vector<Baserel> *Res) {
@@ -252,9 +263,10 @@ void ImportThunkChunkX86::getBaserels(std::vector<Baserel> *Res) {
 }
 
 void ImportThunkChunkX86::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, ImportThunkX86, sizeof(ImportThunkX86));
+  memcpy(Buf + OutputSectionOff, ImportThunkX86, sizeof(ImportThunkX86));
   // The first two bytes is a JMP instruction. Fill its operand.
-  write32le(Buf + FileOff + 2, ImpSymbol->getRVA() + Config->ImageBase);
+  write32le(Buf + OutputSectionOff + 2,
+            ImpSymbol->getRVA() + Config->ImageBase);
 }
 
 void ImportThunkChunkARM::getBaserels(std::vector<Baserel> *Res) {
@@ -262,9 +274,9 @@ void ImportThunkChunkARM::getBaserels(std::vector<Baserel> *Res) {
 }
 
 void ImportThunkChunkARM::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, ImportThunkARM, sizeof(ImportThunkARM));
+  memcpy(Buf + OutputSectionOff, ImportThunkARM, sizeof(ImportThunkARM));
   // Fix mov.w and mov.t operands.
-  applyMOV32T(Buf + FileOff, ImpSymbol->getRVA() + Config->ImageBase);
+  applyMOV32T(Buf + OutputSectionOff, ImpSymbol->getRVA() + Config->ImageBase);
 }
 
 void LocalImportChunk::getBaserels(std::vector<Baserel> *Res) {
@@ -277,14 +289,14 @@ size_t LocalImportChunk::getSize() const {
 
 void LocalImportChunk::writeTo(uint8_t *Buf) {
   if (Config->is64()) {
-    write64le(Buf + FileOff, Sym->getRVA() + Config->ImageBase);
+    write64le(Buf + OutputSectionOff, Sym->getRVA() + Config->ImageBase);
   } else {
-    write32le(Buf + FileOff, Sym->getRVA() + Config->ImageBase);
+    write32le(Buf + OutputSectionOff, Sym->getRVA() + Config->ImageBase);
   }
 }
 
 void SEHTableChunk::writeTo(uint8_t *Buf) {
-  ulittle32_t *Begin = reinterpret_cast<ulittle32_t *>(Buf + FileOff);
+  ulittle32_t *Begin = reinterpret_cast<ulittle32_t *>(Buf + OutputSectionOff);
   size_t Cnt = 0;
   for (Defined *D : Syms)
     Begin[Cnt++] = D->getRVA();
@@ -308,7 +320,7 @@ BaserelChunk::BaserelChunk(uint32_t Page, Baserel *Begin, Baserel *End) {
 }
 
 void BaserelChunk::writeTo(uint8_t *Buf) {
-  memcpy(Buf + FileOff, Data.data(), Data.size());
+  memcpy(Buf + OutputSectionOff, Data.data(), Data.size());
 }
 
 uint8_t Baserel::getDefaultType() {

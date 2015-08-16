@@ -38,11 +38,11 @@
 
 ; CHECK: DW_TAG_structure_type
 ; CHECK-NEXT: DW_AT_name {{.*}} "C"
-; CHECK:   DW_TAG_subprogram
-; CHECK-NOT: DW_TAG
+; CHECK: [[M_FN3_DECL:.*]]:  DW_TAG_subprogram
+; CHECK-NOT: {{DW_TAG|NULL}}
 ; CHECK: DW_AT_name {{.*}} "m_fn3"
 
-; CHECK: DW_AT_specification {{.*}} "_ZN1C5m_fn3Ev"
+; CHECK: DW_AT_specification {{.*}} {[[M_FN3_DECL]]}
 ; CHECK-NOT: DW_TAG
 ; CHECK:   DW_TAG_formal_parameter
 ; CHECK-NOT: DW_TAG
@@ -336,7 +336,7 @@ attributes #3 = { nounwind readnone }
 !llvm.module.flags = !{!36, !37}
 !llvm.ident = !{!38}
 
-!0 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: true, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !21, globals: !2, imports: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: true, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !21, globals: !2, imports: !2)
 !1 = !DIFile(filename: "<stdin>", directory: "/tmp/dbginfo")
 !2 = !{}
 !3 = !{!4, !14}

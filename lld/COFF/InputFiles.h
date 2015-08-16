@@ -1,4 +1,4 @@
-//===- InputFiles.h -------------------------------------------------------===//
+//===- InputFiles.h ---------------------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -50,9 +50,8 @@ public:
   // Returns symbols defined by this file.
   virtual std::vector<SymbolBody *> &getSymbols() = 0;
 
-  // Reads a file (constructors don't do that). Returns an error if a
-  // file is broken.
-  virtual std::error_code parse() = 0;
+  // Reads a file (the constructor doesn't do that).
+  virtual void parse() = 0;
 
   // Returns the CPU type this file was compiled to.
   virtual MachineTypes getMachineType() { return IMAGE_FILE_MACHINE_UNKNOWN; }
@@ -90,12 +89,12 @@ class ArchiveFile : public InputFile {
 public:
   explicit ArchiveFile(MemoryBufferRef M) : InputFile(ArchiveKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ArchiveKind; }
-  std::error_code parse() override;
+  void parse() override;
 
   // Returns a memory buffer for a given symbol. An empty memory buffer
   // is returned if we have already returned the same memory buffer.
   // (So that we don't instantiate same members more than once.)
-  ErrorOr<MemoryBufferRef> getMember(const Archive::Symbol *Sym);
+  MemoryBufferRef getMember(const Archive::Symbol *Sym);
 
   std::vector<Lazy *> &getLazySymbols() { return LazySymbols; }
 
@@ -117,7 +116,7 @@ class ObjectFile : public InputFile {
 public:
   explicit ObjectFile(MemoryBufferRef M) : InputFile(ObjectKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ObjectKind; }
-  std::error_code parse() override;
+  void parse() override;
   MachineTypes getMachineType() override;
   std::vector<Chunk *> &getChunks() { return Chunks; }
   std::vector<SymbolBody *> &getSymbols() override { return SymbolBodies; }
@@ -140,9 +139,9 @@ public:
   std::set<SymbolBody *> SEHandlers;
 
 private:
-  std::error_code initializeChunks();
-  std::error_code initializeSymbols();
-  std::error_code initializeSEH();
+  void initializeChunks();
+  void initializeSymbols();
+  void initializeSEH();
 
   Defined *createDefined(COFFSymbolRef Sym, const void *Aux, bool IsFirst);
   Undefined *createUndefined(COFFSymbolRef Sym);
@@ -184,12 +183,12 @@ public:
   std::vector<SymbolBody *> &getSymbols() override { return SymbolBodies; }
 
 private:
-  std::error_code parse() override;
+  void parse() override;
 
   std::vector<SymbolBody *> SymbolBodies;
   llvm::BumpPtrAllocator Alloc;
   llvm::BumpPtrAllocator StringAllocAux;
-  llvm::BumpPtrStringSaver StringAlloc;
+  llvm::StringSaver StringAlloc;
 };
 
 // Used for LTO.
@@ -204,7 +203,7 @@ public:
   LTOModule *releaseModule() { return M.release(); }
 
 private:
-  std::error_code parse() override;
+  void parse() override;
 
   std::vector<SymbolBody *> SymbolBodies;
   llvm::BumpPtrAllocator Alloc;

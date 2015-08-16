@@ -125,6 +125,19 @@ std::error_code ELFFile<ELFT>::createAtomizableSections() {
   // Record the number of relocs to guess at preallocating the buffer.
   uint64_t totalRelocs = 0;
   for (const Elf_Shdr &section : _objFile->sections()) {
+    switch (section.sh_type) {
+    case llvm::ELF::SHT_SYMTAB:
+      _symtab = &section;
+      continue;
+    case llvm::ELF::SHT_SYMTAB_SHNDX: {
+      ErrorOr<ArrayRef<Elf_Word>> tableOrErr = _objFile->getSHNDXTable(section);
+      if (std::error_code ec = tableOrErr.getError())
+        return ec;
+      _shndxTable = *tableOrErr;
+      continue;
+    }
+    }
+
     if (isIgnoredSection(&section))
       continue;
 
@@ -208,21 +221,23 @@ template <class ELFT>
 std::error_code ELFFile<ELFT>::createSymbolsFromAtomizableSections() {
   // Increment over all the symbols collecting atoms and symbol names for
   // later use.
-  const Elf_Shdr *symtab = _objFile->getDotSymtabSec();
-  if (!symtab)
+  if (!_symtab)
     return std::error_code();
 
-  ErrorOr<StringRef> strTableOrErr = _objFile->getStringTableForSymtab(*symtab);
+  ErrorOr<StringRef> strTableOrErr =
+      _objFile->getStringTableForSymtab(*_symtab);
   if (std::error_code ec = strTableOrErr.getError())
     return ec;
   StringRef strTable = *strTableOrErr;
 
-  auto SymI = _objFile->symbol_begin(), SymE = _objFile->symbol_end();
+  auto SymI = _objFile->symbol_begin(_symtab),
+       SymE = _objFile->symbol_end(_symtab);
   // Skip over dummy sym.
   ++SymI;
 
   for (; SymI != SymE; ++SymI) {
-    ErrorOr<const Elf_Shdr *> section = _objFile->getSection(&*SymI);
+    ErrorOr<const Elf_Shdr *> section =
+        _objFile->getSection(SymI, _symtab, _shndxTable);
     if (std::error_code ec = section.getError())
       return ec;
 
@@ -308,11 +323,10 @@ template <class ELFT> std::error_code ELFFile<ELFT>::createAtoms() {
     ELFDefinedAtom<ELFT> *previousAtom = nullptr;
     ELFReference<ELFT> *anonFollowedBy = nullptr;
 
-    const Elf_Shdr *symtab = _objFile->getDotSymtabSec();
-    if (!symtab)
+    if (!_symtab)
       continue;
     ErrorOr<StringRef> strTableOrErr =
-        _objFile->getStringTableForSymtab(*symtab);
+        _objFile->getStringTableForSymtab(*_symtab);
     if (std::error_code ec = strTableOrErr.getError())
       return ec;
     StringRef strTable = *strTableOrErr;
@@ -663,13 +677,13 @@ void ELFFile<ELFT>::updateReferenceForMergeStringAccess(ELFReference<ELFT> *ref,
 }
 
 template <class ELFT> void ELFFile<ELFT>::updateReferences() {
-  const Elf_Shdr *symtab = _objFile->getDotSymtabSec();
   for (auto &ri : _references) {
     if (ri->kindNamespace() != Reference::KindNamespace::ELF)
       continue;
     const Elf_Sym *symbol =
-        _objFile->getSymbol(symtab, ri->targetSymbolIndex());
-    ErrorOr<const Elf_Shdr *> shdr = _objFile->getSection(symbol);
+        _objFile->getSymbol(_symtab, ri->targetSymbolIndex());
+    ErrorOr<const Elf_Shdr *> shdr =
+        _objFile->getSection(symbol, _symtab, _shndxTable);
 
     // If the atom is not in mergeable string section, the target atom is
     // simply that atom.

@@ -915,14 +915,8 @@ bool LLParser::ParseFnAttributeValuePairs(AttrBuilder &B,
     }
     // Target-dependent attributes:
     case lltok::StringConstant: {
-      std::string Attr = Lex.getStrVal();
-      Lex.Lex();
-      std::string Val;
-      if (EatIfPresent(lltok::equal) &&
-          ParseStringConstant(Val))
+      if (ParseStringAttribute(B))
         return true;
-
-      B.addAttribute(Attr, Val);
       continue;
     }
 
@@ -1229,6 +1223,19 @@ bool LLParser::ParseOptionalAddrSpace(unsigned &AddrSpace) {
          ParseToken(lltok::rparen, "expected ')' in address space");
 }
 
+/// ParseStringAttribute
+///   := StringConstant
+///   := StringConstant '=' StringConstant
+bool LLParser::ParseStringAttribute(AttrBuilder &B) {
+  std::string Attr = Lex.getStrVal();
+  Lex.Lex();
+  std::string Val;
+  if (EatIfPresent(lltok::equal) && ParseStringConstant(Val))
+    return true;
+  B.addAttribute(Attr, Val);
+  return false;
+}
+
 /// ParseOptionalParamAttrs - Parse a potentially empty list of parameter attributes.
 bool LLParser::ParseOptionalParamAttrs(AttrBuilder &B) {
   bool HaveError = false;
@@ -1240,6 +1247,11 @@ bool LLParser::ParseOptionalParamAttrs(AttrBuilder &B) {
     switch (Token) {
     default:  // End of attributes.
       return HaveError;
+    case lltok::StringConstant: {
+      if (ParseStringAttribute(B))
+        return true;
+      continue;
+    }
     case lltok::kw_align: {
       unsigned Alignment;
       if (ParseOptionalAlignment(Alignment))
@@ -1321,6 +1333,11 @@ bool LLParser::ParseOptionalReturnAttrs(AttrBuilder &B) {
     switch (Token) {
     default:  // End of attributes.
       return HaveError;
+    case lltok::StringConstant: {
+      if (ParseStringAttribute(B))
+        return true;
+      continue;
+    }
     case lltok::kw_dereferenceable: {
       uint64_t Bytes;
       if (ParseOptionalDerefAttrBytes(lltok::kw_dereferenceable, Bytes))
@@ -3585,6 +3602,9 @@ bool LLParser::ParseDIFile(MDNode *&Result, bool IsDistinct) {
 ///                      enums: !1, retainedTypes: !2, subprograms: !3,
 ///                      globals: !4, imports: !5, dwoId: 0x0abcd)
 bool LLParser::ParseDICompileUnit(MDNode *&Result, bool IsDistinct) {
+  if (!IsDistinct)
+    return Lex.Error("missing 'distinct', required for !DICompileUnit");
+
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   REQUIRED(language, DwarfLangField, );                                        \
   REQUIRED(file, MDField, (/* AllowNull */ false));                            \
@@ -3603,12 +3623,10 @@ bool LLParser::ParseDICompileUnit(MDNode *&Result, bool IsDistinct) {
   PARSE_MD_FIELDS();
 #undef VISIT_MD_FIELDS
 
-  Result = GET_OR_DISTINCT(DICompileUnit,
-                           (Context, language.Val, file.Val, producer.Val,
-                            isOptimized.Val, flags.Val, runtimeVersion.Val,
-                            splitDebugFilename.Val, emissionKind.Val, enums.Val,
-                            retainedTypes.Val, subprograms.Val, globals.Val,
-                            imports.Val, dwoId.Val));
+  Result = DICompileUnit::getDistinct(
+      Context, language.Val, file.Val, producer.Val, isOptimized.Val, flags.Val,
+      runtimeVersion.Val, splitDebugFilename.Val, emissionKind.Val, enums.Val,
+      retainedTypes.Val, subprograms.Val, globals.Val, imports.Val, dwoId.Val);
   return false;
 }
 
@@ -5009,13 +5027,24 @@ bool LLParser::ParseCleanupRet(Instruction *&Inst, PerFunctionState &PFS) {
 }
 
 /// ParseCatchRet
-///   ::= 'catchret' TypeAndValue
+///   ::= 'catchret' ('void' | TypeAndValue) 'to' TypeAndValue
 bool LLParser::ParseCatchRet(Instruction *&Inst, PerFunctionState &PFS) {
-  BasicBlock *BB;
-  if (ParseTypeAndBasicBlock(BB, PFS))
+  Type *RetTy = nullptr;
+  Value *RetVal = nullptr;
+
+  if (ParseType(RetTy, /*AllowVoid=*/true))
+    return true;
+
+  if (!RetTy->isVoidTy())
+    if (ParseValue(RetTy, RetVal, PFS))
       return true;
 
-  Inst = CatchReturnInst::Create(BB);
+  BasicBlock *BB;
+  if (ParseToken(lltok::kw_to, "expected 'to' in catchret") ||
+      ParseTypeAndBasicBlock(BB, PFS))
+      return true;
+
+  Inst = CatchReturnInst::Create(BB, RetVal);
   return false;
 }
 

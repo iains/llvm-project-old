@@ -105,6 +105,29 @@ static bool StressIVChain = false;
 
 namespace {
 
+struct MemAccessTy {
+  /// Used in situations where the accessed memory type is unknown.
+  static const unsigned UnknownAddressSpace = ~0u;
+
+  Type *MemTy;
+  unsigned AddrSpace;
+
+  MemAccessTy() : MemTy(nullptr), AddrSpace(UnknownAddressSpace) {}
+
+  MemAccessTy(Type *Ty, unsigned AS) :
+    MemTy(Ty), AddrSpace(AS) {}
+
+  bool operator==(MemAccessTy Other) const {
+    return MemTy == Other.MemTy && AddrSpace == Other.AddrSpace;
+  }
+
+  bool operator!=(MemAccessTy Other) const { return !(*this == Other); }
+
+  static MemAccessTy getUnknown(LLVMContext &Ctx) {
+    return MemAccessTy(Type::getVoidTy(Ctx), UnknownAddressSpace);
+  }
+};
+
 /// RegSortData - This class holds data which is used to order reuse candidates.
 class RegSortData {
 public:
@@ -256,22 +279,9 @@ struct Formula {
   /// live in an add immediate field rather than a register.
   int64_t UnfoldedOffset;
 
-  /// ZeroExtendScaledReg - This formula zero extends the scale register to
-  /// ZeroExtendType before its use.
-  bool ZeroExtendScaledReg;
-
-  /// ZeroExtendBaseReg - This formula zero extends all the base registers to
-  /// ZeroExtendType before their use.
-  bool ZeroExtendBaseReg;
-
-  /// ZeroExtendType - The destination type of the zero extension implied by
-  /// the above two booleans.
-  Type *ZeroExtendType;
-
   Formula()
       : BaseGV(nullptr), BaseOffset(0), HasBaseReg(false), Scale(0),
-        ScaledReg(nullptr), UnfoldedOffset(0), ZeroExtendScaledReg(false),
-        ZeroExtendBaseReg(false), ZeroExtendType(nullptr) {}
+        ScaledReg(nullptr), UnfoldedOffset(0) {}
 
   void InitialMatch(const SCEV *S, Loop *L, ScalarEvolution &SE);
 
@@ -426,12 +436,10 @@ size_t Formula::getNumRegs() const {
 /// getType - Return the type of this formula, if it has one, or null
 /// otherwise. This type is meaningless except for the bit size.
 Type *Formula::getType() const {
-  return ZeroExtendType
-             ? ZeroExtendType
-             : !BaseRegs.empty()
-                   ? BaseRegs.front()->getType()
-                   : ScaledReg ? ScaledReg->getType()
-                               : BaseGV ? BaseGV->getType() : nullptr;
+  return !BaseRegs.empty() ? BaseRegs.front()->getType() :
+         ScaledReg ? ScaledReg->getType() :
+         BaseGV ? BaseGV->getType() :
+         nullptr;
 }
 
 /// DeleteBaseReg - Delete the given base reg from the BaseRegs list.
@@ -472,10 +480,7 @@ void Formula::print(raw_ostream &OS) const {
   }
   for (const SCEV *BaseReg : BaseRegs) {
     if (!First) OS << " + "; else First = false;
-    if (ZeroExtendBaseReg)
-      OS << "reg(zext " << *BaseReg << " to " << *ZeroExtendType << ')';
-    else
-      OS << "reg(" << *BaseReg << ')';
+    OS << "reg(" << *BaseReg << ')';
   }
   if (HasBaseReg && BaseRegs.empty()) {
     if (!First) OS << " + "; else First = false;
@@ -487,12 +492,9 @@ void Formula::print(raw_ostream &OS) const {
   if (Scale != 0) {
     if (!First) OS << " + "; else First = false;
     OS << Scale << "*reg(";
-    if (ScaledReg) {
-      if (ZeroExtendScaledReg)
-        OS << "(zext " << *ScaledReg << " to " << *ZeroExtendType << ')';
-      else
-        OS << *ScaledReg;
-    } else
+    if (ScaledReg)
+      OS << *ScaledReg;
+    else
       OS << "<unknown>";
     OS << ')';
   }
@@ -704,11 +706,14 @@ static bool isAddressUse(Instruction *Inst, Value *OperandVal) {
 }
 
 /// getAccessType - Return the type of the memory being accessed.
-static Type *getAccessType(const Instruction *Inst) {
-  Type *AccessTy = Inst->getType();
-  if (const StoreInst *SI = dyn_cast<StoreInst>(Inst))
-    AccessTy = SI->getOperand(0)->getType();
-  else if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(Inst)) {
+static MemAccessTy getAccessType(const Instruction *Inst) {
+  MemAccessTy AccessTy(Inst->getType(), MemAccessTy::UnknownAddressSpace);
+  if (const StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+    AccessTy.MemTy = SI->getOperand(0)->getType();
+    AccessTy.AddrSpace = SI->getPointerAddressSpace();
+  } else if (const LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
+    AccessTy.AddrSpace = LI->getPointerAddressSpace();
+  } else if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(Inst)) {
     // Addressing modes can also be folded into prefetches and a variety
     // of intrinsics.
     switch (II->getIntrinsicID()) {
@@ -717,16 +722,16 @@ static Type *getAccessType(const Instruction *Inst) {
     case Intrinsic::x86_sse2_storeu_pd:
     case Intrinsic::x86_sse2_storeu_dq:
     case Intrinsic::x86_sse2_storel_dq:
-      AccessTy = II->getArgOperand(0)->getType();
+      AccessTy.MemTy = II->getArgOperand(0)->getType();
       break;
     }
   }
 
   // All pointers have the same requirements, so canonicalize them to an
   // arbitrary pointer type to minimize variation.
-  if (PointerType *PTy = dyn_cast<PointerType>(AccessTy))
-    AccessTy = PointerType::get(IntegerType::get(PTy->getContext(), 1),
-                                PTy->getAddressSpace());
+  if (PointerType *PTy = dyn_cast<PointerType>(AccessTy.MemTy))
+    AccessTy.MemTy = PointerType::get(IntegerType::get(PTy->getContext(), 1),
+                                      PTy->getAddressSpace());
 
   return AccessTy;
 }
@@ -1225,7 +1230,7 @@ public:
   typedef PointerIntPair<const SCEV *, 2, KindType> SCEVUseKindPair;
 
   KindType Kind;
-  Type *AccessTy;
+  MemAccessTy AccessTy;
 
   SmallVector<int64_t, 8> Offsets;
   int64_t MinOffset;
@@ -1257,12 +1262,10 @@ public:
   /// Regs - The set of register candidates used by all formulae in this LSRUse.
   SmallPtrSet<const SCEV *, 4> Regs;
 
-  LSRUse(KindType K, Type *T) : Kind(K), AccessTy(T),
-                                      MinOffset(INT64_MAX),
-                                      MaxOffset(INT64_MIN),
-                                      AllFixupsOutsideLoop(true),
-                                      RigidFormula(false),
-                                      WidestFixupType(nullptr) {}
+  LSRUse(KindType K, MemAccessTy AT)
+      : Kind(K), AccessTy(AT), MinOffset(INT64_MAX), MaxOffset(INT64_MIN),
+        AllFixupsOutsideLoop(true), RigidFormula(false),
+        WidestFixupType(nullptr) {}
 
   bool HasFormulaWithSameRegs(const Formula &F) const;
   bool InsertFormula(const Formula &F);
@@ -1352,10 +1355,13 @@ void LSRUse::print(raw_ostream &OS) const {
   case ICmpZero: OS << "ICmpZero"; break;
   case Address:
     OS << "Address of ";
-    if (AccessTy->isPointerTy())
+    if (AccessTy.MemTy->isPointerTy())
       OS << "pointer"; // the full pointer type could be really verbose
-    else
-      OS << *AccessTy;
+    else {
+      OS << *AccessTy.MemTy;
+    }
+
+    OS << " in addrspace(" << AccessTy.AddrSpace << ')';
   }
 
   OS << ", Offsets={";
@@ -1381,12 +1387,13 @@ void LSRUse::dump() const {
 #endif
 
 static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
-                                 LSRUse::KindType Kind, Type *AccessTy,
+                                 LSRUse::KindType Kind, MemAccessTy AccessTy,
                                  GlobalValue *BaseGV, int64_t BaseOffset,
                                  bool HasBaseReg, int64_t Scale) {
   switch (Kind) {
   case LSRUse::Address:
-    return TTI.isLegalAddressingMode(AccessTy, BaseGV, BaseOffset, HasBaseReg, Scale);
+    return TTI.isLegalAddressingMode(AccessTy.MemTy, BaseGV, BaseOffset,
+                                     HasBaseReg, Scale, AccessTy.AddrSpace);
 
   case LSRUse::ICmpZero:
     // There's not even a target hook for querying whether it would be legal to
@@ -1433,7 +1440,7 @@ static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
 
 static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
                                  int64_t MinOffset, int64_t MaxOffset,
-                                 LSRUse::KindType Kind, Type *AccessTy,
+                                 LSRUse::KindType Kind, MemAccessTy AccessTy,
                                  GlobalValue *BaseGV, int64_t BaseOffset,
                                  bool HasBaseReg, int64_t Scale) {
   // Check for overflow.
@@ -1454,7 +1461,7 @@ static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
 
 static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
                                  int64_t MinOffset, int64_t MaxOffset,
-                                 LSRUse::KindType Kind, Type *AccessTy,
+                                 LSRUse::KindType Kind, MemAccessTy AccessTy,
                                  const Formula &F) {
   // For the purpose of isAMCompletelyFolded either having a canonical formula
   // or a scale not equal to zero is correct.
@@ -1470,9 +1477,9 @@ static bool isAMCompletelyFolded(const TargetTransformInfo &TTI,
 
 /// isLegalUse - Test whether we know how to expand the current formula.
 static bool isLegalUse(const TargetTransformInfo &TTI, int64_t MinOffset,
-                       int64_t MaxOffset, LSRUse::KindType Kind, Type *AccessTy,
-                       GlobalValue *BaseGV, int64_t BaseOffset, bool HasBaseReg,
-                       int64_t Scale) {
+                       int64_t MaxOffset, LSRUse::KindType Kind,
+                       MemAccessTy AccessTy, GlobalValue *BaseGV,
+                       int64_t BaseOffset, bool HasBaseReg, int64_t Scale) {
   // We know how to expand completely foldable formulae.
   return isAMCompletelyFolded(TTI, MinOffset, MaxOffset, Kind, AccessTy, BaseGV,
                               BaseOffset, HasBaseReg, Scale) ||
@@ -1484,8 +1491,8 @@ static bool isLegalUse(const TargetTransformInfo &TTI, int64_t MinOffset,
 }
 
 static bool isLegalUse(const TargetTransformInfo &TTI, int64_t MinOffset,
-                       int64_t MaxOffset, LSRUse::KindType Kind, Type *AccessTy,
-                       const Formula &F) {
+                       int64_t MaxOffset, LSRUse::KindType Kind,
+                       MemAccessTy AccessTy, const Formula &F) {
   return isLegalUse(TTI, MinOffset, MaxOffset, Kind, AccessTy, F.BaseGV,
                     F.BaseOffset, F.HasBaseReg, F.Scale);
 }
@@ -1511,14 +1518,12 @@ static unsigned getScalingFactorCost(const TargetTransformInfo &TTI,
   switch (LU.Kind) {
   case LSRUse::Address: {
     // Check the scaling factor cost with both the min and max offsets.
-    int ScaleCostMinOffset =
-      TTI.getScalingFactorCost(LU.AccessTy, F.BaseGV,
-                               F.BaseOffset + LU.MinOffset,
-                               F.HasBaseReg, F.Scale);
-    int ScaleCostMaxOffset =
-      TTI.getScalingFactorCost(LU.AccessTy, F.BaseGV,
-                               F.BaseOffset + LU.MaxOffset,
-                               F.HasBaseReg, F.Scale);
+    int ScaleCostMinOffset = TTI.getScalingFactorCost(
+        LU.AccessTy.MemTy, F.BaseGV, F.BaseOffset + LU.MinOffset, F.HasBaseReg,
+        F.Scale, LU.AccessTy.AddrSpace);
+    int ScaleCostMaxOffset = TTI.getScalingFactorCost(
+        LU.AccessTy.MemTy, F.BaseGV, F.BaseOffset + LU.MaxOffset, F.HasBaseReg,
+        F.Scale, LU.AccessTy.AddrSpace);
 
     assert(ScaleCostMinOffset >= 0 && ScaleCostMaxOffset >= 0 &&
            "Legal addressing mode has an illegal cost!");
@@ -1536,7 +1541,7 @@ static unsigned getScalingFactorCost(const TargetTransformInfo &TTI,
 }
 
 static bool isAlwaysFoldable(const TargetTransformInfo &TTI,
-                             LSRUse::KindType Kind, Type *AccessTy,
+                             LSRUse::KindType Kind, MemAccessTy AccessTy,
                              GlobalValue *BaseGV, int64_t BaseOffset,
                              bool HasBaseReg) {
   // Fast-path: zero is always foldable.
@@ -1560,7 +1565,8 @@ static bool isAlwaysFoldable(const TargetTransformInfo &TTI,
 static bool isAlwaysFoldable(const TargetTransformInfo &TTI,
                              ScalarEvolution &SE, int64_t MinOffset,
                              int64_t MaxOffset, LSRUse::KindType Kind,
-                             Type *AccessTy, const SCEV *S, bool HasBaseReg) {
+                             MemAccessTy AccessTy, const SCEV *S,
+                             bool HasBaseReg) {
   // Fast-path: zero is always foldable.
   if (S->isZero()) return true;
 
@@ -1717,11 +1723,10 @@ class LSRInstance {
   UseMapTy UseMap;
 
   bool reconcileNewOffset(LSRUse &LU, int64_t NewOffset, bool HasBaseReg,
-                          LSRUse::KindType Kind, Type *AccessTy);
+                          LSRUse::KindType Kind, MemAccessTy AccessTy);
 
-  std::pair<size_t, int64_t> getUse(const SCEV *&Expr,
-                                    LSRUse::KindType Kind,
-                                    Type *AccessTy);
+  std::pair<size_t, int64_t> getUse(const SCEV *&Expr, LSRUse::KindType Kind,
+                                    MemAccessTy AccessTy);
 
   void DeleteUse(LSRUse &LU, size_t LUIdx);
 
@@ -1753,7 +1758,6 @@ class LSRInstance {
   void GenerateICmpZeroScales(LSRUse &LU, unsigned LUIdx, Formula Base);
   void GenerateScales(LSRUse &LU, unsigned LUIdx, Formula Base);
   void GenerateTruncates(LSRUse &LU, unsigned LUIdx, Formula Base);
-  void GenerateZExts(LSRUse &LU, unsigned LUIdx, Formula Base);
   void GenerateCrossUseConstantOffsets();
   void GenerateAllReuseFormulae();
 
@@ -2174,16 +2178,18 @@ LSRInstance::OptimizeLoopTermCond() {
                 C->getValue().isMinSignedValue())
               goto decline_post_inc;
             // Check for possible scaled-address reuse.
-            Type *AccessTy = getAccessType(UI->getUser());
+            MemAccessTy AccessTy = getAccessType(UI->getUser());
             int64_t Scale = C->getSExtValue();
-            if (TTI.isLegalAddressingMode(AccessTy, /*BaseGV=*/ nullptr,
-                                          /*BaseOffset=*/ 0,
-                                          /*HasBaseReg=*/ false, Scale))
+            if (TTI.isLegalAddressingMode(AccessTy.MemTy, /*BaseGV=*/nullptr,
+                                          /*BaseOffset=*/0,
+                                          /*HasBaseReg=*/false, Scale,
+                                          AccessTy.AddrSpace))
               goto decline_post_inc;
             Scale = -Scale;
-            if (TTI.isLegalAddressingMode(AccessTy, /*BaseGV=*/ nullptr,
-                                          /*BaseOffset=*/ 0,
-                                          /*HasBaseReg=*/ false, Scale))
+            if (TTI.isLegalAddressingMode(AccessTy.MemTy, /*BaseGV=*/nullptr,
+                                          /*BaseOffset=*/0,
+                                          /*HasBaseReg=*/false, Scale,
+                                          AccessTy.AddrSpace))
               goto decline_post_inc;
           }
         }
@@ -2238,12 +2244,12 @@ LSRInstance::OptimizeLoopTermCond() {
 /// reconcileNewOffset - Determine if the given use can accommodate a fixup
 /// at the given offset and other details. If so, update the use and
 /// return true.
-bool
-LSRInstance::reconcileNewOffset(LSRUse &LU, int64_t NewOffset, bool HasBaseReg,
-                                LSRUse::KindType Kind, Type *AccessTy) {
+bool LSRInstance::reconcileNewOffset(LSRUse &LU, int64_t NewOffset,
+                                     bool HasBaseReg, LSRUse::KindType Kind,
+                                     MemAccessTy AccessTy) {
   int64_t NewMinOffset = LU.MinOffset;
   int64_t NewMaxOffset = LU.MaxOffset;
-  Type *NewAccessTy = AccessTy;
+  MemAccessTy NewAccessTy = AccessTy;
 
   // Check for a mismatched kind. It's tempting to collapse mismatched kinds to
   // something conservative, however this can pessimize in the case that one of
@@ -2254,8 +2260,10 @@ LSRInstance::reconcileNewOffset(LSRUse &LU, int64_t NewOffset, bool HasBaseReg,
   // Check for a mismatched access type, and fall back conservatively as needed.
   // TODO: Be less conservative when the type is similar and can use the same
   // addressing modes.
-  if (Kind == LSRUse::Address && AccessTy != LU.AccessTy)
-    NewAccessTy = Type::getVoidTy(AccessTy->getContext());
+  if (Kind == LSRUse::Address) {
+    if (AccessTy != LU.AccessTy)
+      NewAccessTy = MemAccessTy::getUnknown(AccessTy.MemTy->getContext());
+  }
 
   // Conservatively assume HasBaseReg is true for now.
   if (NewOffset < LU.MinOffset) {
@@ -2282,9 +2290,9 @@ LSRInstance::reconcileNewOffset(LSRUse &LU, int64_t NewOffset, bool HasBaseReg,
 /// getUse - Return an LSRUse index and an offset value for a fixup which
 /// needs the given expression, with the given kind and optional access type.
 /// Either reuse an existing use or create a new one, as needed.
-std::pair<size_t, int64_t>
-LSRInstance::getUse(const SCEV *&Expr,
-                    LSRUse::KindType Kind, Type *AccessTy) {
+std::pair<size_t, int64_t> LSRInstance::getUse(const SCEV *&Expr,
+                                               LSRUse::KindType Kind,
+                                               MemAccessTy AccessTy) {
   const SCEV *Copy = Expr;
   int64_t Offset = ExtractImmediate(Expr, SE);
 
@@ -2853,10 +2861,10 @@ static bool canFoldIVIncExpr(const SCEV *IncExpr, Instruction *UserInst,
   if (IncConst->getValue()->getValue().getMinSignedBits() > 64)
     return false;
 
+  MemAccessTy AccessTy = getAccessType(UserInst);
   int64_t IncOffset = IncConst->getValue()->getSExtValue();
-  if (!isAlwaysFoldable(TTI, LSRUse::Address,
-                        getAccessType(UserInst), /*BaseGV=*/ nullptr,
-                        IncOffset, /*HaseBaseReg=*/ false))
+  if (!isAlwaysFoldable(TTI, LSRUse::Address, AccessTy, /*BaseGV=*/nullptr,
+                        IncOffset, /*HaseBaseReg=*/false))
     return false;
 
   return true;
@@ -2983,7 +2991,7 @@ void LSRInstance::CollectFixupsAndInitialFormulae() {
     LF.PostIncLoops = U.getPostIncLoops();
 
     LSRUse::KindType Kind = LSRUse::Basic;
-    Type *AccessTy = nullptr;
+    MemAccessTy AccessTy;
     if (isAddressUse(LF.UserInst, LF.OperandValToReplace)) {
       Kind = LSRUse::Address;
       AccessTy = getAccessType(LF.UserInst);
@@ -3170,7 +3178,8 @@ LSRInstance::CollectLoopInvariantFixupsAndFormulae() {
         LSRFixup &LF = getNewFixup();
         LF.UserInst = const_cast<Instruction *>(UserInst);
         LF.OperandValToReplace = U;
-        std::pair<size_t, int64_t> P = getUse(S, LSRUse::Basic, nullptr);
+        std::pair<size_t, int64_t> P = getUse(
+            S, LSRUse::Basic, MemAccessTy());
         LF.LUIdx = P.first;
         LF.Offset = P.second;
         LSRUse &LU = Uses[LF.LUIdx];
@@ -3649,64 +3658,6 @@ void LSRInstance::GenerateTruncates(LSRUse &LU, unsigned LUIdx, Formula Base) {
   }
 }
 
-/// GenerateZExts - If a scale or a base register can be rewritten as
-/// "Zext({A,+,1})" then consider a formula of that form.
-void LSRInstance::GenerateZExts(LSRUse &LU, unsigned LUIdx, Formula Base) {
-  // Don't bother with symbolic values.
-  if (Base.BaseGV)
-    return;
-
-  auto CanBeNarrowed = [&](const SCEV *Reg) -> const SCEV * {
-    // Check if the register is an increment can be rewritten as zext(R) where
-    // the zext is free.
-
-    const auto *RegAR = dyn_cast_or_null<SCEVAddRecExpr>(Reg);
-    if (!RegAR)
-      return nullptr;
-
-    const auto *ZExtStart = dyn_cast<SCEVZeroExtendExpr>(RegAR->getStart());
-    const auto *ConstStep =
-        dyn_cast<SCEVConstant>(RegAR->getStepRecurrence(SE));
-    if (!ZExtStart || !ConstStep || ConstStep->getValue()->getValue() != 1)
-      return nullptr;
-
-    const SCEV *NarrowStart = ZExtStart->getOperand();
-    if (!TTI.isZExtFree(NarrowStart->getType(), ZExtStart->getType()))
-      return nullptr;
-
-    const auto *NarrowAR = dyn_cast<SCEVAddRecExpr>(
-        SE.getAddRecExpr(NarrowStart, SE.getConstant(NarrowStart->getType(), 1),
-                         RegAR->getLoop(), RegAR->getNoWrapFlags()));
-
-    if (!NarrowAR || !NarrowAR->getNoWrapFlags(SCEV::FlagNUW))
-      return nullptr;
-
-    return NarrowAR;
-  };
-
-  if (Base.ScaledReg && !Base.ZeroExtendType)
-    if (const SCEV *S = CanBeNarrowed(Base.ScaledReg)) {
-      Formula F = Base;
-      F.ZeroExtendType = Base.ScaledReg->getType();
-      F.ZeroExtendScaledReg = true;
-      F.ScaledReg = S;
-
-      if (isLegalUse(TTI, LU.MinOffset, LU.MaxOffset, LU.Kind, LU.AccessTy, F))
-        InsertFormula(LU, LUIdx, F);
-    }
-
-  if (Base.BaseRegs.size() == 1 && !Base.ZeroExtendType)
-    if (const SCEV *S = CanBeNarrowed(Base.BaseRegs[0])) {
-      Formula F = Base;
-      F.ZeroExtendType = Base.BaseRegs[0]->getType();
-      F.ZeroExtendBaseReg = true;
-      F.BaseRegs[0] = S;
-
-      if (isLegalUse(TTI, LU.MinOffset, LU.MaxOffset, LU.Kind, LU.AccessTy, F))
-        InsertFormula(LU, LUIdx, F);
-    }
-}
-
 namespace {
 
 /// WorkItem - Helper class for GenerateCrossUseConstantOffsets. It's used to
@@ -3926,8 +3877,6 @@ LSRInstance::GenerateAllReuseFormulae() {
     LSRUse &LU = Uses[LUIdx];
     for (size_t i = 0, f = LU.Formulae.size(); i != f; ++i)
       GenerateTruncates(LU, LUIdx, LU.Formulae[i]);
-    for (size_t i = 0, f = LU.Formulae.size(); i != f; ++i)
-      GenerateZExts(LU, LUIdx, LU.Formulae[i]);
   }
 
   GenerateCrossUseConstantOffsets();
@@ -4565,27 +4514,12 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
 
     // If we're expanding for a post-inc user, make the post-inc adjustment.
     PostIncLoopSet &Loops = const_cast<PostIncLoopSet &>(LF.PostIncLoops);
-    const SCEV *ExtendedReg =
-        F.ZeroExtendBaseReg ? SE.getZeroExtendExpr(Reg, F.ZeroExtendType) : Reg;
+    Reg = TransformForPostIncUse(Denormalize, Reg,
+                                 LF.UserInst, LF.OperandValToReplace,
+                                 Loops, SE, DT);
 
-    const SCEV *PostIncReg =
-        TransformForPostIncUse(Denormalize, ExtendedReg, LF.UserInst,
-                               LF.OperandValToReplace, Loops, SE, DT);
-    if (PostIncReg == ExtendedReg) {
-      Value *Expanded = Rewriter.expandCodeFor(Reg, nullptr, IP);
-      if (F.ZeroExtendBaseReg)
-        Expanded = new ZExtInst(Expanded, F.ZeroExtendType, "", IP);
-      Ops.push_back(SE.getUnknown(Expanded));
-    } else {
-      Ops.push_back(
-          SE.getUnknown(Rewriter.expandCodeFor(PostIncReg, nullptr, IP)));
-    }
+    Ops.push_back(SE.getUnknown(Rewriter.expandCodeFor(Reg, nullptr, IP)));
   }
-
-  // Note on post-inc uses and zero extends -- since the no-wrap behavior for
-  // the post-inc SCEV can be different from the no-wrap behavior of the pre-inc
-  // SCEV, if a post-inc transform is required we do the zero extension on the
-  // pre-inc expression before doing the post-inc transform.
 
   // Expand the ScaledReg portion.
   Value *ICmpScaledV = nullptr;
@@ -4594,33 +4528,22 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
 
     // If we're expanding for a post-inc user, make the post-inc adjustment.
     PostIncLoopSet &Loops = const_cast<PostIncLoopSet &>(LF.PostIncLoops);
-    const SCEV *ExtendedScaleS =
-        F.ZeroExtendScaledReg ? SE.getZeroExtendExpr(ScaledS, F.ZeroExtendType)
-                              : ScaledS;
-    const SCEV *PostIncScaleS =
-        TransformForPostIncUse(Denormalize, ExtendedScaleS, LF.UserInst,
-                               LF.OperandValToReplace, Loops, SE, DT);
+    ScaledS = TransformForPostIncUse(Denormalize, ScaledS,
+                                     LF.UserInst, LF.OperandValToReplace,
+                                     Loops, SE, DT);
 
     if (LU.Kind == LSRUse::ICmpZero) {
       // Expand ScaleReg as if it was part of the base regs.
-      Value *Expanded = nullptr;
-      if (PostIncScaleS == ExtendedScaleS) {
-        Expanded = Rewriter.expandCodeFor(ScaledS, nullptr, IP);
-        if (F.ZeroExtendScaledReg)
-          Expanded = new ZExtInst(Expanded, F.ZeroExtendType, "", IP);
-      } else {
-        Expanded = Rewriter.expandCodeFor(PostIncScaleS, nullptr, IP);
-      }
-
       if (F.Scale == 1)
-        Ops.push_back(SE.getUnknown(Expanded));
+        Ops.push_back(
+            SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr, IP)));
       else {
         // An interesting way of "folding" with an icmp is to use a negated
         // scale, which we'll implement by inserting it into the other operand
         // of the icmp.
         assert(F.Scale == -1 &&
                "The only scale supported by ICmpZero uses is -1!");
-        ICmpScaledV = Expanded;
+        ICmpScaledV = Rewriter.expandCodeFor(ScaledS, nullptr, IP);
       }
     } else {
       // Otherwise just expand the scaled register and an explicit scale,
@@ -4634,17 +4557,7 @@ Value *LSRInstance::Expand(const LSRFixup &LF,
         Ops.clear();
         Ops.push_back(SE.getUnknown(FullV));
       }
-
-      Value *Expanded = nullptr;
-      if (PostIncScaleS == ExtendedScaleS) {
-        Expanded = Rewriter.expandCodeFor(ScaledS, nullptr, IP);
-        if (F.ZeroExtendScaledReg)
-          Expanded = new ZExtInst(Expanded, F.ZeroExtendType, "", IP);
-      } else {
-        Expanded = Rewriter.expandCodeFor(PostIncScaleS, nullptr, IP);
-      }
-
-      ScaledS = SE.getUnknown(Expanded);
+      ScaledS = SE.getUnknown(Rewriter.expandCodeFor(ScaledS, nullptr, IP));
       if (F.Scale != 1)
         ScaledS =
             SE.getMulExpr(ScaledS, SE.getConstant(ScaledS->getType(), F.Scale));

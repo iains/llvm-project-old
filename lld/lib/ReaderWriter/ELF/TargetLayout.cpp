@@ -328,30 +328,11 @@ template <class ELFT> void TargetLayout<ELFT>::createOutputSections() {
 }
 
 template <class ELFT>
-std::vector<const script::PHDR *>
-TargetLayout<ELFT>::getCustomSegments(const OutputSection<ELFT> *sec) const {
-  std::vector<const script::PHDR *> phdrs;
-  if (_linkerScriptSema.getPHDRsForOutputSection(sec->name(), phdrs)) {
-    llvm::report_fatal_error(
-        "Linker script has wrong segments set for output sections");
-  }
-  return phdrs;
-}
-
-template <class ELFT>
-std::vector<const script::PHDR *>
-TargetLayout<ELFT>::getCustomSegments(const Section<ELFT> *section) const {
-  auto sec = section->getOutputSection();
-  assert(sec && "Output section should be already set for input section");
-  return getCustomSegments(sec);
-}
-
-template <class ELFT>
 std::vector<typename TargetLayout<ELFT>::SegmentKey>
 TargetLayout<ELFT>::getSegmentsForSection(const OutputSection<ELFT> *os,
                                           const Section<ELFT> *sec) const {
   std::vector<SegmentKey> segKeys;
-  auto phdrs = getCustomSegments(os);
+  auto phdrs = _linkerScriptSema.getPHDRsForOutputSection(os->name());
   if (!phdrs.empty()) {
     if (phdrs.size() == 1 && phdrs[0]->isNone()) {
       segKeys.emplace_back("NONE", llvm::ELF::PT_NULL, 0, false);
@@ -466,11 +447,36 @@ template <class ELFT> void TargetLayout<ELFT>::assignSectionsToSegments() {
       }
     }
   }
-  if (_ctx.isDynamic() && !_ctx.isDynamicLibrary()) {
+
+  // Default values if no linker script is available
+  bool hasProgramSegment = _ctx.isDynamic() && !_ctx.isDynamicLibrary();
+  bool hasElfHeader = true;
+  bool hasProgramHeader = true;
+  uint64_t segmentFlags = 0;
+
+  // Check if linker script has PHDRS and program segment defined
+  if (_linkerScriptSema.hasPHDRs()) {
+    if (auto p = _linkerScriptSema.getProgramPHDR()) {
+      hasProgramSegment = true;
+      hasElfHeader = p->hasFileHdr();
+      hasProgramHeader = p->hasPHDRs();
+      segmentFlags = p->flags();
+    } else {
+      hasProgramSegment = false;
+      hasElfHeader = false;
+      hasProgramHeader = false;
+    }
+  }
+
+  if (hasProgramSegment) {
     Segment<ELFT> *segment = new (_allocator) ProgramHeaderSegment<ELFT>(_ctx);
     _segments.push_back(segment);
-    segment->append(_elfHeader);
-    segment->append(_programHeader);
+    if (segmentFlags)
+      segment->setSegmentFlags(segmentFlags);
+    if (hasElfHeader)
+      segment->append(_elfHeader);
+    if (hasProgramHeader)
+      segment->append(_programHeader);
   }
 }
 

@@ -20,15 +20,7 @@
 // Helper macros for defining get() overrides.
 #define DEFINE_MDNODE_GET_UNPACK_IMPL(...) __VA_ARGS__
 #define DEFINE_MDNODE_GET_UNPACK(ARGS) DEFINE_MDNODE_GET_UNPACK_IMPL ARGS
-#define DEFINE_MDNODE_GET(CLASS, FORMAL, ARGS)                                 \
-  static CLASS *get(LLVMContext &Context, DEFINE_MDNODE_GET_UNPACK(FORMAL)) {  \
-    return getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Uniqued);          \
-  }                                                                            \
-  static CLASS *getIfExists(LLVMContext &Context,                              \
-                            DEFINE_MDNODE_GET_UNPACK(FORMAL)) {                \
-    return getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Uniqued,           \
-                   /* ShouldCreate */ false);                                  \
-  }                                                                            \
+#define DEFINE_MDNODE_GET_DISTINCT_TEMPORARY(CLASS, FORMAL, ARGS)              \
   static CLASS *getDistinct(LLVMContext &Context,                              \
                             DEFINE_MDNODE_GET_UNPACK(FORMAL)) {                \
     return getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Distinct);         \
@@ -38,6 +30,16 @@
     return Temp##CLASS(                                                        \
         getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Temporary));          \
   }
+#define DEFINE_MDNODE_GET(CLASS, FORMAL, ARGS)                                 \
+  static CLASS *get(LLVMContext &Context, DEFINE_MDNODE_GET_UNPACK(FORMAL)) {  \
+    return getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Uniqued);          \
+  }                                                                            \
+  static CLASS *getIfExists(LLVMContext &Context,                              \
+                            DEFINE_MDNODE_GET_UNPACK(FORMAL)) {                \
+    return getImpl(Context, DEFINE_MDNODE_GET_UNPACK(ARGS), Uniqued,           \
+                   /* ShouldCreate */ false);                                  \
+  }                                                                            \
+  DEFINE_MDNODE_GET_DISTINCT_TEMPORARY(CLASS, FORMAL, ARGS)
 
 namespace llvm {
 
@@ -934,7 +936,9 @@ class DICompileUnit : public DIScope {
       : DIScope(C, DICompileUnitKind, Storage, dwarf::DW_TAG_compile_unit, Ops),
         SourceLanguage(SourceLanguage), IsOptimized(IsOptimized),
         RuntimeVersion(RuntimeVersion), EmissionKind(EmissionKind),
-        DWOId(DWOId) {}
+        DWOId(DWOId) {
+    assert(Storage != Uniqued);
+  }
   ~DICompileUnit() = default;
 
   static DICompileUnit *
@@ -971,20 +975,22 @@ class DICompileUnit : public DIScope {
         getGlobalVariables(), getImportedEntities(), DWOId);
   }
 
+  static void get() = delete;
+  static void getIfExists() = delete;
+
 public:
-  DEFINE_MDNODE_GET(DICompileUnit,
-                    (unsigned SourceLanguage, DIFile *File, StringRef Producer,
-                     bool IsOptimized, StringRef Flags, unsigned RuntimeVersion,
-                     StringRef SplitDebugFilename, unsigned EmissionKind,
-                     DICompositeTypeArray EnumTypes, DITypeArray RetainedTypes,
-                     DISubprogramArray Subprograms,
-                     DIGlobalVariableArray GlobalVariables,
-                     DIImportedEntityArray ImportedEntities, uint64_t DWOId),
-                    (SourceLanguage, File, Producer, IsOptimized, Flags,
-                     RuntimeVersion, SplitDebugFilename, EmissionKind,
-                     EnumTypes, RetainedTypes, Subprograms, GlobalVariables,
-                     ImportedEntities, DWOId))
-  DEFINE_MDNODE_GET(
+  DEFINE_MDNODE_GET_DISTINCT_TEMPORARY(
+      DICompileUnit,
+      (unsigned SourceLanguage, DIFile *File, StringRef Producer,
+       bool IsOptimized, StringRef Flags, unsigned RuntimeVersion,
+       StringRef SplitDebugFilename, unsigned EmissionKind,
+       DICompositeTypeArray EnumTypes, DITypeArray RetainedTypes,
+       DISubprogramArray Subprograms, DIGlobalVariableArray GlobalVariables,
+       DIImportedEntityArray ImportedEntities, uint64_t DWOId),
+      (SourceLanguage, File, Producer, IsOptimized, Flags, RuntimeVersion,
+       SplitDebugFilename, EmissionKind, EnumTypes, RetainedTypes, Subprograms,
+       GlobalVariables, ImportedEntities, DWOId))
+  DEFINE_MDNODE_GET_DISTINCT_TEMPORARY(
       DICompileUnit,
       (unsigned SourceLanguage, Metadata *File, MDString *Producer,
        bool IsOptimized, MDString *Flags, unsigned RuntimeVersion,
@@ -1383,7 +1389,7 @@ public:
   void replaceFunction(std::nullptr_t) { replaceOperandWith(7, nullptr); }
   /// @}
 
-  /// \brief Check if this subprogram decribes the given function.
+  /// \brief Check if this subprogram describes the given function.
   ///
   /// FIXME: Should this be looking through bitcasts?
   bool describes(const Function *F) const;
@@ -1937,7 +1943,7 @@ public:
   /// \brief Check that a location is valid for this variable.
   ///
   /// Check that \c DL exists, is in the same subprogram, and has the same
-  /// inlined-at location as \c this.  (Otherwise, it's not a valid attachemnt
+  /// inlined-at location as \c this.  (Otherwise, it's not a valid attachment
   /// to a \a DbgInfoIntrinsic.)
   bool isValidLocationForIntrinsic(const DILocation *DL) const {
     return DL && getScope()->getSubprogram() == DL->getScope()->getSubprogram();

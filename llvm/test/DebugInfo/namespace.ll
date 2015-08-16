@@ -1,7 +1,6 @@
 ; REQUIRES: object-emission
 
-; RUN: %llc_dwarf -O0 -filetype=obj < %s > %t
-; RUN: llvm-dwarfdump %t | FileCheck %s
+; RUN: %llc_dwarf -O0 -filetype=obj -dwarf-linkage-names=Enable < %s | llvm-dwarfdump - | FileCheck %s
 ; CHECK: debug_info contents
 ; CHECK: [[NS1:0x[0-9a-f]*]]:{{ *}}DW_TAG_namespace
 ; CHECK-NEXT: DW_AT_name{{.*}} = "A"
@@ -288,7 +287,7 @@ attributes #1 = { nounwind readnone }
 !llvm.module.flags = !{!57, !58}
 !llvm.ident = !{!59}
 
-!0 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.6.0 ", isOptimized: false, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !9, globals: !30, imports: !33)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.6.0 ", isOptimized: false, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !9, globals: !30, imports: !33)
 !1 = !DIFile(filename: "debug-info-namespace.cpp", directory: "/tmp")
 !2 = !{}
 !3 = !{!4, !8}

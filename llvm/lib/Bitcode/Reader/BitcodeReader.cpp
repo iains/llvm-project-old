@@ -1360,6 +1360,9 @@ std::error_code BitcodeReader::parseTypeTableBody() {
     case bitc::TYPE_CODE_X86_MMX:   // X86_MMX
       ResultTy = Type::getX86_MMXTy(Context);
       break;
+    case bitc::TYPE_CODE_TOKEN:     // TOKEN
+      ResultTy = Type::getTokenTy(Context);
+      break;
     case bitc::TYPE_CODE_INTEGER: { // INTEGER: [width]
       if (Record.size() < 1)
         return error("Invalid record");
@@ -1872,15 +1875,16 @@ std::error_code BitcodeReader::parseMetadata() {
       if (Record.size() < 14 || Record.size() > 15)
         return error("Invalid record");
 
+      // Ignore Record[1], which indicates whether this compile unit is
+      // distinct.  It's always distinct.
       MDValueList.assignValue(
-          GET_OR_DISTINCT(
-              DICompileUnit, Record[0],
-              (Context, Record[1], getMDOrNull(Record[2]),
-               getMDString(Record[3]), Record[4], getMDString(Record[5]),
-               Record[6], getMDString(Record[7]), Record[8],
-               getMDOrNull(Record[9]), getMDOrNull(Record[10]),
-               getMDOrNull(Record[11]), getMDOrNull(Record[12]),
-               getMDOrNull(Record[13]), Record.size() == 14 ? 0 : Record[14])),
+          DICompileUnit::getDistinct(
+              Context, Record[1], getMDOrNull(Record[2]),
+              getMDString(Record[3]), Record[4], getMDString(Record[5]),
+              Record[6], getMDString(Record[7]), Record[8],
+              getMDOrNull(Record[9]), getMDOrNull(Record[10]),
+              getMDOrNull(Record[11]), getMDOrNull(Record[12]),
+              getMDOrNull(Record[13]), Record.size() == 14 ? 0 : Record[14]),
           NextMDValueNo++);
       break;
     }
@@ -3843,12 +3847,18 @@ std::error_code BitcodeReader::parseFunctionBody(Function *F) {
       break;
     }
     case bitc::FUNC_CODE_INST_CATCHRET: { // CATCHRET: [bb#]
-      if (Record.size() != 1)
+      if (Record.size() != 1 && Record.size() != 3)
         return error("Invalid record");
-      BasicBlock *BB = getBasicBlock(Record[0]);
+      unsigned Idx = 0;
+      BasicBlock *BB = getBasicBlock(Record[Idx++]);
       if (!BB)
         return error("Invalid record");
-      I = CatchReturnInst::Create(BB);
+      Value *RetVal = nullptr;
+      if (Record.size() == 3 &&
+          getValueTypePair(Record, Idx, NextValueNo, RetVal))
+        return error("Invalid record");
+
+      I = CatchReturnInst::Create(BB, RetVal);
       InstructionList.push_back(I);
       break;
     }

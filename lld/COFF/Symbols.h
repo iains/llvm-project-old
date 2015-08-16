@@ -1,4 +1,4 @@
-//===- Symbols.h ----------------------------------------------------------===//
+//===- Symbols.h ------------------------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -27,8 +27,6 @@ using llvm::object::Archive;
 using llvm::object::COFFSymbolRef;
 using llvm::object::coff_import_header;
 using llvm::object::coff_symbol_generic;
-using llvm::object::coff_symbol16;
-using llvm::object::coff_symbol32;
 
 class ArchiveFile;
 class BitcodeFile;
@@ -177,8 +175,8 @@ public:
     return S->kind() == DefinedRegularKind;
   }
 
-  uint64_t getFileOff() {
-    return (*Data)->getFileOff() + Sym->Value;
+  uint64_t getOutputSectionOff() {
+    return (*Data)->getOutputSectionOff() + Sym->Value;
   }
 
   uint64_t getRVA() { return (*Data)->getRVA() + Sym->Value; }
@@ -204,7 +202,7 @@ public:
   }
 
   uint64_t getRVA() { return Data->getRVA(); }
-  uint64_t getFileOff() { return Data->getFileOff(); }
+  uint64_t getOutputSectionOff() { return Data->getOutputSectionOff(); }
 
 private:
   friend SymbolBody;
@@ -270,7 +268,7 @@ public:
 
   // Returns an object file for this symbol, or a nullptr if the file
   // was already returned.
-  ErrorOr<std::unique_ptr<InputFile>> getMember();
+  std::unique_ptr<InputFile> getMember();
 
   int getFileIndex() { return File->Index; }
 
@@ -318,7 +316,7 @@ public:
   }
 
   uint64_t getRVA() { return Location->getRVA(); }
-  uint64_t getFileOff() { return Location->getFileOff(); }
+  uint64_t getOutputSectionOff() { return Location->getOutputSectionOff(); }
 
   StringRef getDLLName() { return DLLName; }
   StringRef getExternalName() { return ExternalName; }
@@ -346,7 +344,7 @@ public:
   }
 
   uint64_t getRVA() { return Data->getRVA(); }
-  uint64_t getFileOff() { return Data->getFileOff(); }
+  uint64_t getOutputSectionOff() { return Data->getOutputSectionOff(); }
   Chunk *getChunk() { return Data.get(); }
 
 private:
@@ -368,7 +366,7 @@ public:
   }
 
   uint64_t getRVA() { return Data.getRVA(); }
-  uint64_t getFileOff() { return Data.getFileOff(); }
+  uint64_t getOutputSectionOff() { return Data.getOutputSectionOff(); }
 
   Chunk *getChunk() { return &Data; }
 

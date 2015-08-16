@@ -1,6 +1,6 @@
-; REQUIRES: object-emission
+; REQUIRES: object-emission, native
 ;
-; RUN: llvm-link %s %p/type-unique-odr-b.ll -S -o - | %llc_dwarf -filetype=obj -O0 | llvm-dwarfdump -debug-dump=info - | FileCheck %s
+; RUN: llvm-link %s %p/type-unique-odr-b.ll -S -o - | %llc_dwarf -dwarf-linkage-names=Enable -filetype=obj -O0 | llvm-dwarfdump -debug-dump=info - | FileCheck %s
 ;
 ; Test ODR-based type uniquing for C++ class members.
 ; rdar://problem/15851313.
@@ -73,7 +73,7 @@ attributes #1 = { nounwind readnone }
 !llvm.module.flags = !{!20, !21}
 !llvm.ident = !{!22}
 
-!0 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: false, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !14, globals: !2, imports: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: false, emissionKind: 1, file: !1, enums: !2, retainedTypes: !3, subprograms: !14, globals: !2, imports: !2)
 !1 = !DIFile(filename: "<unknown>", directory: "")
 !2 = !{}
 !3 = !{!4}

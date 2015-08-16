@@ -224,6 +224,13 @@ bool WriteToFile(fd_t fd, const void *buff, uptr buff_size,
 bool RenameFile(const char *oldpath, const char *newpath,
                 error_t *error_p = nullptr);
 
+// Scoped file handle closer.
+struct FileCloser {
+  explicit FileCloser(fd_t fd) : fd(fd) {}
+  ~FileCloser() { CloseFile(fd); }
+  fd_t fd;
+};
+
 bool SupportsColoredOutput(fd_t fd);
 
 // Opens the file 'file_name" and reads up to 'max_len' bytes.
@@ -299,6 +306,8 @@ void NORETURN Abort();
 void NORETURN Die();
 void NORETURN
 CheckFailed(const char *file, int line, const char *cond, u64 v1, u64 v2);
+void NORETURN ReportMmapFailureAndDie(uptr size, const char *mem_type,
+                                      error_t err);
 
 // Set the name of the current thread to 'name', return true on succees.
 // The name may be truncated to a system-dependent limit.

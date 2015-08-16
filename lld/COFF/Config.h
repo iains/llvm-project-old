@@ -1,4 +1,4 @@
-//===- Config.h -----------------------------------------------------------===//
+//===- Config.h -------------------------------------------------*- C++ -*-===//
 //
 //                             The LLVM Linker
 //
@@ -79,7 +79,6 @@ struct Configuration {
   std::vector<Export> Exports;
   std::set<std::string> DelayLoads;
   Undefined *DelayLoadHelper = nullptr;
-  StringRef LoadConfigUsed;
 
   // Used for SafeSEH.
   DefinedRelative *SEHTable = nullptr;
@@ -87,6 +86,9 @@ struct Configuration {
 
   // Used for /opt:icf
   bool ICF = false;
+
+  // Used for /opt:lldlto=N
+  unsigned LTOOptLevel = 2;
 
   // Used for /merge:from=to (e.g. /merge:.rdata=.text)
   std::map<StringRef, StringRef> Merge;

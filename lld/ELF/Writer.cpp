@@ -7,10 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Writer.h"
 #include "Chunks.h"
-#include "Driver.h"
+#include "Config.h"
+#include "Error.h"
+#include "SymbolTable.h"
+#include "Writer.h"
+#include "Symbols.h"
+
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/FileOutputBuffer.h"
 
 using namespace llvm;
 using namespace llvm::ELF;
@@ -21,51 +26,226 @@ using namespace lld::elf2;
 
 static const int PageSize = 4096;
 
-template <class ELFT> Writer<ELFT>::Writer(SymbolTable<ELFT> *T) : Symtab(T) {}
-template <class ELFT> Writer<ELFT>::~Writer() {}
+namespace {
+// OutputSection represents a section in an output file. It's a
+// container of chunks. OutputSection and Chunk are 1:N relationship.
+// Chunks cannot belong to more than one OutputSections. The writer
+// creates multiple OutputSections and assign them unique,
+// non-overlapping file offsets and VAs.
+template <bool Is64Bits> class OutputSectionBase {
+public:
+  typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
+  typedef
+      typename std::conditional<Is64Bits, Elf64_Shdr, Elf32_Shdr>::type HeaderT;
+
+  OutputSectionBase(StringRef Name, uint32_t sh_type, uintX_t sh_flags)
+      : Name(Name) {
+    memset(&Header, 0, sizeof(HeaderT));
+    Header.sh_type = sh_type;
+    Header.sh_flags = sh_flags;
+  }
+  void setVA(uintX_t VA) { Header.sh_addr = VA; }
+  void setFileOffset(uintX_t Off) { Header.sh_offset = Off; }
+  template <endianness E>
+  void writeHeaderTo(typename ELFFile<ELFType<E, Is64Bits>>::Elf_Shdr *SHdr);
+  StringRef getName() { return Name; }
+  void setNameOffset(uintX_t Offset) { Header.sh_name = Offset; }
+
+  // Returns the size of the section in the output file.
+  uintX_t getSize() { return Header.sh_size; }
+  uintX_t getFlags() { return Header.sh_flags; }
+  uintX_t getFileOff() { return Header.sh_offset; }
+  uintX_t getAlign() { return Header.sh_addralign; }
+
+  virtual void finalize() {}
+  virtual void writeTo(uint8_t *Buf) = 0;
+
+protected:
+  StringRef Name;
+  HeaderT Header;
+  ~OutputSectionBase() = default;
+};
+
+template <class ELFT>
+class OutputSection final : public OutputSectionBase<ELFT::Is64Bits> {
+public:
+  typedef typename OutputSectionBase<ELFT::Is64Bits>::uintX_t uintX_t;
+  OutputSection(StringRef Name, uint32_t sh_type, uintX_t sh_flags)
+      : OutputSectionBase<ELFT::Is64Bits>(Name, sh_type, sh_flags) {}
+
+  void addChunk(SectionChunk<ELFT> *C);
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  std::vector<SectionChunk<ELFT> *> Chunks;
+};
+
+template <bool Is64Bits>
+class StringTableSection final : public OutputSectionBase<Is64Bits> {
+  llvm::StringTableBuilder &StrTabBuilder;
+
+public:
+  typedef typename OutputSectionBase<Is64Bits>::uintX_t uintX_t;
+  StringTableSection(llvm::StringTableBuilder &StrTabBuilder)
+      : OutputSectionBase<Is64Bits>(".strtab", SHT_STRTAB, 0),
+        StrTabBuilder(StrTabBuilder) {
+    this->Header.sh_addralign = 1;
+  }
+
+  void add(StringRef S) { StrTabBuilder.add(S); }
+  size_t getFileOff(StringRef S) { return StrTabBuilder.getOffset(S); }
+  void writeTo(uint8_t *Buf) override;
+
+  void finalize() override {
+    StrTabBuilder.finalize(StringTableBuilder::ELF);
+    this->Header.sh_size = StrTabBuilder.data().size();
+  }
+};
+
+template <class ELFT>
+class SymbolTableSection final : public OutputSectionBase<ELFT::Is64Bits> {
+public:
+  typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  SymbolTableSection(SymbolTable &Table)
+      : OutputSectionBase<ELFT::Is64Bits>(".symtab", SHT_SYMTAB, 0),
+        Table(Table) {
+    typedef OutputSectionBase<ELFT::Is64Bits> Base;
+    typename Base::HeaderT &Header = this->Header;
+
+    // For now the only local symbol is going to be the one at index 0
+    Header.sh_info = 1;
+
+    Header.sh_entsize = sizeof(Elf_Sym);
+    Header.sh_addralign = ELFT::Is64Bits ? 8 : 4;
+    this->Header.sh_size = (Table.getNumSymbols() + 1) * sizeof(Elf_Sym);
+  }
+  void setStringTableIndex(uint32_t Index) { this->Header.sh_link = Index; }
+
+  void writeTo(uint8_t *Buf) override;
+
+private:
+  SymbolTable &Table;
+};
+
+// The writer writes a SymbolTable result to a file.
+template <class ELFT> class Writer {
+public:
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+  Writer(SymbolTable *T)
+      : Symtab(T), SymTable(*T), StringTable(T->getStringBuilder()) {}
+  void run();
+
+private:
+  void createSections();
+  void assignAddresses();
+  void openFile(StringRef OutputPath);
+  void writeHeader();
+  void writeSections();
+
+  SymbolTable *Symtab;
+  std::unique_ptr<llvm::FileOutputBuffer> Buffer;
+  llvm::SpecificBumpPtrAllocator<OutputSection<ELFT>> CAlloc;
+  std::vector<OutputSectionBase<ELFT::Is64Bits> *> OutputSections;
+
+  uintX_t FileSize;
+  uintX_t SizeOfHeaders;
+  uintX_t SectionHeaderOff;
+
+  SymbolTableSection<ELFT> SymTable;
+
+  unsigned StringTableIndex;
+  StringTableSection<ELFT::Is64Bits> StringTable;
+
+  unsigned NumSections;
+};
+} // anonymous namespace
+
+namespace lld {
+namespace elf2 {
+
+template <class ELFT>
+void writeResult(SymbolTable *Symtab) { Writer<ELFT>(Symtab).run(); }
+
+template void writeResult<ELF32LE>(SymbolTable *);
+template void writeResult<ELF32BE>(SymbolTable *);
+template void writeResult<ELF64LE>(SymbolTable *);
+template void writeResult<ELF64BE>(SymbolTable *);
+
+} // namespace elf2
+} // namespace lld
 
 // The main function of the writer.
-template <class ELFT> void Writer<ELFT>::write(StringRef OutputPath) {
+template <class ELFT> void Writer<ELFT>::run() {
   createSections();
   assignAddresses();
-  openFile(OutputPath);
+  openFile(Config->OutputFile);
   writeHeader();
   writeSections();
   error(Buffer->commit());
 }
 
-void OutputSection::setVA(uint64_t VA) {
-  Header.sh_addr = VA;
-  for (Chunk *C : Chunks)
-    C->setVA(C->getVA() + VA);
-}
-
-void OutputSection::setFileOffset(uint64_t Off) {
-  if (Header.sh_size == 0)
-    return;
-  Header.sh_offset = Off;
-  for (Chunk *C : Chunks)
-    C->setFileOff(C->getFileOff() + Off);
-}
-
 template <class ELFT>
-void OutputSection::addChunk(Chunk *C) {
+void OutputSection<ELFT>::addChunk(SectionChunk<ELFT> *C) {
   Chunks.push_back(C);
-  C->setOutputSection(this);
-  uint64_t Off = Header.sh_size;
-  Off = RoundUpToAlignment(Off, C->getAlign());
-  C->setVA(Off);
-  C->setFileOff(Off);
+  uint32_t Align = C->getAlign();
+  if (Align > this->Header.sh_addralign)
+    this->Header.sh_addralign = Align;
+
+  uintX_t Off = this->Header.sh_size;
+  Off = RoundUpToAlignment(Off, Align);
+  C->setOutputSectionOff(Off);
   Off += C->getSize();
-  Header.sh_size = Off;
-  if (auto SC = dyn_cast<SectionChunk<ELFT>>(C)) {
-    Header.sh_type = SC->getSectionHdr()->sh_type;
-    Header.sh_flags |= SC->getSectionHdr()->sh_flags;
+  this->Header.sh_size = Off;
+}
+
+template <class ELFT> void OutputSection<ELFT>::writeTo(uint8_t *Buf) {
+  for (SectionChunk<ELFT> *C : Chunks)
+    C->writeTo(Buf);
+}
+
+template <bool Is64Bits>
+void StringTableSection<Is64Bits>::writeTo(uint8_t *Buf) {
+  StringRef Data = StrTabBuilder.data();
+  memcpy(Buf, Data.data(), Data.size());
+}
+
+template <class ELFT> void SymbolTableSection<ELFT>::writeTo(uint8_t *Buf) {
+  Buf += sizeof(Elf_Sym);
+  llvm::StringTableBuilder &Builder = Table.getStringBuilder();
+  for (auto &P : Table.getSymbols()) {
+    StringRef Name = P.first;
+    Symbol *Sym = P.second;
+
+    auto *ESym = reinterpret_cast<Elf_Sym *>(Buf);
+    ESym->st_name = Builder.getOffset(Name);
+    uint8_t Binding;
+    SymbolBody *Body = Sym->Body;
+    uint8_t Type = 0;
+    switch (Body->kind()) {
+    case SymbolBody::UndefinedKind:
+    case SymbolBody::UndefinedSyntheticKind:
+      llvm_unreachable("Should be defined by now");
+    case SymbolBody::DefinedRegularKind:
+      Binding = STB_GLOBAL;
+      Type = cast<DefinedRegular<ELFT>>(Body)->Sym.getType();
+      break;
+    case SymbolBody::DefinedWeakKind:
+    case SymbolBody::UndefinedWeakKind:
+      Binding = STB_WEAK;
+      Type = cast<ELFSymbolBody<ELFT>>(Body)->Sym.getType();
+      break;
+    }
+    ESym->setBindingAndType(Binding, Type);
+
+    Buf += sizeof(Elf_Sym);
   }
 }
 
-template <class ELFT>
-void OutputSection::writeHeaderTo(Elf_Shdr_Impl<ELFT> *SHdr) {
+template <bool Is64Bits>
+template <endianness E>
+void OutputSectionBase<Is64Bits>::writeHeaderTo(
+    typename ELFFile<ELFType<E, Is64Bits>>::Elf_Shdr *SHdr) {
   SHdr->sh_name = Header.sh_name;
   SHdr->sh_type = Header.sh_type;
   SHdr->sh_flags = Header.sh_flags;
@@ -78,34 +258,101 @@ void OutputSection::writeHeaderTo(Elf_Shdr_Impl<ELFT> *SHdr) {
   SHdr->sh_entsize = Header.sh_entsize;
 }
 
+namespace {
+template <bool Is64Bits> struct SectionKey {
+  typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
+  StringRef Name;
+  uint32_t sh_type;
+  uintX_t sh_flags;
+};
+}
+namespace llvm {
+template <bool Is64Bits> struct DenseMapInfo<SectionKey<Is64Bits>> {
+  static SectionKey<Is64Bits> getEmptyKey() {
+    return SectionKey<Is64Bits>{DenseMapInfo<StringRef>::getEmptyKey(), 0, 0};
+  }
+  static SectionKey<Is64Bits> getTombstoneKey() {
+    return SectionKey<Is64Bits>{DenseMapInfo<StringRef>::getTombstoneKey(), 0,
+                                0};
+  }
+  static unsigned getHashValue(const SectionKey<Is64Bits> &Val) {
+    return hash_combine(Val.Name, Val.sh_type, Val.sh_flags);
+  }
+  static bool isEqual(const SectionKey<Is64Bits> &LHS,
+                      const SectionKey<Is64Bits> &RHS) {
+    return DenseMapInfo<StringRef>::isEqual(LHS.Name, RHS.Name) &&
+           LHS.sh_type == RHS.sh_type && LHS.sh_flags == RHS.sh_flags;
+  }
+};
+}
+
 // Create output section objects and add them to OutputSections.
 template <class ELFT> void Writer<ELFT>::createSections() {
-  SmallDenseMap<StringRef, OutputSection *> Map;
-  for (Chunk *C : Symtab->getChunks()) {
-    OutputSection *&Sec = Map[C->getSectionName()];
-    if (!Sec) {
-      Sec = new (CAlloc.Allocate()) OutputSection(C->getSectionName());
-      OutputSections.push_back(Sec);
+  SmallDenseMap<SectionKey<ELFT::Is64Bits>, OutputSection<ELFT> *> Map;
+  for (std::unique_ptr<ObjectFileBase> &FileB : Symtab->ObjectFiles) {
+    auto &File = cast<ObjectFile<ELFT>>(*FileB);
+    for (SectionChunk<ELFT> *C : File.getChunks()) {
+      const Elf_Shdr *H = C->getSectionHdr();
+      SectionKey<ELFT::Is64Bits> Key{C->getSectionName(), H->sh_type,
+                                     H->sh_flags};
+      OutputSection<ELFT> *&Sec = Map[Key];
+      if (!Sec) {
+        Sec = new (CAlloc.Allocate())
+            OutputSection<ELFT>(Key.Name, Key.sh_type, Key.sh_flags);
+        OutputSections.push_back(Sec);
+      }
+      Sec->addChunk(C);
     }
-    Sec->addChunk<ELFT>(C);
   }
+}
+
+template <bool Is64Bits>
+static bool compSec(OutputSectionBase<Is64Bits> *A,
+                    OutputSectionBase<Is64Bits> *B) {
+  // Place SHF_ALLOC sections first.
+  return (A->getFlags() & SHF_ALLOC) && !(B->getFlags() & SHF_ALLOC);
 }
 
 // Visits all sections to assign incremental, non-overlapping RVAs and
 // file offsets.
 template <class ELFT> void Writer<ELFT>::assignAddresses() {
   SizeOfHeaders = RoundUpToAlignment(sizeof(Elf_Ehdr_Impl<ELFT>), PageSize);
-  uint64_t VA = 0x1000; // The first page is kept unmapped.
-  uint64_t FileOff = SizeOfHeaders;
-  for (OutputSection *Sec : OutputSections) {
-    Sec->setVA(VA);
+  uintX_t VA = 0x1000; // The first page is kept unmapped.
+  uintX_t FileOff = SizeOfHeaders;
+
+  std::stable_sort(OutputSections.begin(), OutputSections.end(),
+                   compSec<ELFT::Is64Bits>);
+
+  OutputSections.push_back(&SymTable);
+  OutputSections.push_back(&StringTable);
+  StringTableIndex = OutputSections.size();
+  SymTable.setStringTableIndex(StringTableIndex);
+
+  for (OutputSectionBase<ELFT::Is64Bits> *Sec : OutputSections) {
+    StringTable.add(Sec->getName());
+    Sec->finalize();
+
+    uintX_t Align = Sec->getAlign();
+    uintX_t Size = Sec->getSize();
+    if (Sec->getFlags() & SHF_ALLOC) {
+      Sec->setVA(VA);
+      VA += RoundUpToAlignment(Size, Align);
+    }
     Sec->setFileOffset(FileOff);
-    VA += RoundUpToAlignment(Sec->getSize(), PageSize);
-    FileOff += RoundUpToAlignment(Sec->getSize(), 8);
+    FileOff += RoundUpToAlignment(Size, Align);
   }
+
+  // Regular sections.
+  NumSections = OutputSections.size();
+
+  // First dummy section.
+  NumSections++;
+
+  FileOff += OffsetToAlignment(FileOff, ELFT::Is64Bits ? 8 : 4);
+
   // Add space for section headers.
   SectionHeaderOff = FileOff;
-  FileOff += (OutputSections.size() + 1) * sizeof(Elf_Shdr_Impl<ELFT>);
+  FileOff += NumSections * sizeof(Elf_Shdr_Impl<ELFT>);
   FileSize = SizeOfHeaders + RoundUpToAlignment(FileOff - SizeOfHeaders, 8);
 }
 
@@ -116,13 +363,16 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   EHdr->e_ident[EI_MAG1] = 0x45;
   EHdr->e_ident[EI_MAG2] = 0x4C;
   EHdr->e_ident[EI_MAG3] = 0x46;
-  EHdr->e_ident[EI_CLASS] = ELFCLASS64;
-  EHdr->e_ident[EI_DATA] = ELFDATA2LSB;
+  EHdr->e_ident[EI_CLASS] = ELFT::Is64Bits ? ELFCLASS64 : ELFCLASS32;
+  EHdr->e_ident[EI_DATA] = ELFT::TargetEndianness == llvm::support::little
+                               ? ELFDATA2LSB
+                               : ELFDATA2MSB;
   EHdr->e_ident[EI_VERSION] = EV_CURRENT;
-  EHdr->e_ident[EI_OSABI] = ELFOSABI_GNU;
+  EHdr->e_ident[EI_OSABI] = ELFOSABI_NONE;
 
   EHdr->e_type = ET_EXEC;
-  EHdr->e_machine = EM_X86_64;
+  auto &FirstObj = cast<ObjectFile<ELFT>>(*Symtab->ObjectFiles[0]);
+  EHdr->e_machine = FirstObj.getObj()->getHeader()->e_machine;
   EHdr->e_version = EV_CURRENT;
   EHdr->e_entry = 0x401000;
   EHdr->e_phoff = sizeof(Elf_Ehdr_Impl<ELFT>);
@@ -131,8 +381,8 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   EHdr->e_phentsize = sizeof(Elf_Phdr_Impl<ELFT>);
   EHdr->e_phnum = 1;
   EHdr->e_shentsize = sizeof(Elf_Shdr_Impl<ELFT>);
-  EHdr->e_shnum = OutputSections.size() + 1;
-  EHdr->e_shstrndx = 0;
+  EHdr->e_shnum = NumSections;
+  EHdr->e_shstrndx = StringTableIndex;
 
   auto PHdrs = reinterpret_cast<Elf_Phdr_Impl<ELFT> *>(Buf + EHdr->e_phoff);
   PHdrs->p_type = PT_LOAD;
@@ -147,35 +397,22 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   auto SHdrs = reinterpret_cast<Elf_Shdr_Impl<ELFT> *>(Buf + EHdr->e_shoff);
   // First entry is null.
   ++SHdrs;
-  for (OutputSection *Sec : OutputSections)
-    Sec->writeHeaderTo<ELFT>(SHdrs++);
+  for (OutputSectionBase<ELFT::Is64Bits> *Sec : OutputSections) {
+    Sec->setNameOffset(StringTable.getFileOff(Sec->getName()));
+    Sec->template writeHeaderTo<ELFT::TargetEndianness>(SHdrs++);
+  }
 }
 
 template <class ELFT> void Writer<ELFT>::openFile(StringRef Path) {
-  std::error_code EC = FileOutputBuffer::create(Path, FileSize, Buffer,
-                                                FileOutputBuffer::F_executable);
-  error(EC, Twine("failed to open ") + Path);
+  ErrorOr<std::unique_ptr<FileOutputBuffer>> BufferOrErr =
+      FileOutputBuffer::create(Path, FileSize, FileOutputBuffer::F_executable);
+  error(BufferOrErr, Twine("failed to open ") + Path);
+  Buffer = std::move(*BufferOrErr);
 }
 
 // Write section contents to a mmap'ed file.
 template <class ELFT> void Writer<ELFT>::writeSections() {
   uint8_t *Buf = Buffer->getBufferStart();
-  for (OutputSection *Sec : OutputSections) {
-    for (Chunk *C : Sec->getChunks())
-      C->writeTo(Buf);
-  }
-}
-
-namespace lld {
-namespace elf2 {
-template class Writer<ELF32LE>;
-template class Writer<ELF32BE>;
-template class Writer<ELF64LE>;
-template class Writer<ELF64BE>;
-
-template void OutputSection::addChunk<ELF32LE>(Chunk *);
-template void OutputSection::addChunk<ELF32BE>(Chunk *);
-template void OutputSection::addChunk<ELF64LE>(Chunk *);
-template void OutputSection::addChunk<ELF64BE>(Chunk *);
-}
+  for (OutputSectionBase<ELFT::Is64Bits> *Sec : OutputSections)
+    Sec->writeTo(Buf + Sec->getFileOff());
 }

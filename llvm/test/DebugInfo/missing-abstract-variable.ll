@@ -5,7 +5,7 @@
 ; The formal parameter 'b' for Function 'x' when inlined within 'a' is lost on
 ; mips and powerpc64 (and on x86_64 at at least -O2). Presumably this is a
 ; SelectionDAG issue (do mips/powerpc64 use FastISel?).
-; XFAIL: mips, powerpc64, s390x
+; XFAIL: mips, powerpc64, s390x, sparc
 
 ; Build from the following source with clang -O2.
 
@@ -37,7 +37,7 @@
 ;   x(u);
 ; }
 
-; CHECK: DW_TAG_subprogram
+; CHECK: [[X_DECL:.*]]: DW_TAG_subprogram
 ; CHECK-NOT: DW_TAG
 ; CHECK:   DW_AT_name {{.*}} "x"
 ; CHECK-NOT: {{DW_TAG|NULL}}
@@ -57,7 +57,7 @@
 ; CHECK-NOT: {{DW_TAG|NULL}}
 ; CHECK:   DW_TAG_inlined_subroutine
 ; CHECK-NOT: DW_TAG
-; CHECK:     DW_AT_abstract_origin {{.*}} "_Z1xb"
+; CHECK:     DW_AT_abstract_origin {{.*}} {[[X_DECL]]}
 ; CHECK-NOT: {{DW_TAG|NULL}}
 ; CHECK:     DW_TAG_formal_parameter
 ; CHECK-NOT: DW_TAG
@@ -78,7 +78,7 @@
 ; CHECK-NOT: {{DW_TAG|NULL}}
 ; CHECK:   DW_TAG_inlined_subroutine
 ; CHECK-NOT: DW_TAG
-; CHECK:     DW_AT_abstract_origin {{.*}} "_Z1xb"
+; CHECK:     DW_AT_abstract_origin {{.*}} {[[X_DECL]]}
 ; CHECK-NOT: {{DW_TAG|NULL}}
 ; FIXME: This formal parameter goes missing at least at -O2 (& on
 ; mips/powerpc), maybe before that. Perhaps SelectionDAG is to blame (and
@@ -135,7 +135,7 @@ attributes #2 = { nounwind readnone }
 !llvm.module.flags = !{!21, !22}
 !llvm.ident = !{!23}
 
-!0 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: true, emissionKind: 1, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !2, imports: !2)
+!0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang version 3.5.0 ", isOptimized: true, emissionKind: 1, file: !1, enums: !2, retainedTypes: !2, subprograms: !3, globals: !2, imports: !2)
 !1 = !DIFile(filename: "missing-abstract-variables.cc", directory: "/tmp/dbginfo")
 !2 = !{}
 !3 = !{!4, !8, !14}

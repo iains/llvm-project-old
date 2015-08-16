@@ -877,7 +877,6 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(MODULE_NAME);
   RECORD(MODULE_MAP_FILE);
   RECORD(IMPORTS);
-  RECORD(KNOWN_MODULE_FILES);
   RECORD(LANGUAGE_OPTIONS);
   RECORD(TARGET_OPTIONS);
   RECORD(ORIGINAL_FILE);
@@ -1186,17 +1185,26 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
   }
 
   if (WritingModule && WritingModule->Directory) {
-    // Module directory.
-    BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
-    Abbrev->Add(BitCodeAbbrevOp(MODULE_DIRECTORY));
-    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Directory
-    unsigned AbbrevCode = Stream.EmitAbbrev(Abbrev);
-    RecordData Record;
-    Record.push_back(MODULE_DIRECTORY);
-
     SmallString<128> BaseDir(WritingModule->Directory->getName());
     cleanPathForOutput(Context.getSourceManager().getFileManager(), BaseDir);
-    Stream.EmitRecordWithBlob(AbbrevCode, Record, BaseDir);
+
+    // If the home of the module is the current working directory, then we
+    // want to pick up the cwd of the build process loading the module, not
+    // our cwd, when we load this module.
+    if (!PP.getHeaderSearchInfo()
+             .getHeaderSearchOpts()
+             .ModuleMapFileHomeIsCwd ||
+        WritingModule->Directory->getName() != StringRef(".")) {
+      // Module directory.
+      BitCodeAbbrev *Abbrev = new BitCodeAbbrev();
+      Abbrev->Add(BitCodeAbbrevOp(MODULE_DIRECTORY));
+      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Directory
+      unsigned AbbrevCode = Stream.EmitAbbrev(Abbrev);
+
+      RecordData Record;
+      Record.push_back(MODULE_DIRECTORY);
+      Stream.EmitRecordWithBlob(AbbrevCode, Record, BaseDir);
+    }
 
     // Write out all other paths relative to the base directory if possible.
     BaseDirectory.assign(BaseDir.begin(), BaseDir.end());
@@ -1245,15 +1253,6 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
       AddPath(M->FileName, Record);
     }
     Stream.EmitRecord(IMPORTS, Record);
-
-    // Also emit a list of known module files that were not imported,
-    // but are made available by this module.
-    // FIXME: Should we also include a signature here?
-    Record.clear();
-    for (auto *E : Mgr.getAdditionalKnownModuleFiles())
-      AddPath(E->getName(), Record);
-    if (!Record.empty())
-      Stream.EmitRecord(KNOWN_MODULE_FILES, Record);
   }
 
   // Language options.
@@ -2738,12 +2737,15 @@ uint64_t ASTWriter::WriteDeclContextLexicalBlock(ASTContext &Context,
   uint64_t Offset = Stream.GetCurrentBitNo();
   RecordData Record;
   Record.push_back(DECL_CONTEXT_LEXICAL);
-  SmallVector<KindDeclIDPair, 64> Decls;
-  for (const auto *D : DC->decls())
-    Decls.push_back(std::make_pair(D->getKind(), GetDeclRef(D)));
+  SmallVector<uint32_t, 128> KindDeclPairs;
+  for (const auto *D : DC->decls()) {
+    KindDeclPairs.push_back(D->getKind());
+    KindDeclPairs.push_back(GetDeclRef(D));
+  }
 
   ++NumLexicalDeclContexts;
-  Stream.EmitRecordWithBlob(DeclContextLexicalAbbrev, Record, bytes(Decls));
+  Stream.EmitRecordWithBlob(DeclContextLexicalAbbrev, Record,
+                            bytes(KindDeclPairs));
   return Offset;
 }
 
@@ -3754,6 +3756,9 @@ uint64_t ASTWriter::WriteDeclContextVisibleBlock(ASTContext &Context,
 /// (in C++), for namespaces, and for classes with forward-declared unscoped
 /// enumeration members (in C++11).
 void ASTWriter::WriteDeclContextVisibleUpdate(const DeclContext *DC) {
+  if (isRewritten(cast<Decl>(DC)))
+    return;
+
   StoredDeclsMap *Map = DC->getLookupPtr();
   if (!Map || Map->empty())
     return;
@@ -4285,10 +4290,12 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   // Create a lexical update block containing all of the declarations in the
   // translation unit that do not come from other AST files.
   const TranslationUnitDecl *TU = Context.getTranslationUnitDecl();
-  SmallVector<KindDeclIDPair, 64> NewGlobalDecls;
-  for (const auto *I : TU->noload_decls()) {
-    if (!I->isFromASTFile())
-      NewGlobalDecls.push_back(std::make_pair(I->getKind(), GetDeclRef(I)));
+  SmallVector<uint32_t, 128> NewGlobalKindDeclPairs;
+  for (const auto *D : TU->noload_decls()) {
+    if (!D->isFromASTFile()) {
+      NewGlobalKindDeclPairs.push_back(D->getKind());
+      NewGlobalKindDeclPairs.push_back(GetDeclRef(D));
+    }
   }
   
   llvm::BitCodeAbbrev *Abv = new llvm::BitCodeAbbrev();
@@ -4298,7 +4305,7 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
   Record.clear();
   Record.push_back(TU_UPDATE_LEXICAL);
   Stream.EmitRecordWithBlob(TuUpdateLexicalAbbrev, Record,
-                            bytes(NewGlobalDecls));
+                            bytes(NewGlobalKindDeclPairs));
   
   // And a visible updates block for the translation unit.
   Abv = new llvm::BitCodeAbbrev();
@@ -5705,6 +5712,7 @@ void ASTWriter::AddedVisibleDecl(const DeclContext *DC, const Decl *D) {
   if (!(!D->isFromASTFile() && cast<Decl>(DC)->isFromASTFile()))
     return; // Not a source decl added to a DeclContext from PCH.
 
+  assert(DC == DC->getPrimaryContext() && "added to non-primary context");
   assert(!getDefinitiveDeclContext(DC) && "DeclContext not definitive!");
   assert(!WritingAST && "Already writing the AST!");
   UpdatedDeclContexts.insert(DC);

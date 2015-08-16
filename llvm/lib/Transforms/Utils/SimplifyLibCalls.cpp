@@ -102,7 +102,7 @@ static bool callHasFloatingPointArgument(const CallInst *CI) {
 }
 
 /// \brief Check whether the overloaded unary floating point function
-/// corresponing to \a Ty is available.
+/// corresponding to \a Ty is available.
 static bool hasUnaryFloatFn(const TargetLibraryInfo *TLI, Type *Ty,
                             LibFunc::Func DoubleFn, LibFunc::Func FloatFn,
                             LibFunc::Func LongDoubleFn) {
@@ -1436,7 +1436,7 @@ Value *LibCallSimplifier::optimizeFFS(CallInst *CI, IRBuilder<> &B) {
   Type *ArgType = Op->getType();
   Value *F =
       Intrinsic::getDeclaration(Callee->getParent(), Intrinsic::cttz, ArgType);
-  Value *V = B.CreateCall(F, {Op, B.getFalse()}, "cttz");
+  Value *V = B.CreateCall(F, {Op, B.getTrue()}, "cttz");
   V = B.CreateAdd(V, ConstantInt::get(V->getType(), 1));
   V = B.CreateIntCast(V, B.getInt32Ty(), false);
 

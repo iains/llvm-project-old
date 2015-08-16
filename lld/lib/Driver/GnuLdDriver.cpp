@@ -89,7 +89,7 @@ maybeExpandResponseFiles(llvm::ArrayRef<const char *> args,
   SmallVector<const char *, 256> smallvec;
   for (const char *arg : args)
     smallvec.push_back(arg);
-  llvm::BumpPtrStringSaver saver(alloc);
+  llvm::StringSaver saver(alloc);
   llvm::cl::ExpandResponseFiles(saver, llvm::cl::TokenizeGNUCommandLine, smallvec);
 
   // Pack the results to a C-array and return it.
@@ -748,7 +748,10 @@ bool GnuLdDriver::parse(llvm::ArrayRef<const char *> args,
     return false;
 
   // Perform linker script semantic actions
-  ctx->linkerScriptSema().perform();
+  if (auto ec = ctx->linkerScriptSema().perform()) {
+    diag << "Error in the linker script's semantics: " << ec.message() << "\n";
+    return false;
+  }
 
   context.swap(ctx);
   return true;

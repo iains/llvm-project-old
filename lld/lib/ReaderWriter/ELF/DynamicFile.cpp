@@ -68,8 +68,11 @@ template <class ELFT> std::error_code DynamicFile<ELFT>::doParse() {
   const char *base = _mb->getBuffer().data();
   const Elf_Dyn *dynStart = nullptr;
   const Elf_Dyn *dynEnd = nullptr;
+
+  const Elf_Shdr *dynSymSec = nullptr;
   for (const Elf_Shdr &sec : obj.sections()) {
-    if (sec.sh_type == llvm::ELF::SHT_DYNAMIC) {
+    switch (sec.sh_type) {
+    case llvm::ELF::SHT_DYNAMIC: {
       dynStart = reinterpret_cast<const Elf_Dyn *>(base + sec.sh_offset);
       uint64_t size = sec.sh_size;
       if (size % sizeof(Elf_Dyn))
@@ -77,9 +80,12 @@ template <class ELFT> std::error_code DynamicFile<ELFT>::doParse() {
       dynEnd = dynStart + size / sizeof(Elf_Dyn);
       break;
     }
+    case llvm::ELF::SHT_DYNSYM:
+      dynSymSec = &sec;
+      break;
+    }
   }
 
-  const Elf_Shdr *dynSymSec = obj.getDotDynSymSec();
   ErrorOr<StringRef> strTableOrErr = obj.getStringTableForSymtab(*dynSymSec);
   if (std::error_code ec = strTableOrErr.getError())
     return ec;
@@ -101,7 +107,7 @@ template <class ELFT> std::error_code DynamicFile<ELFT>::doParse() {
   // Create a map from names to dynamic symbol table entries.
   // TODO: This should use the object file's build in hash table instead if
   // it exists.
-  for (auto i = obj.dynamic_symbol_begin(), e = obj.dynamic_symbol_end();
+  for (auto i = obj.symbol_begin(dynSymSec), e = obj.symbol_end(dynSymSec);
        i != e; ++i) {
     auto name = i->getName(stringTable);
     if ((ec = name.getError()))

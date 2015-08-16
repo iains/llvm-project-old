@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Chunks.h"
-#include "Driver.h"
+#include "Error.h"
 
 using namespace llvm;
 using namespace llvm::ELF;
@@ -19,12 +19,7 @@ using namespace lld::elf2;
 template <class ELFT>
 SectionChunk<ELFT>::SectionChunk(object::ELFFile<ELFT> *Obj,
                                  const Elf_Shdr *Header)
-    : Chunk(SectionKind), Obj(Obj), Header(Header) {
-  // Initialize SectionName.
-  ErrorOr<StringRef> Name = Obj->getSectionName(Header);
-  error(Name);
-  SectionName = *Name;
-
+    : Obj(Obj), Header(Header) {
   Align = Header->sh_addralign;
 }
 
@@ -33,9 +28,15 @@ template <class ELFT> void SectionChunk<ELFT>::writeTo(uint8_t *Buf) {
     return;
   // Copy section contents from source object file to output file.
   ArrayRef<uint8_t> Data = *Obj->getSectionContents(Header);
-  memcpy(Buf + FileOff, Data.data(), Data.size());
+  memcpy(Buf + OutputSectionOff, Data.data(), Data.size());
 
   // FIXME: Relocations
+}
+
+template <class ELFT> StringRef SectionChunk<ELFT>::getSectionName() const {
+  ErrorOr<StringRef> Name = Obj->getSectionName(Header);
+  error(Name);
+  return *Name;
 }
 
 namespace lld {

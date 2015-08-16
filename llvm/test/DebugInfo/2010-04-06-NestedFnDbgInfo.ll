@@ -13,7 +13,7 @@
 ; CHECK-NOT: DW_TAG
 ; CHECK: DW_AT_low_pc
 ; CHECK-NOT: DW_TAG
-; CHECK: DW_AT_linkage_name {{.*}} "_ZZN1B2fnEvEN1A3fooEv"
+; CHECK: DW_AT_name {{.*}} "foo"
 ; And just double check that there's no out of line definition that references
 ; this subprogram.
 ; CHECK-NOT: DW_AT_specification {{.*}} {[[FOO_INL]]}
@@ -74,7 +74,7 @@ entry:
 !1 = distinct !DILexicalBlock(line: 15, column: 12, file: !38, scope: !2)
 !2 = !DISubprogram(name: "main", linkageName: "main", line: 15, isLocal: false, isDefinition: true, virtualIndex: 6, isOptimized: false, scopeLine: 15, file: !38, scope: !3, type: !5, function: i32 ()* @main)
 !3 = !DIFile(filename: "one.cc", directory: "/tmp")
-!4 = !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang 1.5", isOptimized: false, emissionKind: 0, file: !38, enums: !39, retainedTypes: !39, subprograms: !37, imports:  null)
+!4 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus, producer: "clang 1.5", isOptimized: false, emissionKind: 0, file: !38, enums: !39, retainedTypes: !39, subprograms: !37, imports:  null)
 !5 = !DISubroutineType(types: !6)
 !6 = !{!7}
 !7 = !DIBasicType(tag: DW_TAG_base_type, name: "int", size: 32, align: 32, encoding: DW_ATE_signed)

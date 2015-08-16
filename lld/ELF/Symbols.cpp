@@ -9,29 +9,13 @@
 
 #include "Symbols.h"
 #include "Chunks.h"
+#include "Error.h"
 #include "InputFiles.h"
 
 using namespace llvm::object;
 
 using namespace lld;
 using namespace lld::elf2;
-
-template <class ELFT>
-StringRef
-getSymbolName(const llvm::object::ELFFile<ELFT> *F,
-  const typename llvm::object::ELFFile<ELFT>::Elf_Sym *S) {
-  ErrorOr<StringRef> StrTab = F->getStringTableForSymtab(*F->getDotSymtabSec());
-  if (!StrTab || S->st_name >= StrTab->size())
-    llvm::report_fatal_error("Invalid string table.");
-  return StrTab->data() + S->st_name;
-}
-
-template <class ELFT>
-DefinedRegular<ELFT>::DefinedRegular(ObjectFile<ELFT> *F, const Elf_Sym *S)
-    : Defined(DefinedRegularKind, getSymbolName<ELFT>(F->getObj(), S)), File(F),
-      Sym(S) {
-  IsExternal = S->isExternal();
-}
 
 // Returns 1, 0 or -1 if this symbol should take precedence
 // over the Other, tie or lose, respectively.
@@ -44,28 +28,18 @@ int SymbolBody::compare(SymbolBody *Other) {
     return -Other->compare(this);
 
   // First handle comparisons between two different kinds.
-  if (LK != RK) {
-    assert(LK == DefinedRegularKind);
-    assert(RK == UndefinedKind);
+  if (LK != RK)
     return 1;
-  }
 
   // Now handle the case where the kinds are the same.
   switch (LK) {
   case DefinedRegularKind:
     return 0;
+  case DefinedWeakKind:
   case UndefinedKind:
+  case UndefinedWeakKind:
+  case UndefinedSyntheticKind:
     return 1;
-  default:
-    llvm_unreachable("unknown symbol kind");
   }
-}
-
-namespace lld {
-namespace elf2 {
-template class DefinedRegular<llvm::object::ELF32LE>;
-template class DefinedRegular<llvm::object::ELF32BE>;
-template class DefinedRegular<llvm::object::ELF64LE>;
-template class DefinedRegular<llvm::object::ELF64BE>;
-}
+  llvm_unreachable("unknown symbol kind");
 }

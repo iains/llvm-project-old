@@ -9,6 +9,9 @@
 
 #include "Driver.h"
 #include "Config.h"
+#include "Error.h"
+#include "InputFiles.h"
+#include "SymbolTable.h"
 #include "Writer.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -20,32 +23,13 @@ using namespace lld::elf2;
 namespace lld {
 namespace elf2 {
 Configuration *Config;
-LinkerDriver *Driver;
 
 void link(ArrayRef<const char *> Args) {
   auto C = make_unique<Configuration>();
   Config = C.get();
-  auto D = make_unique<LinkerDriver>();
-  Driver = D.get();
-  Driver->link(Args.slice(1));
+  LinkerDriver().link(Args.slice(1));
 }
 
-void error(Twine Msg) {
-  errs() << Msg << "\n";
-  exit(1);
-}
-
-void error(std::error_code EC, Twine Prefix) {
-  if (!EC)
-    return;
-  error(Prefix + ": " + EC.message());
-}
-
-void error(std::error_code EC) {
-  if (!EC)
-    return;
-  error(EC.message());
-}
 }
 }
 
@@ -61,7 +45,22 @@ MemoryBufferRef LinkerDriver::openFile(StringRef Path) {
 }
 
 static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
-  return std::unique_ptr<InputFile>(new ObjectFile<object::ELF64LE>(MB));
+  std::pair<unsigned char, unsigned char> Type =
+      object::getElfArchType(MB.getBuffer());
+  if (Type.second != ELF::ELFDATA2LSB && Type.second != ELF::ELFDATA2MSB)
+    error("Invalid data encoding");
+
+  if (Type.first == ELF::ELFCLASS32) {
+    if (Type.second == ELF::ELFDATA2LSB)
+      return make_unique<ObjectFile<object::ELF32LE>>(MB);
+    return make_unique<ObjectFile<object::ELF32BE>>(MB);
+  }
+  if (Type.first == ELF::ELFCLASS64) {
+    if (Type.second == ELF::ELFDATA2LSB)
+      return make_unique<ObjectFile<object::ELF64LE>>(MB);
+    return make_unique<ObjectFile<object::ELF64BE>>(MB);
+  }
+  error("Invalid file class");
 }
 
 void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
@@ -86,7 +85,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     error("no input files.");
 
   // Create a symbol table.
-  SymbolTable<object::ELF64LE> Symtab;
+  SymbolTable Symtab;
 
   // Parse all input files and put all symbols to the symbol table.
   // The symbol table will take care of name resolution.
@@ -99,6 +98,19 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   Symtab.reportRemainingUndefines();
 
   // Write the result.
-  Writer<object::ELF64LE> Out(&Symtab);
-  Out.write(Config->OutputFile);
+  ObjectFileBase &FirstObj = *Symtab.ObjectFiles[0];
+  switch (FirstObj.kind()) {
+  case InputFile::Object32LEKind:
+    writeResult<object::ELF32LE>(&Symtab);
+    return;
+  case InputFile::Object32BEKind:
+    writeResult<object::ELF32BE>(&Symtab);
+    return;
+  case InputFile::Object64LEKind:
+    writeResult<object::ELF64LE>(&Symtab);
+    return;
+  case InputFile::Object64BEKind:
+    writeResult<object::ELF64BE>(&Symtab);
+    return;
+  }
 }

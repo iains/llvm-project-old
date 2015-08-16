@@ -8,6 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Config.h"
+#include "DLL.h"
+#include "Error.h"
+#include "InputFiles.h"
+#include "SymbolTable.h"
+#include "Symbols.h"
 #include "Writer.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -20,6 +25,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <utility>
 
 using namespace llvm;
@@ -27,41 +33,118 @@ using namespace llvm::COFF;
 using namespace llvm::object;
 using namespace llvm::support;
 using namespace llvm::support::endian;
+using namespace lld;
+using namespace lld::coff;
 
 static const int PageSize = 4096;
-static const int FileAlignment = 512;
-static const int SectionAlignment = 4096;
+static const int SectorSize = 512;
 static const int DOSStubSize = 64;
 static const int NumberfOfDataDirectory = 16;
+
+namespace {
+// The writer writes a SymbolTable result to a file.
+class Writer {
+public:
+  Writer(SymbolTable *T) : Symtab(T) {}
+  void run();
+
+private:
+  void markLive();
+  void dedupCOMDATs();
+  void createSections();
+  void createMiscChunks();
+  void createImportTables();
+  void createExportTable();
+  void assignAddresses();
+  void removeEmptySections();
+  void createSymbolAndStringTable();
+  void openFile(StringRef OutputPath);
+  template <typename PEHeaderTy> void writeHeader();
+  void fixSafeSEHSymbols();
+  void writeSections();
+  void sortExceptionTable();
+  void applyRelocations();
+
+  llvm::Optional<coff_symbol16> createSymbol(Defined *D);
+  size_t addEntryToStringTable(StringRef Str);
+
+  OutputSection *findSection(StringRef Name);
+  OutputSection *createSection(StringRef Name);
+  void addBaserels(OutputSection *Dest);
+  void addBaserelBlocks(OutputSection *Dest, std::vector<Baserel> &V);
+
+  uint32_t getSizeOfInitializedData();
+  std::map<StringRef, std::vector<DefinedImportData *>> binImports();
+
+  SymbolTable *Symtab;
+  std::unique_ptr<llvm::FileOutputBuffer> Buffer;
+  llvm::SpecificBumpPtrAllocator<OutputSection> CAlloc;
+  llvm::SpecificBumpPtrAllocator<BaserelChunk> BAlloc;
+  std::vector<OutputSection *> OutputSections;
+  std::vector<char> Strtab;
+  std::vector<llvm::object::coff_symbol16> OutputSymtab;
+  IdataContents Idata;
+  DelayLoadContents DelayIdata;
+  EdataContents Edata;
+  std::unique_ptr<SEHTableChunk> SEHTable;
+
+  uint64_t FileSize;
+  uint32_t PointerToSymbolTable = 0;
+  uint64_t SizeOfImage;
+  uint64_t SizeOfHeaders;
+
+  std::vector<std::unique_ptr<Chunk>> Chunks;
+};
+} // anonymous namespace
 
 namespace lld {
 namespace coff {
 
-// The main function of the writer.
-std::error_code Writer::write(StringRef OutputPath) {
-  markLive();
-  dedupCOMDATs();
-  createSections();
-  createMiscChunks();
-  createImportTables();
-  createExportTable();
-  if (Config->Relocatable)
-    createSection(".reloc");
-  assignAddresses();
-  removeEmptySections();
-  createSymbolAndStringTable();
-  if (auto EC = openFile(OutputPath))
-    return EC;
-  if (Config->is64()) {
-    writeHeader<pe32plus_header>();
-  } else {
-    writeHeader<pe32_header>();
-  }
-  fixSafeSEHSymbols();
-  writeSections();
-  sortExceptionTable();
-  return Buffer->commit();
-}
+void writeResult(SymbolTable *T) { Writer(T).run(); }
+
+// OutputSection represents a section in an output file. It's a
+// container of chunks. OutputSection and Chunk are 1:N relationship.
+// Chunks cannot belong to more than one OutputSections. The writer
+// creates multiple OutputSections and assign them unique,
+// non-overlapping file offsets and RVAs.
+class OutputSection {
+public:
+  OutputSection(StringRef N) : Name(N), Header({}) {}
+  void setRVA(uint64_t);
+  void setFileOffset(uint64_t);
+  void addChunk(Chunk *C);
+  StringRef getName() { return Name; }
+  std::vector<Chunk *> &getChunks() { return Chunks; }
+  void addPermissions(uint32_t C);
+  uint32_t getPermissions() { return Header.Characteristics & PermMask; }
+  uint32_t getCharacteristics() { return Header.Characteristics; }
+  uint64_t getRVA() { return Header.VirtualAddress; }
+  uint64_t getFileOff() { return Header.PointerToRawData; }
+  void writeHeaderTo(uint8_t *Buf);
+
+  // Returns the size of this section in an executable memory image.
+  // This may be smaller than the raw size (the raw size is multiple
+  // of disk sector size, so there may be padding at end), or may be
+  // larger (if that's the case, the loader reserves spaces after end
+  // of raw data).
+  uint64_t getVirtualSize() { return Header.VirtualSize; }
+
+  // Returns the size of the section in the output file.
+  uint64_t getRawSize() { return Header.SizeOfRawData; }
+
+  // Set offset into the string table storing this section name.
+  // Used only when the name is longer than 8 bytes.
+  void setStringTableOff(uint32_t V) { StringTableOff = V; }
+
+  // N.B. The section index is one based.
+  uint32_t SectionIndex = 0;
+
+private:
+  StringRef Name;
+  coff_section Header;
+  uint32_t StringTableOff = 0;
+  std::vector<Chunk *> Chunks;
+};
 
 void OutputSection::setRVA(uint64_t RVA) {
   Header.VirtualAddress = RVA;
@@ -76,8 +159,6 @@ void OutputSection::setFileOffset(uint64_t Off) {
   if (Header.SizeOfRawData == 0)
     return;
   Header.PointerToRawData = Off;
-  for (Chunk *C : Chunks)
-    C->setFileOff(C->getFileOff() + Off);
 }
 
 void OutputSection::addChunk(Chunk *C) {
@@ -86,11 +167,11 @@ void OutputSection::addChunk(Chunk *C) {
   uint64_t Off = Header.VirtualSize;
   Off = RoundUpToAlignment(Off, C->getAlign());
   C->setRVA(Off);
-  C->setFileOff(Off);
+  C->setOutputSectionOff(Off);
   Off += C->getSize();
   Header.VirtualSize = Off;
   if (C->hasData())
-    Header.SizeOfRawData = RoundUpToAlignment(Off, FileAlignment);
+    Header.SizeOfRawData = RoundUpToAlignment(Off, SectorSize);
 }
 
 void OutputSection::addPermissions(uint32_t C) {
@@ -109,6 +190,53 @@ void OutputSection::writeHeaderTo(uint8_t *Buf) {
     strncpy(Hdr->Name, Name.data(),
             std::min(Name.size(), (size_t)COFF::NameSize));
   }
+}
+
+uint64_t Defined::getSecrel() {
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return getRVA() - D->getChunk()->getOutputSection()->getRVA();
+  error("SECREL relocation points to a non-regular symbol");
+}
+
+uint64_t Defined::getSectionIndex() {
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return D->getChunk()->getOutputSection()->SectionIndex;
+  error("SECTION relocation points to a non-regular symbol");
+}
+
+bool Defined::isExecutable() {
+  const auto X = IMAGE_SCN_MEM_EXECUTE;
+  if (auto *D = dyn_cast<DefinedRegular>(this))
+    return D->getChunk()->getOutputSection()->getPermissions() & X;
+  return isa<DefinedImportThunk>(this);
+}
+
+} // namespace coff
+} // namespace lld
+
+// The main function of the writer.
+void Writer::run() {
+  markLive();
+  dedupCOMDATs();
+  createSections();
+  createMiscChunks();
+  createImportTables();
+  createExportTable();
+  if (Config->Relocatable)
+    createSection(".reloc");
+  assignAddresses();
+  removeEmptySections();
+  createSymbolAndStringTable();
+  openFile(Config->OutputFile);
+  if (Config->is64()) {
+    writeHeader<pe32plus_header>();
+  } else {
+    writeHeader<pe32_header>();
+  }
+  fixSafeSEHSymbols();
+  writeSections();
+  sortExceptionTable();
+  error(Buffer->commit(), "Failed to write the output file");
 }
 
 // Set live bit on for each reachable chunk. Unmarked (unreachable)
@@ -220,7 +348,7 @@ void Writer::createMiscChunks() {
   if (Config->Machine != I386)
     return;
   std::set<Defined *> Handlers;
-  for (ObjectFile *File : Symtab->ObjectFiles) {
+  for (lld::coff::ObjectFile *File : Symtab->ObjectFiles) {
     if (!File->SEHCompat)
       return;
     for (SymbolBody *B : File->SEHandlers)
@@ -361,7 +489,7 @@ void Writer::createSymbolAndStringTable() {
     Sec->setStringTableOff(addEntryToStringTable(Name));
   }
 
-  for (ObjectFile *File : Symtab->ObjectFiles)
+  for (lld::coff::ObjectFile *File : Symtab->ObjectFiles)
     for (SymbolBody *B : File->getSymbols())
       if (auto *D = dyn_cast<Defined>(B))
         if (Optional<coff_symbol16> Sym = createSymbol(D))
@@ -376,15 +504,14 @@ void Writer::createSymbolAndStringTable() {
   // We position the symbol table to be adjacent to the end of the last section.
   uint64_t FileOff =
       LastSection->getFileOff() +
-      RoundUpToAlignment(LastSection->getRawSize(), FileAlignment);
+      RoundUpToAlignment(LastSection->getRawSize(), SectorSize);
   if (!OutputSymtab.empty()) {
     PointerToSymbolTable = FileOff;
     FileOff += OutputSymtab.size() * sizeof(coff_symbol16);
   }
   if (!Strtab.empty())
     FileOff += Strtab.size() + 4;
-  FileSize = SizeOfHeaders +
-             RoundUpToAlignment(FileOff - SizeOfHeaders, FileAlignment);
+  FileSize = RoundUpToAlignment(FileOff, SectorSize);
 }
 
 // Visits all sections to assign incremental, non-overlapping RVAs and
@@ -395,9 +522,9 @@ void Writer::assignAddresses() {
                   sizeof(coff_section) * OutputSections.size();
   SizeOfHeaders +=
       Config->is64() ? sizeof(pe32plus_header) : sizeof(pe32_header);
-  SizeOfHeaders = RoundUpToAlignment(SizeOfHeaders, PageSize);
+  SizeOfHeaders = RoundUpToAlignment(SizeOfHeaders, SectorSize);
   uint64_t RVA = 0x1000; // The first page is kept unmapped.
-  uint64_t FileOff = SizeOfHeaders;
+  FileSize = SizeOfHeaders;
   // Move DISCARDABLE (or non-memory-mapped) sections to the end of file because
   // the loader cannot handle holes.
   std::stable_partition(
@@ -408,13 +535,11 @@ void Writer::assignAddresses() {
     if (Sec->getName() == ".reloc")
       addBaserels(Sec);
     Sec->setRVA(RVA);
-    Sec->setFileOffset(FileOff);
+    Sec->setFileOffset(FileSize);
     RVA += RoundUpToAlignment(Sec->getVirtualSize(), PageSize);
-    FileOff += RoundUpToAlignment(Sec->getRawSize(), FileAlignment);
+    FileSize += RoundUpToAlignment(Sec->getRawSize(), SectorSize);
   }
   SizeOfImage = SizeOfHeaders + RoundUpToAlignment(RVA - 0x1000, PageSize);
-  FileSize = SizeOfHeaders +
-             RoundUpToAlignment(FileOff - SizeOfHeaders, FileAlignment);
 }
 
 template <typename PEHeaderTy> void Writer::writeHeader() {
@@ -453,8 +578,8 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   Buf += sizeof(*PE);
   PE->Magic = Config->is64() ? PE32Header::PE32_PLUS : PE32Header::PE32;
   PE->ImageBase = Config->ImageBase;
-  PE->SectionAlignment = SectionAlignment;
-  PE->FileAlignment = FileAlignment;
+  PE->SectionAlignment = PageSize;
+  PE->FileAlignment = SectorSize;
   PE->MajorImageVersion = Config->MajorImageVersion;
   PE->MinorImageVersion = Config->MinorImageVersion;
   PE->MajorOperatingSystemVersion = Config->MajorOSVersion;
@@ -530,7 +655,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
       Dir[TLS_TABLE].Size = 40;
     }
   }
-  if (Symbol *Sym = Symtab->find(Config->LoadConfigUsed)) {
+  if (Symbol *Sym = Symtab->findUnderscore("_load_config_used")) {
     if (Defined *B = dyn_cast<Defined>(Sym->Body)) {
       Dir[LOAD_CONFIG_TABLE].RelativeVirtualAddress = B->getRVA();
       Dir[LOAD_CONFIG_TABLE].Size = Config->is64() ? 112 : 64;
@@ -560,13 +685,11 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   memcpy(Buf + 4, Strtab.data(), Strtab.size());
 }
 
-std::error_code Writer::openFile(StringRef Path) {
-  if (auto EC = FileOutputBuffer::create(Path, FileSize, Buffer,
-                                         FileOutputBuffer::F_executable)) {
-    llvm::errs() << "failed to open " << Path << ": " << EC.message() << "\n";
-    return EC;
-  }
-  return std::error_code();
+void Writer::openFile(StringRef Path) {
+  ErrorOr<std::unique_ptr<FileOutputBuffer>> BufferOrErr =
+      FileOutputBuffer::create(Path, FileSize, FileOutputBuffer::F_executable);
+  error(BufferOrErr, Twine("failed to open ") + Path);
+  Buffer = std::move(*BufferOrErr);
 }
 
 void Writer::fixSafeSEHSymbols() {
@@ -580,26 +703,38 @@ void Writer::fixSafeSEHSymbols() {
 void Writer::writeSections() {
   uint8_t *Buf = Buffer->getBufferStart();
   for (OutputSection *Sec : OutputSections) {
+    uint8_t *SecBuf = Buf + Sec->getFileOff();
     // Fill gaps between functions in .text with INT3 instructions
     // instead of leaving as NUL bytes (which can be interpreted as
     // ADD instructions).
     if (Sec->getPermissions() & IMAGE_SCN_CNT_CODE)
-      memset(Buf + Sec->getFileOff(), 0xCC, Sec->getRawSize());
+      memset(SecBuf, 0xCC, Sec->getRawSize());
     for (Chunk *C : Sec->getChunks())
-      C->writeTo(Buf);
+      C->writeTo(SecBuf);
   }
 }
 
 // Sort .pdata section contents according to PE/COFF spec 5.5.
 void Writer::sortExceptionTable() {
-  if (auto *Sec = findSection(".pdata")) {
-    // We assume .pdata contains function table entries only.
+  OutputSection *Sec = findSection(".pdata");
+  if (!Sec)
+    return;
+  // We assume .pdata contains function table entries only.
+  uint8_t *Begin = Buffer->getBufferStart() + Sec->getFileOff();
+  uint8_t *End = Begin + Sec->getVirtualSize();
+  if (Config->Machine == AMD64) {
     struct Entry { ulittle32_t Begin, End, Unwind; };
-    uint8_t *Buf = Buffer->getBufferStart() + Sec->getFileOff();
-    std::sort(reinterpret_cast<Entry *>(Buf),
-              reinterpret_cast<Entry *>(Buf + Sec->getVirtualSize()),
+    std::sort((Entry *)Begin, (Entry *)End,
               [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    return;
   }
+  if (Config->Machine == ARMNT) {
+    struct Entry { ulittle32_t Begin, Unwind; };
+    std::sort((Entry *)Begin, (Entry *)End,
+              [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    return;
+  }
+  errs() << "warning: don't know how to handle .pdata.\n";
 }
 
 OutputSection *Writer::findSection(StringRef Name) {
@@ -681,25 +816,3 @@ void Writer::addBaserelBlocks(OutputSection *Dest, std::vector<Baserel> &V) {
   BaserelChunk *Buf = BAlloc.Allocate();
   Dest->addChunk(new (Buf) BaserelChunk(Page, &V[I], &V[0] + J));
 }
-
-uint64_t Defined::getSecrel() {
-  if (auto *D = dyn_cast<DefinedRegular>(this))
-    return getRVA() - D->getChunk()->getOutputSection()->getRVA();
-  llvm::report_fatal_error("SECREL relocation points to a non-regular symbol");
-}
-
-uint64_t Defined::getSectionIndex() {
-  if (auto *D = dyn_cast<DefinedRegular>(this))
-    return D->getChunk()->getOutputSection()->SectionIndex;
-  llvm::report_fatal_error("SECTION relocation points to a non-regular symbol");
-}
-
-bool Defined::isExecutable() {
-  const auto X = IMAGE_SCN_MEM_EXECUTE;
-  if (auto *D = dyn_cast<DefinedRegular>(this))
-    return D->getChunk()->getOutputSection()->getPermissions() & X;
-  return isa<DefinedImportThunk>(this);
-}
-
-} // namespace coff
-} // namespace lld
