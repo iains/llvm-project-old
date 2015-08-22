@@ -1500,13 +1500,14 @@ unsigned HeaderFileInfoTrait::ComputeHash(internal_key_ref ikey) {
 
 HeaderFileInfoTrait::internal_key_type 
 HeaderFileInfoTrait::GetInternalKey(const FileEntry *FE) {
-  internal_key_type ikey = { FE->getSize(), FE->getModificationTime(),
-                             FE->getName(), /*Imported*/false };
+  internal_key_type ikey = {FE->getSize(),
+                            M.HasTimestamps ? FE->getModificationTime() : 0,
+                            FE->getName(), /*Imported*/ false};
   return ikey;
 }
     
 bool HeaderFileInfoTrait::EqualKey(internal_key_ref a, internal_key_ref b) {
-  if (a.Size != b.Size || a.ModTime != b.ModTime)
+  if (a.Size != b.Size || (a.ModTime && b.ModTime && a.ModTime != b.ModTime))
     return false;
 
   if (llvm::sys::path::is_absolute(a.Filename) &&
@@ -1555,14 +1556,15 @@ HeaderFileInfoTrait::ReadData(internal_key_ref key, const unsigned char *d,
   using namespace llvm::support;
   HeaderFileInfo HFI;
   unsigned Flags = *d++;
-  HFI.HeaderRole = static_cast<ModuleMap::ModuleHeaderRole>
-                   ((Flags >> 6) & 0x03);
-  HFI.isImport = (Flags >> 5) & 0x01;
-  HFI.isPragmaOnce = (Flags >> 4) & 0x01;
-  HFI.DirInfo = (Flags >> 2) & 0x03;
-  HFI.Resolved = (Flags >> 1) & 0x01;
+  // FIXME: Refactor with mergeHeaderFileInfo in HeaderSearch.cpp.
+  HFI.isImport |= (Flags >> 4) & 0x01;
+  HFI.isPragmaOnce |= (Flags >> 3) & 0x01;
+  HFI.DirInfo = (Flags >> 1) & 0x03;
   HFI.IndexHeaderMapHeader = Flags & 0x01;
-  HFI.NumIncludes = endian::readNext<uint16_t, little, unaligned>(d);
+  // FIXME: Find a better way to handle this. Maybe just store a
+  // "has been included" flag?
+  HFI.NumIncludes = std::max(endian::readNext<uint16_t, little, unaligned>(d),
+                             HFI.NumIncludes);
   HFI.ControllingMacroID = Reader.getGlobalIdentifierID(
       M, endian::readNext<uint32_t, little, unaligned>(d));
   if (unsigned FrameworkOffset =
@@ -1572,32 +1574,32 @@ HeaderFileInfoTrait::ReadData(internal_key_ref key, const unsigned char *d,
     StringRef FrameworkName(FrameworkStrings + FrameworkOffset - 1);
     HFI.Framework = HS->getUniqueFrameworkName(FrameworkName);
   }
-  
-  if (d != End) {
+
+  assert((End - d) % 4 == 0 &&
+         "Wrong data length in HeaderFileInfo deserialization");
+  while (d != End) {
     uint32_t LocalSMID = endian::readNext<uint32_t, little, unaligned>(d);
-    if (LocalSMID) {
-      // This header is part of a module. Associate it with the module to enable
-      // implicit module import.
-      SubmoduleID GlobalSMID = Reader.getGlobalSubmoduleID(M, LocalSMID);
-      Module *Mod = Reader.getSubmodule(GlobalSMID);
-      HFI.isModuleHeader = true;
-      FileManager &FileMgr = Reader.getFileManager();
-      ModuleMap &ModMap =
-          Reader.getPreprocessor().getHeaderSearchInfo().getModuleMap();
-      // FIXME: This information should be propagated through the
-      // SUBMODULE_HEADER etc records rather than from here.
-      // FIXME: We don't ever mark excluded headers.
-      std::string Filename = key.Filename;
-      if (key.Imported)
-        Reader.ResolveImportedPath(M, Filename);
-      Module::Header H = { key.Filename, FileMgr.getFile(Filename) };
-      ModMap.addHeader(Mod, H, HFI.getHeaderRole());
-    }
+    auto HeaderRole = static_cast<ModuleMap::ModuleHeaderRole>(LocalSMID & 3);
+    LocalSMID >>= 2;
+
+    // This header is part of a module. Associate it with the module to enable
+    // implicit module import.
+    SubmoduleID GlobalSMID = Reader.getGlobalSubmoduleID(M, LocalSMID);
+    Module *Mod = Reader.getSubmodule(GlobalSMID);
+    FileManager &FileMgr = Reader.getFileManager();
+    ModuleMap &ModMap =
+        Reader.getPreprocessor().getHeaderSearchInfo().getModuleMap();
+
+    std::string Filename = key.Filename;
+    if (key.Imported)
+      Reader.ResolveImportedPath(M, Filename);
+    // FIXME: This is not always the right filename-as-written, but we're not
+    // going to use this information to rebuild the module, so it doesn't make
+    // a lot of difference.
+    Module::Header H = { key.Filename, FileMgr.getFile(Filename) };
+    ModMap.addHeader(Mod, H, HeaderRole);
   }
 
-  assert(End == d && "Wrong data length in HeaderFileInfo deserialization");
-  (void)End;
-        
   // This HeaderFileInfo was externally loaded.
   HFI.External = true;
   return HFI;
@@ -1976,14 +1978,9 @@ InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
        // have inconsistent modification times that sometimes
        // erroneously trigger this error-handling path.
        //
-       // This also happens in networked file systems, so disable this
-       // check if validation is disabled or if we have an explicitly
-       // built PCM file.
-       //
-       // FIXME: Should we also do this for PCH files? They could also
-       // reasonably get shared across a network during a distributed build.
-       (StoredTime != File->getModificationTime() && !DisableValidation &&
-        F.Kind != MK_ExplicitModule)
+       // FIXME: This probably also breaks HeaderFileInfo lookups on Windows.
+       (StoredTime && StoredTime != File->getModificationTime() &&
+        !DisableValidation)
 #endif
        )) {
     if (Complain) {
@@ -2164,7 +2161,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
         return VersionMismatch;
       }
 
-      bool hasErrors = Record[5];
+      bool hasErrors = Record[6];
       if (hasErrors && !DisableValidation && !AllowASTWithCompilerErrors) {
         Diag(diag::err_pch_with_compiler_errors);
         return HadErrors;
@@ -2174,6 +2171,8 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       // Relative paths in a relocatable PCH are relative to our sysroot.
       if (F.RelocatablePCH)
         F.BaseDirectory = isysroot.empty() ? "/" : isysroot;
+
+      F.HasTimestamps = Record[5];
 
       const std::string &CurBranch = getClangFullRepositoryVersion();
       StringRef ASTBranch = Blob;
@@ -8124,14 +8123,9 @@ void ASTReader::finishPendingActions() {
     PendingIncompleteDeclChains.clear();
 
     // Load pending declaration chains.
-    for (unsigned I = 0; I != PendingDeclChains.size(); ++I) {
-      PendingDeclChainsKnown.erase(PendingDeclChains[I]);
+    for (unsigned I = 0; I != PendingDeclChains.size(); ++I)
       loadPendingDeclChain(PendingDeclChains[I]);
-    }
-    assert(PendingDeclChainsKnown.empty());
     PendingDeclChains.clear();
-
-    assert(RedeclsDeserialized.empty() && "some redecls not wired up");
 
     // Make the most recent of the top-level declarations visible.
     for (TopLevelDeclsMap::iterator TLD = TopLevelDecls.begin(),
@@ -8239,9 +8233,8 @@ void ASTReader::finishPendingActions() {
 
   // Load the bodies of any functions or methods we've encountered. We do
   // this now (delayed) so that we can be sure that the declaration chains
-  // have been fully wired up.
-  // FIXME: There seems to be no point in delaying this, it does not depend
-  // on the redecl chains having been wired up.
+  // have been fully wired up (hasBody relies on this).
+  // FIXME: We shouldn't require complete redeclaration chains here.
   for (PendingBodiesMap::iterator PB = PendingBodies.begin(),
                                PBEnd = PendingBodies.end();
        PB != PBEnd; ++PB) {
@@ -8440,8 +8433,9 @@ void ASTReader::FinishedDeserializing() {
       PendingExceptionSpecUpdates.clear();
       for (auto Update : Updates) {
         auto *FPT = Update.second->getType()->castAs<FunctionProtoType>();
-        SemaObj->UpdateExceptionSpec(Update.second,
-                                     FPT->getExtProtoInfo().ExceptionSpec);
+        auto ESI = FPT->getExtProtoInfo().ExceptionSpec;
+        for (auto *Redecl : Update.second->redecls())
+          Context.adjustExceptionSpec(cast<FunctionDecl>(Redecl), ESI);
       }
     }
 

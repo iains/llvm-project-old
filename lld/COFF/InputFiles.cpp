@@ -54,7 +54,7 @@ void ArchiveFile::parse() {
   // Parse a MemoryBufferRef as an archive file.
   auto ArchiveOrErr = Archive::create(MB);
   error(ArchiveOrErr, "Failed to parse static library");
-  File = std::move(ArchiveOrErr.get());
+  File = std::move(*ArchiveOrErr);
 
   // Allocate a buffer for Lazy objects.
   size_t NumSyms = File->getNumberOfSymbols();
@@ -63,13 +63,8 @@ void ArchiveFile::parse() {
   LazySymbols.reserve(NumSyms);
 
   // Read the symbol table to construct Lazy objects.
-  uint32_t I = 0;
-  for (const Archive::Symbol &Sym : File->symbols()) {
-    auto *B = new (&Buf[I++]) Lazy(this, Sym);
-    // Skip special symbol exists in import library files.
-    if (B->getName() != "__NULL_IMPORT_DESCRIPTOR")
-      LazySymbols.push_back(B);
-  }
+  for (const Archive::Symbol &Sym : File->symbols())
+    LazySymbols.push_back(new (Buf++) Lazy(this, Sym));
 
   // Seen is a map from member files to boolean values. Initially
   // all members are mapped to false, which indicates all these files
@@ -84,7 +79,7 @@ MemoryBufferRef ArchiveFile::getMember(const Archive::Symbol *Sym) {
   auto ItOrErr = Sym->getMember();
   error(ItOrErr,
         Twine("Could not get the member for symbol ") + Sym->getName());
-  Archive::child_iterator It = ItOrErr.get();
+  Archive::child_iterator It = *ItOrErr;
 
   // Return an empty buffer if we have already returned the same buffer.
   if (Seen[It->getChildOffset()].test_and_set())
@@ -99,7 +94,7 @@ void ObjectFile::parse() {
   // Parse a memory buffer as a COFF file.
   auto BinOrErr = createBinary(MB);
   error(BinOrErr, "Failed to parse object file");
-  std::unique_ptr<Binary> Bin = std::move(BinOrErr.get());
+  std::unique_ptr<Binary> Bin = std::move(*BinOrErr);
 
   if (auto *Obj = dyn_cast<COFFObjectFile>(Bin.get())) {
     Bin.release();
@@ -154,13 +149,14 @@ void ObjectFile::initializeSymbols() {
   uint32_t NumSymbols = COFFObj->getNumberOfSymbols();
   SymbolBodies.reserve(NumSymbols);
   SparseSymbolBodies.resize(NumSymbols);
+  llvm::SmallVector<Undefined *, 8> WeakAliases;
   int32_t LastSectionNumber = 0;
   for (uint32_t I = 0; I < NumSymbols; ++I) {
     // Get a COFFSymbolRef object.
     auto SymOrErr = COFFObj->getSymbol(I);
     error(SymOrErr, Twine("broken object file: ") + getName());
 
-    COFFSymbolRef Sym = SymOrErr.get();
+    COFFSymbolRef Sym = *SymOrErr;
 
     const void *AuxP = nullptr;
     if (Sym.getNumberOfAuxSymbols())
@@ -172,6 +168,7 @@ void ObjectFile::initializeSymbols() {
       Body = createUndefined(Sym);
     } else if (Sym.isWeakExternal()) {
       Body = createWeakExternal(Sym, AuxP);
+      WeakAliases.push_back((Undefined *)Body);
     } else {
       Body = createDefined(Sym, AuxP, IsFirst);
     }
@@ -182,6 +179,8 @@ void ObjectFile::initializeSymbols() {
     I += Sym.getNumberOfAuxSymbols();
     LastSectionNumber = Sym.getSectionNumber();
   }
+  for (Undefined *U : WeakAliases)
+    U->WeakAlias = SparseSymbolBodies[(uintptr_t)U->WeakAlias];
 }
 
 Undefined *ObjectFile::createUndefined(COFFSymbolRef Sym) {
@@ -195,7 +194,7 @@ Undefined *ObjectFile::createWeakExternal(COFFSymbolRef Sym, const void *AuxP) {
   COFFObj->getSymbolName(Sym, Name);
   auto *U = new (Alloc) Undefined(Name);
   auto *Aux = (const coff_aux_weak_external *)AuxP;
-  U->WeakAlias = SparseSymbolBodies[Aux->TagIndex];
+  U->WeakAlias = (Undefined *)(uintptr_t)Aux->TagIndex;
   return U;
 }
 
@@ -281,7 +280,8 @@ void ImportFile::parse() {
   // Read names and create an __imp_ symbol.
   StringRef Name = StringAlloc.save(StringRef(Buf + sizeof(*Hdr)));
   StringRef ImpName = StringAlloc.save(Twine("__imp_") + Name);
-  StringRef DLLName(Buf + sizeof(coff_import_header) + Name.size() + 1);
+  const char *NameStart = Buf + sizeof(coff_import_header) + Name.size() + 1;
+  DLLName = StringRef(NameStart).lower();
   StringRef ExtName;
   switch (Hdr->getNameType()) {
   case IMPORT_ORDINAL:
@@ -298,16 +298,16 @@ void ImportFile::parse() {
     ExtName = ExtName.substr(0, ExtName.find('@'));
     break;
   }
-  auto *ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, ExtName, Hdr);
+  ImpSym = new (Alloc) DefinedImportData(DLLName, ImpName, ExtName, Hdr);
   SymbolBodies.push_back(ImpSym);
 
   // If type is function, we need to create a thunk which jump to an
   // address pointed by the __imp_ symbol. (This allows you to call
   // DLL functions just like regular non-DLL functions.)
-  if (Hdr->getType() == llvm::COFF::IMPORT_CODE) {
-    auto *B = new (Alloc) DefinedImportThunk(Name, ImpSym, Hdr->Machine);
-    SymbolBodies.push_back(B);
-  }
+  if (Hdr->getType() != llvm::COFF::IMPORT_CODE)
+    return;
+  ThunkSym = new (Alloc) DefinedImportThunk(Name, ImpSym, Hdr->Machine);
+  SymbolBodies.push_back(ThunkSym);
 }
 
 void BitcodeFile::parse() {

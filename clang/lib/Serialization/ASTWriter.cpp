@@ -1148,6 +1148,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
   MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 16)); // Clang maj.
   MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 16)); // Clang min.
   MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Relocatable
+  MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Timestamps
   MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Errors
   MetadataAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // SVN branch/tag
   unsigned MetadataAbbrevCode = Stream.EmitAbbrev(MetadataAbbrev);
@@ -1159,6 +1160,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
   assert((!WritingModule || isysroot.empty()) &&
          "writing module as a relocatable PCH?");
   Record.push_back(!isysroot.empty());
+  Record.push_back(IncludeTimestamps);
   Record.push_back(ASTHasCompilerErrors);
   Stream.EmitRecordWithBlob(MetadataAbbrevCode, Record,
                             getClangFullRepositoryVersion());
@@ -1248,7 +1250,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
       Record.push_back((unsigned)M->Kind); // FIXME: Stable encoding
       AddSourceLocation(M->ImportLoc, Record);
       Record.push_back(M->File->getSize());
-      Record.push_back(M->File->getModificationTime());
+      Record.push_back(getTimestampForOutput(M->File));
       Record.push_back(M->Signature);
       AddPath(M->FileName, Record);
     }
@@ -1512,7 +1514,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
 
     // Emit size/modification time for this file.
     Record.push_back(Entry.File->getSize());
-    Record.push_back(Entry.File->getModificationTime());
+    Record.push_back(getTimestampForOutput(Entry.File));
 
     // Whether this file was overridden.
     Record.push_back(Entry.BufferOverridden);
@@ -1624,27 +1626,25 @@ namespace {
     typedef unsigned hash_value_type;
     typedef unsigned offset_type;
     
-    static hash_value_type ComputeHash(key_type_ref key) {
+    hash_value_type ComputeHash(key_type_ref key) {
       // The hash is based only on size/time of the file, so that the reader can
       // match even when symlinking or excess path elements ("foo/../", "../")
       // change the form of the name. However, complete path is still the key.
-      //
-      // FIXME: Using the mtime here will cause problems for explicit module
-      // imports.
       return llvm::hash_combine(key.FE->getSize(),
-                                key.FE->getModificationTime());
+                                Writer.getTimestampForOutput(key.FE));
     }
     
     std::pair<unsigned,unsigned>
     EmitKeyDataLength(raw_ostream& Out, key_type_ref key, data_type_ref Data) {
       using namespace llvm::support;
-      endian::Writer<little> Writer(Out);
+      endian::Writer<little> LE(Out);
       unsigned KeyLen = strlen(key.Filename) + 1 + 8 + 8;
-      Writer.write<uint16_t>(KeyLen);
+      LE.write<uint16_t>(KeyLen);
       unsigned DataLen = 1 + 2 + 4 + 4;
-      if (Data.isModuleHeader)
-        DataLen += 4;
-      Writer.write<uint8_t>(DataLen);
+      for (auto ModInfo : HS.getModuleMap().findAllModulesForHeader(key.FE))
+        if (Writer.getLocalOrImportedSubmoduleID(ModInfo.getModule()))
+          DataLen += 4;
+      LE.write<uint8_t>(DataLen);
       return std::make_pair(KeyLen, DataLen);
     }
     
@@ -1653,7 +1653,7 @@ namespace {
       endian::Writer<little> LE(Out);
       LE.write<uint64_t>(key.FE->getSize());
       KeyLen -= 8;
-      LE.write<uint64_t>(key.FE->getModificationTime());
+      LE.write<uint64_t>(Writer.getTimestampForOutput(key.FE));
       KeyLen -= 8;
       Out.write(key.Filename, KeyLen);
     }
@@ -1664,11 +1664,9 @@ namespace {
       endian::Writer<little> LE(Out);
       uint64_t Start = Out.tell(); (void)Start;
       
-      unsigned char Flags = (Data.HeaderRole << 6)
-                          | (Data.isImport << 5)
-                          | (Data.isPragmaOnce << 4)
-                          | (Data.DirInfo << 2)
-                          | (Data.Resolved << 1)
+      unsigned char Flags = (Data.isImport << 4)
+                          | (Data.isPragmaOnce << 3)
+                          | (Data.DirInfo << 1)
                           | Data.IndexHeaderMapHeader;
       LE.write<uint8_t>(Flags);
       LE.write<uint16_t>(Data.NumIncludes);
@@ -1695,9 +1693,15 @@ namespace {
       }
       LE.write<uint32_t>(Offset);
 
-      if (Data.isModuleHeader) {
-        Module *Mod = HS.findModuleForHeader(key.FE).getModule();
-        LE.write<uint32_t>(Writer.getExistingSubmoduleID(Mod));
+      // FIXME: If the header is excluded, we should write out some
+      // record of that fact.
+      for (auto ModInfo : HS.getModuleMap().findAllModulesForHeader(key.FE)) {
+        if (uint32_t ModID =
+                Writer.getLocalOrImportedSubmoduleID(ModInfo.getModule())) {
+          uint32_t Value = (ModID << 2) | (unsigned)ModInfo.getRole();
+          assert((Value >> 2) == ModID && "overflow in header module info");
+          LE.write<uint32_t>(Value);
+        }
       }
 
       assert(Out.tell() - Start == DataLen && "Wrong data length");
@@ -1727,12 +1731,15 @@ void ASTWriter::WriteHeaderSearch(const HeaderSearch &HS) {
     if (!File)
       continue;
 
-    // Use HeaderSearch's getFileInfo to make sure we get the HeaderFileInfo
-    // from the external source if it was not provided already.
-    HeaderFileInfo HFI;
-    if (!HS.tryGetFileInfo(File, HFI) ||
-        (HFI.External && Chain) ||
-        (HFI.isModuleHeader && !HFI.isCompilingModuleHeader))
+    // Get the file info. This will load info from the external source if
+    // necessary. Skip emitting this file if we have no information on it
+    // as a header file (in which case HFI will be null) or if it hasn't
+    // changed since it was loaded. Also skip it if it's for a modular header
+    // from a different module; in that case, we rely on the module(s)
+    // containing the header to provide this information.
+    const HeaderFileInfo *HFI = HS.getExistingFileInfo(File);
+    if (!HFI || (HFI->External && Chain) ||
+        (HFI->isModuleHeader && !HFI->isCompilingModuleHeader))
       continue;
 
     // Massage the file path into an appropriate form.
@@ -1746,7 +1753,7 @@ void ASTWriter::WriteHeaderSearch(const HeaderSearch &HS) {
     }
 
     HeaderFileInfoTrait::key_type key = { File, Filename };
-    Generator.insert(key, HFI, GeneratorTrait);
+    Generator.insert(key, *HFI, GeneratorTrait);
     ++NumHeaderSearchEntries;
   }
   
@@ -2284,24 +2291,28 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec) {
   }
 }
 
-unsigned ASTWriter::getSubmoduleID(Module *Mod) {
-  llvm::DenseMap<Module *, unsigned>::iterator Known = SubmoduleIDs.find(Mod);
-  if (Known != SubmoduleIDs.end())
-    return Known->second;
-  
-  return SubmoduleIDs[Mod] = NextSubmoduleID++;
-}
-
-unsigned ASTWriter::getExistingSubmoduleID(Module *Mod) const {
+unsigned ASTWriter::getLocalOrImportedSubmoduleID(Module *Mod) {
   if (!Mod)
     return 0;
 
-  llvm::DenseMap<Module *, unsigned>::const_iterator
-    Known = SubmoduleIDs.find(Mod);
+  llvm::DenseMap<Module *, unsigned>::iterator Known = SubmoduleIDs.find(Mod);
   if (Known != SubmoduleIDs.end())
     return Known->second;
 
-  return 0;
+  if (Mod->getTopLevelModule() != WritingModule)
+    return 0;
+
+  return SubmoduleIDs[Mod] = NextSubmoduleID++;
+}
+
+unsigned ASTWriter::getSubmoduleID(Module *Mod) {
+  // FIXME: This can easily happen, if we have a reference to a submodule that
+  // did not result in us loading a module file for that submodule. For
+  // instance, a cross-top-level-module 'conflict' declaration will hit this.
+  unsigned ID = getLocalOrImportedSubmoduleID(Mod);
+  assert((ID || !Mod) &&
+         "asked for module ID for non-local, non-imported module");
+  return ID;
 }
 
 /// \brief Compute the number of modules within the given tree (including the
@@ -2435,12 +2446,11 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     Stream.EmitRecordWithBlob(DefinitionAbbrev, Record, Mod->Name);
     
     // Emit the requirements.
-    for (unsigned I = 0, N = Mod->Requirements.size(); I != N; ++I) {
+    for (const auto &R : Mod->Requirements) {
       Record.clear();
       Record.push_back(SUBMODULE_REQUIRES);
-      Record.push_back(Mod->Requirements[I].second);
-      Stream.EmitRecordWithBlob(RequiresAbbrev, Record,
-                                Mod->Requirements[I].first);
+      Record.push_back(R.second);
+      Stream.EmitRecordWithBlob(RequiresAbbrev, Record, R.first);
     }
 
     // Emit the umbrella header, if there is one.
@@ -2488,26 +2498,19 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     // Emit the imports. 
     if (!Mod->Imports.empty()) {
       Record.clear();
-      for (unsigned I = 0, N = Mod->Imports.size(); I != N; ++I) {
-        unsigned ImportedID = getSubmoduleID(Mod->Imports[I]);
-        assert(ImportedID && "Unknown submodule!");
-        Record.push_back(ImportedID);
-      }
+      for (auto *I : Mod->Imports)
+        Record.push_back(getSubmoduleID(I));
       Stream.EmitRecord(SUBMODULE_IMPORTS, Record);
     }
 
     // Emit the exports. 
     if (!Mod->Exports.empty()) {
       Record.clear();
-      for (unsigned I = 0, N = Mod->Exports.size(); I != N; ++I) {
-        if (Module *Exported = Mod->Exports[I].getPointer()) {
-          unsigned ExportedID = getSubmoduleID(Exported);
-          Record.push_back(ExportedID);
-        } else {
-          Record.push_back(0);
-        }
-        
-        Record.push_back(Mod->Exports[I].getInt());
+      for (const auto &E : Mod->Exports) {
+        // FIXME: This may fail; we don't require that all exported modules
+        // are local or imported.
+        Record.push_back(getSubmoduleID(E.getPointer()));
+        Record.push_back(E.getInt());
       }
       Stream.EmitRecord(SUBMODULE_EXPORTS, Record);
     }
@@ -2517,45 +2520,37 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     // module itself.
 
     // Emit the link libraries.
-    for (unsigned I = 0, N = Mod->LinkLibraries.size(); I != N; ++I) {
+    for (const auto &LL : Mod->LinkLibraries) {
       Record.clear();
       Record.push_back(SUBMODULE_LINK_LIBRARY);
-      Record.push_back(Mod->LinkLibraries[I].IsFramework);
-      Stream.EmitRecordWithBlob(LinkLibraryAbbrev, Record,
-                                Mod->LinkLibraries[I].Library);
+      Record.push_back(LL.IsFramework);
+      Stream.EmitRecordWithBlob(LinkLibraryAbbrev, Record, LL.Library);
     }
 
     // Emit the conflicts.
-    for (unsigned I = 0, N = Mod->Conflicts.size(); I != N; ++I) {
+    for (const auto &C : Mod->Conflicts) {
       Record.clear();
       Record.push_back(SUBMODULE_CONFLICT);
-      unsigned OtherID = getSubmoduleID(Mod->Conflicts[I].Other);
-      assert(OtherID && "Unknown submodule!");
-      Record.push_back(OtherID);
-      Stream.EmitRecordWithBlob(ConflictAbbrev, Record,
-                                Mod->Conflicts[I].Message);
+      // FIXME: This may fail; we don't require that all conflicting modules
+      // are local or imported.
+      Record.push_back(getSubmoduleID(C.Other));
+      Stream.EmitRecordWithBlob(ConflictAbbrev, Record, C.Message);
     }
 
     // Emit the configuration macros.
-    for (unsigned I = 0, N =  Mod->ConfigMacros.size(); I != N; ++I) {
+    for (const auto &CM : Mod->ConfigMacros) {
       Record.clear();
       Record.push_back(SUBMODULE_CONFIG_MACRO);
-      Stream.EmitRecordWithBlob(ConfigMacroAbbrev, Record,
-                                Mod->ConfigMacros[I]);
+      Stream.EmitRecordWithBlob(ConfigMacroAbbrev, Record, CM);
     }
 
     // Queue up the submodules of this module.
-    for (Module::submodule_iterator Sub = Mod->submodule_begin(),
-                                 SubEnd = Mod->submodule_end();
-         Sub != SubEnd; ++Sub)
-      Q.push(*Sub);
+    for (auto *M : Mod->submodules())
+      Q.push(M);
   }
   
   Stream.ExitBlock();
 
-  // FIXME: This can easily happen, if we have a reference to a submodule that
-  // did not result in us loading a module file for that submodule. For
-  // instance, a cross-top-level-module 'conflict' declaration will hit this.
   assert((NextSubmoduleID - FirstSubmoduleID ==
           getNumberOfModules(WritingModule)) &&
          "Wrong # of submodules; found a reference to a non-local, "
@@ -3804,41 +3799,39 @@ void ASTWriter::WriteRedeclarations() {
   SmallVector<serialization::LocalRedeclarationsInfo, 2> LocalRedeclsMap;
 
   for (unsigned I = 0, N = Redeclarations.size(); I != N; ++I) {
-    const Decl *Key = Redeclarations[I];
-    assert((Chain ? Chain->getKeyDeclaration(Key) == Key
-                  : Key->isFirstDecl()) &&
-           "not the key declaration");
+    const Decl *FirstLocal = Redeclarations[I];
+    assert(!FirstLocal->isFromASTFile() &&
+           (!FirstLocal->getPreviousDecl() ||
+            FirstLocal->getPreviousDecl()->isFromASTFile() ||
+            getDeclID(FirstLocal->getPreviousDecl()) < NUM_PREDEF_DECL_IDS) &&
+           "not the first local declaration");
+    assert(getDeclID(FirstLocal) >= NUM_PREDEF_DECL_IDS &&
+           "should not have predefined decl as first decl");
 
-    const Decl *First = Key->getCanonicalDecl();
-    const Decl *MostRecent = First->getMostRecentDecl();
-
-    assert((getDeclID(First) >= NUM_PREDEF_DECL_IDS || First == Key) &&
-           "should not have imported key decls for predefined decl");
-
-    // If we only have a single declaration, there is no point in storing
-    // a redeclaration chain.
-    if (First == MostRecent)
-      continue;
-    
     unsigned Offset = LocalRedeclChains.size();
     unsigned Size = 0;
     LocalRedeclChains.push_back(0); // Placeholder for the size.
 
     // Collect the set of local redeclarations of this declaration, from newest
     // to oldest.
-    for (const Decl *Prev = MostRecent; Prev;
-         Prev = Prev->getPreviousDecl()) { 
-      if (!Prev->isFromASTFile() && Prev != Key) {
+    for (const Decl *Prev = FirstLocal->getMostRecentDecl(); Prev != FirstLocal;
+         Prev = Prev->getPreviousDecl()) {
+      if (!Prev->isFromASTFile()) {
         AddDeclRef(Prev, LocalRedeclChains);
         ++Size;
       }
     }
 
+    // If we only have a single local declaration, there is no point in storing
+    // a redeclaration chain.
+    if (LocalRedeclChains.size() == 1)
+      continue;
+
     LocalRedeclChains[Offset] = Size;
 
     // Add the mapping from the first ID from the AST to the set of local
     // declarations.
-    LocalRedeclarationsInfo Info = { getDeclID(Key), Offset };
+    LocalRedeclarationsInfo Info = { getDeclID(FirstLocal), Offset };
     LocalRedeclsMap.push_back(Info);
 
     assert(N == Redeclarations.size() && 
@@ -4058,22 +4051,21 @@ void ASTWriter::SetSelectorOffset(Selector Sel, uint32_t Offset) {
   SelectorOffsets[ID - FirstSelectorID] = Offset;
 }
 
-ASTWriter::ASTWriter(llvm::BitstreamWriter &Stream)
+ASTWriter::ASTWriter(llvm::BitstreamWriter &Stream, bool IncludeTimestamps)
     : Stream(Stream), Context(nullptr), PP(nullptr), Chain(nullptr),
-      WritingModule(nullptr), WritingAST(false),
-      DoneWritingDeclsAndTypes(false), ASTHasCompilerErrors(false),
-      FirstDeclID(NUM_PREDEF_DECL_IDS), NextDeclID(FirstDeclID),
-      FirstTypeID(NUM_PREDEF_TYPE_IDS), NextTypeID(FirstTypeID),
-      FirstIdentID(NUM_PREDEF_IDENT_IDS), NextIdentID(FirstIdentID),
-      FirstMacroID(NUM_PREDEF_MACRO_IDS), NextMacroID(FirstMacroID),
-      FirstSubmoduleID(NUM_PREDEF_SUBMODULE_IDS),
+      WritingModule(nullptr), IncludeTimestamps(IncludeTimestamps),
+      WritingAST(false), DoneWritingDeclsAndTypes(false),
+      ASTHasCompilerErrors(false), FirstDeclID(NUM_PREDEF_DECL_IDS),
+      NextDeclID(FirstDeclID), FirstTypeID(NUM_PREDEF_TYPE_IDS),
+      NextTypeID(FirstTypeID), FirstIdentID(NUM_PREDEF_IDENT_IDS),
+      NextIdentID(FirstIdentID), FirstMacroID(NUM_PREDEF_MACRO_IDS),
+      NextMacroID(FirstMacroID), FirstSubmoduleID(NUM_PREDEF_SUBMODULE_IDS),
       NextSubmoduleID(FirstSubmoduleID),
       FirstSelectorID(NUM_PREDEF_SELECTOR_IDS), NextSelectorID(FirstSelectorID),
       CollectedStmts(&StmtsToEmit), NumStatements(0), NumMacros(0),
       NumLexicalDeclContexts(0), NumVisibleDeclContexts(0),
       NextCXXBaseSpecifiersID(1), NextCXXCtorInitializersID(1),
-      TypeExtQualAbbrev(0),
-      TypeFunctionProtoAbbrev(0), DeclParmVarAbbrev(0),
+      TypeExtQualAbbrev(0), TypeFunctionProtoAbbrev(0), DeclParmVarAbbrev(0),
       DeclContextLexicalAbbrev(0), DeclContextVisibleLookupAbbrev(0),
       UpdateVisibleAbbrev(0), DeclRecordAbbrev(0), DeclTypedefAbbrev(0),
       DeclVarAbbrev(0), DeclFieldAbbrev(0), DeclEnumAbbrev(0),
@@ -4088,6 +4080,10 @@ ASTWriter::~ASTWriter() {
 const LangOptions &ASTWriter::getLangOpts() const {
   assert(WritingAST && "can't determine lang opts when not writing AST");
   return Context->getLangOpts();
+}
+
+time_t ASTWriter::getTimestampForOutput(const FileEntry *E) const {
+  return IncludeTimestamps ? E->getModificationTime() : 0;
 }
 
 void ASTWriter::WriteAST(Sema &SemaRef,
@@ -4147,8 +4143,6 @@ void ASTWriter::WriteASTCore(Sema &SemaRef,
     if (D) {
       assert(D->isCanonicalDecl() && "predefined decl is not canonical");
       DeclIDs[D] = ID;
-      if (D->getMostRecentDecl() != D)
-        Redeclarations.push_back(D);
     }
   };
   RegisterPredefDecl(Context.getTranslationUnitDecl(),
@@ -5730,42 +5724,6 @@ void ASTWriter::AddedCXXImplicitMember(const CXXRecordDecl *RD, const Decl *D) {
   assert(RD->isCompleteDefinition());
   assert(!WritingAST && "Already writing the AST!");
   DeclUpdates[RD].push_back(DeclUpdate(UPD_CXX_ADDED_IMPLICIT_MEMBER, D));
-}
-
-void ASTWriter::AddedCXXTemplateSpecialization(const ClassTemplateDecl *TD,
-                                     const ClassTemplateSpecializationDecl *D) {
-  // The specializations set is kept in the canonical template.
-  TD = TD->getCanonicalDecl();
-  if (!(!D->isFromASTFile() && TD->isFromASTFile()))
-    return; // Not a source specialization added to a template from PCH.
-
-  assert(!WritingAST && "Already writing the AST!");
-  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
-                                       D));
-}
-
-void ASTWriter::AddedCXXTemplateSpecialization(
-    const VarTemplateDecl *TD, const VarTemplateSpecializationDecl *D) {
-  // The specializations set is kept in the canonical template.
-  TD = TD->getCanonicalDecl();
-  if (!(!D->isFromASTFile() && TD->isFromASTFile()))
-    return; // Not a source specialization added to a template from PCH.
-
-  assert(!WritingAST && "Already writing the AST!");
-  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
-                                       D));
-}
-
-void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
-                                               const FunctionDecl *D) {
-  // The specializations set is kept in the canonical template.
-  TD = TD->getCanonicalDecl();
-  if (!(!D->isFromASTFile() && TD->isFromASTFile()))
-    return; // Not a source specialization added to a template from PCH.
-
-  assert(!WritingAST && "Already writing the AST!");
-  DeclUpdates[TD].push_back(DeclUpdate(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION,
-                                       D));
 }
 
 void ASTWriter::ResolvedExceptionSpec(const FunctionDecl *FD) {

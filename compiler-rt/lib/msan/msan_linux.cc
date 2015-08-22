@@ -154,9 +154,6 @@ bool InitShadow(bool init_origins) {
 void MsanDie() {
   if (common_flags()->coverage)
     __sanitizer_cov_dump();
-  if (death_callback)
-    death_callback();
-  internal__exit(flags()->exit_code);
 }
 
 static void MsanAtExit(void) {
@@ -164,7 +161,8 @@ static void MsanAtExit(void) {
     ReportStats();
   if (msan_report_count > 0) {
     ReportAtExitStatistics();
-    if (flags()->exit_code) _exit(flags()->exit_code);
+    if (common_flags()->exitcode)
+      internal__exit(common_flags()->exitcode);
   }
 }
 

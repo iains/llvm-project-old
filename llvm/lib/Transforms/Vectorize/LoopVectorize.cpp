@@ -552,7 +552,8 @@ static void propagateMetadata(Instruction *To, const Instruction *From) {
     if (Kind != LLVMContext::MD_tbaa &&
         Kind != LLVMContext::MD_alias_scope &&
         Kind != LLVMContext::MD_noalias &&
-        Kind != LLVMContext::MD_fpmath)
+        Kind != LLVMContext::MD_fpmath &&
+        Kind != LLVMContext::MD_nontemporal)
       continue;
 
     To->setMetadata(Kind, M.second);
@@ -1498,7 +1499,7 @@ public:
   bool doesNotMeet(Function *F, Loop *L, const LoopVectorizeHints &Hints) {
     // If a loop hint is provided the diagnostic is always produced.
     const char *Name = Hints.isForced() ? DiagnosticInfo::AlwaysPrint : LV_NAME;
-    bool failed = false;
+    bool Failed = false;
     if (UnsafeAlgebraInst &&
         Hints.getForce() == LoopVectorizeHints::FK_Undefined &&
         Hints.getWidth() == 0) {
@@ -1508,7 +1509,7 @@ public:
                                    "order of operations, however IEEE 754 "
                                    "floating-point operations are not "
                                    "commutative");
-      failed = true;
+      Failed = true;
     }
 
     if (NumRuntimePointerChecks >
@@ -1523,10 +1524,10 @@ public:
                  "would exceed the limit of "
               << VectorizerParams::RuntimeMemoryCheckThreshold << " checks");
       DEBUG(dbgs() << "LV: Too many memory checks needed.\n");
-      failed = true;
+      Failed = true;
     }
 
-    return failed;
+    return Failed;
   }
 
 private:
@@ -1569,7 +1570,7 @@ struct LoopVectorize : public FunctionPass {
   BlockFrequency ColdEntryFreq;
 
   bool runOnFunction(Function &F) override {
-    SE = &getAnalysis<ScalarEvolution>();
+    SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
@@ -1863,7 +1864,7 @@ struct LoopVectorize : public FunctionPass {
     AU.addRequired<BlockFrequencyInfoWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<ScalarEvolution>();
+    AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<LoopAccessAnalysis>();
@@ -5399,7 +5400,7 @@ INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
