@@ -22,7 +22,6 @@
 #include "lldb/Symbol/Type.h"
 #include "lldb/Symbol/VerifyDecl.h"
 #include "lldb/Target/ExecutionContext.h"
-#include "lldb/Target/ObjCLanguageRuntime.h"
 #include "lldb/Target/Process.h"
 
 #include <iterator>
@@ -397,14 +396,14 @@ CompilerType::GetTypeClass () const
 }
 
 void
-CompilerType::SetClangType (TypeSystem* type_system, void*  type)
+CompilerType::SetCompilerType (TypeSystem* type_system, void*  type)
 {
     m_type_system = type_system;
     m_type = type;
 }
 
 void
-CompilerType::SetClangType (clang::ASTContext *ast, clang::QualType qual_type)
+CompilerType::SetCompilerType (clang::ASTContext *ast, clang::QualType qual_type)
 {
     m_type_system = ClangASTContext::GetASTContext(ast);
     m_type = qual_type.getAsOpaquePtr();
@@ -536,15 +535,6 @@ CompilerType::GetTypedefedType () const
     return CompilerType();
 }
 
-//CompilerType
-//CompilerType::RemoveFastQualifiers () const
-//{
-//    if (IsValid())
-//        return m_type_system->RemoveFastQualifiers(m_type);
-//    return CompilerType();
-//}
-
-
 //----------------------------------------------------------------------
 // Create related types using the current type's AST
 //----------------------------------------------------------------------
@@ -553,7 +543,7 @@ CompilerType
 CompilerType::GetBasicTypeFromAST (lldb::BasicType basic_type) const
 {
     if (IsValid())
-        return m_type_system->GetBasicTypeFromAST(m_type, basic_type);
+        return m_type_system->GetBasicTypeFromAST(basic_type);
     return CompilerType();
 }
 //----------------------------------------------------------------------
@@ -620,6 +610,12 @@ CompilerType::GetBasicTypeEnumeration () const
     return eBasicTypeInvalid;
 }
 
+void
+CompilerType::ForEachEnumerator (std::function <bool (const CompilerType &integer_type, const ConstString &name, const llvm::APSInt &value)> const &callback) const
+{
+    if (IsValid())
+        return m_type_system->ForEachEnumerator (m_type, callback);
+}
 
 
 uint32_t
@@ -640,6 +636,38 @@ CompilerType::GetFieldAtIndex (size_t idx,
     if (!IsValid())
         return CompilerType();
     return m_type_system->GetFieldAtIndex(m_type, idx, name, bit_offset_ptr, bitfield_bit_size_ptr, is_bitfield_ptr);
+}
+
+uint32_t
+CompilerType::GetNumDirectBaseClasses () const
+{
+    if (IsValid())
+        return m_type_system->GetNumDirectBaseClasses (m_type);
+    return 0;
+}
+
+uint32_t
+CompilerType::GetNumVirtualBaseClasses () const
+{
+    if (IsValid())
+        return m_type_system->GetNumVirtualBaseClasses (m_type);
+    return 0;
+}
+
+CompilerType
+CompilerType::GetDirectBaseClassAtIndex (size_t idx, uint32_t *bit_offset_ptr) const
+{
+    if (IsValid())
+        return m_type_system->GetDirectBaseClassAtIndex (m_type, idx, bit_offset_ptr);
+    return CompilerType();
+}
+
+CompilerType
+CompilerType::GetVirtualBaseClassAtIndex (size_t idx, uint32_t *bit_offset_ptr) const
+{
+    if (IsValid())
+        return m_type_system->GetVirtualBaseClassAtIndex (m_type, idx, bit_offset_ptr);
+    return CompilerType();
 }
 
 uint32_t

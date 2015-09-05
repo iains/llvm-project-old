@@ -328,6 +328,12 @@ static void HandleInlinedEHPad(InvokeInst *II, BasicBlock *FirstNewBlock,
           CEPI->eraseFromParent();
           UpdatePHINodes(BB);
         }
+      } else if (auto *CEPI = dyn_cast<CleanupEndPadInst>(I)) {
+        if (CEPI->unwindsToCaller()) {
+          CleanupEndPadInst::Create(CEPI->getCleanupPad(), UnwindDest, CEPI);
+          CEPI->eraseFromParent();
+          UpdatePHINodes(BB);
+        }
       } else if (auto *TPI = dyn_cast<TerminatePadInst>(I)) {
         if (TPI->unwindsToCaller()) {
           SmallVector<Value *, 3> TerminatePadArgs;
@@ -344,8 +350,7 @@ static void HandleInlinedEHPad(InvokeInst *II, BasicBlock *FirstNewBlock,
 
     if (auto *CRI = dyn_cast<CleanupReturnInst>(BB->getTerminator())) {
       if (CRI->unwindsToCaller()) {
-        CleanupReturnInst::Create(CRI->getContext(), CRI->getReturnValue(),
-                                  UnwindDest, CRI);
+        CleanupReturnInst::Create(CRI->getCleanupPad(), UnwindDest, CRI);
         CRI->eraseFromParent();
         UpdatePHINodes(BB);
       }

@@ -374,7 +374,7 @@ public:
     virtual ~ValueObject();
     
     CompilerType
-    GetClangType ();
+    GetCompilerType ();
     
     // this vends a TypeImpl that is useful at the SB API layer
     virtual TypeImpl
@@ -1139,7 +1139,7 @@ protected:
     
     friend class ValueObjectChild;
     friend class ClangExpressionDeclMap;  // For GetValue
-    friend class ClangExpressionVariable; // For SetName
+    friend class ExpressionVariable;      // For SetName
     friend class Target;                  // For SetName
     friend class ValueObjectConstResultImpl;
     friend class ValueObjectSynthetic;    // For ClearUserVisibleData
@@ -1232,7 +1232,7 @@ protected:
     //------------------------------------------------------------------
     
     virtual CompilerType
-    GetClangTypeImpl () = 0;
+    GetCompilerTypeImpl () = 0;
     
     const char *
     GetLocationAsCStringImpl (const Value& value,

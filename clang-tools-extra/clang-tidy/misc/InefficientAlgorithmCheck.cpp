@@ -28,6 +28,11 @@ static bool areTypesCompatible(QualType Left, QualType Right) {
 }
 
 void InefficientAlgorithmCheck::registerMatchers(MatchFinder *Finder) {
+  // Only register the matchers for C++; the functionality currently does not
+  // provide any benefit to other languages, despite being benign.
+  if (!getLangOpts().CPlusPlus)
+    return;
+
   const std::string Algorithms =
       "^::std::(find|count|equal_range|lower_bound|upper_bound)$";
   const auto ContainerMatcher = classTemplateSpecializationDecl(
@@ -49,7 +54,8 @@ void InefficientAlgorithmCheck::registerMatchers(MatchFinder *Finder) {
                              on(declRefExpr(hasDeclaration(
                                  equalsBoundNode("IneffContObj")))))))),
           hasArgument(2, expr().bind("AlgParam")),
-          unless(isInTemplateInstantiation())).bind("IneffAlg");
+          unless(isInTemplateInstantiation()))
+          .bind("IneffAlg");
 
   Finder->addMatcher(Matcher, this);
 }

@@ -128,13 +128,13 @@ static std::vector<std::vector<DefinedImportData *>>
 binImports(const std::vector<DefinedImportData *> &Imports) {
   // Group DLL-imported symbols by DLL name because that's how
   // symbols are layed out in the import descriptor table.
-  auto Less = [](StringRef A, StringRef B) {
+  auto Less = [](const std::string &A, const std::string &B) {
     return Config->DLLOrder[A] < Config->DLLOrder[B];
   };
-  std::map<StringRef, std::vector<DefinedImportData *>,
-           bool(*)(StringRef, StringRef)> M(Less);
+  std::map<std::string, std::vector<DefinedImportData *>,
+           bool(*)(const std::string &, const std::string &)> M(Less);
   for (DefinedImportData *Sym : Imports)
-    M[Sym->getDLLName()].push_back(Sym);
+    M[Sym->getDLLName().lower()].push_back(Sym);
 
   std::vector<std::vector<DefinedImportData *>> V;
   for (auto &P : M) {
@@ -539,7 +539,7 @@ EdataContents::EdataContents() {
   std::vector<Chunk *> Names;
   for (Export &E : Config->Exports)
     if (!E.Noname)
-      Names.push_back(new StringChunk(E.ExtDLLName));
+      Names.push_back(new StringChunk(E.ExportName));
   auto *NameTab = new NamePointersChunk(Names);
   auto *OrdinalTab = new ExportOrdinalChunk(Names.size());
   auto *Dir = new ExportDirectoryChunk(MaxOrdinal, Names.size(), DLLName,

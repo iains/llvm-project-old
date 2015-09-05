@@ -18,6 +18,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/CodeGen/ParallelCG.h"
 #include "llvm/CodeGen/RuntimeLibcalls.h"
 #include "llvm/Config/config.h"
 #include "llvm/IR/Constants.h"
@@ -64,31 +65,22 @@ const char* LTOCodeGenerator::getVersionString() {
 }
 
 LTOCodeGenerator::LTOCodeGenerator()
-    : Context(getGlobalContext()), IRLinker(new Module("ld-temp.o", Context)) {
+    : Context(getGlobalContext()),
+      MergedModule(new Module("ld-temp.o", Context)),
+      IRLinker(MergedModule.get()) {
   initializeLTOPasses();
 }
 
 LTOCodeGenerator::LTOCodeGenerator(std::unique_ptr<LLVMContext> Context)
     : OwnedContext(std::move(Context)), Context(*OwnedContext),
-      IRLinker(new Module("ld-temp.o", *OwnedContext)) {
+      MergedModule(new Module("ld-temp.o", *OwnedContext)),
+      IRLinker(MergedModule.get()) {
   initializeLTOPasses();
 }
 
-void LTOCodeGenerator::destroyMergedModule() {
-  if (OwnedModule) {
-    assert(IRLinker.getModule() == &OwnedModule->getModule() &&
-           "The linker's module should be the same as the owned module");
-    delete OwnedModule;
-    OwnedModule = nullptr;
-  } else if (IRLinker.getModule())
-    IRLinker.deleteModule();
-}
+LTOCodeGenerator::~LTOCodeGenerator() {}
 
-LTOCodeGenerator::~LTOCodeGenerator() {
-  destroyMergedModule();
-}
-
-// Initialize LTO passes. Please keep this funciton in sync with
+// Initialize LTO passes. Please keep this function in sync with
 // PassManagerBuilder::populateLTOPassManager(), and make sure all LTO
 // passes are initialized.
 void LTOCodeGenerator::initializeLTOPasses() {
@@ -118,41 +110,39 @@ void LTOCodeGenerator::initializeLTOPasses() {
   initializeCFGSimplifyPassPass(R);
 }
 
-bool LTOCodeGenerator::addModule(LTOModule *mod) {
-  assert(&mod->getModule().getContext() == &Context &&
+bool LTOCodeGenerator::addModule(LTOModule *Mod) {
+  assert(&Mod->getModule().getContext() == &Context &&
          "Expected module in same context");
 
-  bool ret = IRLinker.linkInModule(&mod->getModule());
+  bool ret = IRLinker.linkInModule(&Mod->getModule());
 
-  const std::vector<const char*> &undefs = mod->getAsmUndefinedRefs();
+  const std::vector<const char *> &undefs = Mod->getAsmUndefinedRefs();
   for (int i = 0, e = undefs.size(); i != e; ++i)
     AsmUndefinedRefs[undefs[i]] = 1;
 
   return !ret;
 }
 
-void LTOCodeGenerator::setModule(LTOModule *Mod) {
+void LTOCodeGenerator::setModule(std::unique_ptr<LTOModule> Mod) {
   assert(&Mod->getModule().getContext() == &Context &&
          "Expected module in same context");
 
-  // Delete the old merged module.
-  destroyMergedModule();
   AsmUndefinedRefs.clear();
 
-  OwnedModule = Mod;
-  IRLinker.setModule(&Mod->getModule());
+  MergedModule = Mod->takeModule();
+  IRLinker.setModule(MergedModule.get());
 
   const std::vector<const char*> &Undefs = Mod->getAsmUndefinedRefs();
   for (int I = 0, E = Undefs.size(); I != E; ++I)
     AsmUndefinedRefs[Undefs[I]] = 1;
 }
 
-void LTOCodeGenerator::setTargetOptions(TargetOptions options) {
-  Options = options;
+void LTOCodeGenerator::setTargetOptions(TargetOptions Options) {
+  this->Options = Options;
 }
 
-void LTOCodeGenerator::setDebugInfo(lto_debug_model debug) {
-  switch (debug) {
+void LTOCodeGenerator::setDebugInfo(lto_debug_model Debug) {
+  switch (Debug) {
   case LTO_DEBUG_MODEL_NONE:
     EmitDwarfDebugInfo = false;
     return;
@@ -164,8 +154,8 @@ void LTOCodeGenerator::setDebugInfo(lto_debug_model debug) {
   llvm_unreachable("Unknown debug format!");
 }
 
-void LTOCodeGenerator::setOptLevel(unsigned level) {
-  OptLevel = level;
+void LTOCodeGenerator::setOptLevel(unsigned Level) {
+  OptLevel = Level;
   switch (OptLevel) {
   case 0:
     CGOptLevel = CodeGenOpt::None;
@@ -182,9 +172,9 @@ void LTOCodeGenerator::setOptLevel(unsigned level) {
   }
 }
 
-bool LTOCodeGenerator::writeMergedModules(const char *path,
-                                          std::string &errMsg) {
-  if (!determineTarget(errMsg))
+bool LTOCodeGenerator::writeMergedModules(const char *Path,
+                                          std::string &ErrMsg) {
+  if (!determineTarget(ErrMsg))
     return false;
 
   // mark which symbols can not be internalized
@@ -192,20 +182,20 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
 
   // create output file
   std::error_code EC;
-  tool_output_file Out(path, EC, sys::fs::F_None);
+  tool_output_file Out(Path, EC, sys::fs::F_None);
   if (EC) {
-    errMsg = "could not open bitcode file for writing: ";
-    errMsg += path;
+    ErrMsg = "could not open bitcode file for writing: ";
+    ErrMsg += Path;
     return false;
   }
 
   // write bitcode to it
-  WriteBitcodeToFile(IRLinker.getModule(), Out.os(), ShouldEmbedUselists);
+  WriteBitcodeToFile(MergedModule.get(), Out.os(), ShouldEmbedUselists);
   Out.os().close();
 
   if (Out.os().has_error()) {
-    errMsg = "could not write bitcode file: ";
-    errMsg += path;
+    ErrMsg = "could not write bitcode file: ";
+    ErrMsg += Path;
     Out.os().clear_error();
     return false;
   }
@@ -214,22 +204,22 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
   return true;
 }
 
-bool LTOCodeGenerator::compileOptimizedToFile(const char **name,
-                                              std::string &errMsg) {
+bool LTOCodeGenerator::compileOptimizedToFile(const char **Name,
+                                              std::string &ErrMsg) {
   // make unique temp .o file to put generated object file
   SmallString<128> Filename;
   int FD;
   std::error_code EC =
       sys::fs::createTemporaryFile("lto-llvm", "o", FD, Filename);
   if (EC) {
-    errMsg = EC.message();
+    ErrMsg = EC.message();
     return false;
   }
 
   // generate object file
   tool_output_file objFile(Filename.c_str(), FD);
 
-  bool genResult = compileOptimized(objFile.os(), errMsg);
+  bool genResult = compileOptimized(&objFile.os(), ErrMsg);
   objFile.os().close();
   if (objFile.os().has_error()) {
     objFile.os().clear_error();
@@ -244,21 +234,21 @@ bool LTOCodeGenerator::compileOptimizedToFile(const char **name,
   }
 
   NativeObjectPath = Filename.c_str();
-  *name = NativeObjectPath.c_str();
+  *Name = NativeObjectPath.c_str();
   return true;
 }
 
 std::unique_ptr<MemoryBuffer>
-LTOCodeGenerator::compileOptimized(std::string &errMsg) {
+LTOCodeGenerator::compileOptimized(std::string &ErrMsg) {
   const char *name;
-  if (!compileOptimizedToFile(&name, errMsg))
+  if (!compileOptimizedToFile(&name, ErrMsg))
     return nullptr;
 
   // read .o file into memory buffer
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
       MemoryBuffer::getFile(name, -1, false);
   if (std::error_code EC = BufferOrErr.getError()) {
-    errMsg = EC.message();
+    ErrMsg = EC.message();
     sys::fs::remove(NativeObjectPath);
     return nullptr;
   }
@@ -269,42 +259,38 @@ LTOCodeGenerator::compileOptimized(std::string &errMsg) {
   return std::move(*BufferOrErr);
 }
 
-
-bool LTOCodeGenerator::compile_to_file(const char **name,
-                                       bool disableInline,
-                                       bool disableGVNLoadPRE,
-                                       bool disableVectorization,
-                                       std::string &errMsg) {
-  if (!optimize(disableInline, disableGVNLoadPRE,
-                disableVectorization, errMsg))
+bool LTOCodeGenerator::compile_to_file(const char **Name, bool DisableInline,
+                                       bool DisableGVNLoadPRE,
+                                       bool DisableVectorization,
+                                       std::string &ErrMsg) {
+  if (!optimize(DisableInline, DisableGVNLoadPRE, DisableVectorization, ErrMsg))
     return false;
 
-  return compileOptimizedToFile(name, errMsg);
+  return compileOptimizedToFile(Name, ErrMsg);
 }
 
 std::unique_ptr<MemoryBuffer>
-LTOCodeGenerator::compile(bool disableInline, bool disableGVNLoadPRE,
-                          bool disableVectorization, std::string &errMsg) {
-  if (!optimize(disableInline, disableGVNLoadPRE,
-                disableVectorization, errMsg))
+LTOCodeGenerator::compile(bool DisableInline, bool DisableGVNLoadPRE,
+                          bool DisableVectorization, std::string &ErrMsg) {
+  if (!optimize(DisableInline, DisableGVNLoadPRE, DisableVectorization, ErrMsg))
     return nullptr;
 
-  return compileOptimized(errMsg);
+  return compileOptimized(ErrMsg);
 }
 
-bool LTOCodeGenerator::determineTarget(std::string &errMsg) {
+bool LTOCodeGenerator::determineTarget(std::string &ErrMsg) {
   if (TargetMach)
     return true;
 
-  std::string TripleStr = IRLinker.getModule()->getTargetTriple();
+  std::string TripleStr = MergedModule->getTargetTriple();
   if (TripleStr.empty()) {
     TripleStr = sys::getDefaultTargetTriple();
-    IRLinker.getModule()->setTargetTriple(TripleStr);
+    MergedModule->setTargetTriple(TripleStr);
   }
   llvm::Triple Triple(TripleStr);
 
   // create target machine from info for merged modules
-  const Target *march = TargetRegistry::lookupTarget(TripleStr, errMsg);
+  const Target *march = TargetRegistry::lookupTarget(TripleStr, ErrMsg);
   if (!march)
     return false;
 
@@ -412,7 +398,6 @@ static void accumulateAndSortLibcalls(std::vector<StringRef> &Libcalls,
 void LTOCodeGenerator::applyScopeRestrictions() {
   if (ScopeRestrictionsDone || !ShouldInternalize)
     return;
-  Module *mergedModule = IRLinker.getModule();
 
   // Start off with a verification pass.
   legacy::PassManager passes;
@@ -426,20 +411,17 @@ void LTOCodeGenerator::applyScopeRestrictions() {
   TargetLibraryInfoImpl TLII(Triple(TargetMach->getTargetTriple()));
   TargetLibraryInfo TLI(TLII);
 
-  accumulateAndSortLibcalls(Libcalls, TLI, *mergedModule, *TargetMach);
+  accumulateAndSortLibcalls(Libcalls, TLI, *MergedModule, *TargetMach);
 
-  for (Module::iterator f = mergedModule->begin(),
-         e = mergedModule->end(); f != e; ++f)
-    applyRestriction(*f, Libcalls, MustPreserveList, AsmUsed, Mangler);
-  for (Module::global_iterator v = mergedModule->global_begin(),
-         e = mergedModule->global_end(); v !=  e; ++v)
-    applyRestriction(*v, Libcalls, MustPreserveList, AsmUsed, Mangler);
-  for (Module::alias_iterator a = mergedModule->alias_begin(),
-         e = mergedModule->alias_end(); a != e; ++a)
-    applyRestriction(*a, Libcalls, MustPreserveList, AsmUsed, Mangler);
+  for (Function &f : *MergedModule)
+    applyRestriction(f, Libcalls, MustPreserveList, AsmUsed, Mangler);
+  for (GlobalVariable &v : MergedModule->globals())
+    applyRestriction(v, Libcalls, MustPreserveList, AsmUsed, Mangler);
+  for (GlobalAlias &a : MergedModule->aliases())
+    applyRestriction(a, Libcalls, MustPreserveList, AsmUsed, Mangler);
 
   GlobalVariable *LLVMCompilerUsed =
-    mergedModule->getGlobalVariable("llvm.compiler.used");
+    MergedModule->getGlobalVariable("llvm.compiler.used");
   findUsedValues(LLVMCompilerUsed, AsmUsed);
   if (LLVMCompilerUsed)
     LLVMCompilerUsed->eraseFromParent();
@@ -454,7 +436,7 @@ void LTOCodeGenerator::applyScopeRestrictions() {
 
     llvm::ArrayType *ATy = llvm::ArrayType::get(i8PTy, asmUsed2.size());
     LLVMCompilerUsed =
-      new llvm::GlobalVariable(*mergedModule, ATy, false,
+      new llvm::GlobalVariable(*MergedModule, ATy, false,
                                llvm::GlobalValue::AppendingLinkage,
                                llvm::ConstantArray::get(ATy, asmUsed2),
                                "llvm.compiler.used");
@@ -465,20 +447,17 @@ void LTOCodeGenerator::applyScopeRestrictions() {
   passes.add(createInternalizePass(MustPreserveList));
 
   // apply scope restrictions
-  passes.run(*mergedModule);
+  passes.run(*MergedModule);
 
   ScopeRestrictionsDone = true;
 }
 
 /// Optimize merged modules using various IPO passes
-bool LTOCodeGenerator::optimize(bool DisableInline,
-                                bool DisableGVNLoadPRE,
+bool LTOCodeGenerator::optimize(bool DisableInline, bool DisableGVNLoadPRE,
                                 bool DisableVectorization,
-                                std::string &errMsg) {
-  if (!this->determineTarget(errMsg))
+                                std::string &ErrMsg) {
+  if (!this->determineTarget(ErrMsg))
     return false;
-
-  Module *mergedModule = IRLinker.getModule();
 
   // Mark which symbols can not be internalized
   this->applyScopeRestrictions();
@@ -487,7 +466,7 @@ bool LTOCodeGenerator::optimize(bool DisableInline,
   legacy::PassManager passes;
 
   // Add an appropriate DataLayout instance for this module...
-  mergedModule->setDataLayout(TargetMach->createDataLayout());
+  MergedModule->setDataLayout(TargetMach->createDataLayout());
 
   passes.add(
       createTargetTransformInfoWrapperPass(TargetMach->getTargetIRAnalysis()));
@@ -507,41 +486,40 @@ bool LTOCodeGenerator::optimize(bool DisableInline,
   PMB.populateLTOPassManager(passes);
 
   // Run our queue of passes all at once now, efficiently.
-  passes.run(*mergedModule);
+  passes.run(*MergedModule);
 
   return true;
 }
 
-bool LTOCodeGenerator::compileOptimized(raw_pwrite_stream &out,
-                                        std::string &errMsg) {
-  if (!this->determineTarget(errMsg))
+bool LTOCodeGenerator::compileOptimized(ArrayRef<raw_pwrite_stream *> Out,
+                                        std::string &ErrMsg) {
+  if (!this->determineTarget(ErrMsg))
     return false;
 
-  Module *mergedModule = IRLinker.getModule();
-
-  legacy::PassManager codeGenPasses;
+  legacy::PassManager preCodeGenPasses;
 
   // If the bitcode files contain ARC code and were compiled with optimization,
   // the ObjCARCContractPass must be run, so do it unconditionally here.
-  codeGenPasses.add(createObjCARCContractPass());
+  preCodeGenPasses.add(createObjCARCContractPass());
+  preCodeGenPasses.run(*MergedModule);
 
-  if (TargetMach->addPassesToEmitFile(codeGenPasses, out,
-                                      TargetMachine::CGFT_ObjectFile)) {
-    errMsg = "target file type not supported";
-    return false;
-  }
-
-  // Run the code generator, and write assembly file
-  codeGenPasses.run(*mergedModule);
+  // Do code generation. We need to preserve the module in case the client calls
+  // writeMergedModules() after compilation, but we only need to allow this at
+  // parallelism level 1. This is achieved by having splitCodeGen return the
+  // original module at parallelism level 1 which we then assign back to
+  // MergedModule.
+  MergedModule =
+      splitCodeGen(std::move(MergedModule), Out, MCpu, FeatureStr, Options,
+                   RelocModel, CodeModel::Default, CGOptLevel);
 
   return true;
 }
 
 /// setCodeGenDebugOptions - Set codegen debugging options to aid in debugging
 /// LTO problems.
-void LTOCodeGenerator::setCodeGenDebugOptions(const char *options) {
-  for (std::pair<StringRef, StringRef> o = getToken(options);
-       !o.first.empty(); o = getToken(o.second))
+void LTOCodeGenerator::setCodeGenDebugOptions(const char *Options) {
+  for (std::pair<StringRef, StringRef> o = getToken(Options); !o.first.empty();
+       o = getToken(o.second))
     CodegenOptions.push_back(o.first);
 }
 

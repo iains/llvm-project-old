@@ -18,14 +18,18 @@
 #include "lldb/lldb-public.h"
 #include "lldb/lldb-enumerations.h"
 
+#include "lldb/Core/ThreadSafeDenseMap.h"
+
 #include "lldb/DataFormatters/FormatCache.h"
 #include "lldb/DataFormatters/FormatClasses.h"
 #include "lldb/DataFormatters/FormattersContainer.h"
+#include "lldb/DataFormatters/LanguageCategory.h"
 #include "lldb/DataFormatters/TypeCategory.h"
 #include "lldb/DataFormatters/TypeCategoryMap.h"
 
 #include <atomic>
 #include <functional>
+#include <memory>
 
 namespace lldb_private {
     
@@ -47,6 +51,8 @@ public:
     
     template <typename FormatterType>
     using HardcodedFormatterFinders = std::vector<HardcodedFormatterFinder<FormatterType>>;
+    
+    typedef std::map<lldb::LanguageType, LanguageCategory::UniquePointer> LanguageCategories;
     
     typedef TypeCategoryMap::CallbackType CategoryCallback;
     
@@ -87,16 +93,10 @@ public:
     }
     
     void
-    EnableAllCategories ()
-    {
-        m_categories_map.EnableAllCategories ();
-    }
+    EnableAllCategories ();
     
     void
-    DisableAllCategories ()
-    {
-        m_categories_map.DisableAllCategories ();
-    }
+    DisableAllCategories ();
     
     bool
     DeleteCategory (const ConstString& category_name)
@@ -123,11 +123,8 @@ public:
     }
     
     void
-    LoopThroughCategories (CategoryCallback callback, void* param)
-    {
-        m_categories_map.LoopThrough(callback, param);
-    }
-    
+    LoopThroughCategories (CategoryCallback callback, void* param);
+
     lldb::TypeCategoryImplSP
     GetCategory (const char* category_name = NULL,
                  bool can_create = true)
@@ -248,7 +245,7 @@ public:
     {
         FormattersMatchVector matches;
         GetPossibleMatches (valobj,
-                            valobj.GetClangType(),
+                            valobj.GetCompilerType(),
                             lldb_private::eFormatterChoiceCriterionDirectChoice,
                             use_dynamic,
                             matches,
@@ -258,6 +255,12 @@ public:
                             true);
         return matches;
     }
+    
+    static ConstString
+    GetTypeForCache (ValueObject&, lldb::DynamicValueType);
+    
+    LanguageCategory*
+    GetCategoryForLanguage (lldb::LanguageType lang_type);
 
 private:
     
@@ -276,11 +279,11 @@ private:
     NamedSummariesMap m_named_summaries_map;
     std::atomic<uint32_t> m_last_revision;
     TypeCategoryMap m_categories_map;
+    LanguageCategories m_language_categories_map;
+    Mutex m_language_categories_mutex;
     
     ConstString m_default_category_name;
     ConstString m_system_category_name;
-    ConstString m_gnu_cpp_category_name;
-    ConstString m_libcxx_category_name;
     ConstString m_objc_category_name;
     ConstString m_corefoundation_category_name;
     ConstString m_coregraphics_category_name;
@@ -316,12 +319,6 @@ private:
     // while a few of these actually should be globally available and setup by LLDB itself
     // most would actually belong to the users' lldbinit file or to some other form of configurable
     // storage
-    void
-    LoadLibStdcppFormatters ();
-    
-    void
-    LoadLibcxxFormatters ();
-    
     void
     LoadSystemFormatters ();
     

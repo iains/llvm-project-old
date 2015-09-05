@@ -369,15 +369,17 @@ void Writer::createImportTables() {
   // Initialize DLLOrder so that import entries are ordered in
   // the same order as in the command line. (That affects DLL
   // initialization order, and this ordering is MSVC-compatible.)
-  for (ImportFile *File : Symtab->ImportFiles)
-    if (Config->DLLOrder.count(File->DLLName) == 0)
-      Config->DLLOrder[File->DLLName] = Config->DLLOrder.size();
+  for (ImportFile *File : Symtab->ImportFiles) {
+    std::string DLL = StringRef(File->DLLName).lower();
+    if (Config->DLLOrder.count(DLL) == 0)
+      Config->DLLOrder[DLL] = Config->DLLOrder.size();
+  }
 
   OutputSection *Text = createSection(".text");
   for (ImportFile *File : Symtab->ImportFiles) {
     if (DefinedImportThunk *Thunk = File->ThunkSym)
       Text->addChunk(Thunk->getChunk());
-    if (Config->DelayLoads.count(File->DLLName)) {
+    if (Config->DelayLoads.count(StringRef(File->DLLName).lower())) {
       DelayIdata.add(File->ImpSym);
     } else {
       Idata.add(File->ImpSym);

@@ -13,7 +13,6 @@
 #include "InputFiles.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
-#include "llvm/MC/StringTableBuilder.h"
 
 namespace lld {
 namespace elf2 {
@@ -35,27 +34,44 @@ public:
 
   void addFile(std::unique_ptr<InputFile> File);
 
+  const ELFFileBase *getFirstELF() const {
+    if (!ObjectFiles.empty())
+      return ObjectFiles[0].get();
+    if (!SharedFiles.empty())
+      return SharedFiles[0].get();
+    return nullptr;
+  }
+
   // Print an error message on undefined symbols.
   void reportRemainingUndefines();
-
-  // The writer needs to infer the machine type from the object files.
-  std::vector<std::unique_ptr<ObjectFileBase>> ObjectFiles;
-
-  unsigned getNumSymbols() { return Symtab.size(); }
-  llvm::StringTableBuilder &getStringBuilder() { return Builder; };
 
   const llvm::DenseMap<StringRef, Symbol *> &getSymbols() const {
     return Symtab;
   }
 
-private:
-  void addObject(ObjectFileBase *File);
+  const std::vector<std::unique_ptr<ObjectFileBase>> &getObjectFiles() const {
+    return ObjectFiles;
+  }
 
-  void resolve(SymbolBody *Body);
+private:
+  Symbol *insert(SymbolBody *New);
+  template <class ELFT> void addELFFile(ELFFileBase *File);
+  void addELFFile(ELFFileBase *File);
+  void addLazy(Lazy *New);
+  void addMemberFile(Lazy *Body);
+
+  template <class ELFT> void init();
+  template <class ELFT> void resolve(SymbolBody *Body);
+
+  std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
 
   llvm::DenseMap<StringRef, Symbol *> Symtab;
   llvm::BumpPtrAllocator Alloc;
-  llvm::StringTableBuilder Builder;
+
+  // The writer needs to infer the machine type from the object files.
+  std::vector<std::unique_ptr<ObjectFileBase>> ObjectFiles;
+
+  std::vector<std::unique_ptr<SharedFileBase>> SharedFiles;
 };
 
 } // namespace elf2

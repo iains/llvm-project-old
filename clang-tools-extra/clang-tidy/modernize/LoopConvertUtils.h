@@ -197,14 +197,14 @@ private:
 /// \brief The information needed to describe a valid convertible usage
 /// of an array index or iterator.
 struct Usage {
-  const Expr *E;
+  const Expr *Expression;
   bool IsArrow;
   SourceRange Range;
 
   explicit Usage(const Expr *E)
-      : E(E), IsArrow(false), Range(E->getSourceRange()) {}
+      : Expression(E), IsArrow(false), Range(Expression->getSourceRange()) {}
   Usage(const Expr *E, bool IsArrow, SourceRange Range)
-      : E(E), IsArrow(IsArrow), Range(std::move(Range)) {}
+      : Expression(E), IsArrow(IsArrow), Range(std::move(Range)) {}
 };
 
 /// \brief A class to encapsulate lowering of the tool's confidence level.
@@ -277,6 +277,9 @@ public:
   /// \brief Accessor for Usages.
   const UsageResult &getUsages() const { return Usages; }
 
+  /// \brief Adds the Usage if it was not added before.
+  void addUsage(const Usage &U);
+
   /// \brief Get the container indexed by IndexVar, if any.
   const Expr *getContainerIndexed() const { return ContainerExpr; }
 
@@ -309,6 +312,7 @@ private:
   bool TraverseArraySubscriptExpr(ArraySubscriptExpr *E);
   bool TraverseCXXMemberCallExpr(CXXMemberCallExpr *MemberCall);
   bool TraverseCXXOperatorCallExpr(CXXOperatorCallExpr *OpCall);
+  bool TraverseLambdaCapture(LambdaExpr *LE, const LambdaCapture *C);
   bool TraverseMemberExpr(MemberExpr *Member);
   bool TraverseUnaryDeref(UnaryOperator *Uop);
   bool VisitDeclRefExpr(DeclRefExpr *E);
@@ -335,6 +339,7 @@ private:
   /// A container which holds all usages of IndexVar as the index of
   /// ArraySubscriptExpressions.
   UsageResult Usages;
+  llvm::SmallSet<SourceLocation, 8> UsageLocations;
   bool OnlyUsedAsIndex;
   /// The DeclStmt for an alias to the container element.
   const DeclStmt *AliasDecl;

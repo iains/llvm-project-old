@@ -110,6 +110,12 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
   assert(MakeImplicitID == MD_make_implicit &&
          "make.implicit kind id drifted");
   (void)MakeImplicitID;
+
+  // Create the 'unpredictable' metadata kind.
+  unsigned UnpredictableID = getMDKindID("unpredictable");
+  assert(UnpredictableID == MD_unpredictable &&
+         "unpredictable kind id drifted");
+  (void)UnpredictableID;
 }
 LLVMContext::~LLVMContext() { delete pImpl; }
 
@@ -261,7 +267,7 @@ unsigned LLVMContext::getMDKindID(StringRef Name) const {
       .first->second;
 }
 
-/// getHandlerNames - Populate client supplied smallvector using custome
+/// getHandlerNames - Populate client-supplied smallvector using custom
 /// metadata name and ID.
 void LLVMContext::getMDKindNames(SmallVectorImpl<StringRef> &Names) const {
   Names.resize(pImpl->CustomMDKindNames.size());

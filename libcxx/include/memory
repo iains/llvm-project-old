@@ -932,6 +932,15 @@ public:
         {return _VSTD::addressof(__r);}
 };
 
+template <class _From, class _To>
+struct __rebind_pointer {
+#ifndef _LIBCPP_HAS_NO_TEMPLATE_ALIASES
+    typedef typename pointer_traits<_From>::template rebind<_To>        type;
+#else
+    typedef typename pointer_traits<_From>::template rebind<_To>::other type;
+#endif
+};
+
 // allocator_traits
 
 namespace __has_pointer_type_imp
@@ -2659,10 +2668,17 @@ public:
         : __ptr_(__u->release(), _VSTD::forward<deleter_type>(__u->get_deleter())) {}
 
     template <class _Up, class _Ep>
-    _LIBCPP_INLINE_VISIBILITY unique_ptr& operator=(unique_ptr<_Up, _Ep> __u)
+    _LIBCPP_INLINE_VISIBILITY
+    typename enable_if<
+        !is_array<_Up>::value &&
+        is_convertible<typename unique_ptr<_Up, _Ep>::pointer, pointer>::value &&
+        is_assignable<deleter_type&, _Ep&>::value,
+        unique_ptr&
+    >::type
+    operator=(unique_ptr<_Up, _Ep> __u)
     {
         reset(__u.release());
-        __ptr_.second() = _VSTD::forward<deleter_type>(__u.get_deleter());
+        __ptr_.second() = _VSTD::forward<_Ep>(__u.get_deleter());
         return *this;
     }
 

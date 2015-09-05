@@ -98,7 +98,7 @@ public:
   // (So that we don't instantiate same members more than once.)
   MemoryBufferRef getMember(const Archive::Symbol *Sym);
 
-  std::vector<Lazy *> &getLazySymbols() { return LazySymbols; }
+  llvm::MutableArrayRef<Lazy> getLazySymbols() { return LazySymbols; }
 
   // All symbols returned by ArchiveFiles are of Lazy type.
   std::vector<SymbolBody *> &getSymbols() override {
@@ -108,9 +108,8 @@ public:
 private:
   std::unique_ptr<Archive> File;
   std::string Filename;
-  std::vector<Lazy *> LazySymbols;
+  std::vector<Lazy> LazySymbols;
   std::map<uint64_t, std::atomic_flag> Seen;
-  llvm::MallocAllocator Alloc;
 };
 
 // .obj or .o file. This may be a member of an archive file.
@@ -206,7 +205,7 @@ public:
   MachineTypes getMachineType() override;
 
   LTOModule *getModule() const { return M.get(); }
-  LTOModule *releaseModule() { return M.release(); }
+  std::unique_ptr<LTOModule> takeModule() { return std::move(M); }
 
 private:
   void parse() override;

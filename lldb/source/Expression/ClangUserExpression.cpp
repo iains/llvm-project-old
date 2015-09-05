@@ -160,7 +160,7 @@ ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Error &err)
         return;
     }
 
-    clang::DeclContext *decl_context = function_block->GetClangDeclContext();
+    CompilerDeclContext decl_context = function_block->GetDeclContext();
 
     if (!decl_context)
     {
@@ -169,7 +169,7 @@ ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Error &err)
         return;
     }
 
-    if (clang::CXXMethodDecl *method_decl = llvm::dyn_cast<clang::CXXMethodDecl>(decl_context))
+    if (clang::CXXMethodDecl *method_decl = ClangASTContext::DeclContextGetAsCXXMethodDecl(decl_context))
     {
         if (m_allow_cxx && method_decl->isInstance())
         {
@@ -200,7 +200,7 @@ ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Error &err)
             m_needs_object_ptr = true;
         }
     }
-    else if (clang::ObjCMethodDecl *method_decl = llvm::dyn_cast<clang::ObjCMethodDecl>(decl_context))
+    else if (clang::ObjCMethodDecl *method_decl = ClangASTContext::DeclContextGetAsObjCMethodDecl(decl_context))
     {
         if (m_allow_objc)
         {
@@ -234,14 +234,14 @@ ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Error &err)
                 m_in_static_method = true;
         }
     }
-    else if (clang::FunctionDecl *function_decl = llvm::dyn_cast<clang::FunctionDecl>(decl_context))
+    else if (clang::FunctionDecl *function_decl = ClangASTContext::DeclContextGetAsFunctionDecl(decl_context))
     {
         // We might also have a function that said in the debug information that it captured an
         // object pointer.  The best way to deal with getting to the ivars at present is by pretending
         // that this is a method of a class in whatever runtime the debug info says the object pointer
         // belongs to.  Do that here.
 
-        ClangASTMetadata *metadata = ClangASTContext::GetMetadata (&decl_context->getParentASTContext(), function_decl);
+        ClangASTMetadata *metadata = ClangASTContext::DeclContextGetMetaData (decl_context, function_decl);
         if (metadata && metadata->HasObjectPtr())
         {
             lldb::LanguageType language = metadata->GetObjectPtrLanguage();
@@ -305,7 +305,7 @@ ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Error &err)
                         return;
                     }
 
-                    CompilerType self_clang_type = self_type->GetClangForwardType();
+                    CompilerType self_clang_type = self_type->GetForwardCompilerType ();
 
                     if (!self_clang_type)
                     {
@@ -797,7 +797,7 @@ ClangUserExpression::PrepareToExecuteJITExpression (Stream &error_stream,
 bool
 ClangUserExpression::FinalizeJITExecution (Stream &error_stream,
                                            ExecutionContext &exe_ctx,
-                                           lldb::ClangExpressionVariableSP &result,
+                                           lldb::ExpressionVariableSP &result,
                                            lldb::addr_t function_stack_bottom,
                                            lldb::addr_t function_stack_top)
 {
@@ -835,7 +835,7 @@ ClangUserExpression::Execute (Stream &error_stream,
                               ExecutionContext &exe_ctx,
                               const EvaluateExpressionOptions& options,
                               lldb::ClangUserExpressionSP &shared_ptr_to_me,
-                              lldb::ClangExpressionVariableSP &result)
+                              lldb::ExpressionVariableSP &result)
 {
     // The expression log is quite verbose, and if you're just tracking the execution of the
     // expression, it's quite convenient to have these logs come out with the STEP log as well.
@@ -1090,7 +1090,7 @@ ClangUserExpression::Evaluate (ExecutionContext &exe_ctx,
     }
     else
     {
-        lldb::ClangExpressionVariableSP expr_result;
+        lldb::ExpressionVariableSP expr_result;
 
         if (execution_policy == eExecutionPolicyNever &&
             !user_expression_sp->CanInterpret())

@@ -5,8 +5,11 @@ add_clang_library(clangTidyModernizeModule
   LoopConvertUtils.cpp
   ModernizeTidyModule.cpp
   PassByValueCheck.cpp
+  ReplaceAutoPtrCheck.cpp
+  ShrinkToFitCheck.cpp
   UseAutoCheck.cpp
   UseNullptrCheck.cpp
+  UseOverrideCheck.cpp
 
   LINK_LIBS
   clangAST

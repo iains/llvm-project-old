@@ -13,8 +13,6 @@
 // C++ Includes
 // Other libraries and framework includes
 // Project includes
-#include "AppleThreadPlanStepThroughObjCTrampoline.h"
-
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclCXX.h"
 
@@ -30,6 +28,8 @@
 #include "lldb/Symbol/Symbol.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Process.h"
+#include "lldb/Target/Target.h"
+#include "lldb/Target/Thread.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -311,21 +311,21 @@ AppleGetQueuesHandler::GetCurrentQueues (Thread &thread, addr_t page_to_free, ui
     CompilerType clang_void_ptr_type = clang_ast_context->GetBasicType(eBasicTypeVoid).GetPointerType();
     Value return_buffer_ptr_value;
     return_buffer_ptr_value.SetValueType (Value::eValueTypeScalar);
-    return_buffer_ptr_value.SetClangType (clang_void_ptr_type);
+    return_buffer_ptr_value.SetCompilerType (clang_void_ptr_type);
 
     CompilerType clang_int_type = clang_ast_context->GetBasicType(eBasicTypeInt);
     Value debug_value;
     debug_value.SetValueType (Value::eValueTypeScalar);
-    debug_value.SetClangType (clang_int_type);
+    debug_value.SetCompilerType (clang_int_type);
 
     Value page_to_free_value;
     page_to_free_value.SetValueType (Value::eValueTypeScalar);
-    page_to_free_value.SetClangType (clang_void_ptr_type);
+    page_to_free_value.SetCompilerType (clang_void_ptr_type);
 
     CompilerType clang_uint64_type = clang_ast_context->GetBasicType(eBasicTypeUnsignedLongLong);
     Value page_to_free_size_value;
     page_to_free_size_value.SetValueType (Value::eValueTypeScalar);
-    page_to_free_size_value.SetClangType (clang_uint64_type);
+    page_to_free_size_value.SetCompilerType (clang_uint64_type);
 
 
     Mutex::Locker locker(m_get_queues_retbuffer_mutex);

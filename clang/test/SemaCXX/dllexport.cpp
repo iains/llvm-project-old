@@ -71,6 +71,10 @@ __declspec(dllexport) auto ExternalAutoTypeGlobal = External();
 
 // Thread local variables are invalid.
 __declspec(dllexport) __thread int ThreadLocalGlobal; // expected-error{{'ThreadLocalGlobal' cannot be thread local when declared 'dllexport'}}
+// But a static local TLS var in an export function is OK.
+inline void __declspec(dllexport) ExportedInlineWithThreadLocal() {
+  static __thread int OK; // no-error
+}
 
 // Export in local scope.
 void functionScope() {

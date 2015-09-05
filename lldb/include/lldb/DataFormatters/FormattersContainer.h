@@ -12,6 +12,7 @@
 
 // C Includes
 // C++ Includes
+#include <functional>
 
 // Other libraries and framework includes
 #include "clang/AST/DeclCXX.h"
@@ -92,7 +93,7 @@ public:
     typedef typename ValueType::SharedPointer ValueSP;
     typedef std::map<KeyType, ValueSP> MapType;
     typedef typename MapType::iterator MapIterator;
-    typedef bool(*CallbackType)(void*, KeyType, const ValueSP&);
+    typedef std::function<bool(void*, KeyType, const ValueSP&)> CallbackType;
     
     FormatMap(IFormatChangeListener* lst) :
     m_map(),
@@ -268,7 +269,7 @@ public:
         uint32_t* why = NULL)
     {
         uint32_t value = lldb_private::eFormatterChoiceCriterionDirectChoice;
-        CompilerType ast_type(valobj.GetClangType());
+        CompilerType ast_type(valobj.GetCompilerType());
         bool ret = Get(valobj, ast_type, entry, use_dynamic, value);
         if (ret)
             entry = MapValueType(entry);

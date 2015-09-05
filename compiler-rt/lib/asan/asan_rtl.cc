@@ -56,10 +56,6 @@ static void AsanDie() {
       UnmapOrDie((void*)kLowShadowBeg, kHighShadowEnd - kLowShadowBeg);
     }
   }
-  if (common_flags()->coverage)
-    __sanitizer_cov_dump();
-  if (flags()->abort_on_error)
-    Abort();
 }
 
 static void AsanCheckFailed(const char *file, int line, const char *cond,
@@ -393,7 +389,7 @@ static void AsanInitInternal() {
   AsanDoesNotSupportStaticLinkage();
 
   // Install tool-specific callbacks in sanitizer_common.
-  SetDieCallback(AsanDie);
+  AddDieCallback(AsanDie);
   SetCheckFailedCallback(AsanCheckFailed);
   SetPrintfAndReportCallback(AppendToErrorMessageBuffer);
 

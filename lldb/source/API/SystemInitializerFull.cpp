@@ -41,6 +41,9 @@
 #include "Plugins/Instruction/ARM64/EmulateInstructionARM64.h"
 #include "Plugins/InstrumentationRuntime/AddressSanitizer/AddressSanitizerRuntime.h"
 #include "Plugins/JITLoader/GDB/JITLoaderGDB.h"
+#include "Plugins/Language/CPlusPlus/CPlusPlusLanguage.h"
+#include "Plugins/Language/ObjC/ObjCLanguage.h"
+#include "Plugins/Language/ObjCPlusPlus/ObjCPlusPlusLanguage.h"
 #include "Plugins/LanguageRuntime/CPlusPlus/ItaniumABI/ItaniumABILanguageRuntime.h"
 #include "Plugins/LanguageRuntime/ObjC/AppleObjCRuntime/AppleObjCRuntimeV1.h"
 #include "Plugins/LanguageRuntime/ObjC/AppleObjCRuntime/AppleObjCRuntimeV2.h"
@@ -70,8 +73,8 @@
 
 #if defined(_MSC_VER)
 #include "lldb/Host/windows/windows.h"
-#include "Plugins/Process/Windows/ProcessWindows.h"
-#include "Plugins/Process/win-minidump/ProcessWinMiniDump.h"
+#include "Plugins/Process/Windows/Live/ProcessWindows.h"
+#include "Plugins/Process/Windows/MiniDump/ProcessWinMiniDump.h"
 #endif
 
 #include "llvm/Support/TargetSelect.h"
@@ -231,6 +234,7 @@ void
 SystemInitializerFull::Initialize()
 {
     SystemInitializerCommon::Initialize();
+    ScriptInterpreterNone::Initialize();
 
 #if !defined(LLDB_DISABLE_PYTHON)
     InitializeSWIG();
@@ -238,7 +242,6 @@ SystemInitializerFull::Initialize()
     // ScriptInterpreterPython::Initialize() depends on things like HostInfo being initialized
     // so it can compute the python directory etc, so we need to do this after
     // SystemInitializerCommon::Initialize().
-    ScriptInterpreterNone::Initialize();
     ScriptInterpreterPython::Initialize();
 #endif
 
@@ -281,6 +284,10 @@ SystemInitializerFull::Initialize()
     AppleObjCRuntimeV1::Initialize();
     SystemRuntimeMacOSX::Initialize();
     RenderScriptRuntime::Initialize();
+    
+    CPlusPlusLanguage::Initialize();
+    ObjCLanguage::Initialize();
+    ObjCPlusPlusLanguage::Initialize();
 
 #if defined(_MSC_VER)
     ProcessWindows::Initialize();
@@ -385,6 +392,10 @@ SystemInitializerFull::Terminate()
     SystemRuntimeMacOSX::Terminate();
     RenderScriptRuntime::Terminate();
 
+    CPlusPlusLanguage::Terminate();
+    ObjCLanguage::Terminate();
+    ObjCPlusPlusLanguage::Terminate();
+    
 #if defined(__APPLE__)
     ProcessMachCore::Terminate();
     ProcessKDP::Terminate();

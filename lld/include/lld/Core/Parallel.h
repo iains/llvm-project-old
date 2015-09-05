@@ -14,21 +14,15 @@
 #include "lld/Core/LLVM.h"
 #include "lld/Core/range.h"
 #include "llvm/Support/MathExtras.h"
-
-#ifdef _MSC_VER
-// concrt.h depends on eh.h for __uncaught_exception declaration
-// even if we disable exceptions.
-#include <eh.h>
-#endif
+#include "llvm/Support/thread.h"
 
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
-#include <thread>
 #include <stack>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && LLVM_ENABLE_THREADS
 #include <concrt.h>
 #include <ppl.h>
 #endif

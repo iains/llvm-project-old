@@ -1,12 +1,10 @@
-set(LLVM_NO_RTTI 1)
-
 add_lldb_library(lldbSymbol
   Block.cpp
   ClangASTContext.cpp
   ClangASTImporter.cpp
   ClangExternalASTSourceCallbacks.cpp
   ClangExternalASTSourceCommon.cpp
-  ClangNamespaceDecl.cpp
+  CompilerDeclContext.cpp
   CompilerType.cpp
   CompileUnit.cpp
   CompactUnwindInfo.cpp

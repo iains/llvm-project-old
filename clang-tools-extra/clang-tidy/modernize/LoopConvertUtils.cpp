@@ -334,7 +334,8 @@ static bool isDereferenceOfUop(const UnaryOperator *Uop,
 ///     // use t, do not use i
 ///   }
 /// \endcode
-static bool isAliasDecl(const Decl *TheDecl, const VarDecl *IndexVar) {
+static bool isAliasDecl(ASTContext *Context, const Decl *TheDecl,
+                        const VarDecl *IndexVar) {
   const auto *VDecl = dyn_cast<VarDecl>(TheDecl);
   if (!VDecl)
     return false;
@@ -344,6 +345,15 @@ static bool isAliasDecl(const Decl *TheDecl, const VarDecl *IndexVar) {
   const Expr *Init =
       digThroughConstructors(VDecl->getInit()->IgnoreParenImpCasts());
   if (!Init)
+    return false;
+
+  // Check that the declared type is the same as (or a reference to) the
+  // container type.
+  QualType DeclarationType = VDecl->getType();
+  if (DeclarationType->isReferenceType())
+    DeclarationType = DeclarationType.getNonReferenceType();
+  QualType InitType = Init->getType();
+  if (!Context->hasSameUnqualifiedType(DeclarationType, InitType))
     return false;
 
   switch (Init->getStmtClass()) {
@@ -363,13 +373,22 @@ static bool isAliasDecl(const Decl *TheDecl, const VarDecl *IndexVar) {
       return isDereferenceOfOpCall(OpCall, IndexVar);
     if (OpCall->getOperator() == OO_Subscript) {
       assert(OpCall->getNumArgs() == 2);
-      return true;
+      return isIndexInSubscriptExpr(OpCall->getArg(1), IndexVar);
     }
     break;
   }
 
-  case Stmt::CXXMemberCallExprClass:
-    return true;
+  case Stmt::CXXMemberCallExprClass: {
+    const auto *MemCall = cast<CXXMemberCallExpr>(Init);
+    // This check is needed because getMethodDecl can return nullptr if the
+    // callee is a member function pointer.
+    if (MemCall->getMethodDecl() &&
+        MemCall->getMethodDecl()->getName() == "at") {
+      assert(MemCall->getNumArgs() == 1);
+      return isIndexInSubscriptExpr(MemCall->getArg(0), IndexVar);
+    }
+    return false;
+  }
 
   default:
     break;
@@ -419,12 +438,8 @@ ForLoopIndexUseVisitor::ForLoopIndexUseVisitor(ASTContext *Context,
       ConfidenceLevel(Confidence::CL_Safe), NextStmtParent(nullptr),
       CurrStmtParent(nullptr), ReplaceWithAliasUse(false),
       AliasFromForInit(false) {
-  if (ContainerExpr) {
+  if (ContainerExpr)
     addComponent(ContainerExpr);
-    FoldingSetNodeID ID;
-    const Expr *E = ContainerExpr->IgnoreParenImpCasts();
-    E->Profile(ID, *Context, true);
-  }
 }
 
 bool ForLoopIndexUseVisitor::findAndVerifyUsages(const Stmt *Body) {
@@ -445,6 +460,15 @@ void ForLoopIndexUseVisitor::addComponent(const Expr *E) {
   DependentExprs.push_back(std::make_pair(Node, ID));
 }
 
+void ForLoopIndexUseVisitor::addUsage(const Usage &U) {
+  SourceLocation Begin = U.Range.getBegin();
+  if (Begin.isMacroID())
+    Begin = Context->getSourceManager().getSpellingLoc(Begin);
+
+  if (UsageLocations.insert(Begin).second)
+    Usages.push_back(U);
+}
+
 /// \brief If the unary operator is a dereference of IndexVar, include it
 /// as a valid usage and prune the traversal.
 ///
@@ -460,7 +484,7 @@ bool ForLoopIndexUseVisitor::TraverseUnaryDeref(UnaryOperator *Uop) {
   // If we dereference an iterator that's actually a pointer, count the
   // occurrence.
   if (isDereferenceOfUop(Uop, IndexVar)) {
-    Usages.push_back(Usage(Uop));
+    addUsage(Usage(Uop));
     return true;
   }
 
@@ -515,7 +539,13 @@ bool ForLoopIndexUseVisitor::TraverseMemberExpr(MemberExpr *Member) {
     }
   }
 
-  if (Member->isArrow() && Obj && exprReferencesVariable(IndexVar, Obj)) {
+  if (Obj && exprReferencesVariable(IndexVar, Obj)) {
+    // Member calls on the iterator with '.' are not allowed.
+    if (!Member->isArrow()) {
+      OnlyUsedAsIndex = false;
+      return true;
+    }
+
     if (ExprType.isNull())
       ExprType = Obj->getType();
 
@@ -528,12 +558,12 @@ bool ForLoopIndexUseVisitor::TraverseMemberExpr(MemberExpr *Member) {
     // If something complicated is happening (i.e. the next token isn't an
     // arrow), give up on making this work.
     if (!ArrowLoc.isInvalid()) {
-      Usages.push_back(Usage(ResultExpr, /*IsArrow=*/true,
-                             SourceRange(Base->getExprLoc(), ArrowLoc)));
+      addUsage(Usage(ResultExpr, /*IsArrow=*/true,
+                     SourceRange(Base->getExprLoc(), ArrowLoc)));
       return true;
     }
   }
-  return TraverseStmt(Member->getBase());
+  return VisitorBase::TraverseMemberExpr(Member);
 }
 
 /// \brief If a member function call is the at() accessor on the container with
@@ -558,7 +588,7 @@ bool ForLoopIndexUseVisitor::TraverseCXXMemberCallExpr(
     if (isIndexInSubscriptExpr(Context, MemberCall->getArg(0), IndexVar,
                                Member->getBase(), ContainerExpr,
                                ContainerNeedsDereference)) {
-      Usages.push_back(Usage(MemberCall));
+      addUsage(Usage(MemberCall));
       return true;
     }
   }
@@ -570,7 +600,7 @@ bool ForLoopIndexUseVisitor::TraverseCXXMemberCallExpr(
 }
 
 /// \brief If an overloaded operator call is a dereference of IndexVar or
-/// a subscript of a the container with IndexVar as the single argument,
+/// a subscript of the container with IndexVar as the single argument,
 /// include it as a valid usage and prune the traversal.
 ///
 /// For example, given
@@ -593,7 +623,7 @@ bool ForLoopIndexUseVisitor::TraverseCXXOperatorCallExpr(
   switch (OpCall->getOperator()) {
   case OO_Star:
     if (isDereferenceOfOpCall(OpCall, IndexVar)) {
-      Usages.push_back(Usage(OpCall));
+      addUsage(Usage(OpCall));
       return true;
     }
     break;
@@ -604,7 +634,7 @@ bool ForLoopIndexUseVisitor::TraverseCXXOperatorCallExpr(
     if (isIndexInSubscriptExpr(Context, OpCall->getArg(1), IndexVar,
                                OpCall->getArg(0), ContainerExpr,
                                ContainerNeedsDereference)) {
-      Usages.push_back(Usage(OpCall));
+      addUsage(Usage(OpCall));
       return true;
     }
     break;
@@ -653,7 +683,7 @@ bool ForLoopIndexUseVisitor::TraverseArraySubscriptExpr(ArraySubscriptExpr *E) {
   if (!ContainerExpr)
     ContainerExpr = Arr;
 
-  Usages.push_back(Usage(E));
+  addUsage(Usage(E));
   return true;
 }
 
@@ -676,9 +706,6 @@ bool ForLoopIndexUseVisitor::TraverseArraySubscriptExpr(ArraySubscriptExpr *E) {
 ///     i.insert(0);
 ///   for (vector<int>::iterator i = container.begin(), e = container.end();
 ///        i != e; ++i)
-///     i.insert(0);
-///   for (vector<int>::iterator i = container.begin(), e = container.end();
-///        i != e; ++i)
 ///     if (i + 1 != e)
 ///       printf("%d", *i);
 /// \endcode
@@ -694,11 +721,49 @@ bool ForLoopIndexUseVisitor::TraverseArraySubscriptExpr(ArraySubscriptExpr *E) {
 /// \endcode
 bool ForLoopIndexUseVisitor::VisitDeclRefExpr(DeclRefExpr *E) {
   const ValueDecl *TheDecl = E->getDecl();
-  if (areSameVariable(IndexVar, TheDecl) || areSameVariable(EndVar, TheDecl))
+  if (areSameVariable(IndexVar, TheDecl) ||
+      exprReferencesVariable(IndexVar, E) || areSameVariable(EndVar, TheDecl) ||
+      exprReferencesVariable(EndVar, E))
     OnlyUsedAsIndex = false;
   if (containsExpr(Context, &DependentExprs, E))
     ConfidenceLevel.lowerTo(Confidence::CL_Risky);
   return true;
+}
+
+/// \brief If the loop index is captured by a lambda, replace this capture
+/// by the range-for loop variable.
+///
+/// For example:
+/// \code
+///   for (int i = 0; i < N; ++i) {
+///     auto f = [v, i](int k) {
+///       printf("%d\n", v[i] + k);
+///     };
+///     f(v[i]);
+///   }
+/// \endcode
+///
+/// Will be replaced by:
+/// \code
+///   for (auto & elem : v) {
+///     auto f = [v, elem](int k) {
+///       printf("%d\n", elem + k);
+///     };
+///     f(elem);
+///   }
+/// \endcode
+bool ForLoopIndexUseVisitor::TraverseLambdaCapture(LambdaExpr *LE,
+                                                   const LambdaCapture *C) {
+  if (C->capturesVariable()) {
+    const VarDecl *VDecl = C->getCapturedVar();
+    if (areSameVariable(IndexVar, cast<ValueDecl>(VDecl))) {
+      // FIXME: if the index is captured, it will count as an usage and the
+      // alias (if any) won't work, because it is only used in case of having
+      // exactly one usage.
+      addUsage(Usage(nullptr, false, C->getLocation()));
+    }
+  }
+  return VisitorBase::TraverseLambdaCapture(LE, C);
 }
 
 /// \brief If we find that another variable is created just to refer to the loop
@@ -707,7 +772,7 @@ bool ForLoopIndexUseVisitor::VisitDeclRefExpr(DeclRefExpr *E) {
 /// See the comments for isAliasDecl.
 bool ForLoopIndexUseVisitor::VisitDeclStmt(DeclStmt *S) {
   if (!AliasDecl && S->isSingleDecl() &&
-      isAliasDecl(S->getSingleDecl(), IndexVar)) {
+      isAliasDecl(Context, S->getSingleDecl(), IndexVar)) {
     AliasDecl = S;
     if (CurrStmtParent) {
       if (isa<IfStmt>(CurrStmtParent) || isa<WhileStmt>(CurrStmtParent) ||

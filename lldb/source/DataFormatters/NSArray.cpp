@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "lldb/DataFormatters/CXXFormatterFunctions.h"
+#include "lldb/DataFormatters/Cocoa.h"
 
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/Error.h"
 #include "lldb/Core/Stream.h"
 #include "lldb/Core/ValueObject.h"
 #include "lldb/Core/ValueObjectConstResult.h"
+#include "lldb/DataFormatters/FormattersHelpers.h"
 #include "lldb/Host/Endian.h"
 #include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Target/ObjCLanguageRuntime.h"
@@ -528,9 +529,9 @@ lldb_private::formatters::NSArrayISyntheticFrontEnd::NSArrayISyntheticFrontEnd (
     m_items (0),
     m_data_ptr (0)
 {
-    if (valobj_sp && valobj_sp->GetClangType().IsValid())
+    if (valobj_sp && valobj_sp->GetCompilerType().IsValid())
     {
-        ClangASTContext *ast = valobj_sp->GetClangType().GetTypeSystem()->AsClangASTContext();
+        ClangASTContext *ast = valobj_sp->GetCompilerType().GetTypeSystem()->AsClangASTContext();
         if (ast)
             m_id_type = CompilerType(ast->getASTContext(), ast->getASTContext()->ObjCBuiltinIdTy);
     }
@@ -622,7 +623,7 @@ SyntheticChildrenFrontEnd* lldb_private::formatters::NSArraySyntheticFrontEndCre
     if (!runtime)
         return NULL;
     
-    CompilerType valobj_type(valobj_sp->GetClangType());
+    CompilerType valobj_type(valobj_sp->GetCompilerType());
     Flags flags(valobj_type.GetTypeInfo());
     
     if (flags.IsClear(eTypeIsPointer))

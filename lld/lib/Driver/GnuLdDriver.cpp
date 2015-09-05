@@ -165,19 +165,15 @@ getArchType(const llvm::Triple &triple, StringRef value) {
       return llvm::Triple::x86_64;
     return llvm::None;
   case llvm::Triple::mips:
-  case llvm::Triple::mips64:
-    if (value == "elf32btsmip")
-      return llvm::Triple::mips;
-    if (value == "elf64btsmip")
-      return llvm::Triple::mips64;
-    return llvm::None;
   case llvm::Triple::mipsel:
+  case llvm::Triple::mips64:
   case llvm::Triple::mips64el:
-    if (value == "elf32ltsmip")
-      return llvm::Triple::mipsel;
-    if (value == "elf64ltsmip")
-      return llvm::Triple::mips64el;
-    return llvm::None;
+    return llvm::StringSwitch<llvm::Optional<llvm::Triple::ArchType>>(value)
+        .Cases("elf32btsmip", "elf32btsmipn32", llvm::Triple::mips)
+        .Cases("elf32ltsmip", "elf32ltsmipn32", llvm::Triple::mipsel)
+        .Case("elf64btsmip", llvm::Triple::mips64)
+        .Case("elf64ltsmip", llvm::Triple::mips64el)
+        .Default(llvm::None);
   case llvm::Triple::aarch64:
     if (value == "aarch64linux")
       return llvm::Triple::aarch64;
@@ -329,6 +325,7 @@ std::unique_ptr<ELFLinkingContext>
 GnuLdDriver::createELFLinkingContext(llvm::Triple triple) {
   std::unique_ptr<ELFLinkingContext> p;
   if ((p = elf::createAArch64LinkingContext(triple))) return p;
+  if ((p = elf::createAMDGPULinkingContext(triple))) return p;
   if ((p = elf::createARMLinkingContext(triple))) return p;
   if ((p = elf::createExampleLinkingContext(triple))) return p;
   if ((p = elf::createHexagonLinkingContext(triple))) return p;

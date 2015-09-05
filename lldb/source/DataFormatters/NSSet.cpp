@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "lldb/DataFormatters/CXXFormatterFunctions.h"
+#include "lldb/DataFormatters/Cocoa.h"
 
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/Error.h"
 #include "lldb/Core/Stream.h"
 #include "lldb/Core/ValueObject.h"
 #include "lldb/Core/ValueObjectConstResult.h"
+#include "lldb/DataFormatters/FormattersHelpers.h"
 #include "lldb/Host/Endian.h"
 #include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Target/ObjCLanguageRuntime.h"
@@ -470,7 +471,7 @@ lldb_private::formatters::NSSetISyntheticFrontEnd::GetChildAtIndex (size_t idx)
             CreateValueObjectFromData(idx_name.GetData(),
                                       data,
                                       m_exe_ctx_ref,
-                                      m_backend.GetClangType().GetBasicTypeFromAST(lldb::eBasicTypeObjCID));
+                                      m_backend.GetCompilerType().GetBasicTypeFromAST(lldb::eBasicTypeObjCID));
     }
     return set_item.valobj_sp;
 }
@@ -638,7 +639,7 @@ lldb_private::formatters::NSSetMSyntheticFrontEnd::GetChildAtIndex (size_t idx)
             CreateValueObjectFromData(idx_name.GetData(),
                                       data,
                                       m_exe_ctx_ref,
-                                      m_backend.GetClangType().GetBasicTypeFromAST(lldb::eBasicTypeObjCID));
+                                      m_backend.GetCompilerType().GetBasicTypeFromAST(lldb::eBasicTypeObjCID));
     }
     return set_item.valobj_sp;
 }

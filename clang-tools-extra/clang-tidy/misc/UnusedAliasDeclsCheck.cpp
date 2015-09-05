@@ -17,11 +17,12 @@ using namespace clang::ast_matchers;
 namespace clang {
 namespace tidy {
 
-// FIXME: Move this to ASTMatchers.h.
-const ast_matchers::internal::VariadicDynCastAllOfMatcher<
-    Decl, NamespaceAliasDecl> namespaceAliasDecl;
-
 void UnusedAliasDeclsCheck::registerMatchers(MatchFinder *Finder) {
+  // Only register the matchers for C++11; the functionality currently does not
+  // provide any benefit to other languages, despite being benign.
+  if (!getLangOpts().CPlusPlus11)
+    return;
+
   // We cannot do anything about headers (yet), as the alias declarations
   // used in one header could be used by some other translation unit.
   Finder->addMatcher(namespaceAliasDecl(isExpansionInMainFile()).bind("alias"),

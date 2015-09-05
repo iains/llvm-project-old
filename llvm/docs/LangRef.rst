@@ -4163,6 +4163,16 @@ Examples:
     !2 = !{ i8 0, i8 2, i8 3, i8 6 }
     !3 = !{ i8 -2, i8 0, i8 3, i8 6 }
 
+'``unpredictable``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``unpredictable`` metadata may be attached to any branch or switch
+instruction. It can be used to express the unpredictability of control
+flow. Similar to the llvm.expect intrinsic, it may be used to alter
+optimizations related to compare and branch instructions. The metadata
+is treated as a boolean value; if it exists, it signals that the branch
+or switch that it is attached to is completely unpredictable.
+
 '``llvm.loop``'
 ^^^^^^^^^^^^^^^
 
@@ -4772,6 +4782,7 @@ The terminator instructions are: ':ref:`ret <i_ret>`',
 ':ref:`resume <i_resume>`', ':ref:`catchpad <i_catchpad>`',
 ':ref:`catchendpad <i_catchendpad>`',
 ':ref:`catchret <i_catchret>`',
+':ref:`cleanupendpad <i_cleanupendpad>`',
 ':ref:`cleanupret <i_cleanupret>`',
 ':ref:`terminatepad <i_terminatepad>`',
 and ':ref:`unreachable <i_unreachable>`'.
@@ -5138,7 +5149,7 @@ Syntax:
 
 ::
 
-      <resultval> = catchpad <resultty> [<args>*]
+      <resultval> = catchpad [<args>*]
           to label <normal label> unwind label <exception label>
 
 Overview:
@@ -5153,9 +5164,9 @@ routine requires to know if this is an appropriate place to catch the
 exception. Control is tranfered to the ``exception`` label if the
 ``catchpad`` is not an appropriate handler for the in-flight exception.
 The ``normal`` label should contain the code found in the ``catch``
-portion of a ``try``/``catch`` sequence. It defines values supplied by
-the :ref:`personality function <personalityfn>` upon re-entry to the
-function. The ``resultval`` has the type ``resultty``.
+portion of a ``try``/``catch`` sequence. The ``resultval`` has the type
+:ref:`token <t_token>` and is used to match the ``catchpad`` to
+corresponding :ref:`catchrets <i_catchret>`.
 
 Arguments:
 """"""""""
@@ -5170,15 +5181,11 @@ label to transfer control to if it doesn't.
 Semantics:
 """"""""""
 
-The '``catchpad``' instruction defines the values which are set by the
-:ref:`personality function <personalityfn>` upon re-entry to the function, and
-therefore the "result type" of the ``catchpad`` instruction. As with
-calling conventions, how the personality function results are
-represented in LLVM IR is target specific.
-
 When the call stack is being unwound due to an exception being thrown,
 the exception is compared against the ``args``. If it doesn't match,
 then control is transfered to the ``exception`` basic block.
+As with calling conventions, how the personality function results are
+represented in LLVM IR is target specific.
 
 The ``catchpad`` instruction has several restrictions:
 
@@ -5192,11 +5199,14 @@ The ``catchpad`` instruction has several restrictions:
    catch block.
 -  A basic block that is not a catch block may not include a
    '``catchpad``' instruction.
+-  A catch block which has another catch block as a predecessor may not have
+   any other predecessors.
 -  It is undefined behavior for control to transfer from a ``catchpad`` to a
-   ``cleanupret`` without first executing a ``catchret`` and a subsequent
-   ``cleanuppad``.
--  It is undefined behavior for control to transfer from a ``catchpad`` to a
-   ``ret`` without first executing a ``catchret``.
+   ``ret`` without first executing a ``catchret`` that consumes the
+   ``catchpad`` or unwinding through its ``catchendpad``.
+-  It is undefined behavior for control to transfer from a ``catchpad`` to
+   itself without first executing a ``catchret`` that consumes the
+   ``catchpad`` or unwinding through its ``catchendpad``.
 
 Example:
 """"""""
@@ -5204,7 +5214,7 @@ Example:
 .. code-block:: llvm
 
       ;; A catch block which can catch an integer.
-      %res = catchpad { i8*, i32 } [i8** @_ZTIi]
+      %tok = catchpad [i8** @_ZTIi]
         to label %int.handler unwind label %terminate
 
 .. _i_catchendpad:
@@ -5226,7 +5236,11 @@ Overview:
 The '``catchendpad``' instruction is used by `LLVM's exception handling
 system <ExceptionHandling.html#overview>`_ to communicate to the
 :ref:`personality function <personalityfn>` which invokes are associated
-with a chain of :ref:`catchpad <i_catchpad>` instructions.
+with a chain of :ref:`catchpad <i_catchpad>` instructions; propagating an
+exception out of a catch handler is represented by unwinding through its
+``catchendpad``.  Unwinding to the outer scope when a chain of catch handlers
+do not handle an exception is also represented by unwinding through their
+``catchendpad``.
 
 The ``nextaction`` label indicates where control should transfer to if
 none of the ``catchpad`` instructions are suitable for catching the
@@ -5259,12 +5273,23 @@ The ``catchendpad`` instruction has several restrictions:
 -  A catch-end block must have a '``catchendpad``' instruction as its
    first non-PHI instruction.
 -  There can be only one '``catchendpad``' instruction within the
-   catch block.
+   catch-end block.
 -  A basic block that is not a catch-end block may not include a
    '``catchendpad``' instruction.
 -  Exactly one catch block may unwind to a ``catchendpad``.
--  The unwind target of invokes between a ``catchpad`` and a
-   corresponding ``catchret`` must be its ``catchendpad``.
+- It is undefined behavior to execute a ``catchendpad`` if none of the
+  '``catchpad``'s chained to it have been executed.
+- It is undefined behavior to execute a ``catchendpad`` twice without an
+  intervening execution of one or more of the '``catchpad``'s chained to it.
+- It is undefined behavior to execute a ``catchendpad`` if, after the most
+  recent execution of the normal successor edge of any ``catchpad`` chained
+  to it, some ``catchret`` consuming that ``catchpad`` has already been
+  executed.
+- It is undefined behavior to execute a ``catchendpad`` if, after the most
+  recent execution of the normal successor edge of any ``catchpad`` chained
+  to it, any other ``catchpad`` or ``cleanuppad`` has been executed but has
+  not had a corresponding
+  ``catchret``/``cleanupret``/``catchendpad``/``cleanupendpad`` executed.
 
 Example:
 """"""""
@@ -5284,7 +5309,7 @@ Syntax:
 
 ::
 
-      catchret <type> <value> to label <normal>
+      catchret <value> to label <normal>
 
 Overview:
 """""""""
@@ -5296,8 +5321,10 @@ single successor.
 Arguments:
 """"""""""
 
-The '``catchret``' instruction requires one argument which specifies
-where control will transfer to next.
+The first argument to a '``catchret``' indicates which ``catchpad`` it
+exits.  It must be a :ref:`catchpad <i_catchpad>`.
+The second argument to a '``catchret``' specifies where control will
+transfer to next.
 
 Semantics:
 """"""""""
@@ -5310,12 +5337,97 @@ arbitrary code to, for example, run a C++ destructor.
 Control then transfers to ``normal``.
 It may be passed an optional, personality specific, value.
 
+It is undefined behavior to execute a ``catchret`` whose ``catchpad`` has
+not been executed.
+
+It is undefined behavior to execute a ``catchret`` if, after the most recent
+execution of its ``catchpad``, some ``catchret`` or ``catchendpad`` linked
+to the same ``catchpad`` has already been executed.
+
+It is undefined behavior to execute a ``catchret`` if, after the most recent
+execution of its ``catchpad``, any other ``catchpad`` or ``cleanuppad`` has
+been executed but has not had a corresponding
+``catchret``/``cleanupret``/``catchendpad``/``cleanupendpad`` executed.
+
 Example:
 """"""""
 
 .. code-block:: llvm
 
-      catchret label %continue
+      catchret %catch label %continue
+
+.. _i_cleanupendpad:
+
+'``cleanupendpad``' Instruction
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      cleanupendpad <value> unwind label <nextaction>
+      cleanupendpad <value> unwind to caller
+
+Overview:
+"""""""""
+
+The '``cleanupendpad``' instruction is used by `LLVM's exception handling
+system <ExceptionHandling.html#overview>`_ to communicate to the
+:ref:`personality function <personalityfn>` which invokes are associated
+with a :ref:`cleanuppad <i_cleanuppad>` instructions; propagating an exception
+out of a cleanup is represented by unwinding through its ``cleanupendpad``.
+
+The ``nextaction`` label indicates where control should unwind to next, in the
+event that a cleanup is exited by means of an(other) exception being raised.
+
+If a ``nextaction`` label is not present, the instruction unwinds out of
+its parent function. The
+:ref:`personality function <personalityfn>` will continue processing
+exception handling actions in the caller.
+
+Arguments:
+""""""""""
+
+The '``cleanupendpad``' instruction requires one argument, which indicates
+which ``cleanuppad`` it exits, and must be a :ref:`cleanuppad <i_cleanuppad>`.
+It also has an optional successor, ``nextaction``, indicating where control
+should transfer to.
+
+Semantics:
+""""""""""
+
+When and exception propagates to a ``cleanupendpad``, control is transfered to
+``nextaction`` if it is present. If it is not present, control is transfered to
+the caller.
+
+The ``cleanupendpad`` instruction has several restrictions:
+
+-  A cleanup-end block is a basic block which is the unwind destination of
+   an exceptional instruction.
+-  A cleanup-end block must have a '``cleanupendpad``' instruction as its
+   first non-PHI instruction.
+-  There can be only one '``cleanupendpad``' instruction within the
+   cleanup-end block.
+-  A basic block that is not a cleanup-end block may not include a
+   '``cleanupendpad``' instruction.
+- It is undefined behavior to execute a ``cleanupendpad`` whose ``cleanuppad``
+  has not been executed.
+- It is undefined behavior to execute a ``cleanupendpad`` if, after the most
+  recent execution of its ``cleanuppad``, some ``cleanupret`` or ``cleanupendpad``
+  consuming the same ``cleanuppad`` has already been executed.
+- It is undefined behavior to execute a ``cleanupendpad`` if, after the most
+  recent execution of its ``cleanuppad``, any other ``cleanuppad`` or
+  ``catchpad`` has been executed but has not had a corresponding
+  ``cleanupret``/``catchret``/``cleanupendpad``/``catchendpad`` executed.
+
+Example:
+""""""""
+
+.. code-block:: llvm
+
+      cleanupendpad %cleanup unwind label %terminate
+      cleanupendpad %cleanup unwind to caller
 
 .. _i_cleanupret:
 
@@ -5327,8 +5439,8 @@ Syntax:
 
 ::
 
-      cleanupret <type> <value> unwind label <continue>
-      cleanupret <type> <value> unwind to caller
+      cleanupret <value> unwind label <continue>
+      cleanupret <value> unwind to caller
 
 Overview:
 """""""""
@@ -5340,9 +5452,9 @@ an optional successor.
 Arguments:
 """"""""""
 
-The '``cleanupret``' instruction requires one argument, which must have the
-same type as the result of any '``cleanuppad``' instruction in the same
-function. It also has an optional successor,  ``continue``.
+The '``cleanupret``' instruction requires one argument, which indicates
+which ``cleanuppad`` it exits, and must be a :ref:`cleanuppad <i_cleanuppad>`.
+It also has an optional successor, ``continue``.
 
 Semantics:
 """"""""""
@@ -5352,13 +5464,25 @@ The '``cleanupret``' instruction indicates to the
 :ref:`cleanuppad <i_cleanuppad>` it transferred control to has ended.
 It transfers control to ``continue`` or unwinds out of the function.
 
+It is undefined behavior to execute a ``cleanupret`` whose ``cleanuppad`` has
+not been executed.
+
+It is undefined behavior to execute a ``cleanupret`` if, after the most recent
+execution of its ``cleanuppad``, some ``cleanupret`` or ``cleanupendpad``
+consuming the same ``cleanuppad`` has already been executed.
+
+It is undefined behavior to execute a ``cleanupret`` if, after the most recent
+execution of its ``cleanuppad``, any other ``cleanuppad`` or ``catchpad`` has
+been executed but has not had a corresponding
+``cleanupret``/``catchret``/``cleanupendpad``/``catchendpad`` executed.
+
 Example:
 """"""""
 
 .. code-block:: llvm
 
-      cleanupret void unwind to caller
-      cleanupret { i8*, i32 } %exn unwind label %continue
+      cleanupret %cleanup unwind to caller
+      cleanupret %cleanup unwind label %continue
 
 .. _i_terminatepad:
 
@@ -6705,7 +6829,7 @@ The optional ``!nonnull`` metadata must reference a single
 metadata name ``<index>`` corresponding to a metadata node with no
 entries. The existence of the ``!nonnull`` metadata on the
 instruction tells the optimizer that the value loaded is known to
-never be null. This is analogous to the ''nonnull'' attribute
+never be null. This is analogous to the ``nonnull`` attribute
 on parameters and return values. This metadata can only be applied
 to loads of a pointer type.
 
@@ -7400,10 +7524,12 @@ implies that ``fptrunc`` cannot be used to make a *no-op cast*.
 Semantics:
 """"""""""
 
-The '``fptrunc``' instruction truncates a ``value`` from a larger
+The '``fptrunc``' instruction casts a ``value`` from a larger
 :ref:`floating point <t_floating>` type to a smaller :ref:`floating
-point <t_floating>` type. If the value cannot fit within the
-destination type, ``ty2``, then the results are undefined.
+point <t_floating>` type. If the value cannot fit (i.e. overflows) within the
+destination type, ``ty2``, then the results are undefined. If the cast produces
+an inexact result, how rounding is performed (e.g. truncation, also known as
+round to zero) is undefined.
 
 Example:
 """"""""
@@ -8391,7 +8517,7 @@ Syntax:
 
 ::
 
-      <resultval> = cleanuppad <resultty> [<args>*]
+      <resultval> = cleanuppad [<args>*]
 
 Overview:
 """""""""
@@ -8403,7 +8529,9 @@ transfer control to run cleanup actions.
 The ``args`` correspond to whatever additional
 information the :ref:`personality function <personalityfn>` requires to
 execute the cleanup.
-The ``resultval`` has the type ``resultty``.
+The ``resultval`` has the type :ref:`token <t_token>` and is used to
+match the ``cleanuppad`` to corresponding :ref:`cleanuprets <i_cleanupret>`
+and :ref:`cleanupendpads <i_cleanupendpad>`.
 
 Arguments:
 """"""""""
@@ -8414,15 +8542,11 @@ by the :ref:`personality function <personalityfn>`.
 Semantics:
 """"""""""
 
-The '``cleanuppad``' instruction defines the values which are set by the
-:ref:`personality function <personalityfn>` upon re-entry to the function, and
-therefore the "result type" of the ``cleanuppad`` instruction. As with
-calling conventions, how the personality function results are
-represented in LLVM IR is target specific.
-
 When the call stack is being unwound due to an exception being thrown,
 the :ref:`personality function <personalityfn>` transfers control to the
 ``cleanuppad`` with the aid of the personality-specific arguments.
+As with calling conventions, how the personality function results are
+represented in LLVM IR is target specific.
 
 The ``cleanuppad`` instruction has several restrictions:
 
@@ -8434,18 +8558,21 @@ The ``cleanuppad`` instruction has several restrictions:
    cleanup block.
 -  A basic block that is not a cleanup block may not include a
    '``cleanuppad``' instruction.
+-  All '``cleanupret``'s and '``cleanupendpad``'s which consume a ``cleanuppad``
+   must have the same exceptional successor.
 -  It is undefined behavior for control to transfer from a ``cleanuppad`` to a
-   ``catchret`` without first executing a ``cleanupret`` and a subsequent
-   ``catchpad``.
--  It is undefined behavior for control to transfer from a ``cleanuppad`` to a
-   ``ret`` without first executing a ``cleanupret``.
+   ``ret`` without first executing a ``cleanupret`` or ``cleanupendpad`` that
+   consumes the ``cleanuppad``.
+-  It is undefined behavior for control to transfer from a ``cleanuppad`` to
+   itself without first executing a ``cleanupret`` or ``cleanupendpad`` that
+   consumes the ``cleanuppad``.
 
 Example:
 """"""""
 
 .. code-block:: llvm
 
-      %res = cleanuppad { i8*, i32 } [label %nextaction]
+      %tok = cleanuppad []
 
 .. _intrinsics:
 

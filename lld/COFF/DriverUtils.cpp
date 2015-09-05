@@ -20,6 +20,8 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Object/Archive.h"
+#include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
@@ -368,6 +370,12 @@ err:
   error(Twine("invalid /export: ") + Arg);
 }
 
+static StringRef undecorate(StringRef Sym) {
+  if (Config->Machine != I386)
+    return Sym;
+  return Sym.startswith("_") ? Sym.substr(1) : Sym;
+}
+
 // Performs error checking on all /export arguments.
 // It also sets ordinals.
 void fixupExports() {
@@ -377,30 +385,25 @@ void fixupExports() {
     if (E.Ordinal == 0)
       continue;
     if (!Ords.insert(E.Ordinal).second)
-      error(Twine("duplicate export ordinal: ") + E.Name);
+      error("duplicate export ordinal: " + E.Name);
   }
 
   for (Export &E : Config->Exports) {
-    if (!E.ExtName.empty()) {
-      E.ExtDLLName = E.ExtName;
-      E.ExtLibName = E.ExtName;
-      continue;
+    if (Undefined *U = cast_or_null<Undefined>(E.Sym->WeakAlias)) {
+      E.SymbolName = U->getName();
+    } else {
+      E.SymbolName = E.Sym->getName();
     }
-    StringRef S = E.Sym->repl()->getName();
-    if (Config->Machine == I386 && S.startswith("_")) {
-      E.ExtDLLName = S.substr(1).split('@').first;
-      E.ExtLibName = S.substr(1);
-      continue;
-    }
-    E.ExtDLLName = S;
-    E.ExtLibName = S;
   }
+
+  for (Export &E : Config->Exports)
+    E.ExportName = undecorate(E.ExtName.empty() ? E.Name : E.ExtName);
 
   // Uniquefy by name.
   std::map<StringRef, Export *> Map;
   std::vector<Export> V;
   for (Export &E : Config->Exports) {
-    auto Pair = Map.insert(std::make_pair(E.ExtLibName, &E));
+    auto Pair = Map.insert(std::make_pair(E.ExportName, &E));
     bool Inserted = Pair.second;
     if (Inserted) {
       V.push_back(E);
@@ -416,7 +419,7 @@ void fixupExports() {
   // Sort by name.
   std::sort(Config->Exports.begin(), Config->Exports.end(),
             [](const Export &A, const Export &B) {
-              return A.ExtDLLName < B.ExtDLLName;
+              return A.ExportName < B.ExportName;
             });
 }
 
@@ -479,53 +482,149 @@ static std::string writeToTempFile(StringRef Contents) {
   return Path.str();
 }
 
-/// Creates a .def file containing the list of exported symbols.
-static std::string createModuleDefinitionFile() {
-  std::string S;
-  llvm::raw_string_ostream OS(S);
-  OS << "LIBRARY \"" << llvm::sys::path::filename(Config->OutputFile) << "\"\n"
-     << "EXPORTS\n";
-  for (Export &E : Config->Exports) {
-    OS << "  " << E.ExtLibName;
-    if (E.Ordinal > 0)
-      OS << " @" << E.Ordinal;
-    if (E.Noname)
-      OS << " NONAME";
-    if (E.Data)
-      OS << " DATA";
-    if (E.Private)
-      OS << " PRIVATE";
-    OS << "\n";
-  }
-  OS.flush();
-  return S;
-}
-
-// Creates a .def file and runs lib.exe on it to create an import library.
-void writeImportLibrary() {
-  std::string Contents = createModuleDefinitionFile();
-  std::string Def = writeToTempFile(Contents);
-  llvm::FileRemover TempFile(Def);
-
-  Executor E("lib.exe");
-  E.add("/nologo");
-  E.add("/machine:" + machineToStr(Config->Machine));
-  E.add(Twine("/def:") + Def);
-  if (Config->Implib.empty()) {
-    SmallString<128> Out = StringRef(Config->OutputFile);
-    sys::path::replace_extension(Out, ".lib");
-    E.add("/out:" + Out);
-  } else {
-    E.add("/out:" + Config->Implib);
-  }
-  E.run();
-}
-
 void touchFile(StringRef Path) {
   int FD;
   std::error_code EC = sys::fs::openFileForWrite(Path, FD, sys::fs::F_Append);
   error(EC, "failed to create a file");
   sys::Process::SafelyCloseFileDescriptor(FD);
+}
+
+static std::string getImplibPath() {
+  if (!Config->Implib.empty())
+    return Config->Implib;
+  SmallString<128> Out = StringRef(Config->OutputFile);
+  sys::path::replace_extension(Out, ".lib");
+  return Out.str();
+}
+
+static std::unique_ptr<MemoryBuffer> createEmptyImportLibrary() {
+  std::string S = (Twine("LIBRARY \"") +
+                   llvm::sys::path::filename(Config->OutputFile) + "\"\n")
+                      .str();
+  std::string Path1 = writeToTempFile(S);
+  std::string Path2 = getImplibPath();
+  llvm::FileRemover Remover1(Path1);
+  llvm::FileRemover Remover2(Path2);
+
+  Executor E("lib.exe");
+  E.add("/nologo");
+  E.add("/machine:" + machineToStr(Config->Machine));
+  E.add(Twine("/def:") + Path1);
+  E.add(Twine("/out:") + Path2);
+  E.run();
+
+  ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
+      MemoryBuffer::getFile(Path2, -1, false);
+  error(BufOrErr, Twine("Failed to open ") + Path2);
+  return MemoryBuffer::getMemBufferCopy((*BufOrErr)->getBuffer());
+}
+
+static std::vector<NewArchiveIterator>
+readMembers(const object::Archive &Archive) {
+  std::vector<NewArchiveIterator> V;
+  for (const object::Archive::Child &C : Archive.children()) {
+    ErrorOr<StringRef> NameOrErr = C.getName();
+    error(NameOrErr, "Archive::Child::getName failed");
+    V.emplace_back(C, *NameOrErr);
+  }
+  return V;
+}
+
+// This class creates short import files which is described in
+// PE/COFF spec 7. Import Library Format.
+class ShortImportCreator {
+public:
+  ShortImportCreator(object::Archive *A, StringRef S) : Parent(A), DLLName(S) {}
+
+  NewArchiveIterator create(StringRef Sym, uint16_t Ordinal,
+                            ImportNameType NameType, bool isData) {
+    size_t ImpSize = DLLName.size() + Sym.size() + 2; // +2 for NULs
+    size_t Size = sizeof(object::ArchiveMemberHeader) +
+                  sizeof(coff_import_header) + ImpSize;
+    char *Buf = Alloc.Allocate<char>(Size);
+    memset(Buf, 0, Size);
+    char *P = Buf;
+
+    // Write archive member header
+    auto *Hdr = reinterpret_cast<object::ArchiveMemberHeader *>(P);
+    P += sizeof(*Hdr);
+    sprintf(Hdr->Name, "%-12s", "dummy");
+    sprintf(Hdr->LastModified, "%-12d", 0);
+    sprintf(Hdr->UID, "%-6d", 0);
+    sprintf(Hdr->GID, "%-6d", 0);
+    sprintf(Hdr->AccessMode, "%-8d", 0644);
+    sprintf(Hdr->Size, "%-10d", int(sizeof(coff_import_header) + ImpSize));
+
+    // Write short import library.
+    auto *Imp = reinterpret_cast<coff_import_header *>(P);
+    P += sizeof(*Imp);
+    Imp->Sig2 = 0xFFFF;
+    Imp->Machine = Config->Machine;
+    Imp->SizeOfData = ImpSize;
+    if (Ordinal > 0)
+      Imp->OrdinalHint = Ordinal;
+    Imp->TypeInfo = (isData ? IMPORT_DATA : IMPORT_CODE);
+    Imp->TypeInfo |= NameType << 2;
+
+    // Write symbol name and DLL name.
+    memcpy(P, Sym.data(), Sym.size());
+    P += Sym.size() + 1;
+    memcpy(P, DLLName.data(), DLLName.size());
+
+    object::Archive::Child C(Parent, Buf);
+    return NewArchiveIterator(C, DLLName);
+  }
+
+private:
+  BumpPtrAllocator Alloc;
+  object::Archive *Parent;
+  StringRef DLLName;
+};
+
+static ImportNameType getNameType(StringRef Sym, StringRef ExtName) {
+  if (Sym != ExtName)
+    return IMPORT_NAME_UNDECORATE;
+  if (Config->Machine == I386 && Sym.startswith("_"))
+    return IMPORT_NAME_NOPREFIX;
+  return IMPORT_NAME;
+}
+
+static std::string replace(StringRef S, StringRef From, StringRef To) {
+  size_t Pos = S.find(From);
+  assert(Pos != StringRef::npos);
+  return (Twine(S.substr(0, Pos)) + To + S.substr(Pos + From.size())).str();
+}
+
+// Creates an import library for a DLL. In this function, we first
+// create an empty import library using lib.exe and then adds short
+// import files to that file.
+void writeImportLibrary() {
+  std::unique_ptr<MemoryBuffer> Buf = createEmptyImportLibrary();
+  std::error_code EC;
+  object::Archive Archive(Buf->getMemBufferRef(), EC);
+  error(EC, "Error reading an empty import file");
+  std::vector<NewArchiveIterator> Members = readMembers(Archive);
+
+  std::string DLLName = llvm::sys::path::filename(Config->OutputFile);
+  ShortImportCreator ShortImport(&Archive, DLLName);
+  for (Export &E : Config->Exports) {
+    if (E.Private)
+      continue;
+    if (E.ExtName.empty()) {
+      Members.push_back(ShortImport.create(
+          E.SymbolName, E.Ordinal, getNameType(E.SymbolName, E.Name), E.Data));
+    } else {
+      Members.push_back(ShortImport.create(
+          replace(E.SymbolName, E.Name, E.ExtName), E.Ordinal,
+          getNameType(E.SymbolName, E.Name), E.Data));
+    }
+  }
+
+  std::string Path = getImplibPath();
+  std::pair<StringRef, std::error_code> Result =
+      writeArchive(Path, Members, /*WriteSymtab*/ true, object::Archive::K_GNU,
+                   /*Deterministic*/ true, /*Thin*/ false);
+  error(Result.second, Twine("Failed to write ") + Path);
 }
 
 // Create OptTable
@@ -562,6 +661,15 @@ llvm::opt::InputArgList ArgParser::parse(ArrayRef<const char *> ArgsArr) {
   unsigned MissingCount;
   llvm::opt::InputArgList Args =
       Table.ParseArgs(Argv, MissingIndex, MissingCount);
+
+  // Print the real command line if response files are expanded.
+  if (Args.hasArg(OPT_verbose) && ArgsArr.size() != Argv.size()) {
+    llvm::outs() << "Command line:";
+    for (const char *S : Argv)
+      llvm::outs() << " " << S;
+    llvm::outs() << "\n";
+  }
+
   if (MissingCount)
     error(Twine("missing arg value for \"") + Args.getArgString(MissingIndex) +
           "\", expected " + Twine(MissingCount) +

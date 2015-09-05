@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "lldb/DataFormatters/CXXFormatterFunctions.h"
+#include "lldb/DataFormatters/CoreMedia.h"
 
 #include "lldb/Core/Flags.h"
 #include "lldb/Symbol/ClangASTContext.h"
@@ -21,9 +21,9 @@ using namespace lldb_private::formatters;
 bool
 lldb_private::formatters::CMTimeSummaryProvider (ValueObject& valobj, Stream& stream, const TypeSummaryOptions& options)
 {
-    if (!valobj.GetClangType().IsValid())
+    if (!valobj.GetCompilerType().IsValid())
         return false;
-    ClangASTContext *ast_ctx = valobj.GetClangType().GetTypeSystem()->AsClangASTContext();
+    ClangASTContext *ast_ctx = valobj.GetCompilerType().GetTypeSystem()->AsClangASTContext();
     if (!ast_ctx)
         return false;
     

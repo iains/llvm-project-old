@@ -81,6 +81,10 @@ static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
   return std::unique_ptr<InputFile>(new ObjectFile(MB));
 }
 
+static bool isDecorated(StringRef Sym) {
+  return Sym.startswith("_") || Sym.startswith("@") || Sym.startswith("?");
+}
+
 // Parses .drectve section contents and returns a list of files
 // specified by /defaultlib.
 void LinkerDriver::parseDirectives(StringRef S) {
@@ -99,8 +103,7 @@ void LinkerDriver::parseDirectives(StringRef S) {
       break;
     case OPT_export: {
       Export E = parseExport(Arg->getValue());
-      if (Config->Machine == I386 && E.ExtName.startswith("_"))
-        E.ExtName = E.ExtName.substr(1);
+      E.Directives = true;
       Config->Exports.push_back(E);
       break;
     }
@@ -117,6 +120,7 @@ void LinkerDriver::parseDirectives(StringRef S) {
       Config->NoDefaultLibs.insert(doFindLib(Arg->getValue()));
       break;
     case OPT_editandcontinue:
+    case OPT_guardsym:
     case OPT_throwingnew:
       break;
     default:
@@ -372,9 +376,14 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     if (StringRef(S).startswith("lldlto=")) {
       StringRef OptLevel = StringRef(S).substr(7);
       if (OptLevel.getAsInteger(10, Config->LTOOptLevel) ||
-          Config->LTOOptLevel > 3) {
+          Config->LTOOptLevel > 3)
         error("/opt:lldlto: invalid optimization level: " + OptLevel);
-      }
+      continue;
+    }
+    if (StringRef(S).startswith("lldltojobs=")) {
+      StringRef Jobs = StringRef(S).substr(11);
+      if (Jobs.getAsInteger(10, Config->LTOJobs) || Config->LTOJobs == 0)
+        error("/opt:lldltojobs: invalid job count: " + Jobs);
       continue;
     }
     if (S != "ref" && S != "icf" && S != "noicf" &&
@@ -515,8 +524,12 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Handle /export
   for (auto *Arg : Args.filtered(OPT_export)) {
     Export E = parseExport(Arg->getValue());
-    if (Config->Machine == I386 && !E.Name.startswith("_@?"))
-      E.Name = mangle(E.Name);
+    if (Config->Machine == I386) {
+      if (!isDecorated(E.Name))
+        E.Name = Alloc.save("_" + E.Name);
+      if (!E.ExtName.empty() && !isDecorated(E.ExtName))
+        E.ExtName = Alloc.save("_" + E.ExtName);
+    }
     Config->Exports.push_back(E);
   }
 
@@ -569,7 +582,8 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     // Windows specific -- Make sure we resolve all dllexported symbols.
     for (Export &E : Config->Exports) {
       E.Sym = addUndefined(E.Name);
-      Symtab.mangleMaybe(E.Sym);
+      if (!E.Directives)
+        Symtab.mangleMaybe(E.Sym);
     }
 
     // Add weak aliases. Weak aliases is a mechanism to give remaining
@@ -594,9 +608,9 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Symtab.run();
   }
 
-  // Do LTO by compiling bitcode input files to a native COFF file
-  // then link that file.
-  Symtab.addCombinedLTOObject();
+  // Do LTO by compiling bitcode input files to a set of native COFF files then
+  // link those files.
+  Symtab.addCombinedLTOObjects();
 
   // Make sure we have resolved all symbols.
   Symtab.reportRemainingUndefines(/*Resolve=*/true);
@@ -621,7 +635,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
 
   // Windows specific -- when we are creating a .dll file, we also
   // need to create a .lib file.
-  if (!Config->Exports.empty()) {
+  if (!Config->Exports.empty() || Config->DLL) {
     fixupExports();
     writeImportLibrary();
     assignExportOrdinals();

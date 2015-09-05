@@ -441,8 +441,8 @@ void ASTDeclReader::Visit(Decl *D) {
     // If this is a tag declaration with a typedef name for linkage, it's safe
     // to load that typedef now.
     if (NamedDeclForTagDecl)
-      cast<TagDecl>(D)->NamedDeclOrQualifier =
-          cast<NamedDecl>(Reader.GetDecl(NamedDeclForTagDecl));
+      cast<TagDecl>(D)->TypedefNameDeclOrQualifier =
+          cast<TypedefNameDecl>(Reader.GetDecl(NamedDeclForTagDecl));
   } else if (ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(D)) {
     // if we have a fully initialized TypeDecl, we can safely read its type now.
     ID->TypeForDecl = Reader.GetType(TypeIDForTypeDecl).getTypePtrOrNull();
@@ -595,15 +595,12 @@ ASTDeclReader::RedeclarableResult ASTDeclReader::VisitTagDecl(TagDecl *TD) {
   case 1: { // ExtInfo
     TagDecl::ExtInfo *Info = new (Reader.getContext()) TagDecl::ExtInfo();
     ReadQualifierInfo(*Info, Record, Idx);
-    TD->NamedDeclOrQualifier = Info;
+    TD->TypedefNameDeclOrQualifier = Info;
     break;
   }
   case 2: // TypedefNameForAnonDecl
     NamedDeclForTagDecl = ReadDeclID(Record, Idx);
     TypedefNameForLinkage = Reader.GetIdentifierInfo(F, Record, Idx);
-    break;
-  case 3: // DeclaratorForAnonDecl
-    NamedDeclForTagDecl = ReadDeclID(Record, Idx);
     break;
   default:
     llvm_unreachable("unexpected tag info kind");
@@ -1492,6 +1489,8 @@ void ASTDeclReader::MergeDefinitionData(
     Reader.PendingDefinitions.erase(MergeDD.Definition);
     MergeDD.Definition->IsCompleteDefinition = false;
     mergeDefinitionVisibility(DD.Definition, MergeDD.Definition);
+    assert(Reader.Lookups.find(MergeDD.Definition) == Reader.Lookups.end() &&
+           "already loaded pending lookups for merged definition");
   }
 
   auto PFDI = Reader.PendingFakeDefinitionData.find(&DD);
@@ -2156,6 +2155,8 @@ ASTDeclReader::VisitRedeclarable(Redeclarable<T> *D) {
   bool IsKeyDecl = ThisDeclID == FirstDeclID;
   bool IsFirstLocalDecl = false;
 
+  uint64_t RedeclOffset = 0;
+
   // 0 indicates that this declaration was the only declaration of its entity,
   // and is used for space optimization.
   if (FirstDeclID == 0) {
@@ -2175,6 +2176,8 @@ ASTDeclReader::VisitRedeclarable(Redeclarable<T> *D) {
     // declaration.
     for (unsigned I = 0; I != N - 1; ++I)
       MergeWith = ReadDecl(Record, Idx/*, MergeWith*/);
+
+    RedeclOffset = Record[Idx++];
   } else {
     // This declaration was not the first local declaration. Read the first
     // local declaration now, to trigger the import of other redeclarations.
@@ -2198,7 +2201,7 @@ ASTDeclReader::VisitRedeclarable(Redeclarable<T> *D) {
   // above; this ensures that the redeclaration chain is built in the correct
   // order.
   if (IsFirstLocalDecl)
-    Reader.PendingDeclChains.push_back(DAsT);
+    Reader.PendingDeclChains.push_back(std::make_pair(DAsT, RedeclOffset));
 
   return RedeclarableResult(FirstDeclID, MergeWith, IsKeyDecl);
 }
@@ -3345,15 +3348,10 @@ void ASTReader::loadDeclUpdateRecords(serialization::DeclID ID, Decl *D) {
     PendingVisibleUpdates.erase(I);
 
     auto *DC = cast<DeclContext>(D)->getPrimaryContext();
-    for (const PendingVisibleUpdate &Update : VisibleUpdates) {
-      auto *&LookupTable = Update.Mod->DeclContextInfos[DC].NameLookupTableData;
-      assert(!LookupTable && "multiple lookup tables for DC in module");
-      LookupTable = reader::ASTDeclContextNameLookupTable::Create(
-          Update.Data + Update.BucketOffset,
-          Update.Data + sizeof(uint32_t),
-          Update.Data,
+    for (const PendingVisibleUpdate &Update : VisibleUpdates)
+      Lookups[DC].Table.add(
+          Update.Mod, Update.Data,
           reader::ASTDeclContextNameLookupTrait(*this, *Update.Mod));
-    }
     DC->setHasExternalVisibleStorage(true);
   }
 
@@ -3393,43 +3391,40 @@ void ASTReader::loadDeclUpdateRecords(serialization::DeclID ID, Decl *D) {
   }
 }
 
-void ASTReader::loadPendingDeclChain(Decl *FirstLocal) {
-  ModuleFile &M = *getOwningModuleFile(FirstLocal);
-  DeclID LocalID =
-      mapGlobalIDToModuleFileGlobalID(M, FirstLocal->getGlobalID());
-  assert(LocalID && "looking for redecl chain in wrong module file");
-
-  // Perform a binary search to find the local redeclarations for this
-  // declaration (if any).
-  // FIXME: Just store an offset with the first declaration.
-  const LocalRedeclarationsInfo Compare = {LocalID, 0};
-  const LocalRedeclarationsInfo *Result = std::lower_bound(
-      M.RedeclarationsMap,
-      M.RedeclarationsMap + M.LocalNumRedeclarationsInMap, Compare);
-
-  // Pull out the list of redeclarations.
-  SmallVector<Decl*, 4> Chain;
-  if (Result != M.RedeclarationsMap + M.LocalNumRedeclarationsInMap &&
-      Result->FirstID == LocalID) {
-    unsigned Offset = Result->Offset;
-    unsigned N = M.RedeclarationChains[Offset++];
-    for (unsigned I = 0; I != N; ++I)
-      Chain.push_back(GetLocalDecl(M, M.RedeclarationChains[Offset++]));
-  }
-  Chain.push_back(FirstLocal);
-
-  // Hook up the chain.
-  //
-  // FIXME: We have three different dispatches on decl kind here; maybe
-  // we should instead generate one loop per kind and dispatch up-front?
+void ASTReader::loadPendingDeclChain(Decl *FirstLocal, uint64_t LocalOffset) {
+  // Attach FirstLocal to the end of the decl chain.
   Decl *CanonDecl = FirstLocal->getCanonicalDecl();
-  Decl *MostRecent = ASTDeclReader::getMostRecentDecl(CanonDecl);
-  if (!MostRecent)
-    MostRecent = CanonDecl;
-  for (unsigned I = 0, N = Chain.size(); I != N; ++I) {
-    auto *D = Chain[N - I - 1];
-    if (D == CanonDecl)
-      continue;
+  if (FirstLocal != CanonDecl) {
+    Decl *PrevMostRecent = ASTDeclReader::getMostRecentDecl(CanonDecl);
+    ASTDeclReader::attachPreviousDecl(
+        *this, FirstLocal, PrevMostRecent ? PrevMostRecent : CanonDecl,
+        CanonDecl);
+  }
+
+  if (!LocalOffset) {
+    ASTDeclReader::attachLatestDecl(CanonDecl, FirstLocal);
+    return;
+  }
+
+  // Load the list of other redeclarations from this module file.
+  ModuleFile *M = getOwningModuleFile(FirstLocal);
+  assert(M && "imported decl from no module file");
+
+  llvm::BitstreamCursor &Cursor = M->DeclsCursor;
+  SavedStreamPosition SavedPosition(Cursor);
+  Cursor.JumpToBit(LocalOffset);
+
+  RecordData Record;
+  unsigned Code = Cursor.ReadCode();
+  unsigned RecCode = Cursor.readRecord(Code, Record);
+  (void)RecCode;
+  assert(RecCode == LOCAL_REDECLARATIONS && "expected LOCAL_REDECLARATIONS record!");
+
+  // FIXME: We have several different dispatches on decl kind here; maybe
+  // we should instead generate one loop per kind and dispatch up-front?
+  Decl *MostRecent = FirstLocal;
+  for (unsigned I = 0, N = Record.size(); I != N; ++I) {
+    auto *D = GetLocalDecl(*M, Record[N - I - 1]);
     ASTDeclReader::attachPreviousDecl(*this, D, MostRecent, CanonDecl);
     MostRecent = D;
   }

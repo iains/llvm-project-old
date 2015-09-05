@@ -59,7 +59,7 @@ namespace llvm {
 
     LLLexer::LocTy Loc;
     unsigned UIntVal;
-    FunctionType *FTy;
+    FunctionType *FTy = nullptr;
     std::string StrVal, StrVal2;
     APSInt APSIntVal;
     APFloat APFloatVal{0.0};
@@ -106,6 +106,14 @@ namespace llvm {
     struct MDRef {
       SMLoc Loc;
       unsigned MDKind, MDSlot;
+    };
+
+    /// Indicates which operator an operand allows (for the few operands that
+    /// may only reference a certain operator).
+    enum OperatorConstraint {
+      OC_None = 0,  // No constraint
+      OC_CatchPad,  // Must be CatchPadInst
+      OC_CleanupPad // Must be CleanupPadInst
     };
 
     SmallVector<Instruction*, 64> InstsWithTBAATag;
@@ -329,8 +337,10 @@ namespace llvm {
       /// GetVal - Get a value with the specified name or ID, creating a
       /// forward reference record if needed.  This can return null if the value
       /// exists but does not have the right type.
-      Value *GetVal(const std::string &Name, Type *Ty, LocTy Loc);
-      Value *GetVal(unsigned ID, Type *Ty, LocTy Loc);
+      Value *GetVal(const std::string &Name, Type *Ty, LocTy Loc,
+                    OperatorConstraint OC = OC_None);
+      Value *GetVal(unsigned ID, Type *Ty, LocTy Loc,
+                    OperatorConstraint OC = OC_None);
 
       /// SetInstName - After an instruction is parsed and inserted into its
       /// basic block, this installs its name.
@@ -352,12 +362,15 @@ namespace llvm {
     };
 
     bool ConvertValIDToValue(Type *Ty, ValID &ID, Value *&V,
-                             PerFunctionState *PFS);
+                             PerFunctionState *PFS,
+                             OperatorConstraint OC = OC_None);
 
     bool parseConstantValue(Type *Ty, Constant *&C);
-    bool ParseValue(Type *Ty, Value *&V, PerFunctionState *PFS);
-    bool ParseValue(Type *Ty, Value *&V, PerFunctionState &PFS) {
-      return ParseValue(Ty, V, &PFS);
+    bool ParseValue(Type *Ty, Value *&V, PerFunctionState *PFS,
+                    OperatorConstraint OC = OC_None);
+    bool ParseValue(Type *Ty, Value *&V, PerFunctionState &PFS,
+                    OperatorConstraint OC = OC_None) {
+      return ParseValue(Ty, V, &PFS, OC);
     }
     bool ParseValue(Type *Ty, Value *&V, LocTy &Loc,
                     PerFunctionState &PFS) {
@@ -462,6 +475,7 @@ namespace llvm {
     bool ParseTerminatePad(Instruction *&Inst, PerFunctionState &PFS);
     bool ParseCleanupPad(Instruction *&Inst, PerFunctionState &PFS);
     bool ParseCatchEndPad(Instruction *&Inst, PerFunctionState &PFS);
+    bool ParseCleanupEndPad(Instruction *&Inst, PerFunctionState &PFS);
 
     bool ParseArithmetic(Instruction *&I, PerFunctionState &PFS, unsigned Opc,
                          unsigned OperandType);

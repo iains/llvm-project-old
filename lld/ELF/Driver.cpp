@@ -14,6 +14,7 @@
 #include "SymbolTable.h"
 #include "Writer.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/FileSystem.h"
 
 using namespace llvm;
 
@@ -45,22 +46,16 @@ MemoryBufferRef LinkerDriver::openFile(StringRef Path) {
 }
 
 static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
-  std::pair<unsigned char, unsigned char> Type =
-      object::getElfArchType(MB.getBuffer());
-  if (Type.second != ELF::ELFDATA2LSB && Type.second != ELF::ELFDATA2MSB)
-    error("Invalid data encoding");
+  using namespace llvm::sys::fs;
+  file_magic Magic = identify_magic(MB.getBuffer());
 
-  if (Type.first == ELF::ELFCLASS32) {
-    if (Type.second == ELF::ELFDATA2LSB)
-      return make_unique<ObjectFile<object::ELF32LE>>(MB);
-    return make_unique<ObjectFile<object::ELF32BE>>(MB);
-  }
-  if (Type.first == ELF::ELFCLASS64) {
-    if (Type.second == ELF::ELFDATA2LSB)
-      return make_unique<ObjectFile<object::ELF64LE>>(MB);
-    return make_unique<ObjectFile<object::ELF64BE>>(MB);
-  }
-  error("Invalid file class");
+  if (Magic == file_magic::archive)
+    return make_unique<ArchiveFile>(MB);
+
+  if (Magic == file_magic::elf_shared_object)
+    return createELFFile<SharedFile>(MB);
+
+  return createELFFile<ObjectFile>(MB);
 }
 
 void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
@@ -98,18 +93,18 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   Symtab.reportRemainingUndefines();
 
   // Write the result.
-  ObjectFileBase &FirstObj = *Symtab.ObjectFiles[0];
-  switch (FirstObj.kind()) {
-  case InputFile::Object32LEKind:
+  const ELFFileBase *FirstObj = Symtab.getFirstELF();
+  switch (FirstObj->getELFKind()) {
+  case ELF32LEKind:
     writeResult<object::ELF32LE>(&Symtab);
     return;
-  case InputFile::Object32BEKind:
+  case ELF32BEKind:
     writeResult<object::ELF32BE>(&Symtab);
     return;
-  case InputFile::Object64LEKind:
+  case ELF64LEKind:
     writeResult<object::ELF64LE>(&Symtab);
     return;
-  case InputFile::Object64BEKind:
+  case ELF64BEKind:
     writeResult<object::ELF64BE>(&Symtab);
     return;
   }

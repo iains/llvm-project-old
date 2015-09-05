@@ -27,7 +27,6 @@
 #include "lldb/Symbol/Variable.h"
 
 #include "lldb/Target/ExecutionContext.h"
-#include "lldb/Target/LanguageRuntime.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/Target.h"
@@ -55,7 +54,7 @@ ValueObjectCast::ValueObjectCast
 {
     SetName (name);
     //m_value.SetContext (Value::eContextTypeClangType, cast_type.GetOpaqueQualType());
-    m_value.SetClangType (cast_type);
+    m_value.SetCompilerType (cast_type);
 }
 
 ValueObjectCast::~ValueObjectCast()
@@ -63,7 +62,7 @@ ValueObjectCast::~ValueObjectCast()
 }
 
 CompilerType
-ValueObjectCast::GetClangTypeImpl ()
+ValueObjectCast::GetCompilerTypeImpl ()
 {
     return m_cast_type;
 }
@@ -71,7 +70,7 @@ ValueObjectCast::GetClangTypeImpl ()
 size_t
 ValueObjectCast::CalculateNumChildren()
 {
-    return GetClangType().GetNumChildren (true);
+    return GetCompilerType().GetNumChildren (true);
 }
 
 uint64_t
@@ -98,9 +97,9 @@ ValueObjectCast::UpdateValue ()
         Value old_value(m_value);
         m_update_point.SetUpdated();
         m_value = m_parent->GetValue();
-        CompilerType clang_type (GetClangType());
+        CompilerType clang_type (GetCompilerType());
         //m_value.SetContext (Value::eContextTypeClangType, clang_type);
-        m_value.SetClangType (clang_type);
+        m_value.SetCompilerType (clang_type);
         SetAddressTypeOfChildren(m_parent->GetAddressTypeOfChildren());
         if (!CanProvideValue())
         {

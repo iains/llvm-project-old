@@ -70,6 +70,7 @@ StatementMatcher makeArrayLoopMatcher() {
       expr(hasType(isInteger())).bind(ConditionBoundName);
 
   return forStmt(
+             unless(isInTemplateInstantiation()),
              hasLoopInit(declStmt(hasSingleDecl(InitToZeroMatcher))),
              hasCondition(anyOf(
                  binaryOperator(hasOperatorName("<"),
@@ -159,6 +160,7 @@ StatementMatcher makeIteratorLoopMatcher() {
                       .bind(DerefByRefResultName)))))));
 
   return forStmt(
+             unless(isInTemplateInstantiation()),
              hasLoopInit(anyOf(declStmt(declCountIs(2),
                                         containsDeclaration(0, InitDeclMatcher),
                                         containsDeclaration(1, EndDeclMatcher)),
@@ -258,6 +260,7 @@ StatementMatcher makePseudoArrayLoopMatcher() {
                  EndInitMatcher));
 
   return forStmt(
+             unless(isInTemplateInstantiation()),
              hasLoopInit(
                  anyOf(declStmt(declCountIs(2),
                                 containsDeclaration(0, InitToZeroMatcher),
@@ -361,6 +364,23 @@ static bool isDirectMemberExpr(const Expr *E) {
   return false;
 }
 
+/// \brief Returns true when it can be guaranteed that the elements of the
+/// container are not being modified.
+static bool usagesAreConst(const UsageResult &Usages) {
+  // FIXME: Make this function more generic.
+  return Usages.empty();
+}
+
+/// \brief Returns true if the elements of the container are never accessed
+/// by reference.
+static bool usagesReturnRValues(const UsageResult &Usages) {
+  for (const auto &U : Usages) {
+    if (!U.Expression->isRValue())
+      return false;
+  }
+  return true;
+}
+
 LoopConvertCheck::LoopConvertCheck(StringRef Name, ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context), TUInfo(new TUTrackingInfo),
       MinConfidence(StringSwitch<Confidence::Level>(
@@ -449,7 +469,8 @@ void LoopConvertCheck::doConversion(
   StringRef MaybeDereference = ContainerNeedsDereference ? "*" : "";
   std::string TypeString = AutoRefType.getAsString();
   std::string Range = ("(" + TypeString + " " + VarName + " : " +
-                       MaybeDereference + ContainerString + ")").str();
+                       MaybeDereference + ContainerString + ")")
+                          .str();
   Diag << FixItHint::CreateReplacement(
       CharSourceRange::getTokenRange(ParenRange), Range);
   TUInfo->getGeneratedDecls().insert(make_pair(TheLoop, VarName));
@@ -461,7 +482,7 @@ void LoopConvertCheck::doConversion(
 StringRef LoopConvertCheck::checkRejections(ASTContext *Context,
                                             const Expr *ContainerExpr,
                                             const ForStmt *TheLoop) {
-  // If we already modified the reange of this for loop, don't do any further
+  // If we already modified the range of this for loop, don't do any further
   // updates on this iteration.
   if (TUInfo->getReplacedVars().count(TheLoop))
     return "";
@@ -522,6 +543,18 @@ void LoopConvertCheck::findAndVerifyUsages(
     if (!getReferencedVariable(ContainerExpr) &&
         !isDirectMemberExpr(ContainerExpr))
       ConfidenceLevel.lowerTo(Confidence::CL_Risky);
+  } else if (FixerKind == LFK_PseudoArray) {
+    if (!DerefByValue && !DerefByConstRef) {
+      const UsageResult &Usages = Finder.getUsages();
+      if (usagesAreConst(Usages)) {
+        // FIXME: check if the type is trivially copiable.
+        DerefByConstRef = true;
+      } else if (usagesReturnRValues(Usages)) {
+        // If the index usages (dereference, subscript, at) return RValues,
+        // then we should not use a non-const reference.
+        DerefByValue = true;
+      }
+    }
   }
 
   StringRef ContainerString = checkRejections(Context, ContainerExpr, TheLoop);
@@ -536,9 +569,14 @@ void LoopConvertCheck::findAndVerifyUsages(
 }
 
 void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
-  Finder->addMatcher(makeArrayLoopMatcher(), this);
-  Finder->addMatcher(makeIteratorLoopMatcher(), this);
-  Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
+  // Only register the matchers for C++. Because this checker is used for
+  // modernization, it is reasonable to run it on any C++ standard with the
+  // assumption the user is trying to modernize their codebase.
+  if (getLangOpts().CPlusPlus) {
+    Finder->addMatcher(makeArrayLoopMatcher(), this);
+    Finder->addMatcher(makeIteratorLoopMatcher(), this);
+    Finder->addMatcher(makePseudoArrayLoopMatcher(), this);
+  }
 }
 
 void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {

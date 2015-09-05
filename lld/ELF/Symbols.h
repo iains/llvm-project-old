@@ -10,14 +10,16 @@
 #ifndef LLD_ELF_SYMBOLS_H
 #define LLD_ELF_SYMBOLS_H
 
+#include "Chunks.h"
+
 #include "lld/Core/LLVM.h"
+#include "llvm/Object/Archive.h"
 #include "llvm/Object/ELF.h"
 
 namespace lld {
 namespace elf2 {
 
-using llvm::object::ELFFile;
-
+class ArchiveFile;
 class Chunk;
 class InputFile;
 class SymbolBody;
@@ -37,21 +39,28 @@ public:
   enum Kind {
     DefinedFirst = 0,
     DefinedRegularKind = 0,
-    DefinedWeakKind = 1,
-    DefinedLast = 1,
-    UndefinedWeakKind = 2,
+    DefinedAbsoluteKind = 1,
+    DefinedCommonKind = 2,
+    DefinedLast = 2,
     UndefinedKind = 3,
-    UndefinedSyntheticKind = 4
+    LazyKind = 4,
   };
 
   Kind kind() const { return static_cast<Kind>(SymbolKind); }
 
-  bool isStrongUndefined() {
-    return SymbolKind == UndefinedKind || SymbolKind == UndefinedSyntheticKind;
-  }
+  bool isWeak() const { return IsWeak; }
+  bool isUndefined() const { return SymbolKind == UndefinedKind; }
+  bool isDefined() const { return SymbolKind <= DefinedLast; }
+  bool isStrongUndefined() const { return !IsWeak && isUndefined(); }
+  bool isCommon() const { return SymbolKind == DefinedCommonKind; }
+  bool isLazy() const { return SymbolKind == LazyKind; }
 
   // Returns the symbol name.
   StringRef getName() const { return Name; }
+
+  uint8_t getMostConstrainingVisibility() const {
+    return MostConstrainingVisibility;
+  }
 
   // A SymbolBody has a backreference to a Symbol. Originally they are
   // doubly-linked. A backreference will never change. But the pointer
@@ -60,17 +69,22 @@ public:
   // has chosen the object among other objects having the same name,
   // you can access P->Backref->Body to get the resolver's result.
   void setBackref(Symbol *P) { Backref = P; }
+  SymbolBody *getReplacement() { return Backref ? Backref->Body : this; }
 
   // Decides which symbol should "win" in the symbol table, this or
   // the Other. Returns 1 if this wins, -1 if the Other wins, or 0 if
   // they are duplicate (conflicting) symbols.
-  int compare(SymbolBody *Other);
+  template <class ELFT> int compare(SymbolBody *Other);
 
 protected:
-  SymbolBody(Kind K, StringRef Name) : SymbolKind(K), Name(Name) {}
+  SymbolBody(Kind K, StringRef Name, bool IsWeak, uint8_t Visibility)
+      : SymbolKind(K), IsWeak(IsWeak), MostConstrainingVisibility(Visibility),
+        Name(Name) {}
 
 protected:
   const unsigned SymbolKind : 8;
+  const unsigned IsWeak : 1;
+  unsigned MostConstrainingVisibility : 2;
   StringRef Name;
   Symbol *Backref = nullptr;
 };
@@ -86,7 +100,9 @@ template <class ELFT> class ELFSymbolBody : public SymbolBody {
 protected:
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
   ELFSymbolBody(Kind K, StringRef Name, const Elf_Sym &Sym)
-      : SymbolBody(K, Name), Sym(Sym) {}
+      : SymbolBody(K, Name, Sym.getBinding() == llvm::ELF::STB_WEAK,
+                   Sym.getVisibility()),
+        Sym(Sym) {}
 
 public:
   const Elf_Sym &Sym;
@@ -101,18 +117,53 @@ public:
 // etc.
 template <class ELFT> class Defined : public ELFSymbolBody<ELFT> {
   typedef ELFSymbolBody<ELFT> Base;
-  typedef typename Base::Kind Kind;
 
-public:
+protected:
+  typedef typename Base::Kind Kind;
   typedef typename Base::Elf_Sym Elf_Sym;
 
+public:
   explicit Defined(Kind K, StringRef N, const Elf_Sym &Sym)
       : ELFSymbolBody<ELFT>(K, N, Sym) {}
 
+  static bool classof(const SymbolBody *S) { return S->isDefined(); }
+};
+
+template <class ELFT> class DefinedAbsolute : public Defined<ELFT> {
+  typedef ELFSymbolBody<ELFT> Base;
+  typedef typename Base::Elf_Sym Elf_Sym;
+
+public:
+  explicit DefinedAbsolute(StringRef N, const Elf_Sym &Sym)
+      : Defined<ELFT>(Base::DefinedAbsoluteKind, N, Sym) {}
+
   static bool classof(const SymbolBody *S) {
-    Kind K = S->kind();
-    return Base::DefinedFirst <= K && K <= Base::DefinedLast;
+    return S->kind() == Base::DefinedAbsoluteKind;
   }
+};
+
+template <class ELFT> class DefinedCommon : public Defined<ELFT> {
+  typedef ELFSymbolBody<ELFT> Base;
+  typedef typename Base::Elf_Sym Elf_Sym;
+
+public:
+  typedef typename std::conditional<ELFT::Is64Bits, uint64_t, uint32_t>::type
+      uintX_t;
+  explicit DefinedCommon(StringRef N, const Elf_Sym &Sym)
+      : Defined<ELFT>(Base::DefinedCommonKind, N, Sym) {
+    MaxAlignment = Sym.st_value;
+  }
+
+  static bool classof(const SymbolBody *S) {
+    return S->kind() == Base::DefinedCommonKind;
+  }
+
+  // The output offset of this common symbol in the output bss. Computed by the
+  // writer.
+  uintX_t OffsetInBSS;
+
+  // The maximum alignment we have seen for this symbol.
+  uintX_t MaxAlignment;
 };
 
 // Regular defined symbols read from object file symbol tables.
@@ -121,42 +172,25 @@ template <class ELFT> class DefinedRegular : public Defined<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  explicit DefinedRegular(StringRef N, const Elf_Sym &Sym)
-      : Defined<ELFT>(Base::DefinedRegularKind, N, Sym) {}
+  explicit DefinedRegular(StringRef N, const Elf_Sym &Sym,
+                          SectionChunk<ELFT> &Section)
+      : Defined<ELFT>(Base::DefinedRegularKind, N, Sym), Section(Section) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::DefinedRegularKind;
   }
+
+  const SectionChunk<ELFT> &Section;
 };
 
-template <class ELFT> class DefinedWeak : public Defined<ELFT> {
-  typedef Defined<ELFT> Base;
-  typedef typename Base::Elf_Sym Elf_Sym;
-
-public:
-  explicit DefinedWeak(StringRef N, const Elf_Sym &Sym)
-      : Defined<ELFT>(Base::DefinedWeakKind, N, Sym) {}
-
-  static bool classof(const SymbolBody *S) {
-    return S->kind() == Base::DefinedWeakKind;
-  }
-};
-
-// Undefined symbols.
-class SyntheticUndefined : public SymbolBody {
-public:
-  explicit SyntheticUndefined(StringRef N) : SymbolBody(UndefinedKind, N) {}
-
-  static bool classof(const SymbolBody *S) {
-    return S->kind() == UndefinedKind;
-  }
-};
-
+// Undefined symbol.
 template <class ELFT> class Undefined : public ELFSymbolBody<ELFT> {
   typedef ELFSymbolBody<ELFT> Base;
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
+  static Elf_Sym Synthetic;
+
   explicit Undefined(StringRef N, const Elf_Sym &Sym)
       : ELFSymbolBody<ELFT>(Base::UndefinedKind, N, Sym) {}
 
@@ -165,17 +199,29 @@ public:
   }
 };
 
-template <class ELFT> class UndefinedWeak : public ELFSymbolBody<ELFT> {
-  typedef ELFSymbolBody<ELFT> Base;
-  typedef typename Base::Elf_Sym Elf_Sym;
+template <class ELFT>
+typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Synthetic;
 
+// This class represents a symbol defined in an archive file. It is
+// created from an archive file header, and it knows how to load an
+// object file from an archive to replace itself with a defined
+// symbol. If the resolver finds both Undefined and Lazy for
+// the same name, it will ask the Lazy to load a file.
+class Lazy : public SymbolBody {
 public:
-  explicit UndefinedWeak(StringRef N, const Elf_Sym &Sym)
-      : ELFSymbolBody<ELFT>(Base::UndefinedWeakKind, N, Sym) {}
+  Lazy(ArchiveFile *F, const llvm::object::Archive::Symbol S)
+      : SymbolBody(LazyKind, S.getName(), false, llvm::ELF::STV_DEFAULT),
+        File(F), Sym(S) {}
 
-  static bool classof(const SymbolBody *S) {
-    return S->kind() == Base::UndefinedWeakKind;
-  }
+  static bool classof(const SymbolBody *S) { return S->kind() == LazyKind; }
+
+  // Returns an object file for this symbol, or a nullptr if the file
+  // was already returned.
+  std::unique_ptr<InputFile> getMember();
+
+private:
+  ArchiveFile *File;
+  const llvm::object::Archive::Symbol Sym;
 };
 
 } // namespace elf2

@@ -58,13 +58,11 @@ void ArchiveFile::parse() {
 
   // Allocate a buffer for Lazy objects.
   size_t NumSyms = File->getNumberOfSymbols();
-  size_t BufSize = NumSyms * sizeof(Lazy);
-  Lazy *Buf = (Lazy *)Alloc.Allocate(BufSize, llvm::alignOf<Lazy>());
   LazySymbols.reserve(NumSyms);
 
   // Read the symbol table to construct Lazy objects.
   for (const Archive::Symbol &Sym : File->symbols())
-    LazySymbols.push_back(new (Buf++) Lazy(this, Sym));
+    LazySymbols.emplace_back(this, Sym);
 
   // Seen is a map from member files to boolean values. Initially
   // all members are mapped to false, which indicates all these files
@@ -227,13 +225,14 @@ Defined *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
   if (!SC)
     return nullptr;
 
-  // Handle associative sections
+  // Handle section definitions
   if (IsFirst && AuxP) {
     auto *Aux = reinterpret_cast<const coff_aux_section_definition *>(AuxP);
     if (Aux->Selection == IMAGE_COMDAT_SELECT_ASSOCIATIVE)
       if (auto *ParentSC = cast_or_null<SectionChunk>(
               SparseChunks[Aux->getNumber(Sym.isBigObj())]))
         ParentSC->addAssociative(SC);
+    SC->Checksum = Aux->CheckSum;
   }
 
   auto *B = new (Alloc) DefinedRegular(this, Sym, SC);
@@ -281,7 +280,7 @@ void ImportFile::parse() {
   StringRef Name = StringAlloc.save(StringRef(Buf + sizeof(*Hdr)));
   StringRef ImpName = StringAlloc.save(Twine("__imp_") + Name);
   const char *NameStart = Buf + sizeof(coff_import_header) + Name.size() + 1;
-  DLLName = StringRef(NameStart).lower();
+  DLLName = StringRef(NameStart);
   StringRef ExtName;
   switch (Hdr->getNameType()) {
   case IMPORT_ORDINAL:

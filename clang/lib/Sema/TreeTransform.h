@@ -21,6 +21,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
+#include "clang/AST/ExprOpenMP.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
@@ -1354,12 +1355,15 @@ public:
   ///
   /// By default, performs semantic analysis to build the new OpenMP clause.
   /// Subclasses may override this routine to provide different behavior.
-  OMPClause *RebuildOMPIfClause(Expr *Condition,
-                                SourceLocation StartLoc,
+  OMPClause *RebuildOMPIfClause(OpenMPDirectiveKind NameModifier,
+                                Expr *Condition, SourceLocation StartLoc,
                                 SourceLocation LParenLoc,
+                                SourceLocation NameModifierLoc,
+                                SourceLocation ColonLoc,
                                 SourceLocation EndLoc) {
-    return getSema().ActOnOpenMPIfClause(Condition, StartLoc,
-                                         LParenLoc, EndLoc);
+    return getSema().ActOnOpenMPIfClause(NameModifier, Condition, StartLoc,
+                                         LParenLoc, NameModifierLoc, ColonLoc,
+                                         EndLoc);
   }
 
   /// \brief Build a new OpenMP 'final' clause.
@@ -1891,6 +1895,18 @@ public:
                                              RBracketLoc);
   }
 
+  /// \brief Build a new array section expression.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  ExprResult RebuildOMPArraySectionExpr(Expr *Base, SourceLocation LBracketLoc,
+                                        Expr *LowerBound,
+                                        SourceLocation ColonLoc, Expr *Length,
+                                        SourceLocation RBracketLoc) {
+    return getSema().ActOnOMPArraySectionExpr(Base, LBracketLoc, LowerBound,
+                                              ColonLoc, Length, RBracketLoc);
+  }
+
   /// \brief Build a new call expression.
   ///
   /// By default, performs semantic analysis to build the new expression.
@@ -1955,7 +1971,8 @@ public:
     return getSema().BuildMemberReferenceExpr(Base, BaseType, OpLoc, isArrow,
                                               SS, TemplateKWLoc,
                                               FirstQualifierInScope,
-                                              R, ExplicitTemplateArgs);
+                                              R, ExplicitTemplateArgs,
+                                              /*S*/nullptr);
   }
 
   /// \brief Build a new binary operator expression.
@@ -2021,7 +2038,8 @@ public:
                                               SS, SourceLocation(),
                                               /*FirstQualifierInScope*/ nullptr,
                                               NameInfo,
-                                              /* TemplateArgs */ nullptr);
+                                              /* TemplateArgs */ nullptr,
+                                              /*S*/ nullptr);
   }
 
   /// \brief Build a new initializer list expression.
@@ -2469,7 +2487,7 @@ public:
                                                     TemplateArgs);
 
     return getSema().BuildQualifiedDeclarationNameExpr(
-        SS, NameInfo, IsAddressOfOperand, RecoveryTSI);
+        SS, NameInfo, IsAddressOfOperand, /*S*/nullptr, RecoveryTSI);
   }
 
   /// \brief Build a new template-id expression.
@@ -2563,7 +2581,7 @@ public:
                                             SS, TemplateKWLoc,
                                             FirstQualifierInScope,
                                             MemberNameInfo,
-                                            TemplateArgs);
+                                            TemplateArgs, /*S*/nullptr);
   }
 
   /// \brief Build a new member reference expression.
@@ -2585,7 +2603,7 @@ public:
                                             OperatorLoc, IsArrow,
                                             SS, TemplateKWLoc,
                                             FirstQualifierInScope,
-                                            R, TemplateArgs);
+                                            R, TemplateArgs, /*S*/nullptr);
   }
 
   /// \brief Build a new noexcept expression.
@@ -2725,7 +2743,8 @@ public:
                                               SS, SourceLocation(),
                                               /*FirstQualifierInScope=*/nullptr,
                                               NameInfo,
-                                              /*TemplateArgs=*/nullptr);
+                                              /*TemplateArgs=*/nullptr,
+                                              /*S=*/nullptr);
   }
 
   /// \brief Build a new Objective-C property reference expression.
@@ -2743,7 +2762,8 @@ public:
                                               SS, SourceLocation(),
                                               /*FirstQualifierInScope=*/nullptr,
                                               NameInfo,
-                                              /*TemplateArgs=*/nullptr);
+                                              /*TemplateArgs=*/nullptr,
+                                              /*S=*/nullptr);
   }
 
   /// \brief Build a new Objective-C property reference expression.
@@ -2775,7 +2795,8 @@ public:
                                               SS, SourceLocation(),
                                               /*FirstQualifierInScope=*/nullptr,
                                               NameInfo,
-                                              /*TemplateArgs=*/nullptr);
+                                              /*TemplateArgs=*/nullptr,
+                                              /*S=*/nullptr);
   }
 
   /// \brief Build a new shuffle vector expression.
@@ -7196,8 +7217,9 @@ OMPClause *TreeTransform<Derived>::TransformOMPIfClause(OMPIfClause *C) {
   ExprResult Cond = getDerived().TransformExpr(C->getCondition());
   if (Cond.isInvalid())
     return nullptr;
-  return getDerived().RebuildOMPIfClause(Cond.get(), C->getLocStart(),
-                                         C->getLParenLoc(), C->getLocEnd());
+  return getDerived().RebuildOMPIfClause(
+      C->getNameModifier(), Cond.get(), C->getLocStart(), C->getLParenLoc(),
+      C->getNameModifierLoc(), C->getColonLoc(), C->getLocEnd());
 }
 
 template <typename Derived>
@@ -7788,7 +7810,7 @@ TreeTransform<Derived>::TransformOffsetOfExpr(OffsetOfExpr *E) {
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformOpaqueValueExpr(OpaqueValueExpr *E) {
-  assert(getDerived().AlreadyTransformed(E->getType()) &&
+  assert((!E->getSourceExpr() || getDerived().AlreadyTransformed(E->getType())) &&
          "opaque value expression requires transformation");
   return E;
 }
@@ -7894,6 +7916,36 @@ TreeTransform<Derived>::TransformArraySubscriptExpr(ArraySubscriptExpr *E) {
                                            /*FIXME:*/E->getLHS()->getLocStart(),
                                                 RHS.get(),
                                                 E->getRBracketLoc());
+}
+
+template <typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformOMPArraySectionExpr(OMPArraySectionExpr *E) {
+  ExprResult Base = getDerived().TransformExpr(E->getBase());
+  if (Base.isInvalid())
+    return ExprError();
+
+  ExprResult LowerBound;
+  if (E->getLowerBound()) {
+    LowerBound = getDerived().TransformExpr(E->getLowerBound());
+    if (LowerBound.isInvalid())
+      return ExprError();
+  }
+
+  ExprResult Length;
+  if (E->getLength()) {
+    Length = getDerived().TransformExpr(E->getLength());
+    if (Length.isInvalid())
+      return ExprError();
+  }
+
+  if (!getDerived().AlwaysRebuild() && Base.get() == E->getBase() &&
+      LowerBound.get() == E->getLowerBound() && Length.get() == E->getLength())
+    return E;
+
+  return getDerived().RebuildOMPArraySectionExpr(
+      Base.get(), E->getBase()->getLocEnd(), LowerBound.get(), E->getColonLoc(),
+      Length.get(), E->getRBracketLoc());
 }
 
 template<typename Derived>
@@ -11143,7 +11195,8 @@ TreeTransform<Derived>::RebuildCXXPseudoDestructorExpr(Expr *Base,
                                             SS, TemplateKWLoc,
                                             /*FIXME: FirstQualifier*/ nullptr,
                                             NameInfo,
-                                            /*TemplateArgs*/ nullptr);
+                                            /*TemplateArgs*/ nullptr,
+                                            /*S*/nullptr);
 }
 
 template<typename Derived>

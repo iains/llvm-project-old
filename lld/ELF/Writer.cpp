@@ -7,15 +7,18 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Writer.h"
 #include "Chunks.h"
 #include "Config.h"
 #include "Error.h"
-#include "SymbolTable.h"
-#include "Writer.h"
 #include "Symbols.h"
+#include "SymbolTable.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Support/FileOutputBuffer.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 using namespace llvm::ELF;
@@ -45,17 +48,27 @@ public:
     Header.sh_flags = sh_flags;
   }
   void setVA(uintX_t VA) { Header.sh_addr = VA; }
+  uintX_t getVA() { return Header.sh_addr; }
   void setFileOffset(uintX_t Off) { Header.sh_offset = Off; }
   template <endianness E>
   void writeHeaderTo(typename ELFFile<ELFType<E, Is64Bits>>::Elf_Shdr *SHdr);
   StringRef getName() { return Name; }
   void setNameOffset(uintX_t Offset) { Header.sh_name = Offset; }
 
+  unsigned getSectionIndex() const { return SectionIndex; }
+  void setSectionIndex(unsigned I) { SectionIndex = I; }
+
   // Returns the size of the section in the output file.
   uintX_t getSize() { return Header.sh_size; }
+  void setSize(uintX_t Val) { Header.sh_size = Val; }
   uintX_t getFlags() { return Header.sh_flags; }
   uintX_t getFileOff() { return Header.sh_offset; }
-  uintX_t getAlign() { return Header.sh_addralign; }
+  uintX_t getAlign() {
+    // The ELF spec states that a value of 0 means the section has no alignment
+    // constraits.
+    return std::max<uintX_t>(Header.sh_addralign, 1);
+  }
+  uint32_t getType() { return Header.sh_type; }
 
   virtual void finalize() {}
   virtual void writeTo(uint8_t *Buf) = 0;
@@ -63,13 +76,18 @@ public:
 protected:
   StringRef Name;
   HeaderT Header;
+  unsigned SectionIndex;
   ~OutputSectionBase() = default;
 };
+}
 
 template <class ELFT>
-class OutputSection final : public OutputSectionBase<ELFT::Is64Bits> {
+class lld::elf2::OutputSection final
+    : public OutputSectionBase<ELFT::Is64Bits> {
 public:
   typedef typename OutputSectionBase<ELFT::Is64Bits>::uintX_t uintX_t;
+  typedef typename ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+  typedef typename ELFFile<ELFT>::Elf_Rela Elf_Rela;
   OutputSection(StringRef Name, uint32_t sh_type, uintX_t sh_flags)
       : OutputSectionBase<ELFT::Is64Bits>(Name, sh_type, sh_flags) {}
 
@@ -80,15 +98,14 @@ private:
   std::vector<SectionChunk<ELFT> *> Chunks;
 };
 
+namespace {
 template <bool Is64Bits>
 class StringTableSection final : public OutputSectionBase<Is64Bits> {
-  llvm::StringTableBuilder &StrTabBuilder;
-
 public:
+  llvm::StringTableBuilder StrTabBuilder;
+
   typedef typename OutputSectionBase<Is64Bits>::uintX_t uintX_t;
-  StringTableSection(llvm::StringTableBuilder &StrTabBuilder)
-      : OutputSectionBase<Is64Bits>(".strtab", SHT_STRTAB, 0),
-        StrTabBuilder(StrTabBuilder) {
+  StringTableSection() : OutputSectionBase<Is64Bits>(".strtab", SHT_STRTAB, 0) {
     this->Header.sh_addralign = 1;
   }
 
@@ -106,9 +123,10 @@ template <class ELFT>
 class SymbolTableSection final : public OutputSectionBase<ELFT::Is64Bits> {
 public:
   typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
-  SymbolTableSection(SymbolTable &Table)
+  typedef typename OutputSectionBase<ELFT::Is64Bits>::uintX_t uintX_t;
+  SymbolTableSection(SymbolTable &Table, llvm::StringTableBuilder &Builder)
       : OutputSectionBase<ELFT::Is64Bits>(".symtab", SHT_SYMTAB, 0),
-        Table(Table) {
+        Table(Table), Builder(Builder) {
     typedef OutputSectionBase<ELFT::Is64Bits> Base;
     typename Base::HeaderT &Header = this->Header;
 
@@ -117,14 +135,24 @@ public:
 
     Header.sh_entsize = sizeof(Elf_Sym);
     Header.sh_addralign = ELFT::Is64Bits ? 8 : 4;
-    this->Header.sh_size = (Table.getNumSymbols() + 1) * sizeof(Elf_Sym);
   }
+
+  void finalize() override {
+    this->Header.sh_size = (NumVisible + 1) * sizeof(Elf_Sym);
+  }
+
   void setStringTableIndex(uint32_t Index) { this->Header.sh_link = Index; }
 
   void writeTo(uint8_t *Buf) override;
 
+  const SymbolTable &getSymTable() { return Table; }
+
+  OutputSection<ELFT> *BSSSec = nullptr;
+  unsigned NumVisible = 0;
+
 private:
   SymbolTable &Table;
+  llvm::StringTableBuilder &Builder;
 };
 
 // The writer writes a SymbolTable result to a file.
@@ -132,8 +160,8 @@ template <class ELFT> class Writer {
 public:
   typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
-  Writer(SymbolTable *T)
-      : Symtab(T), SymTable(*T), StringTable(T->getStringBuilder()) {}
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  Writer(SymbolTable *T) : SymTable(*T, StringTable.StrTabBuilder) {}
   void run();
 
 private:
@@ -143,7 +171,6 @@ private:
   void writeHeader();
   void writeSections();
 
-  SymbolTable *Symtab;
   std::unique_ptr<llvm::FileOutputBuffer> Buffer;
   llvm::SpecificBumpPtrAllocator<OutputSection<ELFT>> CAlloc;
   std::vector<OutputSectionBase<ELFT::Is64Bits> *> OutputSections;
@@ -152,12 +179,17 @@ private:
   uintX_t SizeOfHeaders;
   uintX_t SectionHeaderOff;
 
-  SymbolTableSection<ELFT> SymTable;
-
   unsigned StringTableIndex;
   StringTableSection<ELFT::Is64Bits> StringTable;
 
+  SymbolTableSection<ELFT> SymTable;
+
   unsigned NumSections;
+
+  void addOutputSection(OutputSectionBase<ELFT::Is64Bits> *Sec) {
+    OutputSections.push_back(Sec);
+    Sec->setSectionIndex(OutputSections.size());
+  }
 };
 } // anonymous namespace
 
@@ -188,6 +220,7 @@ template <class ELFT> void Writer<ELFT>::run() {
 template <class ELFT>
 void OutputSection<ELFT>::addChunk(SectionChunk<ELFT> *C) {
   Chunks.push_back(C);
+  C->setOutputSection(this);
   uint32_t Align = C->getAlign();
   if (Align > this->Header.sh_addralign)
     this->Header.sh_addralign = Align;
@@ -199,9 +232,58 @@ void OutputSection<ELFT>::addChunk(SectionChunk<ELFT> *C) {
   this->Header.sh_size = Off;
 }
 
+template <class ELFT>
+static typename llvm::object::ELFFile<ELFT>::uintX_t
+getSymVA(DefinedRegular<ELFT> *DR) {
+  const SectionChunk<ELFT> *SC = &DR->Section;
+  OutputSection<ELFT> *OS = SC->getOutputSection();
+  return OS->getVA() + SC->getOutputSectionOff() + DR->Sym.st_value;
+}
+
 template <class ELFT> void OutputSection<ELFT>::writeTo(uint8_t *Buf) {
-  for (SectionChunk<ELFT> *C : Chunks)
+  for (SectionChunk<ELFT> *C : Chunks) {
     C->writeTo(Buf);
+    ObjectFile<ELFT> *File = C->getFile();
+    ELFFile<ELFT> *EObj = File->getObj();
+    uint8_t *Base = Buf + C->getOutputSectionOff();
+
+    // Iterate over all relocation sections that apply to this section.
+    for (const Elf_Shdr *RelSec : C->RelocSections) {
+      // Only support RELA for now.
+      if (RelSec->sh_type != SHT_RELA)
+        continue;
+      for (const Elf_Rela &RI : EObj->relas(RelSec)) {
+        uint32_t SymIndex = RI.getSymbol(EObj->isMips64EL());
+        SymbolBody *Body = File->getSymbolBody(SymIndex);
+        if (!Body)
+          continue;
+        // Skip unsupported for now.
+        if (!isa<DefinedRegular<ELFT>>(Body))
+          continue;
+        uintX_t Offset = RI.r_offset;
+        uint32_t Type = RI.getType(EObj->isMips64EL());
+        uintX_t P = this->getVA() + C->getOutputSectionOff();
+        uintX_t SymVA = getSymVA<ELFT>(cast<DefinedRegular<ELFT>>(Body));
+        uint8_t *Location = Base + Offset;
+        switch (Type) {
+        case llvm::ELF::R_X86_64_PC32:
+          support::endian::write32le(Location,
+                                     SymVA + (RI.r_addend - (P + Offset)));
+          break;
+        case llvm::ELF::R_X86_64_32:
+        case llvm::ELF::R_X86_64_32S:
+          support::endian::write32le(Location, SymVA + RI.r_addend);
+          break;
+        case llvm::ELF::R_X86_64_64:
+          support::endian::write64le(Location, SymVA + RI.r_addend);
+          break;
+        default:
+          llvm::errs() << Twine("unrecognized reloc ") + Twine(Type) << '\n';
+          break;
+        }
+      }
+    }
+  }
 }
 
 template <bool Is64Bits>
@@ -210,36 +292,86 @@ void StringTableSection<Is64Bits>::writeTo(uint8_t *Buf) {
   memcpy(Buf, Data.data(), Data.size());
 }
 
+template <class ELFT>
+static int compareSym(const typename ELFFile<ELFT>::Elf_Sym *A,
+                      const typename ELFFile<ELFT>::Elf_Sym *B) {
+  uint32_t AN = A->st_name;
+  uint32_t BN = B->st_name;
+  assert(AN != BN);
+  return AN - BN;
+}
+
 template <class ELFT> void SymbolTableSection<ELFT>::writeTo(uint8_t *Buf) {
+  uint8_t *BufStart = Buf;
+
   Buf += sizeof(Elf_Sym);
-  llvm::StringTableBuilder &Builder = Table.getStringBuilder();
   for (auto &P : Table.getSymbols()) {
     StringRef Name = P.first;
     Symbol *Sym = P.second;
+    SymbolBody *Body = Sym->Body;
+    if (Body->isLazy())
+      continue;
+    const Elf_Sym &InputSym = cast<ELFSymbolBody<ELFT>>(Body)->Sym;
+
+    uint8_t V = Body->getMostConstrainingVisibility();
+    if (V != STV_DEFAULT && V != STV_PROTECTED)
+      continue;
 
     auto *ESym = reinterpret_cast<Elf_Sym *>(Buf);
     ESym->st_name = Builder.getOffset(Name);
-    uint8_t Binding;
-    SymbolBody *Body = Sym->Body;
-    uint8_t Type = 0;
+
+    const SectionChunk<ELFT> *Section = nullptr;
+    OutputSection<ELFT> *Out = nullptr;
+
     switch (Body->kind()) {
-    case SymbolBody::UndefinedKind:
-    case SymbolBody::UndefinedSyntheticKind:
-      llvm_unreachable("Should be defined by now");
     case SymbolBody::DefinedRegularKind:
-      Binding = STB_GLOBAL;
-      Type = cast<DefinedRegular<ELFT>>(Body)->Sym.getType();
+      Section = &cast<DefinedRegular<ELFT>>(Body)->Section;
       break;
-    case SymbolBody::DefinedWeakKind:
-    case SymbolBody::UndefinedWeakKind:
-      Binding = STB_WEAK;
-      Type = cast<ELFSymbolBody<ELFT>>(Body)->Sym.getType();
+    case SymbolBody::DefinedCommonKind:
+      Out = BSSSec;
       break;
+    case SymbolBody::UndefinedKind:
+      assert(Body->isWeak() && "Should be defined by now");
+    case SymbolBody::DefinedAbsoluteKind:
+      break;
+    case SymbolBody::LazyKind:
+      llvm_unreachable("Lazy symbol got to output symbol table!");
     }
-    ESym->setBindingAndType(Binding, Type);
+
+    ESym->setBindingAndType(InputSym.getBinding(), InputSym.getType());
+    ESym->st_size = InputSym.st_size;
+    ESym->setVisibility(Body->getMostConstrainingVisibility());
+    if (InputSym.isAbsolute()) {
+      ESym->st_shndx = SHN_ABS;
+      ESym->st_value = InputSym.st_value;
+    }
+
+    if (Section)
+      Out = Section->getOutputSection();
+
+    if (Out) {
+      ESym->st_shndx = Out->getSectionIndex();
+      uintX_t VA = Out->getVA();
+      if (Section)
+        VA += Section->getOutputSectionOff();
+      if (auto *C = dyn_cast<DefinedCommon<ELFT>>(Body))
+        VA += C->OffsetInBSS;
+      else
+        VA += InputSym.st_value;
+      ESym->st_value = VA;
+    }
 
     Buf += sizeof(Elf_Sym);
   }
+
+  // The order the global symbols are in is not defined. We can use an arbitrary
+  // order, but it has to be reproducible. That is true even when cross linking.
+  // The default hashing of StringRef produces different results on 32 and 64
+  // bit systems so we sort by st_name. That is arbitrary but deterministic.
+  // FIXME: Experiment with passing in a custom hashing instead.
+  auto *Syms = reinterpret_cast<Elf_Sym *>(BufStart);
+  ++Syms;
+  array_pod_sort(Syms, Syms + NumVisible, compareSym<ELFT>);
 }
 
 template <bool Is64Bits>
@@ -286,24 +418,72 @@ template <bool Is64Bits> struct DenseMapInfo<SectionKey<Is64Bits>> {
 };
 }
 
+template <class ELFT>
+static bool cmpAlign(const DefinedCommon<ELFT> *A,
+                     const DefinedCommon<ELFT> *B) {
+  return A->MaxAlignment > B->MaxAlignment;
+}
+
 // Create output section objects and add them to OutputSections.
 template <class ELFT> void Writer<ELFT>::createSections() {
   SmallDenseMap<SectionKey<ELFT::Is64Bits>, OutputSection<ELFT> *> Map;
-  for (std::unique_ptr<ObjectFileBase> &FileB : Symtab->ObjectFiles) {
+  auto getSection = [&](StringRef Name, uint32_t sh_type,
+                        uintX_t sh_flags) -> OutputSection<ELFT> * {
+    SectionKey<ELFT::Is64Bits> Key{Name, sh_type, sh_flags};
+    OutputSection<ELFT> *&Sec = Map[Key];
+    if (!Sec) {
+      Sec = new (CAlloc.Allocate())
+          OutputSection<ELFT>(Key.Name, Key.sh_type, Key.sh_flags);
+      addOutputSection(Sec);
+    }
+    return Sec;
+  };
+
+  const SymbolTable &Symtab = SymTable.getSymTable();
+  for (const std::unique_ptr<ObjectFileBase> &FileB : Symtab.getObjectFiles()) {
     auto &File = cast<ObjectFile<ELFT>>(*FileB);
     for (SectionChunk<ELFT> *C : File.getChunks()) {
+      if (!C)
+        continue;
       const Elf_Shdr *H = C->getSectionHdr();
-      SectionKey<ELFT::Is64Bits> Key{C->getSectionName(), H->sh_type,
-                                     H->sh_flags};
-      OutputSection<ELFT> *&Sec = Map[Key];
-      if (!Sec) {
-        Sec = new (CAlloc.Allocate())
-            OutputSection<ELFT>(Key.Name, Key.sh_type, Key.sh_flags);
-        OutputSections.push_back(Sec);
-      }
+      OutputSection<ELFT> *Sec =
+          getSection(C->getSectionName(), H->sh_type, H->sh_flags);
       Sec->addChunk(C);
     }
   }
+
+  SymTable.BSSSec = getSection(".bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+  OutputSection<ELFT> *BSSSec = SymTable.BSSSec;
+  // FIXME: Try to avoid the extra walk over all global symbols.
+  unsigned &NumVisible = SymTable.NumVisible;
+  llvm::StringTableBuilder &Builder = StringTable.StrTabBuilder;
+  std::vector<DefinedCommon<ELFT> *> CommonSymbols;
+  for (auto &P : Symtab.getSymbols()) {
+    StringRef Name = P.first;
+    SymbolBody *Body = P.second->Body;
+    if (Body->isLazy())
+      continue;
+    if (auto *C = dyn_cast<DefinedCommon<ELFT>>(Body))
+      CommonSymbols.push_back(C);
+    uint8_t V = Body->getMostConstrainingVisibility();
+    if (V != STV_DEFAULT && V != STV_PROTECTED)
+      continue;
+    NumVisible++;
+    Builder.add(Name);
+  }
+
+  // Sort the common symbols by alignment as an heuristic to pack them better.
+  std::stable_sort(CommonSymbols.begin(), CommonSymbols.end(), cmpAlign<ELFT>);
+  uintX_t Off = BSSSec->getSize();
+  for (DefinedCommon<ELFT> *C : CommonSymbols) {
+    const Elf_Sym &Sym = C->Sym;
+    uintX_t Align = C->MaxAlignment;
+    Off = RoundUpToAlignment(Off, Align);
+    C->OffsetInBSS = Off;
+    Off += Sym.st_size;
+  }
+
+  BSSSec->setSize(Off);
 }
 
 template <bool Is64Bits>
@@ -323,8 +503,8 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
   std::stable_sort(OutputSections.begin(), OutputSections.end(),
                    compSec<ELFT::Is64Bits>);
 
-  OutputSections.push_back(&SymTable);
-  OutputSections.push_back(&StringTable);
+  addOutputSection(&SymTable);
+  addOutputSection(&StringTable);
   StringTableIndex = OutputSections.size();
   SymTable.setStringTableIndex(StringTableIndex);
 
@@ -339,7 +519,8 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
       VA += RoundUpToAlignment(Size, Align);
     }
     Sec->setFileOffset(FileOff);
-    FileOff += RoundUpToAlignment(Size, Align);
+    if (Sec->getType() != SHT_NOBITS)
+      FileOff += RoundUpToAlignment(Size, Align);
   }
 
   // Regular sections.
@@ -371,8 +552,9 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   EHdr->e_ident[EI_OSABI] = ELFOSABI_NONE;
 
   EHdr->e_type = ET_EXEC;
-  auto &FirstObj = cast<ObjectFile<ELFT>>(*Symtab->ObjectFiles[0]);
-  EHdr->e_machine = FirstObj.getObj()->getHeader()->e_machine;
+  const SymbolTable &Symtab = SymTable.getSymTable();
+  auto &FirstObj = cast<ObjectFile<ELFT>>(*Symtab.getFirstELF());
+  EHdr->e_machine = FirstObj.getEMachine();
   EHdr->e_version = EV_CURRENT;
   EHdr->e_entry = 0x401000;
   EHdr->e_phoff = sizeof(Elf_Ehdr_Impl<ELFT>);

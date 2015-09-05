@@ -93,6 +93,12 @@ __declspec(dllimport) auto InternalAutoTypeGlobal = Internal(); // expected-erro
 
 // Thread local variables are invalid.
 __declspec(dllimport) __thread int ThreadLocalGlobal; // expected-error{{'ThreadLocalGlobal' cannot be thread local when declared 'dllimport'}}
+// This doesn't work on MinGW, because there, dllimport on the inline function is ignored.
+#ifndef GNU
+inline void __declspec(dllimport) ImportedInlineWithThreadLocal() {
+  static __thread int OK; // no-error
+}
+#endif
 
 // Import in local scope.
 __declspec(dllimport) float LocalRedecl1; // expected-note{{previous declaration is here}}

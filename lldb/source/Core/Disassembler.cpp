@@ -28,7 +28,6 @@
 #include "lldb/Interpreter/OptionValueDictionary.h"
 #include "lldb/Interpreter/OptionValueString.h"
 #include "lldb/Interpreter/OptionValueUInt64.h"
-#include "lldb/Symbol/ClangNamespaceDecl.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/ExecutionContext.h"
@@ -672,6 +671,13 @@ Instruction::DumpEmulation (const ArchSpec &arch)
         return insn_emulator_ap->EvaluateInstruction (0);
 	}
 
+    return false;
+}
+
+bool
+Instruction::HasDelaySlot ()
+{
+    // Default is false.
     return false;
 }
 
@@ -1319,6 +1325,13 @@ PseudoInstruction::DoesBranch ()
     return false;
 }
     
+bool
+PseudoInstruction::HasDelaySlot ()
+{
+    // This is NOT a valid question for a pseudo instruction.
+    return false;
+}
+
 size_t
 PseudoInstruction::Decode (const lldb_private::Disassembler &disassembler,
                            const lldb_private::DataExtractor &data,
