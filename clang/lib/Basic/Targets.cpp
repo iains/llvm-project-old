@@ -30,6 +30,7 @@
 #include "llvm/Support/TargetParser.h"
 #include <algorithm>
 #include <memory>
+
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -739,7 +740,7 @@ namespace {
 template <typename Target>
 class WebAssemblyOSTargetInfo : public OSTargetInfo<Target> {
   void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
-                    MacroBuilder &Builder) const override final {
+                    MacroBuilder &Builder) const final {
     // A common platform macro.
     if (Opts.POSIXThreads)
       Builder.defineMacro("_REENTRANT");
@@ -749,7 +750,7 @@ class WebAssemblyOSTargetInfo : public OSTargetInfo<Target> {
   }
 
   // As an optimization, group static init code together in a section.
-  const char *getStaticInitSectionSpecifier() const override final {
+  const char *getStaticInitSectionSpecifier() const final {
     return ".text.__startup";
   }
 
@@ -4442,37 +4443,20 @@ public:
   bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
                       StringRef CPU,
                       std::vector<std::string> &FeaturesVec) const override {
-    if (CPU == "arm1136jf-s" || CPU == "arm1176jzf-s" || CPU == "mpcore")
-      Features["vfp2"] = true;
-    else if (CPU == "cortex-a8" || CPU == "cortex-a9") {
-      Features["vfp3"] = true;
-      Features["neon"] = true;
-    }
-    else if (CPU == "cortex-a5") {
-      Features["vfp4"] = true;
-      Features["neon"] = true;
-    } else if (CPU == "swift" || CPU == "cortex-a7" ||
-               CPU == "cortex-a12" || CPU == "cortex-a15" ||
-               CPU == "cortex-a17" || CPU == "krait") {
-      Features["vfp4"] = true;
-      Features["neon"] = true;
-      Features["hwdiv"] = true;
-      Features["hwdiv-arm"] = true;
-    } else if (CPU == "cyclone" || CPU == "cortex-a53" || CPU == "cortex-a57" ||
-               CPU == "cortex-a72") {
-      Features["fp-armv8"] = true;
-      Features["neon"] = true;
-      Features["hwdiv"] = true;
-      Features["hwdiv-arm"] = true;
-      Features["crc"] = true;
-      Features["crypto"] = true;
-    } else if (CPU == "cortex-r5" || CPU == "cortex-r7" || ArchVersion == 8) {
-      Features["hwdiv"] = true;
-      Features["hwdiv-arm"] = true;
-    } else if (CPU == "cortex-m3" || CPU == "cortex-m4" || CPU == "cortex-m7" ||
-               CPU == "sc300" || CPU == "cortex-r4" || CPU == "cortex-r4f") {
-      Features["hwdiv"] = true;
-    }
+   
+    std::vector<const char*> TargetFeatures;
+
+    // get default FPU features
+    unsigned FPUKind = llvm::ARM::getDefaultFPU(CPU);
+    llvm::ARM::getFPUFeatures(FPUKind, TargetFeatures);
+
+    // get default Extension features
+    unsigned Extensions = llvm::ARM::getDefaultExtensions(CPU);
+    llvm::ARM::getExtensionFeatures(Extensions, TargetFeatures);
+
+    for (const char *Feature : TargetFeatures)
+      if (Feature[0] == '+')
+        Features[Feature+1] = true; 
 
     if (ArchVersion < 6  || 
        (ArchVersion == 6 && ArchProfile == llvm::ARM::PK_M))
@@ -7028,13 +7012,13 @@ private:
       Features["simd128"] = true;
     return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
   }
-  bool hasFeature(StringRef Feature) const override final {
+  bool hasFeature(StringRef Feature) const final {
     return llvm::StringSwitch<bool>(Feature)
         .Case("simd128", SIMDLevel >= SIMD128)
         .Default(false);
   }
   bool handleTargetFeatures(std::vector<std::string> &Features,
-                            DiagnosticsEngine &Diags) override final {
+                            DiagnosticsEngine &Diags) final {
     for (const auto &Feature : Features) {
       if (Feature == "+simd128") {
         SIMDLevel = std::max(SIMDLevel, SIMD128);
@@ -7051,7 +7035,7 @@ private:
     }
     return true;
   }
-  bool setCPU(const std::string &Name) override final {
+  bool setCPU(const std::string &Name) final {
     return llvm::StringSwitch<bool>(Name)
               .Case("mvp",           true)
               .Case("bleeding-edge", true)
@@ -7059,32 +7043,32 @@ private:
               .Default(false);
   }
   void getTargetBuiltins(const Builtin::Info *&Records,
-                         unsigned &NumRecords) const override final {
+                         unsigned &NumRecords) const final {
     Records = BuiltinInfo;
     NumRecords = clang::WebAssembly::LastTSBuiltin - Builtin::FirstTSBuiltin;
   }
-  BuiltinVaListKind getBuiltinVaListKind() const override final {
+  BuiltinVaListKind getBuiltinVaListKind() const final {
     // TODO: Implement va_list properly.
     return VoidPtrBuiltinVaList;
   }
   void getGCCRegNames(const char *const *&Names,
-                      unsigned &NumNames) const override final {
+                      unsigned &NumNames) const final {
     Names = nullptr;
     NumNames = 0;
   }
   void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                        unsigned &NumAliases) const override final {
+                        unsigned &NumAliases) const final {
     Aliases = nullptr;
     NumAliases = 0;
   }
   bool
   validateAsmConstraint(const char *&Name,
-                        TargetInfo::ConstraintInfo &Info) const override final {
+                        TargetInfo::ConstraintInfo &Info) const final {
     return false;
   }
-  const char *getClobbers() const override final { return ""; }
-  bool isCLZForZeroUndef() const override final { return false; }
-  bool hasInt128Type() const override final { return true; }
+  const char *getClobbers() const final { return ""; }
+  bool isCLZForZeroUndef() const final { return false; }
+  bool hasInt128Type() const final { return true; }
 };
 
 const Builtin::Info WebAssemblyTargetInfo::BuiltinInfo[] = {

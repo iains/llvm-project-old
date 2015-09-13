@@ -42,15 +42,22 @@ public:
     return nullptr;
   }
 
-  // Print an error message on undefined symbols.
-  void reportRemainingUndefines();
-
   const llvm::DenseMap<StringRef, Symbol *> &getSymbols() const {
     return Symtab;
   }
 
   const std::vector<std::unique_ptr<ObjectFileBase>> &getObjectFiles() const {
     return ObjectFiles;
+  }
+
+  const std::vector<std::unique_ptr<SharedFileBase>> &getSharedFiles() const {
+    return SharedFiles;
+  }
+
+  SymbolBody *getEntrySym() const {
+    if (!EntrySym)
+      return nullptr;
+    return EntrySym->getReplacement();
   }
 
 private:
@@ -72,6 +79,8 @@ private:
   std::vector<std::unique_ptr<ObjectFileBase>> ObjectFiles;
 
   std::vector<std::unique_ptr<SharedFileBase>> SharedFiles;
+
+  SymbolBody *EntrySym = nullptr;
 };
 
 } // namespace elf2

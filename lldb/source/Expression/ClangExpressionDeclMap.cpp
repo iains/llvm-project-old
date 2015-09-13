@@ -136,7 +136,7 @@ ClangExpressionDeclMap::DidParse()
         {
             ExpressionVariableSP var_sp(m_found_entities.GetVariableAtIndex(entity_index));
             if (var_sp)
-                var_sp->AsClangExpressionVariable()->DisableParserVars(GetParserID());
+                llvm::cast<ClangExpressionVariable>(var_sp.get())->DisableParserVars(GetParserID());
         }
 
         for (size_t pvar_index = 0, num_pvars = m_parser_vars->m_persistent_vars->GetSize();
@@ -145,7 +145,7 @@ ClangExpressionDeclMap::DidParse()
         {
             ExpressionVariableSP pvar_sp(m_parser_vars->m_persistent_vars->GetVariableAtIndex(pvar_index));
             if (pvar_sp)
-                pvar_sp->AsClangExpressionVariable()->DisableParserVars(GetParserID());
+                llvm::cast<ClangExpressionVariable>(pvar_sp.get())->DisableParserVars(GetParserID());
         }
 
         DisableParserVars();
@@ -194,19 +194,23 @@ ClangExpressionDeclMap::AddPersistentVariable
 {
     assert (m_parser_vars.get());
 
+    ClangASTContext *ast = llvm::dyn_cast_or_null<ClangASTContext>(parser_type.GetTypeSystem());
+    if (ast == nullptr)
+        return false;
+
     if (m_parser_vars->m_materializer && is_result)
     {
         Error err;
 
         ExecutionContext &exe_ctx = m_parser_vars->m_exe_ctx;
         Target *target = exe_ctx.GetTargetPtr();
-        if (target == NULL)
+        if (target == nullptr)
             return false;
 
         ClangASTContext *context(target->GetScratchClangASTContext());
 
         TypeFromUser user_type(m_ast_importer->DeportType(context->getASTContext(),
-                                                          parser_type.GetTypeSystem()->AsClangASTContext()->getASTContext(),
+                                                          ast->getASTContext(),
                                                           parser_type.GetOpaqueQualType()),
                                context);
 
@@ -247,7 +251,7 @@ ClangExpressionDeclMap::AddPersistentVariable
     ClangASTContext *context(target->GetScratchClangASTContext());
 
     TypeFromUser user_type(m_ast_importer->DeportType(context->getASTContext(),
-                                                      parser_type.GetTypeSystem()->AsClangASTContext()->getASTContext(),
+                                                      ast->getASTContext(),
                                                       parser_type.GetOpaqueQualType()),
                            context);
 
@@ -346,11 +350,11 @@ ClangExpressionDeclMap::AddValueToStruct
     // We know entity->m_parser_vars is valid because we used a parser variable
     // to find it
 
-    ClangExpressionVariable::ParserVars *parser_vars = var->AsClangExpressionVariable()->GetParserVars(GetParserID());
+    ClangExpressionVariable::ParserVars *parser_vars = llvm::cast<ClangExpressionVariable>(var)->GetParserVars(GetParserID());
 
     parser_vars->m_llvm_value = value;
 
-    if (ClangExpressionVariable::JITVars *jit_vars = var->AsClangExpressionVariable()->GetJITVars(GetParserID()))
+    if (ClangExpressionVariable::JITVars *jit_vars = llvm::cast<ClangExpressionVariable>(var)->GetJITVars(GetParserID()))
     {
         // We already laid this out; do not touch
 
@@ -358,9 +362,9 @@ ClangExpressionDeclMap::AddValueToStruct
             log->Printf("Already placed at 0x%llx", (unsigned long long)jit_vars->m_offset);
     }
 
-    var->AsClangExpressionVariable()->EnableJITVars(GetParserID());
+    llvm::cast<ClangExpressionVariable>(var)->EnableJITVars(GetParserID());
 
-    ClangExpressionVariable::JITVars *jit_vars = var->AsClangExpressionVariable()->GetJITVars(GetParserID());
+    ClangExpressionVariable::JITVars *jit_vars = llvm::cast<ClangExpressionVariable>(var)->GetJITVars(GetParserID());
 
     jit_vars->m_alignment = alignment;
     jit_vars->m_size = size;
@@ -459,8 +463,8 @@ ClangExpressionDeclMap::GetStructElement
     if (!member_sp)
         return false;
 
-    ClangExpressionVariable::ParserVars *parser_vars = member_sp->AsClangExpressionVariable()->GetParserVars(GetParserID());
-    ClangExpressionVariable::JITVars *jit_vars = member_sp->AsClangExpressionVariable()->GetJITVars(GetParserID());
+    ClangExpressionVariable::ParserVars *parser_vars = llvm::cast<ClangExpressionVariable>(member_sp.get())->GetParserVars(GetParserID());
+    ClangExpressionVariable::JITVars *jit_vars = llvm::cast<ClangExpressionVariable>(member_sp.get())->GetJITVars(GetParserID());
 
     if (!parser_vars ||
         !jit_vars ||
@@ -1802,7 +1806,7 @@ ClangExpressionDeclMap::AddOneVariable(NameSearchContext &context,
 {
     Log *log(lldb_private::GetLogIfAllCategoriesSet (LIBLLDB_LOG_EXPRESSIONS));
 
-    TypeFromUser user_type (pvar_sp->AsClangExpressionVariable()->GetTypeFromUser());
+    TypeFromUser user_type (llvm::cast<ClangExpressionVariable>(pvar_sp.get())->GetTypeFromUser());
 
     TypeFromParser parser_type (GuardedCopyType(user_type));
 
@@ -1815,8 +1819,8 @@ ClangExpressionDeclMap::AddOneVariable(NameSearchContext &context,
 
     NamedDecl *var_decl = context.AddVarDecl(ClangASTContext::GetLValueReferenceType(parser_type));
 
-    pvar_sp->AsClangExpressionVariable()->EnableParserVars(GetParserID());
-    ClangExpressionVariable::ParserVars *parser_vars = pvar_sp->AsClangExpressionVariable()->GetParserVars(GetParserID());
+    llvm::cast<ClangExpressionVariable>(pvar_sp.get())->EnableParserVars(GetParserID());
+    ClangExpressionVariable::ParserVars *parser_vars = llvm::cast<ClangExpressionVariable>(pvar_sp.get())->GetParserVars(GetParserID());
     parser_vars->m_parser_type = parser_type;
     parser_vars->m_named_decl = var_decl;
     parser_vars->m_llvm_value = NULL;
@@ -1897,7 +1901,7 @@ ClangExpressionDeclMap::ResolveUnknownTypes()
     {
         ExpressionVariableSP entity = m_found_entities.GetVariableAtIndex(index);
 
-        ClangExpressionVariable::ParserVars *parser_vars = entity->AsClangExpressionVariable()->GetParserVars(GetParserID());
+        ClangExpressionVariable::ParserVars *parser_vars = llvm::cast<ClangExpressionVariable>(entity.get())->GetParserVars(GetParserID());
 
         if (entity->m_flags & ClangExpressionVariable::EVUnknownType)
         {

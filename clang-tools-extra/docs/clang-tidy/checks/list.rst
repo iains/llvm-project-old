@@ -31,6 +31,7 @@ List of clang-tidy Checks
    misc-macro-repeated-side-effects
    misc-move-constructor-init
    misc-noexcept-move-constructor
+   misc-sizeof-container
    misc-static-assert
    misc-swapped-arguments
    misc-undelegated-constructor
@@ -40,7 +41,9 @@ List of clang-tidy Checks
    misc-unused-raii
    modernize-loop-convert
    modernize-pass-by-value
+   modernize-replace-auto-ptr
    modernize-shrink-to-fit
+   modernize-use-auto
    modernize-use-nullptr
    modernize-use-override
    readability-braces-around-statements
@@ -48,6 +51,7 @@ List of clang-tidy Checks
    readability-else-after-return
    readability-function-size
    readability-identifier-naming
+   readability-inconsistent-declaration-parameter-name
    readability-named-parameter
    readability-redundant-smartptr-get
    readability-redundant-string-cstr

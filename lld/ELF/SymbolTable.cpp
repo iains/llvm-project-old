@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SymbolTable.h"
+#include "Config.h"
 #include "Error.h"
 #include "Symbols.h"
 
@@ -17,8 +18,7 @@ using namespace llvm::object;
 using namespace lld;
 using namespace lld::elf2;
 
-SymbolTable::SymbolTable() {
-}
+SymbolTable::SymbolTable() {}
 
 void SymbolTable::addFile(std::unique_ptr<InputFile> File) {
   File->parse();
@@ -33,8 +33,10 @@ void SymbolTable::addFile(std::unique_ptr<InputFile> File) {
 }
 
 template <class ELFT> void SymbolTable::init() {
-  resolve<ELFT>(new (Alloc)
-                    Undefined<ELFT>("_start", Undefined<ELFT>::Synthetic));
+  if (Config->Shared)
+    return;
+  EntrySym = new (Alloc) Undefined<ELFT>("_start", Undefined<ELFT>::Synthetic);
+  resolve<ELFT>(EntrySym);
 }
 
 template <class ELFT> void SymbolTable::addELFFile(ELFFileBase *File) {
@@ -51,32 +53,27 @@ template <class ELFT> void SymbolTable::addELFFile(ELFFileBase *File) {
       resolve<ELFT>(Body);
   }
 
-  if (auto *S = dyn_cast<SharedFileBase>(File))
+  if (auto *S = dyn_cast<SharedFile<ELFT>>(File)) {
     SharedFiles.emplace_back(S);
+    for (SharedSymbol<ELFT> &Body : S->getSharedSymbols())
+      resolve<ELFT>(&Body);
+  }
 }
 
 void SymbolTable::addELFFile(ELFFileBase *File) {
   switch (File->getELFKind()) {
-    case ELF32LEKind:
-      addELFFile<ELF32LE>(File);
-      break;
-    case ELF32BEKind:
-      addELFFile<ELF32BE>(File);
-      break;
-    case ELF64LEKind:
-      addELFFile<ELF64LE>(File);
-      break;
-    case ELF64BEKind:
-      addELFFile<ELF64BE>(File);
-      break;
-  }
-}
-
-void SymbolTable::reportRemainingUndefines() {
-  for (auto &I : Symtab) {
-    SymbolBody *Body = I.second->Body;
-    if (Body->isStrongUndefined())
-      error(Twine("undefined symbol: ") + Body->getName());
+  case ELF32LEKind:
+    addELFFile<ELF32LE>(File);
+    break;
+  case ELF32BEKind:
+    addELFFile<ELF32BE>(File);
+    break;
+  case ELF64LEKind:
+    addELFFile<ELF64LE>(File);
+    break;
+  case ELF64BEKind:
+    addELFFile<ELF64BE>(File);
+    break;
   }
 }
 

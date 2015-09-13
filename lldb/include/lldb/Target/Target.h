@@ -1230,6 +1230,9 @@ public:
     ClangASTContext *
     GetScratchClangASTContext(bool create_on_demand=true);
     
+    TypeSystem*
+    GetTypeSystemForLanguage (lldb::LanguageType language);
+    
     ClangASTImporter *
     GetClangASTImporter();
     

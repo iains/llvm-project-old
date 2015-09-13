@@ -641,11 +641,12 @@ def expectedFailureCompiler(compiler, compiler_version=None, bugnumber=None):
 # @expectedFailureAll, xfail for all platform/compiler/arch,
 # @expectedFailureAll(compiler='gcc'), xfail for gcc on all platform/architecture
 # @expectedFailureAll(bugnumber, ["linux"], "gcc", ['>=', '4.9'], ['i386']), xfail for gcc>=4.9 on linux with i386
-def expectedFailureAll(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None):
+def expectedFailureAll(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None, triple=None):
     def fn(self):
         return ((oslist is None or self.getPlatform() in oslist) and
                 (compiler is None or (compiler in self.getCompiler() and self.expectedCompilerVersion(compiler_version))) and
-                self.expectedArch(archs))
+                self.expectedArch(archs) and
+                (triple is None or re.match(triple, lldb.DBG.GetSelectedPlatform().GetTriple())))
     return expectedFailure(fn, bugnumber)
 
 # to XFAIL a specific clang versions, try this
@@ -788,6 +789,9 @@ def expectedFlakeyClang(bugnumber=None, compiler_version=None):
 # @expectedFlakeyGcc('bugnumber', ['<=', '3.4'])
 def expectedFlakeyGcc(bugnumber=None, compiler_version=None):
     return expectedFlakeyCompiler('gcc', compiler_version, bugnumber)
+
+def expectedFlakeyAndroid(bugnumber=None, api_levels=None, archs=None):
+    return expectedFlakey(matchAndroid(api_levels, archs), bugnumber)
 
 def skipIfRemote(func):
     """Decorate the item to skip tests if testing remotely."""
@@ -1734,7 +1738,7 @@ class Base(unittest2.TestCase):
         if self.__errored__:
             pairs = lldb.test_result.errors
             prefix = 'Error'
-        if self.__cleanup_errored__:
+        elif self.__cleanup_errored__:
             pairs = lldb.test_result.cleanup_errors
             prefix = 'CleanupError'
         elif self.__failed__:

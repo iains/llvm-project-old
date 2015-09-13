@@ -375,10 +375,24 @@ static bool usagesAreConst(const UsageResult &Usages) {
 /// by reference.
 static bool usagesReturnRValues(const UsageResult &Usages) {
   for (const auto &U : Usages) {
-    if (!U.Expression->isRValue())
+    if (U.Expression && !U.Expression->isRValue())
       return false;
   }
   return true;
+}
+
+/// \brief Returns true if the container is const-qualified.
+static bool containerIsConst(const Expr *ContainerExpr, bool Dereference) {
+  if (const auto *VDec = getReferencedVariable(ContainerExpr)) {
+    QualType CType = VDec->getType();
+    if (Dereference) {
+      if (!CType->isPointerType())
+        return false;
+      CType = CType->getPointeeType();
+    }
+    return CType.isConstQualified();
+  }
+  return false;
 }
 
 LoopConvertCheck::LoopConvertCheck(StringRef Name, ClangTidyContext *Context)
@@ -400,8 +414,12 @@ void LoopConvertCheck::doConversion(
     ASTContext *Context, const VarDecl *IndexVar, const VarDecl *MaybeContainer,
     StringRef ContainerString, const UsageResult &Usages,
     const DeclStmt *AliasDecl, bool AliasUseRequired, bool AliasFromForInit,
-    const ForStmt *TheLoop, bool ContainerNeedsDereference, bool DerefByValue,
-    bool DerefByConstRef) {
+    const ForStmt *TheLoop, RangeDescriptor Descriptor) {
+  // If there aren't any usages, converting the loop would generate an unused
+  // variable warning.
+  if (Usages.size() == 0)
+    return;
+
   auto Diag = diag(TheLoop->getForLoc(), "use range-based for loop instead");
 
   std::string VarName;
@@ -437,11 +455,23 @@ void LoopConvertCheck::doConversion(
     VarName = Namer.createIndexName();
     // First, replace all usages of the array subscript expression with our new
     // variable.
-    for (const auto &I : Usages) {
-      std::string ReplaceText = I.IsArrow ? VarName + "." : VarName;
+    for (const auto &Usage : Usages) {
+      std::string ReplaceText;
+      if (Usage.Expression) {
+        // If this is an access to a member through the arrow operator, after
+        // the replacement it must be accessed through the '.' operator.
+        ReplaceText = Usage.Kind == Usage::UK_MemberThroughArrow ? VarName + "."
+                                                                 : VarName;
+      } else {
+        // The Usage expression is only null in case of lambda captures (which
+        // are VarDecl). If the index is captured by value, add '&' to capture
+        // by reference instead.
+        ReplaceText =
+            Usage.Kind == Usage::UK_CaptureByCopy ? "&" + VarName : VarName;
+      }
       TUInfo->getReplacedVars().insert(std::make_pair(TheLoop, IndexVar));
       Diag << FixItHint::CreateReplacement(
-          CharSourceRange::getTokenRange(I.Range), ReplaceText);
+          CharSourceRange::getTokenRange(Usage.Range), ReplaceText);
     }
   }
 
@@ -457,16 +487,17 @@ void LoopConvertCheck::doConversion(
     // If an iterator's operator*() returns a 'T&' we can bind that to 'auto&'.
     // If operator*() returns 'T' we can bind that to 'auto&&' which will deduce
     // to 'T&&&'.
-    if (DerefByValue) {
-      AutoRefType = Context->getRValueReferenceType(AutoRefType);
+    if (Descriptor.DerefByValue) {
+      if (!Descriptor.IsTriviallyCopyable)
+        AutoRefType = Context->getRValueReferenceType(AutoRefType);
     } else {
-      if (DerefByConstRef)
+      if (Descriptor.DerefByConstRef)
         AutoRefType = Context->getConstType(AutoRefType);
       AutoRefType = Context->getLValueReferenceType(AutoRefType);
     }
   }
 
-  StringRef MaybeDereference = ContainerNeedsDereference ? "*" : "";
+  StringRef MaybeDereference = Descriptor.ContainerNeedsDereference ? "*" : "";
   std::string TypeString = AutoRefType.getAsString();
   std::string Range = ("(" + TypeString + " " + VarName + " : " +
                        MaybeDereference + ContainerString + ")")
@@ -518,11 +549,11 @@ StringRef LoopConvertCheck::checkRejections(ASTContext *Context,
 /// of the index variable and convert the loop if possible.
 void LoopConvertCheck::findAndVerifyUsages(
     ASTContext *Context, const VarDecl *LoopVar, const VarDecl *EndVar,
-    const Expr *ContainerExpr, const Expr *BoundExpr,
-    bool ContainerNeedsDereference, bool DerefByValue, bool DerefByConstRef,
-    const ForStmt *TheLoop, LoopFixerKind FixerKind) {
+    const Expr *ContainerExpr, const Expr *BoundExpr, const ForStmt *TheLoop,
+    LoopFixerKind FixerKind, RangeDescriptor Descriptor) {
   ForLoopIndexUseVisitor Finder(Context, LoopVar, EndVar, ContainerExpr,
-                                BoundExpr, ContainerNeedsDereference);
+                                BoundExpr,
+                                Descriptor.ContainerNeedsDereference);
 
   if (ContainerExpr) {
     ComponentFinderASTVisitor ComponentFinder;
@@ -537,22 +568,43 @@ void LoopConvertCheck::findAndVerifyUsages(
   if (FixerKind == LFK_Array) {
     // The array being indexed by IndexVar was discovered during traversal.
     ContainerExpr = Finder.getContainerIndexed()->IgnoreParenImpCasts();
+
     // Very few loops are over expressions that generate arrays rather than
     // array variables. Consider loops over arrays that aren't just represented
     // by a variable to be risky conversions.
     if (!getReferencedVariable(ContainerExpr) &&
         !isDirectMemberExpr(ContainerExpr))
       ConfidenceLevel.lowerTo(Confidence::CL_Risky);
+
+    // Use 'const' if the array is const.
+    if (containerIsConst(ContainerExpr, Descriptor.ContainerNeedsDereference))
+      Descriptor.DerefByConstRef = true;
+
   } else if (FixerKind == LFK_PseudoArray) {
-    if (!DerefByValue && !DerefByConstRef) {
+    if (!Descriptor.DerefByValue && !Descriptor.DerefByConstRef) {
       const UsageResult &Usages = Finder.getUsages();
-      if (usagesAreConst(Usages)) {
-        // FIXME: check if the type is trivially copiable.
-        DerefByConstRef = true;
+      if (usagesAreConst(Usages) ||
+          containerIsConst(ContainerExpr,
+                           Descriptor.ContainerNeedsDereference)) {
+        Descriptor.DerefByConstRef = true;
       } else if (usagesReturnRValues(Usages)) {
         // If the index usages (dereference, subscript, at) return RValues,
         // then we should not use a non-const reference.
-        DerefByValue = true;
+        Descriptor.DerefByValue = true;
+        // Try to find the type of the elements on the container from the
+        // usages.
+        for (const Usage &U : Usages) {
+          if (!U.Expression || U.Expression->getType().isNull())
+            continue;
+          QualType Type = U.Expression->getType().getCanonicalType();
+          if (U.Kind == Usage::UK_MemberThroughArrow) {
+            if (!Type->isPointerType())
+              continue;
+            Type = Type->getPointeeType();
+          }
+          Descriptor.IsTriviallyCopyable =
+              Type.isTriviallyCopyableType(*Context);
+        }
       }
     }
   }
@@ -565,7 +617,7 @@ void LoopConvertCheck::findAndVerifyUsages(
   doConversion(Context, LoopVar, getReferencedVariable(ContainerExpr),
                ContainerString, Finder.getUsages(), Finder.getAliasDecl(),
                Finder.aliasUseRequired(), Finder.aliasFromForInit(), TheLoop,
-               ContainerNeedsDereference, DerefByValue, DerefByConstRef);
+               Descriptor);
 }
 
 void LoopConvertCheck::registerMatchers(MatchFinder *Finder) {
@@ -612,21 +664,20 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
   // expression the loop variable is being tested against instead.
   const auto *EndCall = Nodes.getStmtAs<CXXMemberCallExpr>(EndCallName);
   const auto *BoundExpr = Nodes.getStmtAs<Expr>(ConditionBoundName);
+
   // If the loop calls end()/size() after each iteration, lower our confidence
   // level.
   if (FixerKind != LFK_Array && !EndVar)
     ConfidenceLevel.lowerTo(Confidence::CL_Reasonable);
 
   const Expr *ContainerExpr = nullptr;
-  bool DerefByValue = false;
-  bool DerefByConstRef = false;
-  bool ContainerNeedsDereference = false;
+  RangeDescriptor Descriptor{false, false, false, false};
   // FIXME: Try to put most of this logic inside a matcher. Currently, matchers
   // don't allow the ight-recursive checks in digThroughConstructors.
   if (FixerKind == LFK_Iterator) {
     ContainerExpr = findContainer(Context, LoopVar->getInit(),
                                   EndVar ? EndVar->getInit() : EndCall,
-                                  &ContainerNeedsDereference);
+                                  &Descriptor.ContainerNeedsDereference);
 
     QualType InitVarType = InitVar->getType();
     QualType CanonicalInitVarType = InitVarType.getCanonicalType();
@@ -643,6 +694,8 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
       // un-qualified pointee types match otherwise we don't use auto.
       if (!Context->hasSameUnqualifiedType(InitPointeeType, BeginPointeeType))
         return;
+      Descriptor.IsTriviallyCopyable =
+          BeginPointeeType.isTriviallyCopyableType(*Context);
     } else {
       // Check for qualified types to avoid conversions from non-const to const
       // iterator types.
@@ -650,17 +703,19 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
         return;
     }
 
-    DerefByValue = Nodes.getNodeAs<QualType>(DerefByValueResultName) != nullptr;
-    if (!DerefByValue) {
+    const auto *DerefByValueType =
+        Nodes.getNodeAs<QualType>(DerefByValueResultName);
+    Descriptor.DerefByValue = DerefByValueType;
+    if (!Descriptor.DerefByValue) {
       if (const auto *DerefType =
               Nodes.getNodeAs<QualType>(DerefByRefResultName)) {
         // A node will only be bound with DerefByRefResultName if we're dealing
         // with a user-defined iterator type. Test the const qualification of
         // the reference type.
-        DerefByConstRef = (*DerefType)
-                              ->getAs<ReferenceType>()
-                              ->getPointeeType()
-                              .isConstQualified();
+        Descriptor.DerefByConstRef = (*DerefType)
+                                         ->getAs<ReferenceType>()
+                                         ->getPointeeType()
+                                         .isConstQualified();
       } else {
         // By nature of the matcher this case is triggered only for built-in
         // iterator types (i.e. pointers).
@@ -671,12 +726,14 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
         // If the initializer and variable have both the same type just use auto
         // otherwise we test for const qualification of the pointed-at type.
         if (!Context->hasSameType(InitPointeeType, BeginPointeeType))
-          DerefByConstRef = InitPointeeType.isConstQualified();
+          Descriptor.DerefByConstRef = InitPointeeType.isConstQualified();
       }
     } else {
       // If the dereference operator returns by value then test for the
       // canonical const qualification of the init variable type.
-      DerefByConstRef = CanonicalInitVarType.isConstQualified();
+      Descriptor.DerefByConstRef = CanonicalInitVarType.isConstQualified();
+      Descriptor.IsTriviallyCopyable =
+          DerefByValueType->isTriviallyCopyableType(*Context);
     }
   } else if (FixerKind == LFK_PseudoArray) {
     if (!EndCall)
@@ -685,7 +742,7 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
     const auto *Member = dyn_cast<MemberExpr>(EndCall->getCallee());
     if (!Member)
       return;
-    ContainerNeedsDereference = Member->isArrow();
+    Descriptor.ContainerNeedsDereference = Member->isArrow();
   }
 
   // We must know the container or an array length bound.
@@ -696,8 +753,7 @@ void LoopConvertCheck::check(const MatchFinder::MatchResult &Result) {
     return;
 
   findAndVerifyUsages(Context, LoopVar, EndVar, ContainerExpr, BoundExpr,
-                      ContainerNeedsDereference, DerefByValue, DerefByConstRef,
-                      TheLoop, FixerKind);
+                      TheLoop, FixerKind, Descriptor);
 }
 
 } // namespace modernize

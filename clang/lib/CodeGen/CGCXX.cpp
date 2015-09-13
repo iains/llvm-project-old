@@ -28,6 +28,7 @@
 using namespace clang;
 using namespace CodeGen;
 
+
 /// Try to emit a base destructor as an alias to its primary
 /// base-class destructor.
 bool CodeGenModule::TryEmitBaseDestructorAsAlias(const CXXDestructorDecl *D) {
@@ -108,6 +109,9 @@ bool CodeGenModule::TryEmitBaseDestructorAsAlias(const CXXDestructorDecl *D) {
       D->getType()->getAs<FunctionType>()->getCallConv())
     return true;
 
+  if (BaseD->hasAttr<AlwaysInlineAttr>())
+    return true;
+
   return TryEmitDefinitionAsAlias(GlobalDecl(D, Dtor_Base),
                                   GlobalDecl(BaseD, Dtor_Base),
                                   false);
@@ -160,14 +164,7 @@ bool CodeGenModule::TryEmitDefinitionAsAlias(GlobalDecl AliasDecl,
 
   // Instead of creating as alias to a linkonce_odr, replace all of the uses
   // of the aliasee.
-  if (llvm::GlobalValue::isDiscardableIfUnused(Linkage) &&
-     (TargetLinkage != llvm::GlobalValue::AvailableExternallyLinkage ||
-      !TargetDecl.getDecl()->hasAttr<AlwaysInlineAttr>())) {
-    // FIXME: An extern template instantiation will create functions with
-    // linkage "AvailableExternally". In libc++, some classes also define
-    // members with attribute "AlwaysInline" and expect no reference to
-    // be generated. It is desirable to reenable this optimisation after
-    // corresponding LLVM changes.
+  if (llvm::GlobalValue::isDiscardableIfUnused(Linkage)) {
     Replacements[MangledName] = Aliasee;
     return false;
   }
@@ -273,7 +270,7 @@ static llvm::Value *BuildAppleKextVirtualCall(CodeGenFunction &CGF,
   VTableIndex += AddressPoint;
   llvm::Value *VFuncPtr =
     CGF.Builder.CreateConstInBoundsGEP1_64(VTable, VTableIndex, "vfnkxt");
-  return CGF.Builder.CreateLoad(VFuncPtr);
+  return CGF.Builder.CreateAlignedLoad(VFuncPtr, CGF.PointerAlignInBytes);
 }
 
 /// BuildAppleKextVirtualCall - This routine is to support gcc's kext ABI making

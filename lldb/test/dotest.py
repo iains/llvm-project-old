@@ -249,6 +249,7 @@ multiprocess_test_subdir = None
 num_threads = None
 output_on_success = False
 no_multiprocess_test_runner = False
+test_runner_name = None
 
 def usage(parser):
     parser.print_help()
@@ -495,6 +496,7 @@ def parseOptionsAndInitTestdirs():
     global num_threads
     global output_on_success
     global no_multiprocess_test_runner
+    global test_runner_name
 
     do_help = False
 
@@ -633,6 +635,17 @@ def parseOptionsAndInitTestdirs():
         if any([x.startswith('-') for x in args.f]):
             usage(parser)
         filters.extend(args.f)
+        # Shut off multiprocessing mode when additional filters are specified.
+        # The rational is that the user is probably going after a very specific
+        # test and doesn't need a bunch of parallel test runners all looking for
+        # it in a frenzy.  Also, '-v' now spits out all test run output even
+        # on success, so the standard recipe for redoing a failing test (with -v
+        # and a -f to filter to the specific test) now causes all test scanning
+        # (in parallel) to print results for do-nothing runs in a very distracting
+        # manner.  If we really need filtered parallel runs in the future, consider
+        # adding a --no-output-on-success that prevents -v from setting
+        # output-on-success.
+        no_multiprocess_test_runner = True
 
     if args.g:
         fs4all = False
@@ -756,7 +769,8 @@ def parseOptionsAndInitTestdirs():
     if args.inferior:
         is_inferior_test_runner = True
 
-    if args.output_on_success:
+    # Turn on output_on_sucess if either explicitly added or -v specified.
+    if args.output_on_success or args.v:
         output_on_success = True
 
     if args.num_threads:
@@ -764,6 +778,9 @@ def parseOptionsAndInitTestdirs():
 
     if args.test_subdir:
         multiprocess_test_subdir = args.test_subdir
+
+    if args.test_runner_name:
+        test_runner_name = args.test_runner_name
 
     if args.lldb_platform_name:
         lldb_platform_name = args.lldb_platform_name
@@ -774,6 +791,8 @@ def parseOptionsAndInitTestdirs():
     # Gather all the dirs passed on the command line.
     if len(args.args) > 0:
         testdirs = map(os.path.abspath, args.args)
+        # Shut off multiprocessing mode when test directories are specified.
+        no_multiprocess_test_runner = True
 
     # If '-r dir' is specified, the tests should be run under the relocated
     # directory.  Let's copy the testdirs over.
@@ -978,7 +997,7 @@ def setupSysPath():
 
     if lldbtest_config.lldbExec and not is_exe(lldbtest_config.lldbExec):
         print "'{}' is not a path to a valid executable".format(lldbtest_config.lldbExec)
-        del lldbtest_config.lldbExec
+        lldbtest_config.lldbExec = None
 
     if not lldbtest_config.lldbExec:
         print "The 'lldb' executable cannot be located.  Some of the tests may not be run as a result."
@@ -1278,8 +1297,9 @@ if __name__ == "__main__":
     # multiprocess test runner here.
     if isMultiprocessTestRunner():
         import dosep
-        dosep.main(output_on_success, num_threads, multiprocess_test_subdir)
-        raise "should never get here"
+        dosep.main(output_on_success, num_threads, multiprocess_test_subdir,
+                   test_runner_name)
+        raise Exception("should never get here")
 
     setupSysPath()
     setupCrashInfoHook()
