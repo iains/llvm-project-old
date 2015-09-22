@@ -38,6 +38,9 @@ SectionChunk::SectionChunk(ObjectFile *F, const coff_section *H)
   unsigned Shift = (Header->Characteristics >> 20) & 0xF;
   if (Shift > 0)
     Align = uint32_t(1) << (Shift - 1);
+
+  // Only COMDAT sections are subject of dead-stripping.
+  Live = !isCOMDAT();
 }
 
 static void add16(uint8_t *P, int16_t V) { write16le(P, read16le(P) + V); }
@@ -46,7 +49,7 @@ static void add64(uint8_t *P, int64_t V) { write64le(P, read64le(P) + V); }
 static void or16(uint8_t *P, uint16_t V) { write16le(P, read16le(P) | V); }
 
 void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym,
-                               uint64_t P) {
+                               uint64_t P) const {
   uint64_t S = Sym->getRVA();
   switch (Type) {
   case IMAGE_REL_AMD64_ADDR32:   add32(Off, S + Config->ImageBase); break;
@@ -66,7 +69,7 @@ void SectionChunk::applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym,
 }
 
 void SectionChunk::applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym,
-                               uint64_t P) {
+                               uint64_t P) const {
   uint64_t S = Sym->getRVA();
   switch (Type) {
   case IMAGE_REL_I386_ABSOLUTE: break;
@@ -107,7 +110,7 @@ static void applyBranch24T(uint8_t *Off, int32_t V) {
 }
 
 void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym,
-                               uint64_t P) {
+                               uint64_t P) const {
   uint64_t S = Sym->getRVA();
   // Pointer to thumb code must have the LSB set.
   if (Sym->isExecutable())
@@ -124,7 +127,7 @@ void SectionChunk::applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym,
   }
 }
 
-void SectionChunk::writeTo(uint8_t *Buf) {
+void SectionChunk::writeTo(uint8_t *Buf) const {
   if (!hasData())
     return;
   // Copy section contents from source object file to output file.
@@ -207,13 +210,10 @@ bool SectionChunk::isCOMDAT() const {
 }
 
 void SectionChunk::printDiscardedMessage() const {
-  if (this == Ptr) {
-    // Removed by dead-stripping.
-    llvm::dbgs() << "Discarded " << Sym->getName() << "\n";
-  } else {
-    // Removed by ICF.
-    llvm::dbgs() << "Replaced " << Sym->getName() << "\n";
-  }
+  // Removed by dead-stripping. If it's removed by ICF, ICF already
+  // printed out the name, so don't repeat that here.
+  if (Sym && this == Ptr)
+    llvm::outs() << "Discarded " << Sym->getName() << "\n";
 }
 
 StringRef SectionChunk::getDebugName() {
@@ -244,7 +244,7 @@ uint32_t CommonChunk::getPermissions() const {
          IMAGE_SCN_MEM_WRITE;
 }
 
-void StringChunk::writeTo(uint8_t *Buf) {
+void StringChunk::writeTo(uint8_t *Buf) const {
   memcpy(Buf + OutputSectionOff, Str.data(), Str.size());
 }
 
@@ -254,7 +254,7 @@ ImportThunkChunkX64::ImportThunkChunkX64(Defined *S) : ImpSymbol(S) {
   Align = 16;
 }
 
-void ImportThunkChunkX64::writeTo(uint8_t *Buf) {
+void ImportThunkChunkX64::writeTo(uint8_t *Buf) const {
   memcpy(Buf + OutputSectionOff, ImportThunkX86, sizeof(ImportThunkX86));
   // The first two bytes is a JMP instruction. Fill its operand.
   write32le(Buf + OutputSectionOff + 2, ImpSymbol->getRVA() - RVA - getSize());
@@ -264,7 +264,7 @@ void ImportThunkChunkX86::getBaserels(std::vector<Baserel> *Res) {
   Res->emplace_back(getRVA() + 2);
 }
 
-void ImportThunkChunkX86::writeTo(uint8_t *Buf) {
+void ImportThunkChunkX86::writeTo(uint8_t *Buf) const {
   memcpy(Buf + OutputSectionOff, ImportThunkX86, sizeof(ImportThunkX86));
   // The first two bytes is a JMP instruction. Fill its operand.
   write32le(Buf + OutputSectionOff + 2,
@@ -275,7 +275,7 @@ void ImportThunkChunkARM::getBaserels(std::vector<Baserel> *Res) {
   Res->emplace_back(getRVA(), IMAGE_REL_BASED_ARM_MOV32T);
 }
 
-void ImportThunkChunkARM::writeTo(uint8_t *Buf) {
+void ImportThunkChunkARM::writeTo(uint8_t *Buf) const {
   memcpy(Buf + OutputSectionOff, ImportThunkARM, sizeof(ImportThunkARM));
   // Fix mov.w and mov.t operands.
   applyMOV32T(Buf + OutputSectionOff, ImpSymbol->getRVA() + Config->ImageBase);
@@ -289,7 +289,7 @@ size_t LocalImportChunk::getSize() const {
   return Config->is64() ? 8 : 4;
 }
 
-void LocalImportChunk::writeTo(uint8_t *Buf) {
+void LocalImportChunk::writeTo(uint8_t *Buf) const {
   if (Config->is64()) {
     write64le(Buf + OutputSectionOff, Sym->getRVA() + Config->ImageBase);
   } else {
@@ -297,7 +297,7 @@ void LocalImportChunk::writeTo(uint8_t *Buf) {
   }
 }
 
-void SEHTableChunk::writeTo(uint8_t *Buf) {
+void SEHTableChunk::writeTo(uint8_t *Buf) const {
   ulittle32_t *Begin = reinterpret_cast<ulittle32_t *>(Buf + OutputSectionOff);
   size_t Cnt = 0;
   for (Defined *D : Syms)
@@ -321,7 +321,7 @@ BaserelChunk::BaserelChunk(uint32_t Page, Baserel *Begin, Baserel *End) {
   }
 }
 
-void BaserelChunk::writeTo(uint8_t *Buf) {
+void BaserelChunk::writeTo(uint8_t *Buf) const {
   memcpy(Buf + OutputSectionOff, Data.data(), Data.size());
 }
 

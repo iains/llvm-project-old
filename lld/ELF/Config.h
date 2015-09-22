@@ -20,6 +20,8 @@ struct Configuration {
   llvm::StringRef DynamicLinker;
   std::string RPath;
   bool Shared = false;
+  bool DiscardAll = false;
+  bool DiscardLocals = false;
 };
 
 extern Configuration *Config;

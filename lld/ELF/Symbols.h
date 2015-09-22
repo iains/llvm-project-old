@@ -24,6 +24,7 @@ class Chunk;
 class InputFile;
 class SymbolBody;
 template <class ELFT> class ObjectFile;
+template <class ELFT> class OutputSection;
 
 // A real symbol object, SymbolBody, is usually accessed indirectly
 // through a Symbol. There's always one Symbol for each symbol name.
@@ -65,6 +66,15 @@ public:
     return MostConstrainingVisibility;
   }
 
+  unsigned getDynamicSymbolTableIndex() const {
+    return DynamicSymbolTableIndex;
+  }
+  void setDynamicSymbolTableIndex(unsigned V) { DynamicSymbolTableIndex = V; }
+
+  unsigned getGotIndex() const { return GotIndex; }
+  bool isInGot() const { return GotIndex != -1U; }
+  void setGotIndex(unsigned I) { GotIndex = I; }
+
   // A SymbolBody has a backreference to a Symbol. Originally they are
   // doubly-linked. A backreference will never change. But the pointer
   // in the Symbol may be mutated by the resolver. If you have a
@@ -86,11 +96,12 @@ protected:
     IsUsedInRegularObj = K != SharedKind && K != LazyKind;
   }
 
-protected:
   const unsigned SymbolKind : 8;
   const unsigned IsWeak : 1;
   unsigned MostConstrainingVisibility : 2;
   unsigned IsUsedInRegularObj : 1;
+  unsigned DynamicSymbolTableIndex = 0;
+  unsigned GotIndex = -1;
   StringRef Name;
   Symbol *Backref = nullptr;
 };
@@ -170,6 +181,8 @@ public:
 
   // The maximum alignment we have seen for this symbol.
   uintX_t MaxAlignment;
+
+  OutputSection<ELFT> *OutputSec = nullptr;
 };
 
 // Regular defined symbols read from object file symbol tables.

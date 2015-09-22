@@ -56,8 +56,7 @@ protected:
       Error.Notes.push_back(TidyMessage);
       return;
     }
-    assert(Error.Message.Message.empty() &&
-           "Overwriting a diagnostic message");
+    assert(Error.Message.Message.empty() && "Overwriting a diagnostic message");
     Error.Message = TidyMessage;
   }
 
@@ -131,7 +130,7 @@ static bool ConsumeNegativeIndicator(StringRef &GlobList) {
 // Converts first glob from the comma-separated list of globs to Regex and
 // removes it and the trailing comma from the GlobList.
 static llvm::Regex ConsumeGlob(StringRef &GlobList) {
-  StringRef Glob = GlobList.substr(0, GlobList.find(','));
+  StringRef Glob = GlobList.substr(0, GlobList.find(',')).trim();
   GlobList = GlobList.substr(Glob.size() + 1);
   llvm::SmallString<128> RegexText("^");
   StringRef MetaChars("()^$|*+?.[]\\{}");

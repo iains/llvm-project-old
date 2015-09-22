@@ -16,6 +16,7 @@
 #include "lldb/Core/StreamString.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/TypeList.h"
+#include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Symbol/VariableList.h"
 
 using namespace lldb_private;
@@ -84,16 +85,13 @@ SymbolFile::GetTypeList ()
     return nullptr;
 }
 
-ClangASTContext &
-SymbolFile::GetClangASTContext ()
-{
-    return m_obj_file->GetModule()->GetClangASTContext();
-}
-
 TypeSystem *
 SymbolFile::GetTypeSystemForLanguage (lldb::LanguageType language)
 {
-    return m_obj_file->GetModule()->GetTypeSystemForLanguage (language);
+    TypeSystem *type_system = m_obj_file->GetModule()->GetTypeSystemForLanguage(language);
+    if (type_system)
+        type_system->SetSymbolFile(this);
+    return type_system;
 }
 
 uint32_t

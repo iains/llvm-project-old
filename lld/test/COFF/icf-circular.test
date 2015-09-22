@@ -1,9 +1,10 @@
 # RUN: yaml2obj < %s > %t.obj
 # RUN: lld-link /entry:foo /out:%t.exe /subsystem:console /include:bar \
-# RUN:   /opt:lldicf /verbose %t.obj > %t.log 2>&1
+# RUN:   /verbose %t.obj > %t.log 2>&1
 # RUN: FileCheck %s < %t.log
 
-# CHECK: Replaced bar
+# CHECK: Selected foo
+# CHECK:   Removed bar
 
 ---
 header:
@@ -18,6 +19,9 @@ sections:
       - VirtualAddress:  5
         SymbolName:      foo
         Type:            IMAGE_REL_AMD64_REL32
+      - VirtualAddress:  10
+        SymbolName:      __ImageBase
+        Type:            IMAGE_REL_AMD64_REL32
   - Name:            '.text$mn'
     Characteristics: [ IMAGE_SCN_CNT_CODE, IMAGE_SCN_LNK_COMDAT, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ ]
     Alignment:       16
@@ -25,6 +29,9 @@ sections:
     Relocations:
       - VirtualAddress:  5
         SymbolName:      bar
+        Type:            IMAGE_REL_AMD64_REL32
+      - VirtualAddress:  10
+        SymbolName:      __ImageBase
         Type:            IMAGE_REL_AMD64_REL32
 symbols:
   - Name:            '.text$mn'
@@ -64,5 +71,11 @@ symbols:
     SectionNumber:   2
     SimpleType:      IMAGE_SYM_TYPE_NULL
     ComplexType:     IMAGE_SYM_DTYPE_FUNCTION
+    StorageClass:    IMAGE_SYM_CLASS_EXTERNAL
+  - Name:            __ImageBase
+    Value:           0
+    SectionNumber:   0
+    SimpleType:      IMAGE_SYM_TYPE_NULL
+    ComplexType:     IMAGE_SYM_DTYPE_NULL
     StorageClass:    IMAGE_SYM_CLASS_EXTERNAL
 ...

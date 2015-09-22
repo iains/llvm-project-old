@@ -102,11 +102,14 @@ public:
 
   uint16_t getEMachine() const { return getObj()->getHeader()->e_machine; }
 
+  StringRef getStringTable() const { return StringTable; }
+
 protected:
   std::unique_ptr<llvm::object::ELFFile<ELFT>> ELFObj;
   const Elf_Shdr *Symtab = nullptr;
   StringRef StringTable;
   Elf_Sym_Range getNonLocalSymbols();
+  Elf_Sym_Range getSymbolsHelper(bool);
 
   void openELF(MemoryBufferRef MB);
 };
@@ -129,14 +132,19 @@ public:
       : ObjectFileBase(getStaticELFKind<ELFT>(), M) {}
   void parse() override;
 
-  ArrayRef<SectionChunk<ELFT> *> getChunks() { return Chunks; }
+  ArrayRef<SectionChunk<ELFT> *> getChunks() const { return Chunks; }
 
-  SymbolBody *getSymbolBody(uint32_t SymbolIndex) {
+  SymbolBody *getSymbolBody(uint32_t SymbolIndex) const {
     uint32_t FirstNonLocal = this->Symtab->sh_info;
     if (SymbolIndex < FirstNonLocal)
       return nullptr;
     return SymbolBodies[SymbolIndex - FirstNonLocal]->getReplacement();
   }
+
+  Elf_Sym_Range getLocalSymbols();
+
+  const Elf_Shdr *getSymbolTable() const { return this->Symtab; };
+  ArrayRef<Elf_Word> getSymbolTableShndx() const { return SymtabSHNDX; };
 
 private:
   void initializeChunks();

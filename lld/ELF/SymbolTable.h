@@ -11,8 +11,7 @@
 #define LLD_ELF_SYMBOL_TABLE_H
 
 #include "InputFiles.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/ADT/MapVector.h"
 
 namespace lld {
 namespace elf2 {
@@ -42,7 +41,9 @@ public:
     return nullptr;
   }
 
-  const llvm::DenseMap<StringRef, Symbol *> &getSymbols() const {
+  bool shouldUseRela() const;
+
+  const llvm::MapVector<StringRef, Symbol *> &getSymbols() const {
     return Symtab;
   }
 
@@ -72,7 +73,14 @@ private:
 
   std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
 
-  llvm::DenseMap<StringRef, Symbol *> Symtab;
+  // The order the global symbols are in is not defined. We can use an arbitrary
+  // order, but it has to be reproducible. That is true even when cross linking.
+  // The default hashing of StringRef produces different results on 32 and 64
+  // bit systems so we use a MapVector. That is arbitrary, deterministic but
+  // a bit inefficient.
+  // FIXME: Experiment with passing in a custom hashing or sorting the symbols
+  // once symbol resolution is finished.
+  llvm::MapVector<StringRef, Symbol *> Symtab;
   llvm::BumpPtrAllocator Alloc;
 
   // The writer needs to infer the machine type from the object files.

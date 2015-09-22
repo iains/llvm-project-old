@@ -39,7 +39,7 @@ class SymbolBody;
 // The resolver updates SymbolBody pointers as it resolves symbols.
 struct Symbol {
   explicit Symbol(SymbolBody *P) : Body(P) {}
-  std::atomic<SymbolBody *> Body;
+  SymbolBody *Body;
 };
 
 // The base class for real symbol classes.
@@ -82,7 +82,7 @@ public:
   // has chosen the object among other objects having the same name,
   // you can access P->Backref->Body to get the resolver's result.
   void setBackref(Symbol *P) { Backref = P; }
-  SymbolBody *repl() { return Backref ? Backref->Body.load() : this; }
+  SymbolBody *repl() { return Backref ? Backref->Body : this; }
 
   // Decides which symbol should "win" in the symbol table, this or
   // the Other. Returns 1 if this wins, -1 if the Other wins, or 0 if
@@ -175,14 +175,8 @@ public:
     return S->kind() == DefinedRegularKind;
   }
 
-  uint64_t getOutputSectionOff() {
-    return (*Data)->getOutputSectionOff() + Sym->Value;
-  }
-
   uint64_t getRVA() { return (*Data)->getRVA() + Sym->Value; }
   bool isCOMDAT() { return IsCOMDAT; }
-  bool isLive() const { return (*Data)->isLive(); }
-  void markLive() { (*Data)->markLive(); }
   SectionChunk *getChunk() { return *Data; }
   uint32_t getValue() { return Sym->Value; }
 
@@ -202,13 +196,10 @@ public:
   }
 
   uint64_t getRVA() { return Data->getRVA(); }
-  uint64_t getOutputSectionOff() { return Data->getOutputSectionOff(); }
 
 private:
   friend SymbolBody;
-
   uint64_t getSize() { return Sym->Value; }
-
   CommonChunk *Data;
 };
 
@@ -316,8 +307,6 @@ public:
   }
 
   uint64_t getRVA() { return Location->getRVA(); }
-  uint64_t getOutputSectionOff() { return Location->getOutputSectionOff(); }
-
   StringRef getDLLName() { return DLLName; }
   StringRef getExternalName() { return ExternalName; }
   void setLocation(Chunk *AddressTable) { Location = AddressTable; }
@@ -344,7 +333,6 @@ public:
   }
 
   uint64_t getRVA() { return Data->getRVA(); }
-  uint64_t getOutputSectionOff() { return Data->getOutputSectionOff(); }
   Chunk *getChunk() { return Data.get(); }
 
 private:
@@ -366,8 +354,6 @@ public:
   }
 
   uint64_t getRVA() { return Data.getRVA(); }
-  uint64_t getOutputSectionOff() { return Data.getOutputSectionOff(); }
-
   Chunk *getChunk() { return &Data; }
 
 private:
@@ -417,14 +403,5 @@ inline uint64_t Defined::getRVA() {
 
 } // namespace coff
 } // namespace lld
-
-// Support isa<>, cast<> and dyn_cast<> for Symbol::Body.
-namespace llvm {
-template <typename T>
-struct simplify_type<std::atomic<T *>> {
-  typedef T *SimpleType;
-  static T *getSimplifiedValue(std::atomic<T *> &A) { return A.load(); }
-};
-}
 
 #endif

@@ -297,9 +297,6 @@ SymbolFileDWARFDebugMap::~SymbolFileDWARFDebugMap()
 void
 SymbolFileDWARFDebugMap::InitializeObject()
 {
-    // Set the symbol file to this file. This allows the clang ASTContext to complete
-    // types using this symbol file when it needs to complete classes and structures.
-    GetClangASTContext().SetSymbolFile(this);
 }
 
 void
@@ -1574,7 +1571,6 @@ SymbolFileDWARFDebugMap::AddOSOARanges (SymbolFileDWARF* dwarf2Data, DWARFDebugA
                 const FileRangeMap::Entry* entry = file_range_map.GetEntryAtIndex(idx);
                 if (entry)
                 {
-                    printf ("[0x%16.16" PRIx64 " - 0x%16.16" PRIx64 ")\n", entry->GetRangeBase(), entry->GetRangeEnd());
                     debug_aranges->AppendRange(dwarf2Data->GetID(), entry->GetRangeBase(), entry->GetRangeEnd());
                     num_line_entries_added++;
                 }

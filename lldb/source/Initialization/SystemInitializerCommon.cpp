@@ -13,7 +13,8 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Timer.h"
-
+#include "lldb/Symbol/GoASTContext.h"
+#include "lldb/Symbol/ClangASTContext.h"
 #include "Plugins/DynamicLoader/MacOSX-DYLD/DynamicLoaderMacOSXDYLD.h"
 #include "Plugins/DynamicLoader/POSIX-DYLD/DynamicLoaderPOSIXDYLD.h"
 #include "Plugins/DynamicLoader/Windows-DYLD/DynamicLoaderWindowsDYLD.h"
@@ -25,6 +26,7 @@
 #include "Plugins/ObjectFile/ELF/ObjectFileELF.h"
 #include "Plugins/ObjectFile/PECOFF/ObjectFilePECOFF.h"
 #include "Plugins/OperatingSystem/Python/OperatingSystemPython.h"
+#include "Plugins/OperatingSystem/Go/OperatingSystemGo.h"
 #include "Plugins/Platform/Android/PlatformAndroid.h"
 #include "Plugins/Platform/FreeBSD/PlatformFreeBSD.h"
 #include "Plugins/Platform/Kalimba/PlatformKalimba.h"
@@ -102,6 +104,9 @@ SystemInitializerCommon::Initialize()
     process_gdb_remote::ProcessGDBRemoteLog::Initialize();
 
     // Initialize plug-ins
+    ClangASTContext::Initialize();
+    GoASTContext::Initialize();
+
     ObjectContainerBSDArchive::Initialize();
     ObjectFileELF::Initialize();
     ObjectFilePECOFF::Initialize();
@@ -142,6 +147,7 @@ SystemInitializerCommon::Initialize()
 #ifndef LLDB_DISABLE_PYTHON
     OperatingSystemPython::Initialize();
 #endif
+    OperatingSystemGo::Initialize();
 }
 
 void
@@ -164,6 +170,9 @@ SystemInitializerCommon::Terminate()
     PlatformRemoteiOS::Terminate();
     PlatformiOSSimulator::Terminate();
 
+    ClangASTContext::Terminate();
+    GoASTContext::Terminate();
+
     EmulateInstructionARM::Terminate();
     EmulateInstructionMIPS::Terminate();
     EmulateInstructionMIPS64::Terminate();
@@ -181,6 +190,7 @@ SystemInitializerCommon::Terminate()
 #ifndef LLDB_DISABLE_PYTHON
     OperatingSystemPython::Terminate();
 #endif
+    OperatingSystemGo::Terminate();
 
     Log::Terminate();
 }

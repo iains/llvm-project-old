@@ -12,7 +12,7 @@
 #include "Error.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
-#include "llvm/ADT/STLExtras.h"
+#include "lld/Core/Parallel.h"
 #include "llvm/LTO/LTOCodeGenerator.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -27,10 +27,12 @@ void SymbolTable::addFile(std::unique_ptr<InputFile> FileP) {
   InputFile *File = FileP.get();
   Files.push_back(std::move(FileP));
   if (auto *F = dyn_cast<ArchiveFile>(File)) {
-    ArchiveQueue.push_back(F);
+    ArchiveQueue.push_back(
+        std::async(std::launch::async, [=]() { F->parse(); return F; }));
     return;
   }
-  ObjectQueue.push_back(File);
+  ObjectQueue.push_back(
+      std::async(std::launch::async, [=]() { File->parse(); return File; }));
   if (auto *F = dyn_cast<ObjectFile>(File)) {
     ObjectFiles.push_back(F);
   } else if (auto *F = dyn_cast<BitcodeFile>(File)) {
@@ -59,10 +61,10 @@ void SymbolTable::readArchives() {
   // Add lazy symbols to the symbol table. Lazy symbols that conflict
   // with existing undefined symbols are accumulated in LazySyms.
   std::vector<Symbol *> LazySyms;
-  for (ArchiveFile *File : ArchiveQueue) {
+  for (std::future<ArchiveFile *> &Future : ArchiveQueue) {
+    ArchiveFile *File = Future.get();
     if (Config->Verbose)
       llvm::outs() << "Reading " << File->getShortName() << "\n";
-    File->parse();
     for (Lazy &Sym : File->getLazySymbols())
       addLazy(&Sym, &LazySyms);
   }
@@ -81,10 +83,9 @@ void SymbolTable::readObjects() {
   // Add defined and undefined symbols to the symbol table.
   std::vector<StringRef> Directives;
   for (size_t I = 0; I < ObjectQueue.size(); ++I) {
-    InputFile *File = ObjectQueue[I];
+    InputFile *File = ObjectQueue[I].get();
     if (Config->Verbose)
       llvm::outs() << "Reading " << File->getShortName() << "\n";
-    File->parse();
     // Adding symbols may add more files to ObjectQueue
     // (but not to ArchiveQueue).
     for (SymbolBody *Sym : File->getSymbols())
@@ -163,20 +164,16 @@ void SymbolTable::addLazy(Lazy *New, std::vector<Symbol *> *Accum) {
   Symbol *Sym = insert(New);
   if (Sym->Body == New)
     return;
-  for (;;) {
-    SymbolBody *Existing = Sym->Body;
-    if (isa<Defined>(Existing))
-      return;
-    if (Lazy *L = dyn_cast<Lazy>(Existing))
-      if (L->getFileIndex() < New->getFileIndex())
-        return;
-    if (!Sym->Body.compare_exchange_strong(Existing, New))
-      continue;
-    New->setBackref(Sym);
-    if (isa<Undefined>(Existing))
-      Accum->push_back(Sym);
+  SymbolBody *Existing = Sym->Body;
+  if (isa<Defined>(Existing))
     return;
-  }
+  if (Lazy *L = dyn_cast<Lazy>(Existing))
+    if (L->getFileIndex() < New->getFileIndex())
+      return;
+  Sym->Body = New;
+  New->setBackref(Sym);
+  if (isa<Undefined>(Existing))
+    Accum->push_back(Sym);
 }
 
 void SymbolTable::addSymbol(SymbolBody *New) {
@@ -185,37 +182,32 @@ void SymbolTable::addSymbol(SymbolBody *New) {
   Symbol *Sym = insert(New);
   if (Sym->Body == New)
     return;
+  SymbolBody *Existing = Sym->Body;
 
-  for (;;) {
-    SymbolBody *Existing = Sym->Body;
-
-    // If we have an undefined symbol and a lazy symbol,
-    // let the lazy symbol to read a member file.
-    if (auto *L = dyn_cast<Lazy>(Existing)) {
-      // Undefined symbols with weak aliases need not to be resolved,
-      // since they would be replaced with weak aliases if they remain
-      // undefined.
-      if (auto *U = dyn_cast<Undefined>(New))
-        if (!U->WeakAlias) {
-          addMemberFile(L);
-          return;
-        }
-      if (!Sym->Body.compare_exchange_strong(Existing, New))
-        continue;
-      return;
+  // If we have an undefined symbol and a lazy symbol,
+  // let the lazy symbol to read a member file.
+  if (auto *L = dyn_cast<Lazy>(Existing)) {
+    // Undefined symbols with weak aliases need not to be resolved,
+    // since they would be replaced with weak aliases if they remain
+    // undefined.
+    if (auto *U = dyn_cast<Undefined>(New)) {
+      if (!U->WeakAlias) {
+        addMemberFile(L);
+        return;
+      }
     }
-
-    // compare() returns -1, 0, or 1 if the lhs symbol is less preferable,
-    // equivalent (conflicting), or more preferable, respectively.
-    int Comp = Existing->compare(New);
-    if (Comp == 0)
-      error(Twine("duplicate symbol: ") + Existing->getDebugName() + " and " +
-            New->getDebugName());
-    if (Comp < 0)
-      if (!Sym->Body.compare_exchange_strong(Existing, New))
-        continue;
+    Sym->Body = New;
     return;
   }
+
+  // compare() returns -1, 0, or 1 if the lhs symbol is less preferable,
+  // equivalent (conflicting), or more preferable, respectively.
+  int Comp = Existing->compare(New);
+  if (Comp == 0)
+    error(Twine("duplicate symbol: ") + Existing->getDebugName() + " and " +
+          New->getDebugName());
+  if (Comp < 0)
+    Sym->Body = New;
 }
 
 Symbol *SymbolTable::insert(SymbolBody *New) {
@@ -325,7 +317,7 @@ void SymbolTable::printMap(llvm::raw_ostream &OS) {
     OS << File->getShortName() << ":\n";
     for (SymbolBody *Body : File->getSymbols())
       if (auto *R = dyn_cast<DefinedRegular>(Body))
-        if (!R->isCOMDAT() || R->isLive())
+        if (R->getChunk()->isLive())
           OS << Twine::utohexstr(Config->ImageBase + R->getRVA())
              << " " << R->getName() << "\n";
   }
@@ -410,8 +402,12 @@ std::vector<ObjectFile *> SymbolTable::createLTOObjects(LTOCodeGenerator *CG) {
   for (unsigned I = 1, E = BitcodeFiles.size(); I != E; ++I)
     CG->addModule(BitcodeFiles[I]->getModule());
 
+  bool DisableVerify = true;
+#ifdef NDEBUG
+  DisableVerify = false;
+#endif
   std::string ErrMsg;
-  if (!CG->optimize(false, false, false, ErrMsg))
+  if (!CG->optimize(DisableVerify, false, false, false, ErrMsg))
     error(ErrMsg);
 
   Objs.resize(Config->LTOJobs);

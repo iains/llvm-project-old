@@ -10,20 +10,6 @@
 #include "SymbolFileDWARF.h"
 
 // Other libraries and framework includes
-#include "clang/AST/ASTConsumer.h"
-#include "clang/AST/ASTContext.h"
-#include "clang/AST/Decl.h"
-#include "clang/AST/DeclGroup.h"
-#include "clang/AST/DeclObjC.h"
-#include "clang/AST/DeclTemplate.h"
-#include "clang/Basic/Builtins.h"
-#include "clang/Basic/IdentifierTable.h"
-#include "clang/Basic/LangOptions.h"
-#include "clang/Basic/SourceManager.h"
-#include "clang/Basic/TargetInfo.h"
-#include "clang/Basic/Specifiers.h"
-#include "clang/Sema/DeclSpec.h"
-
 #include "llvm/Support/Casting.h"
 
 #include "lldb/Core/ArchSpec.h"
@@ -48,6 +34,8 @@
 #include "lldb/Interpreter/OptionValueProperties.h"
 
 #include "lldb/Symbol/Block.h"
+#include "lldb/Symbol/CompilerDecl.h"
+#include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/ObjectFile.h"
@@ -70,7 +58,6 @@
 #include "DWARFDeclContext.h"
 #include "DWARFDIECollection.h"
 #include "DWARFFormValue.h"
-#include "DWARFLocationList.h"
 #include "LogChannelDWARF.h"
 #include "SymbolFileDWARFDwo.h"
 #include "SymbolFileDWARFDebugMap.h"
@@ -494,23 +481,22 @@ SymbolFileDWARF::GetUniqueDWARFASTTypeMap ()
     return m_unique_ast_type_map;
 }
 
-ClangASTContext &
-SymbolFileDWARF::GetClangASTContext ()
-{
-    if (GetDebugMapSymfile ())
-        return m_debug_map_symfile->GetClangASTContext ();
-    else
-        return m_obj_file->GetModule()->GetClangASTContext();
-}
-
 TypeSystem *
 SymbolFileDWARF::GetTypeSystemForLanguage (LanguageType language)
 {
     SymbolFileDWARFDebugMap * debug_map_symfile = GetDebugMapSymfile ();
+    TypeSystem *type_system;
     if (debug_map_symfile)
-        return debug_map_symfile->GetTypeSystemForLanguage (language);
+    {
+        type_system = debug_map_symfile->GetTypeSystemForLanguage(language);
+    }
     else
-        return m_obj_file->GetModule()->GetTypeSystemForLanguage (language);
+    {
+        type_system = m_obj_file->GetModule()->GetTypeSystemForLanguage(language);
+        if (type_system)
+            type_system->SetSymbolFile(this);
+    }
+    return type_system;
 }
 
 void
@@ -566,12 +552,6 @@ SymbolFileDWARF::InitializeObject()
         else
             m_apple_objc_ap.reset();
     }
-
-    // Set the symbol file to this file if we don't have a debug map symbol
-    // file as our main symbol file. This allows the clang ASTContext to complete
-    // types using this symbol file when it needs to complete classes and structures.
-    if (GetDebugMapSymfile () == nullptr)
-        GetClangASTContext().SetSymbolFile(this);
 }
 
 bool
@@ -1383,6 +1363,38 @@ SymbolFileDWARF::ClassOrStructIsVirtual (const DWARFDIE &parent_die)
     return false;
 }
 
+void
+SymbolFileDWARF::ParseDeclsForContext (CompilerDeclContext decl_ctx)
+{
+    TypeSystem *type_system = decl_ctx.GetTypeSystem();
+    DWARFASTParser *ast_parser = type_system->GetDWARFParser();
+    std::vector<DWARFDIE> decl_ctx_die_list = ast_parser->GetDIEForDeclContext(decl_ctx);
+
+    for (DWARFDIE decl_ctx_die : decl_ctx_die_list)
+        for (DWARFDIE decl = decl_ctx_die.GetFirstChild(); decl; decl = decl.GetSibling())
+            ast_parser->GetDeclForUIDFromDWARF(decl);
+}
+
+CompilerDecl
+SymbolFileDWARF::GetDeclForUID (lldb::user_id_t type_uid)
+{
+    if (UserIDMatches(type_uid))
+    {
+        DWARFDebugInfo* debug_info = DebugInfo();
+        if (debug_info)
+        {
+            DWARFDIE die = debug_info->GetDIE(DIERef(type_uid));
+            if (die)
+            {
+                DWARFASTParser *dwarf_ast = die.GetDWARFParser();
+                if (dwarf_ast)
+                    return dwarf_ast->GetDeclForUIDFromDWARF(die);
+            }
+        }
+    }
+    return CompilerDecl();
+}
+
 CompilerDeclContext
 SymbolFileDWARF::GetDeclContextForUID (lldb::user_id_t type_uid)
 {
@@ -1513,15 +1525,16 @@ SymbolFileDWARF::CompleteType (CompilerType &clang_type)
         // We have already resolved this type...
         return true;
     }
+
+    DWARFDebugInfo* debug_info = DebugInfo();
+    DWARFDIE dwarf_die = debug_info->GetDIE(die_it->getSecond());
+
     // Once we start resolving this type, remove it from the forward declaration
     // map in case anyone child members or other types require this type to get resolved.
     // The type will get resolved when all of the calls to SymbolFileDWARF::ResolveClangOpaqueTypeDefinition
     // are done.
-    GetForwardDeclClangTypeToDie().erase (clang_type_no_qualifiers.GetOpaqueQualType());
+    GetForwardDeclClangTypeToDie().erase (die_it);
 
-    DWARFDebugInfo* debug_info = DebugInfo();
-    
-    DWARFDIE dwarf_die = debug_info->GetDIE(die_it->getSecond());
     Type *type = GetDIEToType().lookup (dwarf_die.GetDIE());
 
     Log *log (LogChannelDWARF::GetLogIfAny(DWARF_LOG_DEBUG_INFO|DWARF_LOG_TYPE_COMPLETION));
@@ -2056,7 +2069,9 @@ SymbolFileDWARF::DeclContextMatchesThisSymbolFile (const lldb_private::CompilerD
         return true;
     }
 
-    if ((TypeSystem *)&GetClangASTContext() == decl_ctx->GetTypeSystem())
+    TypeSystem *decl_ctx_type_system = decl_ctx->GetTypeSystem();
+    TypeSystem *type_system = GetTypeSystemForLanguage(decl_ctx_type_system->GetMinimumLanguage(nullptr));
+    if (decl_ctx_type_system == type_system)
         return true;    // The type systems match, return true
     
     // The namespace AST was valid, and it does not match...
@@ -3048,6 +3063,8 @@ SymbolFileDWARF::GetDeclContextDIEContainingDIE (const DWARFDIE &orig_die)
                     case DW_TAG_structure_type:
                     case DW_TAG_union_type:
                     case DW_TAG_class_type:
+                    case DW_TAG_lexical_block:
+                    case DW_TAG_subprogram:
                         return die;
                         
                     default:
@@ -3732,6 +3749,7 @@ SymbolFileDWARF::ParseVariableDIE
     {
         DWARFAttributes attributes;
         const size_t num_attributes = die.GetAttributes(attributes);
+        DWARFDIE spec_die;
         if (num_attributes > 0)
         {
             const char *name = NULL;
@@ -3840,10 +3858,10 @@ SymbolFileDWARF::ParseVariableDIE
                             }
                             else
                             {
-                                const DWARFDataExtractor&    debug_loc_data = get_debug_loc_data();
+                                const DWARFDataExtractor& debug_loc_data = get_debug_loc_data();
                                 const dw_offset_t debug_loc_offset = form_value.Unsigned();
 
-                                size_t loc_list_length = DWARFLocationList::Size(debug_loc_data, debug_loc_offset);
+                                size_t loc_list_length = DWARFExpression::LocationListSize(die.GetCU(), debug_loc_data, debug_loc_offset);
                                 if (loc_list_length > 0)
                                 {
                                     location.CopyOpcodeData(module, debug_loc_data, debug_loc_offset, loc_list_length);
@@ -3853,7 +3871,13 @@ SymbolFileDWARF::ParseVariableDIE
                             }
                         }
                         break;
-
+                    case DW_AT_specification:
+                    {
+                        DWARFDebugInfo* debug_info = DebugInfo();
+                        if (debug_info)
+                            spec_die = debug_info->GetDIE(DIERef(form_value));
+                        break;
+                    }
                     case DW_AT_artificial:      is_artificial = form_value.Boolean(); break;
                     case DW_AT_accessibility:   break; //accessibility = DW_ACCESS_to_AccessType(form_value.Unsigned()); break;
                     case DW_AT_declaration:
@@ -3865,7 +3889,6 @@ SymbolFileDWARF::ParseVariableDIE
                     default:
                     case DW_AT_abstract_origin:
                     case DW_AT_sibling:
-                    case DW_AT_specification:
                         break;
                     }
                 }
@@ -4069,6 +4092,8 @@ SymbolFileDWARF::ParseVariableDIE
         // (missing location due to optimization, etc)) so we don't re-parse
         // this DIE over and over later...
         GetDIEToVariable()[die.GetDIE()] = var_sp;
+        if (spec_die)
+            GetDIEToVariable()[spec_die.GetDIE()] = var_sp;
     }
     return var_sp;
 }
@@ -4297,4 +4322,10 @@ SymbolFileDWARF::GetDebugMapSymfile ()
         }
     }
     return m_debug_map_symfile;
+}
+
+DWARFExpression::LocationListFormat
+SymbolFileDWARF::GetLocationListFormat() const
+{
+    return DWARFExpression::RegularLocationList;
 }

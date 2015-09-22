@@ -82,6 +82,12 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (Args.hasArg(OPT_shared))
     Config->Shared = true;
 
+  if (Args.hasArg(OPT_discard_all))
+    Config->DiscardAll = true;
+
+  if (Args.hasArg(OPT_discard_locals))
+    Config->DiscardLocals = true;
+
   // Create a list of input files.
   std::vector<MemoryBufferRef> Inputs;
 

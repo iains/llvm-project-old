@@ -25,6 +25,12 @@ struct bitset {
   size_t size() const;
 };
 
+// std::array<> is, well, an array. sizeof() is reasonable for it.
+template <typename T, size_t N>
+struct array {
+  size_t size() const;
+};
+
 class fake_container1 {
   size_t size() const; // non-public
 };
@@ -59,19 +65,14 @@ void f() {
 
   int a = 42 + sizeof(s1);
 // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: sizeof() doesn't return the size of the container; did you mean .size()? [misc-sizeof-container]
-// CHECK-FIXES: int a = 42 + s1.size();
   a = 123 * sizeof(s2);
 // CHECK-MESSAGES: :[[@LINE-1]]:13: warning: sizeof() doesn't return the size
-// CHECK-FIXES: a = 123 * s2.size();
   a = 45 + sizeof(s2 + "asdf");
 // CHECK-MESSAGES: :[[@LINE-1]]:12: warning: sizeof() doesn't return the size
-// CHECK-FIXES: a = 45 + (s2 + "asdf").size();
   a = sizeof(v);
 // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: sizeof() doesn't return the size
-// CHECK-FIXES: a = v.size();
   a = sizeof(std::vector<int>{});
 // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: sizeof() doesn't return the size
-// CHECK-FIXES: a = std::vector<int>{}.size();
 
   a = sizeof(a);
   a = sizeof(int);
@@ -82,13 +83,15 @@ void f() {
   g(s2);
   g(v);
 
-  std::fake_container1 f1;
-  std::fake_container2 f2;
-  std::bitset<7> bs;
+  std::fake_container1 fake1;
+  std::fake_container2 fake2;
+  std::bitset<7> std_bitset;
+  std::array<int, 3> std_array;
 
-  a = sizeof(f1);
-  a = sizeof(f2);
-  a = sizeof(bs);
+  a = sizeof(fake1);
+  a = sizeof(fake2);
+  a = sizeof(std_bitset);
+  a = sizeof(std_array);
 
 
   std::string arr[3];

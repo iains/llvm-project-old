@@ -14,7 +14,7 @@
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "Writer.h"
-#include "llvm/ADT/ArrayRef.h"
+#include "lld/Core/Parallel.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -49,8 +49,6 @@ public:
   void run();
 
 private:
-  void markLive();
-  void dedupCOMDATs();
   void createSections();
   void createMiscChunks();
   void createImportTables();
@@ -216,8 +214,6 @@ bool Defined::isExecutable() {
 
 // The main function of the writer.
 void Writer::run() {
-  markLive();
-  dedupCOMDATs();
   createSections();
   createMiscChunks();
   createImportTables();
@@ -239,59 +235,6 @@ void Writer::run() {
   error(Buffer->commit(), "Failed to write the output file");
 }
 
-// Set live bit on for each reachable chunk. Unmarked (unreachable)
-// COMDAT chunks will be ignored in the next step, so that they don't
-// come to the final output file.
-void Writer::markLive() {
-  if (!Config->DoGC)
-    return;
-
-  // We build up a worklist of sections which have been marked as live. We only
-  // push into the worklist when we discover an unmarked section, and we mark
-  // as we push, so sections never appear twice in the list.
-  SmallVector<SectionChunk *, 256> Worklist;
-
-  for (Undefined *U : Config->GCRoot) {
-    auto *D = dyn_cast<DefinedRegular>(U->repl());
-    if (!D || D->isLive())
-      continue;
-    D->markLive();
-    Worklist.push_back(D->getChunk());
-  }
-  for (Chunk *C : Symtab->getChunks()) {
-    auto *SC = dyn_cast<SectionChunk>(C);
-    if (!SC || SC->isCOMDAT() || SC->isLive())
-      continue;
-    SC->markLive();
-    Worklist.push_back(SC);
-  }
-  while (!Worklist.empty()) {
-    SectionChunk *SC = Worklist.pop_back_val();
-    assert(SC->isLive() && "We mark as live when pushing onto the worklist!");
-
-    // Mark all symbols listed in the relocation table for this section.
-    for (SymbolBody *S : SC->symbols())
-      if (auto *D = dyn_cast<DefinedRegular>(S->repl()))
-        if (!D->isLive()) {
-          D->markLive();
-          Worklist.push_back(D->getChunk());
-        }
-
-    // Mark associative sections if any.
-    for (SectionChunk *ChildSC : SC->children())
-      if (!ChildSC->isLive()) {
-        ChildSC->markLive();
-        Worklist.push_back(ChildSC);
-      }
-  }
-}
-
-// Merge identical COMDAT sections.
-void Writer::dedupCOMDATs() {
-  if (Config->ICF)
-    doICF(Symtab->getChunks());
-}
-
 static StringRef getOutputSection(StringRef Name) {
   StringRef S = Name.split('$').first;
   auto It = Config->Merge.find(S);
@@ -305,13 +248,11 @@ void Writer::createSections() {
   // First, bin chunks by name.
   std::map<StringRef, std::vector<Chunk *>> Map;
   for (Chunk *C : Symtab->getChunks()) {
-    if (Config->DoGC) {
-      auto *SC = dyn_cast<SectionChunk>(C);
-      if (SC && !SC->isLive()) {
-        if (Config->Verbose)
-          SC->printDiscardedMessage();
-        continue;
-      }
+    auto *SC = dyn_cast<SectionChunk>(C);
+    if (SC && !SC->isLive()) {
+      if (Config->Verbose)
+        SC->printDiscardedMessage();
+      continue;
     }
     Map[C->getSectionName()].push_back(C);
   }
@@ -435,7 +376,7 @@ size_t Writer::addEntryToStringTable(StringRef Str) {
 
 Optional<coff_symbol16> Writer::createSymbol(Defined *Def) {
   if (auto *D = dyn_cast<DefinedRegular>(Def))
-    if (!D->isLive())
+    if (!D->getChunk()->isLive())
       return None;
 
   coff_symbol16 Sym;
@@ -712,8 +653,8 @@ void Writer::writeSections() {
     // ADD instructions).
     if (Sec->getPermissions() & IMAGE_SCN_CNT_CODE)
       memset(SecBuf, 0xCC, Sec->getRawSize());
-    for (Chunk *C : Sec->getChunks())
-      C->writeTo(SecBuf);
+    parallel_for_each(Sec->getChunks().begin(), Sec->getChunks().end(),
+                      [&](Chunk *C) { C->writeTo(SecBuf); });
   }
 }
 
@@ -727,14 +668,16 @@ void Writer::sortExceptionTable() {
   uint8_t *End = Begin + Sec->getVirtualSize();
   if (Config->Machine == AMD64) {
     struct Entry { ulittle32_t Begin, End, Unwind; };
-    std::sort((Entry *)Begin, (Entry *)End,
-              [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    parallel_sort(
+        (Entry *)Begin, (Entry *)End,
+        [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
     return;
   }
   if (Config->Machine == ARMNT) {
     struct Entry { ulittle32_t Begin, Unwind; };
-    std::sort((Entry *)Begin, (Entry *)End,
-              [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    parallel_sort(
+        (Entry *)Begin, (Entry *)End,
+        [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
     return;
   }
   errs() << "warning: don't know how to handle .pdata.\n";

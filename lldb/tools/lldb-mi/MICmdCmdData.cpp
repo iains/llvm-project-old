@@ -42,6 +42,7 @@
 #include "MICmdArgValConsume.h"
 #include "MICmnLLDBDebugSessionInfoVarObj.h"
 #include "MICmnLLDBUtilSBValue.h"
+#include "MIUtilParse.h"
 
 //++ ------------------------------------------------------------------------------------
 // Details: CMICmdCmdDataEvaluateExpression constructor.
@@ -90,9 +91,9 @@ CMICmdCmdDataEvaluateExpression::~CMICmdCmdDataEvaluateExpression()
 bool
 CMICmdCmdDataEvaluateExpression::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgFrame, false, false, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgExpr, true, true, true, true)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgFrame, false, false, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgExpr, true, true, true, true));
     return ParseValidateCmdOptions();
 }
 
@@ -277,13 +278,13 @@ CMICmdCmdDataDisassemble::~CMICmdCmdDataDisassemble()
 bool
 CMICmdCmdDataDisassemble::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, true, CMICmdArgValListBase::eArgValType_Number, 1)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, true, CMICmdArgValListBase::eArgValType_Number, 1));
     m_setCmdArgs.Add(
-        *(new CMICmdArgValOptionShort(m_constStrArgAddrStart, true, true, CMICmdArgValListBase::eArgValType_StringQuotedNumber, 1)));
+        new CMICmdArgValOptionShort(m_constStrArgAddrStart, true, true, CMICmdArgValListBase::eArgValType_StringQuotedNumber, 1));
     m_setCmdArgs.Add(
-        *(new CMICmdArgValOptionShort(m_constStrArgAddrEnd, true, true, CMICmdArgValListBase::eArgValType_StringQuotedNumber, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValConsume(m_constStrArgConsume, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValNumber(m_constStrArgMode, true, true)));
+        new CMICmdArgValOptionShort(m_constStrArgAddrEnd, true, true, CMICmdArgValListBase::eArgValType_StringQuotedNumber, 1));
+    m_setCmdArgs.Add(new CMICmdArgValConsume(m_constStrArgConsume, true));
+    m_setCmdArgs.Add(new CMICmdArgValNumber(m_constStrArgMode, true, true));
     return ParseValidateCmdOptions();
 }
 
@@ -506,11 +507,11 @@ CMICmdCmdDataReadMemoryBytes::~CMICmdCmdDataReadMemoryBytes()
 bool
 CMICmdCmdDataReadMemoryBytes::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, true, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgFrame, false, true, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionShort(m_constStrArgByteOffset, false, true, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgAddrExpr, true, true, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValNumber(m_constStrArgNumBytes, true, true)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, true, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgFrame, false, true, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValOptionShort(m_constStrArgByteOffset, false, true, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgAddrExpr, true, true, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValNumber(m_constStrArgNumBytes, true, true));
     return ParseValidateCmdOptions();
 }
 
@@ -822,8 +823,8 @@ CMICmdCmdDataListRegisterNames::~CMICmdCmdDataListRegisterNames()
 bool
 CMICmdCmdDataListRegisterNames::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThreadGroup, false, false, CMICmdArgValListBase::eArgValType_ThreadGrp, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValListOfN(m_constStrArgRegNo, false, false, CMICmdArgValListBase::eArgValType_Number)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThreadGroup, false, false, CMICmdArgValListBase::eArgValType_ThreadGrp, 1));
+    m_setCmdArgs.Add(new CMICmdArgValListOfN(m_constStrArgRegNo, false, false, CMICmdArgValListBase::eArgValType_Number));
     return ParseValidateCmdOptions();
 }
 
@@ -1012,10 +1013,10 @@ CMICmdCmdDataListRegisterValues::~CMICmdCmdDataListRegisterValues()
 bool
 CMICmdCmdDataListRegisterValues::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgSkip, false, false)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgFormat, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValListOfN(m_constStrArgRegNo, false, true, CMICmdArgValListBase::eArgValType_Number)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgSkip, false, false));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgFormat, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValListOfN(m_constStrArgRegNo, false, true, CMICmdArgValListBase::eArgValType_Number));
     return ParseValidateCmdOptions();
 }
 
@@ -1322,10 +1323,10 @@ CMICmdCmdDataWriteMemoryBytes::~CMICmdCmdDataWriteMemoryBytes()
 bool
 CMICmdCmdDataWriteMemoryBytes::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgAddr, true, true, false, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgContents, true, true, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgCount, false, true, false, true)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgAddr, true, true, false, true));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgContents, true, true, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgCount, false, true, false, true));
     return ParseValidateCmdOptions();
 }
 
@@ -1444,12 +1445,12 @@ CMICmdCmdDataWriteMemory::~CMICmdCmdDataWriteMemory()
 bool
 CMICmdCmdDataWriteMemory::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValOptionShort(m_constStrArgOffset, false, true, CMICmdArgValListBase::eArgValType_Number, 1)));
-    m_setCmdArgs.Add(*(new CMICmdArgValNumber(m_constStrArgAddr, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgD, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValNumber(m_constStrArgNumber, true, true)));
-    m_setCmdArgs.Add(*(new CMICmdArgValNumber(m_constStrArgContents, true, true)));
+    m_setCmdArgs.Add(new CMICmdArgValOptionLong(m_constStrArgThread, false, false, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValOptionShort(m_constStrArgOffset, false, true, CMICmdArgValListBase::eArgValType_Number, 1));
+    m_setCmdArgs.Add(new CMICmdArgValNumber(m_constStrArgAddr, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgD, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValNumber(m_constStrArgNumber, true, true));
+    m_setCmdArgs.Add(new CMICmdArgValNumber(m_constStrArgContents, true, true));
     return ParseValidateCmdOptions();
 }
 
@@ -1587,7 +1588,7 @@ CMICmdCmdDataInfoLine::~CMICmdCmdDataInfoLine()
 bool
 CMICmdCmdDataInfoLine::ParseArgs()
 {
-    m_setCmdArgs.Add(*(new CMICmdArgValString(m_constStrArgLocation, true, true)));
+    m_setCmdArgs.Add(new CMICmdArgValString(m_constStrArgLocation, true, true));
     return ParseValidateCmdOptions();
 }
 
@@ -1642,6 +1643,53 @@ CMICmdCmdDataInfoLine::Execute()
 }
 
 //++ ------------------------------------------------------------------------------------
+// Details: Helper function for parsing a line entry returned from lldb for the command:
+//              target modules lookup -v <location>
+//          where the line entry is of the format:
+//              LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/file:3[:1]
+//                           start              end                   file       line column(opt)
+// Args:    input - (R) Input string to parse.
+//          start - (W) String representing the start address.
+//          end   - (W) String representing the end address.
+//          file  - (W) String representing the file.
+//          line  - (W) String representing the line.
+// Return:  bool - True = input was parsed successfully, false = input could not be parsed.
+// Throws:  None.
+//--
+static bool
+ParseLLDBLineEntry(const char *input, CMIUtilString &start, CMIUtilString &end,
+                   CMIUtilString &file, CMIUtilString &line)
+{
+    // Note: Ambiguities arise because the column is optional, and
+    // because : can appear in filenames or as a byte in a multibyte
+    // UTF8 character.  We keep those cases to a minimum by using regex
+    // to work on the string from both the left and right, so that what
+    // is remains is assumed to be the filename.
+
+    // Match LineEntry using regex.
+    static MIUtilParse::CRegexParser g_lineentry_nocol_regex( 
+        "^ *LineEntry: \\[(0x[0-9a-fA-F]+)-(0x[0-9a-fA-F]+)\\): (.+):([0-9]+)$");
+    static MIUtilParse::CRegexParser g_lineentry_col_regex( 
+        "^ *LineEntry: \\[(0x[0-9a-fA-F]+)-(0x[0-9a-fA-F]+)\\): (.+):([0-9]+):[0-9]+$");
+        //                ^1=start         ^2=end               ^3=f ^4=line ^5=:col(opt)
+
+    MIUtilParse::CRegexParser::Match match(6);
+
+    // First try matching the LineEntry with the column,
+    // then try without the column.
+    const bool ok = g_lineentry_col_regex.Execute(input, match) ||
+                    g_lineentry_nocol_regex.Execute(input, match);
+    if (ok)
+    {
+        start = match.GetMatchAtIndex(1);
+        end   = match.GetMatchAtIndex(2);
+        file  = match.GetMatchAtIndex(3);
+        line  = match.GetMatchAtIndex(4);
+    }
+    return ok;
+}
+
+//++ ------------------------------------------------------------------------------------
 // Details: The invoker requires this function. The command prepares a MI Record Result
 //          for the work carried out in the Execute().
 // Type:    Overridden.
@@ -1672,58 +1720,25 @@ CMICmdCmdDataInfoLine::Acknowledge()
             // String looks like:
             // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
             const CMIUtilString &rLine(vecLines[i]);
+            CMIUtilString strStart;
+            CMIUtilString strEnd;
+            CMIUtilString strFile;
+            CMIUtilString strLine;
 
-            // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
-            // ^^^^^^^^^ -- property
-            const size_t nPropertyStartPos = rLine.find_first_not_of(' ');
-            const size_t nPropertyEndPos = rLine.find(':');
-            const size_t nPropertyLen = nPropertyEndPos - nPropertyStartPos;
-            const CMIUtilString strProperty(rLine.substr(nPropertyStartPos, nPropertyLen).c_str());
-
-            // Skip all except LineEntry
-            if (!CMIUtilString::Compare(strProperty, "LineEntry"))
+            if (!ParseLLDBLineEntry(rLine.c_str(), strStart, strEnd, strFile, strLine))
                 continue;
 
-            // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
-            //              ^^^^^^^^^^^^^^^^^^ -- start address
-            const size_t nStartAddressStartPos = rLine.find('[');
-            const size_t nStartAddressEndPos = rLine.find('-');
-            const size_t nStartAddressLen = nStartAddressEndPos - nStartAddressStartPos - 1;
-            const CMIUtilString strStartAddress(rLine.substr(nStartAddressStartPos + 1, nStartAddressLen).c_str());
-            const CMICmnMIValueConst miValueConst(strStartAddress);
+            const CMICmnMIValueConst miValueConst(strStart);
             const CMICmnMIValueResult miValueResult("start", miValueConst);
-            CMICmnMIResultRecord miRecordResult(m_cmdData.strMiCmdToken, CMICmnMIResultRecord::eResultClass_Done, miValueResult);
-
-            // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
-            //                                 ^^^^^^^^^^^^^^^^^^ -- end address
-            const size_t nEndAddressEndPos = rLine.find(')');
-            const size_t nEndAddressLen = nEndAddressEndPos - nStartAddressEndPos - 1;
-            const CMIUtilString strEndAddress(rLine.substr(nStartAddressEndPos + 1, nEndAddressLen).c_str());
-            const CMICmnMIValueConst miValueConst2(strEndAddress);
+            CMICmnMIResultRecord miRecordResult(m_cmdData.strMiCmdToken,
+                                                CMICmnMIResultRecord::eResultClass_Done,
+                                                miValueResult);
+            const CMICmnMIValueConst miValueConst2(strEnd);
             const CMICmnMIValueResult miValueResult2("end", miValueConst2);
             miRecordResult.Add(miValueResult2);
-
-            // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
-            //                                                       ^^^^^^^^^^^^^ -- file
-            //                                                                     ^ -- line
-            //                                                                        ^ -- column (optional)
-            const size_t nFileStartPos = rLine.find_first_not_of(' ', nEndAddressEndPos + 2);
-            const size_t nFileOrLineEndPos = rLine.rfind(':');
-            const size_t nFileOrLineStartPos = rLine.rfind(':', nFileOrLineEndPos - 1);
-            const size_t nFileEndPos = nFileStartPos < nFileOrLineStartPos ? nFileOrLineStartPos : nFileOrLineEndPos;
-            const size_t nFileLen = nFileEndPos - nFileStartPos;
-            const CMIUtilString strFile(rLine.substr(nFileStartPos, nFileLen).c_str());
             const CMICmnMIValueConst miValueConst3(strFile);
             const CMICmnMIValueResult miValueResult3("file", miValueConst3);
             miRecordResult.Add(miValueResult3);
-
-            // LineEntry: \[0x0000000100000f37-0x0000000100000f45\): /path/to/file:3[:1]
-            //                                                                     ^ -- line
-            const size_t nLineStartPos = nFileEndPos + 1;
-            const size_t nLineEndPos = rLine.find(':', nLineStartPos);
-            const size_t nLineLen = nLineEndPos != std::string::npos ? nLineEndPos - nLineStartPos
-                                                                     : std::string::npos;
-            const CMIUtilString strLine(rLine.substr(nLineStartPos, nLineLen).c_str());
             const CMICmnMIValueConst miValueConst4(strLine);
             const CMICmnMIValueResult miValueResult4("line", miValueConst4);
             miRecordResult.Add(miValueResult4);

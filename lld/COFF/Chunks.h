@@ -10,13 +10,14 @@
 #ifndef LLD_COFF_CHUNKS_H
 #define LLD_COFF_CHUNKS_H
 
+#include "Config.h"
 #include "InputFiles.h"
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Object/COFF.h"
-#include <map>
+#include <atomic>
 #include <vector>
 
 namespace lld {
@@ -58,11 +59,10 @@ public:
   // beginning of the file. Because this function may use RVA values
   // of other chunks for relocations, you need to set them properly
   // before calling this function.
-  virtual void writeTo(uint8_t *Buf) {}
+  virtual void writeTo(uint8_t *Buf) const {}
 
   // The writer sets and uses the addresses.
   uint64_t getRVA() { return RVA; }
-  uint64_t getOutputSectionOff() { return OutputSectionOff; }
   uint32_t getAlign() { return Align; }
   void setRVA(uint64_t V) { RVA = V; }
   void setOutputSectionOff(uint64_t V) { OutputSectionOff = V; }
@@ -111,20 +111,11 @@ protected:
   uint32_t Align = 1;
 };
 
-class SectionChunk;
-
-// A container of SectionChunks. Used by ICF to store computation
-// results of strongly connected components. You can ignore this
-// unless you are interested in ICF.
-struct Component {
-  Component(std::vector<SectionChunk *> V) : Members(V) {}
-  std::vector<SectionChunk *> Members;
-  std::vector<Component *> Predecessors;
-  int Outdegree = 0;
-};
-
 // A chunk corresponding a section of an input file.
 class SectionChunk : public Chunk {
+  // Identical COMDAT Folding feature accesses section internal data.
+  friend class ICF;
+
 public:
   class symbol_iterator : public llvm::iterator_adaptor_base<
                               symbol_iterator, const coff_relocation *,
@@ -147,15 +138,15 @@ public:
   SectionChunk(ObjectFile *File, const coff_section *Header);
   static bool classof(const Chunk *C) { return C->kind() == SectionKind; }
   size_t getSize() const override { return Header->SizeOfRawData; }
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
   bool hasData() const override;
   uint32_t getPermissions() const override;
   StringRef getSectionName() const override { return SectionName; }
   void getBaserels(std::vector<Baserel> *Res) override;
   bool isCOMDAT() const;
-  void applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
-  void applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
-  void applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P);
+  void applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
+  void applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
+  void applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
 
   // Called if the garbage collector decides to not include this chunk
   // in a final output. It's supposed to print out a log message to stdout.
@@ -169,9 +160,9 @@ public:
   void setSymbol(DefinedRegular *S) { if (!Sym) Sym = S; }
 
   // Used by the garbage collector.
-  bool isLive() { return Live; }
+  bool isLive() { return !Config->DoGC || Live; }
   void markLive() {
-    assert(!Live && "Cannot mark an already live section!");
+    assert(!isLive() && "Cannot mark an already live section!");
     Live = true;
   }
 
@@ -184,25 +175,15 @@ public:
   // Allow iteration over the associated child chunks for this section.
   ArrayRef<SectionChunk *> children() const { return AssocChildren; }
 
-  // Used for ICF (Identical COMDAT Folding)
-  void replaceWith(SectionChunk *Other);
-  uint64_t getHash() const;
-  bool equals(const SectionChunk *Other) const;
-
   // A pointer pointing to a replacement for this chunk.
   // Initially it points to "this" object. If this chunk is merged
   // with other chunk by ICF, it points to another chunk,
   // and this chunk is considrered as dead.
   SectionChunk *Ptr;
-  uint32_t Index = 0;
-  uint32_t LowLink = 0;
-  bool OnStack = false;
-  Component *SCC = nullptr;
 
   // The CRC of the contents as described in the COFF spec 4.5.5.
   // Auxiliary Format 5: Section Definitions. Used for ICF.
   uint32_t Checksum = 0;
-  mutable uint64_t Hash = 0;
 
 private:
   ArrayRef<uint8_t> getContents() const;
@@ -217,7 +198,11 @@ private:
   size_t NumRelocs;
 
   // Used by the garbage collector.
-  bool Live = false;
+  bool Live;
+
+  // Used for ICF (Identical COMDAT Folding)
+  void replaceWith(SectionChunk *Other);
+  std::atomic<uint64_t> GroupID = { 0 };
 
   // Chunks are basically unnamed chunks of bytes.
   // Symbols are associated for debugging and logging purposs only.
@@ -242,7 +227,7 @@ class StringChunk : public Chunk {
 public:
   explicit StringChunk(StringRef S) : Str(S) {}
   size_t getSize() const override { return Str.size() + 1; }
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   StringRef Str;
@@ -265,7 +250,7 @@ class ImportThunkChunkX64 : public Chunk {
 public:
   explicit ImportThunkChunkX64(Defined *S);
   size_t getSize() const override { return sizeof(ImportThunkX86); }
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   Defined *ImpSymbol;
@@ -276,7 +261,7 @@ public:
   explicit ImportThunkChunkX86(Defined *S) : ImpSymbol(S) {}
   size_t getSize() const override { return sizeof(ImportThunkX86); }
   void getBaserels(std::vector<Baserel> *Res) override;
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   Defined *ImpSymbol;
@@ -287,7 +272,7 @@ public:
   explicit ImportThunkChunkARM(Defined *S) : ImpSymbol(S) {}
   size_t getSize() const override { return sizeof(ImportThunkARM); }
   void getBaserels(std::vector<Baserel> *Res) override;
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   Defined *ImpSymbol;
@@ -300,7 +285,7 @@ public:
   explicit LocalImportChunk(Defined *S) : Sym(S) {}
   size_t getSize() const override;
   void getBaserels(std::vector<Baserel> *Res) override;
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   Defined *Sym;
@@ -313,7 +298,7 @@ class SEHTableChunk : public Chunk {
 public:
   explicit SEHTableChunk(std::set<Defined *> S) : Syms(S) {}
   size_t getSize() const override { return Syms.size() * 4; }
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   std::set<Defined *> Syms;
@@ -326,7 +311,7 @@ class BaserelChunk : public Chunk {
 public:
   BaserelChunk(uint32_t Page, Baserel *Begin, Baserel *End);
   size_t getSize() const override { return Data.size(); }
-  void writeTo(uint8_t *Buf) override;
+  void writeTo(uint8_t *Buf) const override;
 
 private:
   std::vector<uint8_t> Data;

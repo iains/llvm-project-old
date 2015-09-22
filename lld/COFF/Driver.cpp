@@ -15,13 +15,10 @@
 #include "Symbols.h"
 #include "Writer.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/LibDriver/LibDriver.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -367,10 +364,15 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     std::string S = StringRef(Arg->getValue()).lower();
     if (S == "noref") {
       Config->DoGC = false;
+      Config->DoICF = false;
       continue;
     }
-    if (S == "lldicf") {
-      Config->ICF = true;
+    if (S == "icf" || StringRef(S).startswith("icf=")) {
+      Config->DoICF = true;
+      continue;
+    }
+    if (S == "noicf") {
+      Config->DoICF = false;
       continue;
     }
     if (StringRef(S).startswith("lldlto=")) {
@@ -386,11 +388,8 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
         error("/opt:lldltojobs: invalid job count: " + Jobs);
       continue;
     }
-    if (S != "ref" && S != "icf" && S != "noicf" &&
-        S != "lbr" && S != "nolbr" &&
-        !StringRef(S).startswith("icf=")) {
+    if (S != "ref" && S != "lbr" && S != "nolbr")
       error(Twine("/opt: unknown option: ") + S);
-    }
   }
 
   // Handle /failifmismatch
@@ -624,14 +623,10 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   }
 
   // Handle /safeseh.
-  if (Args.hasArg(OPT_safeseh)) {
-    for (ObjectFile *File : Symtab.ObjectFiles) {
-      if (File->SEHCompat)
-        continue;
-      error(Twine("/safeseh: ") + File->getName() +
-            " is not compatible with SEH");
-    }
-  }
+  if (Args.hasArg(OPT_safeseh))
+    for (ObjectFile *File : Symtab.ObjectFiles)
+      if (!File->SEHCompat)
+        error("/safeseh: " + File->getName() + " is not compatible with SEH");
 
   // Windows specific -- when we are creating a .dll file, we also
   // need to create a .lib file.
@@ -648,6 +643,14 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Create a dummy PDB file to satisfy build sytem rules.
   if (auto *Arg = Args.getLastArg(OPT_pdb))
     touchFile(Arg->getValue());
+
+  // Identify unreferenced COMDAT sections.
+  if (Config->DoGC)
+    markLive(Symtab.getChunks());
+
+  // Identify identical COMDAT sections to merge them.
+  if (Config->DoICF)
+    doICF(Symtab.getChunks());
 
   // Write the result.
   writeResult(&Symtab);
