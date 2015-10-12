@@ -56,11 +56,11 @@ AppleObjCRuntime::AppleObjCRuntime(Process *process) :
 bool
 AppleObjCRuntime::GetObjectDescription (Stream &str, ValueObject &valobj)
 {
-    CompilerType clang_type(valobj.GetCompilerType());
+    CompilerType compiler_type(valobj.GetCompilerType());
     bool is_signed;
     // ObjC objects can only be pointers (or numbers that actually represents pointers
     // but haven't been typecast, because reasons..)
-    if (!clang_type.IsIntegerType (is_signed) && !clang_type.IsPointerType ())
+    if (!compiler_type.IsIntegerType (is_signed) && !compiler_type.IsPointerType ())
         return false;
     
     // Make the argument list: we pass one arg, the address of our pointer, to the print function.
@@ -94,10 +94,10 @@ AppleObjCRuntime::GetObjectDescription (Stream &strm, Value &value, ExecutionCon
         return false;
     
     Target *target = exe_ctx.GetTargetPtr();
-    CompilerType clang_type = value.GetCompilerType();
-    if (clang_type)
+    CompilerType compiler_type = value.GetCompilerType();
+    if (compiler_type)
     {
-        if (!ClangASTContext::IsObjCObjectPointerType(clang_type))
+        if (!ClangASTContext::IsObjCObjectPointerType(compiler_type))
         {
             strm.Printf ("Value doesn't point to an ObjC object.\n");
             return false;
@@ -120,10 +120,10 @@ AppleObjCRuntime::GetObjectDescription (Stream &strm, Value &value, ExecutionCon
     // This is the return value:
     ClangASTContext *ast_context = target->GetScratchClangASTContext();
     
-    CompilerType return_clang_type = ast_context->GetCStringType(true);
+    CompilerType return_compiler_type = ast_context->GetCStringType(true);
     Value ret;
-//    ret.SetContext(Value::eContextTypeClangType, return_clang_type);
-    ret.SetCompilerType (return_clang_type);
+//    ret.SetContext(Value::eContextTypeClangType, return_compiler_type);
+    ret.SetCompilerType (return_compiler_type);
     
     if (exe_ctx.GetFramePtr() == NULL)
     {
@@ -148,7 +148,7 @@ AppleObjCRuntime::GetObjectDescription (Stream &strm, Value &value, ExecutionCon
     {
         Error error;
          m_print_object_caller_up.reset(exe_scope->CalculateTarget()->GetFunctionCallerForLanguage (eLanguageTypeObjC,
-                                                                                                    return_clang_type,
+                                                                                                    return_compiler_type,
                                                                                                     *function_address,
                                                                                                     arg_value_list,
                                                                                                     "objc-object-description",
@@ -269,6 +269,38 @@ AppleObjCRuntime::GetDynamicTypeAndAddress (ValueObject &in_value,
     return false;
 }
 
+TypeAndOrName
+AppleObjCRuntime::FixUpDynamicType (const TypeAndOrName& type_and_or_name,
+                                    ValueObject& static_value)
+{
+    CompilerType static_type(static_value.GetCompilerType());
+    Flags static_type_flags(static_type.GetTypeInfo());
+    
+    TypeAndOrName ret(type_and_or_name);
+    if (type_and_or_name.HasType())
+    {
+        // The type will always be the type of the dynamic object.  If our parent's type was a pointer,
+        // then our type should be a pointer to the type of the dynamic object.  If a reference, then the original type
+        // should be okay...
+        CompilerType orig_type = type_and_or_name.GetCompilerType();
+        CompilerType corrected_type = orig_type;
+        if (static_type_flags.AllSet(eTypeIsPointer))
+            corrected_type = orig_type.GetPointerType ();
+        ret.SetCompilerType(corrected_type);
+    }
+    else
+    {
+        // If we are here we need to adjust our dynamic type name to include the correct & or * symbol
+        std::string corrected_name (type_and_or_name.GetName().GetCString());
+        if (static_type_flags.AllSet(eTypeIsPointer))
+            corrected_name.append(" *");
+        // the parent type should be a correctly pointer'ed or referenc'ed type
+        ret.SetCompilerType(static_type);
+        ret.SetName(corrected_name.c_str());
+    }
+    return ret;
+}
+
 bool
 AppleObjCRuntime::AppleIsModuleObjCLibrary (const ModuleSP &module_sp)
 {
@@ -345,11 +377,11 @@ AppleObjCRuntime::GetStepThroughTrampolinePlan (Thread &thread, bool stop_others
 //------------------------------------------------------------------
 // Static Functions
 //------------------------------------------------------------------
-enum ObjCRuntimeVersions
+ObjCLanguageRuntime::ObjCRuntimeVersions
 AppleObjCRuntime::GetObjCVersion (Process *process, ModuleSP &objc_module_sp)
 {
     if (!process)
-        return eObjC_VersionUnknown;
+        return ObjCRuntimeVersions::eObjC_VersionUnknown;
         
     Target &target = process->GetTarget();
     const ModuleList &target_modules = target.GetImages();
@@ -369,21 +401,21 @@ AppleObjCRuntime::GetObjCVersion (Process *process, ModuleSP &objc_module_sp)
             objc_module_sp = module_sp;
             ObjectFile *ofile = module_sp->GetObjectFile();
             if (!ofile)
-                return eObjC_VersionUnknown;
+                return ObjCRuntimeVersions::eObjC_VersionUnknown;
             
             SectionList *sections = module_sp->GetSectionList();
             if (!sections)
-                return eObjC_VersionUnknown;    
+                return ObjCRuntimeVersions::eObjC_VersionUnknown;
             SectionSP v1_telltale_section_sp = sections->FindSectionByName(ConstString ("__OBJC"));
             if (v1_telltale_section_sp)
             {
-                return eAppleObjC_V1;
+                return ObjCRuntimeVersions::eAppleObjC_V1;
             }
-            return eAppleObjC_V2;
+            return ObjCRuntimeVersions::eAppleObjC_V2;
         }
     }
             
-    return eObjC_VersionUnknown;
+    return ObjCRuntimeVersions::eObjC_VersionUnknown;
 }
 
 void

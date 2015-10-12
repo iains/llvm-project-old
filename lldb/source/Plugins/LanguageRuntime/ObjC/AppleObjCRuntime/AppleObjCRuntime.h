@@ -29,6 +29,17 @@ class AppleObjCRuntime :
         public lldb_private::ObjCLanguageRuntime
 {
 public:
+    static bool classof(const ObjCLanguageRuntime* runtime)
+    {
+        switch (runtime->GetRuntimeVersion())
+        {
+            case ObjCRuntimeVersions::eAppleObjC_V1:
+            case ObjCRuntimeVersions::eAppleObjC_V2:
+                return true;
+            default:
+                return false;
+        }
+    }
     
     virtual ~AppleObjCRuntime();
     
@@ -49,6 +60,10 @@ public:
                               Address &address,
                               Value::ValueType &value_type) override;
 
+    TypeAndOrName
+    FixUpDynamicType (const TypeAndOrName& type_and_or_name,
+                      ValueObject& static_value) override;
+    
     // These are the ObjC specific functions.
     
     bool
@@ -90,7 +105,7 @@ protected:
     static bool
     AppleIsModuleObjCLibrary (const lldb::ModuleSP &module_sp);
 
-    static enum ObjCRuntimeVersions
+    static ObjCRuntimeVersions
     GetObjCVersion (Process *process, lldb::ModuleSP &objc_module_sp);
 
     void

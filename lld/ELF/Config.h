@@ -12,16 +12,25 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <vector>
+
 namespace lld {
 namespace elf2 {
 
 struct Configuration {
-  llvm::StringRef OutputFile;
   llvm::StringRef DynamicLinker;
+  llvm::StringRef Entry;
+  llvm::StringRef OutputFile = "a.out";
+  llvm::StringRef Sysroot;
   std::string RPath;
-  bool Shared = false;
+  std::vector<llvm::StringRef> InputSearchPaths;
+  bool AllowMultipleDefinition = false;
   bool DiscardAll = false;
   bool DiscardLocals = false;
+  bool DiscardNone = false;
+  bool ExportDynamic = false;
+  bool NoInhibitExec = false;
+  bool Shared = false;
 };
 
 extern Configuration *Config;

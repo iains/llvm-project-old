@@ -10,6 +10,7 @@
 #include "lld/ReaderWriter/MachOLinkingContext.h"
 #include "ArchHandler.h"
 #include "File.h"
+#include "FlatNamespaceFile.h"
 #include "MachONormalizedFile.h"
 #include "MachOPasses.h"
 #include "lld/Core/ArchiveLibraryFile.h"
@@ -143,10 +144,12 @@ MachOLinkingContext::MachOLinkingContext()
       _doNothing(false), _pie(false), _arch(arch_unknown), _os(OS::macOSX),
       _osMinVersion(0), _pageZeroSize(0), _pageSize(4096), _baseAddress(0),
       _stackSize(0), _compatibilityVersion(0), _currentVersion(0),
+      _flatNamespace(false), _undefinedMode(UndefinedMode::error),
       _deadStrippableDylib(false), _printAtoms(false), _testingFileUsage(false),
       _keepPrivateExterns(false), _demangle(false), _archHandler(nullptr),
       _exportMode(ExportMode::globals),
-      _debugInfoMode(DebugInfoMode::addDebugMap), _orderFileEntries(0) {}
+      _debugInfoMode(DebugInfoMode::addDebugMap), _orderFileEntries(0),
+      _flatNamespaceFile(nullptr) {}
 
 MachOLinkingContext::~MachOLinkingContext() {}
 
@@ -194,6 +197,9 @@ void MachOLinkingContext::configure(HeaderFileType type, Arch arch, OS os,
     } else {
       _pageZeroSize = 0x1000;
     }
+
+    // Initial base address is __PAGEZERO size.
+    _baseAddress = _pageZeroSize;
 
     // Make PIE by default when targetting newer OSs.
     switch (os) {
@@ -713,6 +719,13 @@ void MachOLinkingContext::createImplicitFiles(
 
   // Let writer add output type specific extras.
   writer().createImplicitFiles(result);
+
+  // If undefinedMode is != error, add a FlatNamespaceFile instance. This will
+  // provide a SharedLibraryAtom for symbols that aren't defined elsewhere.
+  if (undefinedMode() != UndefinedMode::error) {
+    result.emplace_back(new mach_o::FlatNamespaceFile(*this));
+    _flatNamespaceFile = result.back().get();
+  }
 }
 
 

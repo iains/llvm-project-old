@@ -16,6 +16,8 @@
 #include "Driver.h"
 #include "Error.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/StringSaver.h"
 
 using namespace llvm;
 
@@ -53,12 +55,23 @@ opt::InputArgList ArgParser::parse(ArrayRef<const char *> Argv) {
   unsigned MissingIndex;
   unsigned MissingCount;
 
-  opt::InputArgList Args = Table.ParseArgs(Argv, MissingIndex, MissingCount);
+  // Expand response files. '@<filename>' is replaced by the file's contents.
+  SmallVector<const char *, 256> Vec(Argv.data(), Argv.data() + Argv.size());
+  StringSaver Saver(Alloc);
+  llvm::cl::ExpandResponseFiles(Saver, llvm::cl::TokenizeGNUCommandLine, Vec);
+
+  // Parse options and then do error checking.
+  opt::InputArgList Args = Table.ParseArgs(Vec, MissingIndex, MissingCount);
   if (MissingCount)
     error(Twine("missing arg value for \"") + Args.getArgString(MissingIndex) +
           "\", expected " + Twine(MissingCount) +
           (MissingCount == 1 ? " argument.\n" : " arguments"));
-  for (auto *Arg : Args.filtered(OPT_UNKNOWN))
-    error(Twine("unknown argument: ") + Arg->getSpelling());
+
+  iterator_range<opt::arg_iterator> Unknowns = Args.filtered(OPT_UNKNOWN);
+  for (auto *Arg : Unknowns)
+    warning("warning: unknown argument: " + Arg->getSpelling());
+  if (Unknowns.begin() != Unknowns.end())
+    error("unknown argument(s) found");
+
   return Args;
 }

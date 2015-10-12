@@ -3987,28 +3987,6 @@ Sema::ActOnArraySubscriptExpr(Scope *S, Expr *base, SourceLocation lbLoc,
   return CreateBuiltinArraySubscriptExpr(base, lbLoc, idx, rbLoc);
 }
 
-static QualType getNonOMPArraySectionType(Expr *Base) {
-  unsigned ArraySectionCount = 0;
-  while (auto *OASE = dyn_cast<OMPArraySectionExpr>(Base->IgnoreParens())) {
-    Base = OASE->getBase();
-    ++ArraySectionCount;
-  }
-  auto OriginalTy = Base->getType();
-  if (auto *DRE = dyn_cast<DeclRefExpr>(Base))
-    if (auto *PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
-      OriginalTy = PVD->getOriginalType().getNonReferenceType();
-
-  for (unsigned Cnt = 0; Cnt < ArraySectionCount; ++Cnt) {
-    if (OriginalTy->isAnyPointerType())
-      OriginalTy = OriginalTy->getPointeeType();
-    else {
-      assert (OriginalTy->isArrayType());
-      OriginalTy = OriginalTy->castAsArrayTypeUnsafe()->getElementType();
-    }
-  }
-  return OriginalTy;
-}
-
 ExprResult Sema::ActOnOMPArraySectionExpr(Expr *Base, SourceLocation LBLoc,
                                           Expr *LowerBound,
                                           SourceLocation ColonLoc, Expr *Length,
@@ -4045,7 +4023,7 @@ ExprResult Sema::ActOnOMPArraySectionExpr(Expr *Base, SourceLocation LBLoc,
   }
 
   // Perform default conversions.
-  QualType OriginalTy = getNonOMPArraySectionType(Base);
+  QualType OriginalTy = OMPArraySectionExpr::getBaseOriginalType(Base);
   QualType ResultTy;
   if (OriginalTy->isAnyPointerType()) {
     ResultTy = OriginalTy->getPointeeType();
@@ -10298,6 +10276,20 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
       return ExprError();
   }
 
+  if (getLangOpts().OpenCL) {
+    // OpenCLC v2.0 s6.13.11.1 allows atomic variables to be initialized by
+    // the ATOMIC_VAR_INIT macro.
+    if (LHSExpr->getType()->isAtomicType() ||
+        RHSExpr->getType()->isAtomicType()) {
+      SourceRange SR(LHSExpr->getLocStart(), RHSExpr->getLocEnd());
+      if (BO_Assign == Opc)
+        Diag(OpLoc, diag::err_atomic_init_constant) << SR;
+      else
+        ResultTy = InvalidOperands(OpLoc, LHS, RHS);
+      return ExprError();
+    }
+  }
+
   switch (Opc) {
   case BO_Assign:
     ResultTy = CheckAssignmentOperands(LHS.get(), RHS, OpLoc, QualType());
@@ -10770,6 +10762,14 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
   ExprValueKind VK = VK_RValue;
   ExprObjectKind OK = OK_Ordinary;
   QualType resultType;
+  if (getLangOpts().OpenCL) {
+    // The only legal unary operation for atomics is '&'.
+    if (Opc != UO_AddrOf && InputExpr->getType()->isAtomicType()) {
+      return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
+                       << InputExpr->getType()
+                       << Input.get()->getSourceRange());
+    }
+  }
   switch (Opc) {
   case UO_PreInc:
   case UO_PreDec:

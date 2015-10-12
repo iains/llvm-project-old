@@ -58,6 +58,8 @@ def X86fandn   : SDNode<"X86ISD::FANDN",     SDTFPBinOp,
                         [SDNPCommutative, SDNPAssociative]>;
 def X86frsqrt  : SDNode<"X86ISD::FRSQRT",    SDTFPUnaryOp>;
 def X86frcp    : SDNode<"X86ISD::FRCP",      SDTFPUnaryOp>;
+def X86frsqrt14s: SDNode<"X86ISD::FRSQRT",  SDTFPBinOp>;
+def X86frcp14s : SDNode<"X86ISD::FRCP",    SDTFPBinOp>;
 def X86fgetsign: SDNode<"X86ISD::FGETSIGNx86",SDTFPToIntOp>;
 def X86fhadd   : SDNode<"X86ISD::FHADD",     SDTFPBinOp>;
 def X86fhsub   : SDNode<"X86ISD::FHSUB",     SDTFPBinOp>;
@@ -212,6 +214,13 @@ def X86vsra    : SDNode<"X86ISD::VSRA",
 def X86vshli   : SDNode<"X86ISD::VSHLI", SDTIntShiftOp>;
 def X86vsrli   : SDNode<"X86ISD::VSRLI", SDTIntShiftOp>;
 def X86vsrai   : SDNode<"X86ISD::VSRAI", SDTIntShiftOp>;
+
+def X86vpshl   : SDNode<"X86ISD::VPSHL",
+                        SDTypeProfile<1, 2, [SDTCisVec<0>, SDTCisSameAs<0,1>,
+                                      SDTCisVec<2>]>>;
+def X86vpsha   : SDNode<"X86ISD::VPSHA",
+                        SDTypeProfile<1, 2, [SDTCisVec<0>, SDTCisSameAs<0,1>,
+                                      SDTCisVec<2>]>>;
 
 def SDTX86CmpPTest : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
                                           SDTCisVec<1>,

@@ -10,7 +10,7 @@
 #ifndef LLD_ELF_SYMBOLS_H
 #define LLD_ELF_SYMBOLS_H
 
-#include "Chunks.h"
+#include "InputSection.h"
 
 #include "lld/Core/LLVM.h"
 #include "llvm/Object/Archive.h"
@@ -20,7 +20,6 @@ namespace lld {
 namespace elf2 {
 
 class ArchiveFile;
-class Chunk;
 class InputFile;
 class SymbolBody;
 template <class ELFT> class ObjectFile;
@@ -38,14 +37,15 @@ struct Symbol {
 class SymbolBody {
 public:
   enum Kind {
-    DefinedFirst = 0,
-    DefinedRegularKind = 0,
-    DefinedAbsoluteKind = 1,
-    DefinedCommonKind = 2,
-    SharedKind = 3,
-    DefinedLast = 3,
-    UndefinedKind = 4,
-    LazyKind = 5,
+    DefinedFirst,
+    DefinedRegularKind = DefinedFirst,
+    DefinedAbsoluteKind,
+    DefinedCommonKind,
+    DefinedSyntheticKind,
+    SharedKind,
+    DefinedLast = SharedKind,
+    UndefinedKind,
+    LazyKind
   };
 
   Kind kind() const { return static_cast<Kind>(SymbolKind); }
@@ -58,6 +58,8 @@ public:
   bool isLazy() const { return SymbolKind == LazyKind; }
   bool isShared() const { return SymbolKind == SharedKind; }
   bool isUsedInRegularObj() const { return IsUsedInRegularObj; }
+  bool isUsedInDynamicReloc() const { return IsUsedInDynamicReloc; }
+  void setUsedInDynamicReloc() { IsUsedInDynamicReloc = true; }
 
   // Returns the symbol name.
   StringRef getName() const { return Name; }
@@ -74,6 +76,10 @@ public:
   unsigned getGotIndex() const { return GotIndex; }
   bool isInGot() const { return GotIndex != -1U; }
   void setGotIndex(unsigned I) { GotIndex = I; }
+
+  unsigned getPltIndex() const { return PltIndex; }
+  bool isInPlt() const { return PltIndex != -1U; }
+  void setPltIndex(unsigned I) { PltIndex = I; }
 
   // A SymbolBody has a backreference to a Symbol. Originally they are
   // doubly-linked. A backreference will never change. But the pointer
@@ -94,14 +100,17 @@ protected:
       : SymbolKind(K), IsWeak(IsWeak), MostConstrainingVisibility(Visibility),
         Name(Name) {
     IsUsedInRegularObj = K != SharedKind && K != LazyKind;
+    IsUsedInDynamicReloc = 0;
   }
 
   const unsigned SymbolKind : 8;
   const unsigned IsWeak : 1;
   unsigned MostConstrainingVisibility : 2;
   unsigned IsUsedInRegularObj : 1;
+  unsigned IsUsedInDynamicReloc : 1;
   unsigned DynamicSymbolTableIndex = 0;
   unsigned GotIndex = -1;
+  unsigned PltIndex = -1;
   StringRef Name;
   Symbol *Backref = nullptr;
 };
@@ -140,7 +149,7 @@ protected:
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  explicit Defined(Kind K, StringRef N, const Elf_Sym &Sym)
+  Defined(Kind K, StringRef N, const Elf_Sym &Sym)
       : ELFSymbolBody<ELFT>(K, N, Sym) {}
 
   static bool classof(const SymbolBody *S) { return S->isDefined(); }
@@ -151,13 +160,18 @@ template <class ELFT> class DefinedAbsolute : public Defined<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  explicit DefinedAbsolute(StringRef N, const Elf_Sym &Sym)
+  static Elf_Sym IgnoreUndef;
+
+  DefinedAbsolute(StringRef N, const Elf_Sym &Sym)
       : Defined<ELFT>(Base::DefinedAbsoluteKind, N, Sym) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::DefinedAbsoluteKind;
   }
 };
+
+template <class ELFT>
+typename DefinedAbsolute<ELFT>::Elf_Sym DefinedAbsolute<ELFT>::IgnoreUndef;
 
 template <class ELFT> class DefinedCommon : public Defined<ELFT> {
   typedef ELFSymbolBody<ELFT> Base;
@@ -166,7 +180,7 @@ template <class ELFT> class DefinedCommon : public Defined<ELFT> {
 public:
   typedef typename std::conditional<ELFT::Is64Bits, uint64_t, uint32_t>::type
       uintX_t;
-  explicit DefinedCommon(StringRef N, const Elf_Sym &Sym)
+  DefinedCommon(StringRef N, const Elf_Sym &Sym)
       : Defined<ELFT>(Base::DefinedCommonKind, N, Sym) {
     MaxAlignment = Sym.st_value;
   }
@@ -181,8 +195,6 @@ public:
 
   // The maximum alignment we have seen for this symbol.
   uintX_t MaxAlignment;
-
-  OutputSection<ELFT> *OutputSec = nullptr;
 };
 
 // Regular defined symbols read from object file symbol tables.
@@ -191,15 +203,30 @@ template <class ELFT> class DefinedRegular : public Defined<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  explicit DefinedRegular(StringRef N, const Elf_Sym &Sym,
-                          SectionChunk<ELFT> &Section)
+  DefinedRegular(StringRef N, const Elf_Sym &Sym, InputSection<ELFT> &Section)
       : Defined<ELFT>(Base::DefinedRegularKind, N, Sym), Section(Section) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::DefinedRegularKind;
   }
 
-  const SectionChunk<ELFT> &Section;
+  const InputSection<ELFT> &Section;
+};
+
+template <class ELFT> class DefinedSynthetic : public Defined<ELFT> {
+  typedef Defined<ELFT> Base;
+
+public:
+  typedef typename Base::Elf_Sym Elf_Sym;
+  DefinedSynthetic(StringRef N, const Elf_Sym &Sym,
+                   OutputSection<ELFT> &Section)
+      : Defined<ELFT>(Base::DefinedSyntheticKind, N, Sym), Section(Section) {}
+
+  static bool classof(const SymbolBody *S) {
+    return S->kind() == Base::DefinedSyntheticKind;
+  }
+
+  const OutputSection<ELFT> &Section;
 };
 
 // Undefined symbol.
@@ -210,7 +237,7 @@ template <class ELFT> class Undefined : public ELFSymbolBody<ELFT> {
 public:
   static Elf_Sym Synthetic;
 
-  explicit Undefined(StringRef N, const Elf_Sym &Sym)
+  Undefined(StringRef N, const Elf_Sym &Sym)
       : ELFSymbolBody<ELFT>(Base::UndefinedKind, N, Sym) {}
 
   static bool classof(const SymbolBody *S) {
@@ -221,8 +248,8 @@ public:
 template <class ELFT>
 typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Synthetic;
 
-template <class ELFT> class SharedSymbol : public ELFSymbolBody<ELFT> {
-  typedef ELFSymbolBody<ELFT> Base;
+template <class ELFT> class SharedSymbol : public Defined<ELFT> {
+  typedef Defined<ELFT> Base;
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
@@ -231,7 +258,7 @@ public:
   }
 
   SharedSymbol(StringRef Name, const Elf_Sym &Sym)
-      : ELFSymbolBody<ELFT>(Base::SharedKind, Name, Sym) {}
+      : Defined<ELFT>(Base::SharedKind, Name, Sym) {}
 };
 
 // This class represents a symbol defined in an archive file. It is

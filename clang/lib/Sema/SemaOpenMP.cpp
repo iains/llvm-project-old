@@ -96,7 +96,10 @@ private:
     DeclarationNameInfo DirectiveName;
     Scope *CurScope;
     SourceLocation ConstructLoc;
-    bool OrderedRegion;
+    /// \brief first argument (Expr *) contains optional argument of the
+    /// 'ordered' clause, the second one is true if the regions has 'ordered'
+    /// clause, false otherwise.
+    llvm::PointerIntPair<Expr *, 1, bool> OrderedRegion;
     bool NowaitRegion;
     bool CancelRegion;
     unsigned CollapseNumber;
@@ -105,12 +108,12 @@ private:
                  Scope *CurScope, SourceLocation Loc)
         : SharingMap(), AlignedMap(), LCVSet(), DefaultAttr(DSA_unspecified),
           Directive(DKind), DirectiveName(std::move(Name)), CurScope(CurScope),
-          ConstructLoc(Loc), OrderedRegion(false), NowaitRegion(false),
+          ConstructLoc(Loc), OrderedRegion(), NowaitRegion(false),
           CancelRegion(false), CollapseNumber(1), InnerTeamsRegionLoc() {}
     SharingMapTy()
         : SharingMap(), AlignedMap(), LCVSet(), DefaultAttr(DSA_unspecified),
           Directive(OMPD_unknown), DirectiveName(), CurScope(nullptr),
-          ConstructLoc(), OrderedRegion(false), NowaitRegion(false),
+          ConstructLoc(), OrderedRegion(), NowaitRegion(false),
           CancelRegion(false), CollapseNumber(1), InnerTeamsRegionLoc() {}
   };
 
@@ -231,15 +234,22 @@ public:
   }
 
   /// \brief Marks current region as ordered (it has an 'ordered' clause).
-  void setOrderedRegion(bool IsOrdered = true) {
-    Stack.back().OrderedRegion = IsOrdered;
+  void setOrderedRegion(bool IsOrdered, Expr *Param) {
+    Stack.back().OrderedRegion.setInt(IsOrdered);
+    Stack.back().OrderedRegion.setPointer(Param);
   }
   /// \brief Returns true, if parent region is ordered (has associated
   /// 'ordered' clause), false - otherwise.
   bool isParentOrderedRegion() const {
     if (Stack.size() > 2)
-      return Stack[Stack.size() - 2].OrderedRegion;
+      return Stack[Stack.size() - 2].OrderedRegion.getInt();
     return false;
+  }
+  /// \brief Returns optional parameter for the ordered region.
+  Expr *getParentOrderedRegionParam() const {
+    if (Stack.size() > 2)
+      return Stack[Stack.size() - 2].OrderedRegion.getPointer();
+    return nullptr;
   }
   /// \brief Marks current region as nowait (it has a 'nowait' clause).
   void setNowaitRegion(bool IsNowait = true) {
@@ -1537,7 +1547,7 @@ static bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | simd             | taskwait        |                                    |
   // | simd             | taskgroup       |                                    |
   // | simd             | flush           |                                    |
-  // | simd             | ordered         |                                    |
+  // | simd             | ordered         | + (with simd clause)               |
   // | simd             | atomic          |                                    |
   // | simd             | target          |                                    |
   // | simd             | teams           |                                    |
@@ -1563,7 +1573,7 @@ static bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | for simd         | taskwait        |                                    |
   // | for simd         | taskgroup       |                                    |
   // | for simd         | flush           |                                    |
-  // | for simd         | ordered         |                                    |
+  // | for simd         | ordered         | + (with simd clause)               |
   // | for simd         | atomic          |                                    |
   // | for simd         | target          |                                    |
   // | for simd         | teams           |                                    |
@@ -1589,7 +1599,7 @@ static bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
   // | parallel for simd| taskwait        |                                    |
   // | parallel for simd| taskgroup       |                                    |
   // | parallel for simd| flush           |                                    |
-  // | parallel for simd| ordered         |                                    |
+  // | parallel for simd| ordered         | + (with simd clause)               |
   // | parallel for simd| atomic          |                                    |
   // | parallel for simd| target          |                                    |
   // | parallel for simd| teams           |                                    |
@@ -1867,9 +1877,12 @@ static bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
       ShouldBeInOrderedRegion,
       ShouldBeInTargetRegion
     } Recommend = NoRecommend;
-    if (isOpenMPSimdDirective(ParentRegion)) {
+    if (isOpenMPSimdDirective(ParentRegion) && CurrentRegion != OMPD_ordered) {
       // OpenMP [2.16, Nesting of Regions]
       // OpenMP constructs may not be nested inside a simd region.
+      // OpenMP [2.8.1,simd Construct, Restrictions]
+      // An ordered construct with the simd clause is the only OpenMP construct
+      // that can appear in the simd region.
       SemaRef.Diag(StartLoc, diag::err_omp_prohibited_region_simd);
       return true;
     }
@@ -1977,9 +1990,13 @@ static bool CheckNestingOfRegions(Sema &SemaRef, DSAStackTy *Stack,
       // atomic, or explicit task region.
       // An ordered region must be closely nested inside a loop region (or
       // parallel loop region) with an ordered clause.
+      // OpenMP [2.8.1,simd Construct, Restrictions]
+      // An ordered construct with the simd clause is the only OpenMP construct
+      // that can appear in the simd region.
       NestingProhibited = ParentRegion == OMPD_critical ||
                           ParentRegion == OMPD_task ||
-                          !Stack->isParentOrderedRegion();
+                          !(isOpenMPSimdDirective(ParentRegion) ||
+                            Stack->isParentOrderedRegion());
       Recommend = ShouldBeInOrderedRegion;
     } else if (isOpenMPTeamsDirective(CurrentRegion)) {
       // OpenMP [2.16, Nesting of Regions]
@@ -2220,9 +2237,8 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(
     Res = ActOnOpenMPFlushDirective(ClausesWithImplicit, StartLoc, EndLoc);
     break;
   case OMPD_ordered:
-    assert(ClausesWithImplicit.empty() &&
-           "No clauses are allowed for 'omp ordered' directive");
-    Res = ActOnOpenMPOrderedDirective(AStmt, StartLoc, EndLoc);
+    Res = ActOnOpenMPOrderedDirective(ClausesWithImplicit, AStmt, StartLoc,
+                                      EndLoc);
     break;
   case OMPD_atomic:
     Res = ActOnOpenMPAtomicDirective(ClausesWithImplicit, AStmt, StartLoc,
@@ -4125,7 +4141,8 @@ StmtResult Sema::ActOnOpenMPFlushDirective(ArrayRef<OMPClause *> Clauses,
   return OMPFlushDirective::Create(Context, StartLoc, EndLoc, Clauses);
 }
 
-StmtResult Sema::ActOnOpenMPOrderedDirective(Stmt *AStmt,
+StmtResult Sema::ActOnOpenMPOrderedDirective(ArrayRef<OMPClause *> Clauses,
+                                             Stmt *AStmt,
                                              SourceLocation StartLoc,
                                              SourceLocation EndLoc) {
   if (!AStmt)
@@ -4135,7 +4152,32 @@ StmtResult Sema::ActOnOpenMPOrderedDirective(Stmt *AStmt,
 
   getCurFunction()->setHasBranchProtectedScope();
 
-  return OMPOrderedDirective::Create(Context, StartLoc, EndLoc, AStmt);
+  OMPThreadsClause *TC = nullptr;
+  OMPSIMDClause *SC = nullptr;
+  for (auto *C: Clauses) {
+    if (C->getClauseKind() == OMPC_threads)
+      TC = cast<OMPThreadsClause>(C);
+    else if (C->getClauseKind() == OMPC_simd)
+      SC = cast<OMPSIMDClause>(C);
+  }
+
+  // TODO: this must happen only if 'threads' clause specified or if no clauses
+  // is specified.
+  if (auto *Param = DSAStack->getParentOrderedRegionParam()) {
+    SourceLocation ErrLoc = TC ? TC->getLocStart() : StartLoc;
+    Diag(ErrLoc, diag::err_omp_ordered_directive_with_param) << (TC != nullptr);
+    Diag(Param->getLocStart(), diag::note_omp_ordered_param);
+    return StmtError();
+  }
+  if (!SC && isOpenMPSimdDirective(DSAStack->getParentDirective())) {
+    // OpenMP [2.8.1,simd Construct, Restrictions]
+    // An ordered construct with the simd clause is the only OpenMP construct
+    // that can appear in the simd region.
+    Diag(StartLoc, diag::err_omp_prohibited_region_simd);
+    return StmtError();
+  }
+
+  return OMPOrderedDirective::Create(Context, StartLoc, EndLoc, Clauses, AStmt);
 }
 
 namespace {
@@ -4983,6 +5025,8 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_capture:
   case OMPC_seq_cst:
   case OMPC_depend:
+  case OMPC_threads:
+  case OMPC_simd:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -5181,7 +5225,6 @@ OMPClause *Sema::ActOnOpenMPOrderedClause(SourceLocation StartLoc,
                                           SourceLocation EndLoc,
                                           SourceLocation LParenLoc,
                                           Expr *NumForLoops) {
-  DSAStack->setOrderedRegion();
   // OpenMP [2.7.1, loop construct, Description]
   // OpenMP [2.8.1, simd construct, Description]
   // OpenMP [2.9.6, distribute construct, Description]
@@ -5193,7 +5236,9 @@ OMPClause *Sema::ActOnOpenMPOrderedClause(SourceLocation StartLoc,
     if (NumForLoopsResult.isInvalid())
       return nullptr;
     NumForLoops = NumForLoopsResult.get();
-  }
+  } else
+    NumForLoops = nullptr;
+  DSAStack->setOrderedRegion(/*IsOrdered=*/true, NumForLoops);
   return new (Context)
       OMPOrderedClause(NumForLoops, StartLoc, LParenLoc, EndLoc);
 }
@@ -5242,6 +5287,8 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_seq_cst:
   case OMPC_depend:
   case OMPC_device:
+  case OMPC_threads:
+  case OMPC_simd:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -5369,6 +5416,8 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_seq_cst:
   case OMPC_depend:
   case OMPC_device:
+  case OMPC_threads:
+  case OMPC_simd:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -5472,6 +5521,12 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_seq_cst:
     Res = ActOnOpenMPSeqCstClause(StartLoc, EndLoc);
     break;
+  case OMPC_threads:
+    Res = ActOnOpenMPThreadsClause(StartLoc, EndLoc);
+    break;
+  case OMPC_simd:
+    Res = ActOnOpenMPSIMDClause(StartLoc, EndLoc);
+    break;
   case OMPC_if:
   case OMPC_final:
   case OMPC_num_threads:
@@ -5541,6 +5596,16 @@ OMPClause *Sema::ActOnOpenMPSeqCstClause(SourceLocation StartLoc,
   return new (Context) OMPSeqCstClause(StartLoc, EndLoc);
 }
 
+OMPClause *Sema::ActOnOpenMPThreadsClause(SourceLocation StartLoc,
+                                          SourceLocation EndLoc) {
+  return new (Context) OMPThreadsClause(StartLoc, EndLoc);
+}
+
+OMPClause *Sema::ActOnOpenMPSIMDClause(SourceLocation StartLoc,
+                                       SourceLocation EndLoc) {
+  return new (Context) OMPSIMDClause(StartLoc, EndLoc);
+}
+
 OMPClause *Sema::ActOnOpenMPVarListClause(
     OpenMPClauseKind Kind, ArrayRef<Expr *> VarList, Expr *TailExpr,
     SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation ColonLoc,
@@ -5606,6 +5671,8 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
   case OMPC_capture:
   case OMPC_seq_cst:
   case OMPC_device:
+  case OMPC_threads:
+  case OMPC_simd:
   case OMPC_unknown:
     llvm_unreachable("Clause is not allowed.");
   }
@@ -6323,14 +6390,39 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
     // OpenMP  [2.14.3.3, Restrictions, p.1]
     //  A variable that is part of another variable (as an array or
     //  structure element) cannot appear in a private clause.
-    auto DE = dyn_cast<DeclRefExpr>(RefExpr);
-    if (!DE || !isa<VarDecl>(DE->getDecl())) {
-      Diag(ELoc, diag::err_omp_expected_var_name) << ERange;
+    auto *DE = dyn_cast<DeclRefExpr>(RefExpr);
+    auto *ASE = dyn_cast<ArraySubscriptExpr>(RefExpr);
+    auto *OASE = dyn_cast<OMPArraySectionExpr>(RefExpr);
+    if (!ASE && !OASE && (!DE || !isa<VarDecl>(DE->getDecl()))) {
+      Diag(ELoc, diag::err_omp_expected_var_name_or_array_item) << ERange;
       continue;
     }
-    auto D = DE->getDecl();
-    auto VD = cast<VarDecl>(D);
-    auto Type = VD->getType();
+    QualType Type;
+    VarDecl *VD = nullptr;
+    if (DE) {
+      auto D = DE->getDecl();
+      VD = cast<VarDecl>(D);
+      Type = VD->getType();
+    } else if (ASE)
+      Type = ASE->getType();
+    else if (OASE) {
+      auto BaseType = OMPArraySectionExpr::getBaseOriginalType(OASE->getBase());
+      if (auto *ATy = BaseType->getAsArrayTypeUnsafe())
+        Type = ATy->getElementType();
+      else
+        Type = BaseType->getPointeeType();
+    }
+    // OpenMP [2.15.3.6, reduction Clause]
+    // If a list item is an array section, its lower-bound must be zero.
+    llvm::APSInt Result;
+    if (OASE && OASE->getLowerBound() &&
+        OASE->getLowerBound()->EvaluateAsInt(Result, Context) && Result != 0) {
+      Diag(OASE->getLowerBound()->getExprLoc(),
+           diag::err_omp_expected_array_sect_reduction_lb_not_zero)
+          << OASE->getLowerBound()->getSourceRange();
+      continue;
+    }
+
     // OpenMP [2.9.3.3, Restrictions, C/C++, p.3]
     //  A variable that appears in a private clause must not have an incomplete
     //  type or a reference type.
@@ -6341,36 +6433,42 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
     // Arrays may not appear in a reduction clause.
     if (Type.getNonReferenceType()->isArrayType()) {
       Diag(ELoc, diag::err_omp_reduction_type_array) << Type << ERange;
-      bool IsDecl =
-          VD->isThisDeclarationADefinition(Context) == VarDecl::DeclarationOnly;
-      Diag(VD->getLocation(),
-           IsDecl ? diag::note_previous_decl : diag::note_defined_here)
-          << VD;
+      if (VD) {
+        bool IsDecl = VD->isThisDeclarationADefinition(Context) ==
+                      VarDecl::DeclarationOnly;
+        Diag(VD->getLocation(),
+             IsDecl ? diag::note_previous_decl : diag::note_defined_here)
+            << VD;
+      }
       continue;
     }
     // OpenMP [2.14.3.6, reduction clause, Restrictions]
     // A list item that appears in a reduction clause must not be
     // const-qualified.
     if (Type.getNonReferenceType().isConstant(Context)) {
-      Diag(ELoc, diag::err_omp_const_variable)
+      Diag(ELoc, diag::err_omp_const_reduction_list_item)
           << getOpenMPClauseName(OMPC_reduction) << Type << ERange;
-      bool IsDecl =
-          VD->isThisDeclarationADefinition(Context) == VarDecl::DeclarationOnly;
-      Diag(VD->getLocation(),
-           IsDecl ? diag::note_previous_decl : diag::note_defined_here)
-          << VD;
+      if (VD) {
+        bool IsDecl = VD->isThisDeclarationADefinition(Context) ==
+                      VarDecl::DeclarationOnly;
+        Diag(VD->getLocation(),
+             IsDecl ? diag::note_previous_decl : diag::note_defined_here)
+            << VD;
+      }
       continue;
     }
     // OpenMP [2.9.3.6, Restrictions, C/C++, p.4]
     //  If a list-item is a reference type then it must bind to the same object
     //  for all threads of the team.
-    VarDecl *VDDef = VD->getDefinition();
-    if (Type->isReferenceType() && VDDef) {
-      DSARefChecker Check(DSAStack);
-      if (Check.Visit(VDDef->getInit())) {
-        Diag(ELoc, diag::err_omp_reduction_ref_type_arg) << ERange;
-        Diag(VDDef->getLocation(), diag::note_defined_here) << VDDef;
-        continue;
+    if (VD) {
+      VarDecl *VDDef = VD->getDefinition();
+      if (Type->isReferenceType() && VDDef) {
+        DSARefChecker Check(DSAStack);
+        if (Check.Visit(VDDef->getInit())) {
+          Diag(ELoc, diag::err_omp_reduction_ref_type_arg) << ERange;
+          Diag(VDDef->getLocation(), diag::note_defined_here) << VDDef;
+          continue;
+        }
       }
     }
     // OpenMP [2.14.3.6, reduction clause, Restrictions]
@@ -6386,21 +6484,25 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
           (getLangOpts().CPlusPlus && Type->isArithmeticType()))) {
       Diag(ELoc, diag::err_omp_clause_not_arithmetic_type_arg)
           << getLangOpts().CPlusPlus;
-      bool IsDecl =
-          VD->isThisDeclarationADefinition(Context) == VarDecl::DeclarationOnly;
-      Diag(VD->getLocation(),
-           IsDecl ? diag::note_previous_decl : diag::note_defined_here)
-          << VD;
+      if (VD) {
+        bool IsDecl = VD->isThisDeclarationADefinition(Context) ==
+                      VarDecl::DeclarationOnly;
+        Diag(VD->getLocation(),
+             IsDecl ? diag::note_previous_decl : diag::note_defined_here)
+            << VD;
+      }
       continue;
     }
     if ((BOK == BO_OrAssign || BOK == BO_AndAssign || BOK == BO_XorAssign) &&
         !getLangOpts().CPlusPlus && Type->isFloatingType()) {
       Diag(ELoc, diag::err_omp_clause_floating_type_arg);
-      bool IsDecl =
-          VD->isThisDeclarationADefinition(Context) == VarDecl::DeclarationOnly;
-      Diag(VD->getLocation(),
-           IsDecl ? diag::note_previous_decl : diag::note_defined_here)
-          << VD;
+      if (VD) {
+        bool IsDecl = VD->isThisDeclarationADefinition(Context) ==
+                      VarDecl::DeclarationOnly;
+        Diag(VD->getLocation(),
+             IsDecl ? diag::note_previous_decl : diag::note_defined_here)
+            << VD;
+      }
       continue;
     }
     // OpenMP [2.14.1.1, Data-sharing Attribute Rules for Variables Referenced
@@ -6414,42 +6516,49 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
     //  Any number of reduction clauses can be specified on the directive,
     //  but a list item can appear only once in the reduction clauses for that
     //  directive.
-    DSAStackTy::DSAVarData DVar = DSAStack->getTopDSA(VD, false);
-    if (DVar.CKind == OMPC_reduction) {
-      Diag(ELoc, diag::err_omp_once_referenced)
-          << getOpenMPClauseName(OMPC_reduction);
-      if (DVar.RefExpr) {
-        Diag(DVar.RefExpr->getExprLoc(), diag::note_omp_referenced);
+    DSAStackTy::DSAVarData DVar;
+    if (VD) {
+      DVar = DSAStack->getTopDSA(VD, false);
+      if (DVar.CKind == OMPC_reduction) {
+        Diag(ELoc, diag::err_omp_once_referenced)
+            << getOpenMPClauseName(OMPC_reduction);
+        if (DVar.RefExpr) {
+          Diag(DVar.RefExpr->getExprLoc(), diag::note_omp_referenced);
+        }
+      } else if (DVar.CKind != OMPC_unknown) {
+        Diag(ELoc, diag::err_omp_wrong_dsa)
+            << getOpenMPClauseName(DVar.CKind)
+            << getOpenMPClauseName(OMPC_reduction);
+        ReportOriginalDSA(*this, DSAStack, VD, DVar);
+        continue;
       }
-    } else if (DVar.CKind != OMPC_unknown) {
-      Diag(ELoc, diag::err_omp_wrong_dsa)
-          << getOpenMPClauseName(DVar.CKind)
-          << getOpenMPClauseName(OMPC_reduction);
-      ReportOriginalDSA(*this, DSAStack, VD, DVar);
-      continue;
     }
 
     // OpenMP [2.14.3.6, Restrictions, p.1]
     //  A list item that appears in a reduction clause of a worksharing
     //  construct must be shared in the parallel regions to which any of the
     //  worksharing regions arising from the worksharing construct bind.
-    OpenMPDirectiveKind CurrDir = DSAStack->getCurrentDirective();
-    if (isOpenMPWorksharingDirective(CurrDir) &&
-        !isOpenMPParallelDirective(CurrDir)) {
-      DVar = DSAStack->getImplicitDSA(VD, true);
-      if (DVar.CKind != OMPC_shared) {
-        Diag(ELoc, diag::err_omp_required_access)
-            << getOpenMPClauseName(OMPC_reduction)
-            << getOpenMPClauseName(OMPC_shared);
-        ReportOriginalDSA(*this, DSAStack, VD, DVar);
-        continue;
+    if (VD) {
+      OpenMPDirectiveKind CurrDir = DSAStack->getCurrentDirective();
+      if (isOpenMPWorksharingDirective(CurrDir) &&
+          !isOpenMPParallelDirective(CurrDir)) {
+        DVar = DSAStack->getImplicitDSA(VD, true);
+        if (DVar.CKind != OMPC_shared) {
+          Diag(ELoc, diag::err_omp_required_access)
+              << getOpenMPClauseName(OMPC_reduction)
+              << getOpenMPClauseName(OMPC_shared);
+          ReportOriginalDSA(*this, DSAStack, VD, DVar);
+          continue;
+        }
       }
     }
     Type = Type.getNonLValueExprType(Context).getUnqualifiedType();
-    auto *LHSVD = buildVarDecl(*this, ELoc, Type, ".reduction.lhs",
-                               VD->hasAttrs() ? &VD->getAttrs() : nullptr);
-    auto *RHSVD = buildVarDecl(*this, ELoc, Type, VD->getName(),
-                               VD->hasAttrs() ? &VD->getAttrs() : nullptr);
+    auto *LHSVD =
+        buildVarDecl(*this, ELoc, Type, ".reduction.lhs",
+                     VD && VD->hasAttrs() ? &VD->getAttrs() : nullptr);
+    auto *RHSVD =
+        buildVarDecl(*this, ELoc, Type, VD ? VD->getName() : ".item.",
+                     VD && VD->hasAttrs() ? &VD->getAttrs() : nullptr);
     // Add initializer for private variable.
     Expr *Init = nullptr;
     switch (BOK) {
@@ -6564,11 +6673,13 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
     if (!RHSVD->hasInit()) {
       Diag(ELoc, diag::err_omp_reduction_id_not_compatible) << Type
                                                             << ReductionIdRange;
-      bool IsDecl =
-          VD->isThisDeclarationADefinition(Context) == VarDecl::DeclarationOnly;
-      Diag(VD->getLocation(),
-           IsDecl ? diag::note_previous_decl : diag::note_defined_here)
-          << VD;
+      if (VD) {
+        bool IsDecl = VD->isThisDeclarationADefinition(Context) ==
+                      VarDecl::DeclarationOnly;
+        Diag(VD->getLocation(),
+             IsDecl ? diag::note_previous_decl : diag::note_defined_here)
+            << VD;
+      }
       continue;
     }
     auto *LHSDRE = buildDeclRefExpr(*this, LHSVD, Type, ELoc);
@@ -6594,8 +6705,9 @@ OMPClause *Sema::ActOnOpenMPReductionClause(
     if (ReductionOp.isInvalid())
       continue;
 
-    DSAStack->addDSA(VD, DE, OMPC_reduction);
-    Vars.push_back(DE);
+    if (VD)
+      DSAStack->addDSA(VD, DE, OMPC_reduction);
+    Vars.push_back(RefExpr);
     LHSs.push_back(LHSDRE);
     RHSs.push_back(RHSDRE);
     ReductionOps.push_back(ReductionOp.get());

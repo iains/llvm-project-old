@@ -12,9 +12,7 @@
 
 #include "lldb/lldb-public.h"
 #include "lldb/Core/ArchSpec.h"
-#include "lldb/Core/ClangForward.h"
 #include "lldb/Core/Error.h"
-#include "lldb/Expression/IRForTarget.h"
 
 #include <string>
 #include <vector>
@@ -47,12 +45,12 @@ public:
     ///     The expression to be parsed.
     //------------------------------------------------------------------
     ExpressionParser (ExecutionContextScope *exe_scope,
-                           Expression &expr,
-                           bool generate_debug_info) :
+                      Expression &expr,
+                      bool generate_debug_info) :
         m_expr(expr),
         m_generate_debug_info(generate_debug_info)
-        {
-        }
+    {
+    }
     
     //------------------------------------------------------------------
     /// Destructor

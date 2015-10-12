@@ -62,8 +62,8 @@ public:
   virtual void writeTo(uint8_t *Buf) const {}
 
   // The writer sets and uses the addresses.
-  uint64_t getRVA() { return RVA; }
-  uint32_t getAlign() { return Align; }
+  uint64_t getRVA() const { return RVA; }
+  uint32_t getAlign() const { return Align; }
   void setRVA(uint64_t V) { RVA = V; }
   void setOutputSectionOff(uint64_t V) { OutputSectionOff = V; }
 
@@ -179,7 +179,7 @@ public:
   // Initially it points to "this" object. If this chunk is merged
   // with other chunk by ICF, it points to another chunk,
   // and this chunk is considrered as dead.
-  SectionChunk *Ptr;
+  SectionChunk *Repl;
 
   // The CRC of the contents as described in the COFF spec 4.5.5.
   // Auxiliary Format 5: Section Definitions. Used for ICF.
@@ -201,7 +201,7 @@ private:
   bool Live;
 
   // Used for ICF (Identical COMDAT Folding)
-  void replaceWith(SectionChunk *Other);
+  void replace(SectionChunk *Other);
   std::atomic<uint64_t> GroupID = { 0 };
 
   // Chunks are basically unnamed chunks of bytes.

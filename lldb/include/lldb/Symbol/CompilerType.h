@@ -34,7 +34,7 @@ public:
     //----------------------------------------------------------------------
     // Constructors and Destructors
     //----------------------------------------------------------------------
-    CompilerType (TypeSystem *type_system, void *type);
+    CompilerType (TypeSystem *type_system, lldb::opaque_compiler_type_t type);
     CompilerType (clang::ASTContext *ast_context, clang::QualType qual_type);
 
     CompilerType (const CompilerType &rhs) :
@@ -220,12 +220,12 @@ public:
     GetDisplayTypeName () const;
 
     uint32_t
-    GetTypeInfo (CompilerType *pointee_or_element_clang_type = NULL) const;
+    GetTypeInfo (CompilerType *pointee_or_element_compiler_type = NULL) const;
     
     lldb::LanguageType
     GetMinimumLanguage ();
 
-    void *
+    lldb::opaque_compiler_type_t
     GetOpaqueQualType() const
     {
         return m_type;
@@ -235,7 +235,7 @@ public:
     GetTypeClass () const;
     
     void
-    SetCompilerType (TypeSystem* type_system, void* type);
+    SetCompilerType (TypeSystem* type_system, lldb::opaque_compiler_type_t type);
     void
     SetCompilerType (clang::ASTContext *ast, clang::QualType qual_type);
 
@@ -413,25 +413,25 @@ public:
 
     uint32_t
     GetIndexOfFieldWithName (const char* name,
-                             CompilerType* field_clang_type = NULL,
+                             CompilerType* field_compiler_type = NULL,
                              uint64_t *bit_offset_ptr = NULL,
                              uint32_t *bitfield_bit_size_ptr = NULL,
                              bool *is_bitfield_ptr = NULL) const;
     
     CompilerType
-    GetChildClangTypeAtIndex (ExecutionContext *exe_ctx,
-                              size_t idx,
-                              bool transparent_pointers,
-                              bool omit_empty_base_classes,
-                              bool ignore_array_bounds,
-                              std::string& child_name,
-                              uint32_t &child_byte_size,
-                              int32_t &child_byte_offset,
-                              uint32_t &child_bitfield_bit_size,
-                              uint32_t &child_bitfield_bit_offset,
-                              bool &child_is_base_class,
-                              bool &child_is_deref_of_parent,
-                              ValueObject *valobj) const;
+    GetChildCompilerTypeAtIndex (ExecutionContext *exe_ctx,
+                                 size_t idx,
+                                 bool transparent_pointers,
+                                 bool omit_empty_base_classes,
+                                 bool ignore_array_bounds,
+                                 std::string& child_name,
+                                 uint32_t &child_byte_size,
+                                 int32_t &child_byte_offset,
+                                 uint32_t &child_bitfield_bit_size,
+                                 uint32_t &child_bitfield_bit_offset,
+                                 bool &child_is_base_class,
+                                 bool &child_is_deref_of_parent,
+                                 ValueObject *valobj) const;
     
     // Lookup a child given a name. This function will match base class names
     // and member member names in "clang_type" only, not descendants.
@@ -455,6 +455,12 @@ public:
     CompilerType
     GetTemplateArgument (size_t idx,
                          lldb::TemplateArgumentKind &kind) const;
+    
+    CompilerType
+    GetTypeForFormatters () const;
+    
+    LazyBool
+    ShouldPrintAsOneLiner () const;
     
     //------------------------------------------------------------------
     // Pointers & References
@@ -535,7 +541,7 @@ public:
         m_type_system = NULL;
     }
 private:
-    void* m_type;
+    lldb::opaque_compiler_type_t m_type;
     TypeSystem *m_type_system;
     
 };

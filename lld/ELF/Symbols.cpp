@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Symbols.h"
-#include "Chunks.h"
+#include "InputSection.h"
 #include "Error.h"
 #include "InputFiles.h"
 
@@ -51,6 +51,10 @@ template <class ELFT> int SymbolBody::compare(SymbolBody *Other) {
   if (L != R)
     return -1;
   if (!L.first || !L.second)
+    return 1;
+  if (isShared())
+    return -1;
+  if (Other->isShared())
     return 1;
   if (isCommon()) {
     if (!Other->isCommon())

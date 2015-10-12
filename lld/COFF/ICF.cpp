@@ -85,8 +85,8 @@ uint64_t ICF::getHash(SectionChunk *C) {
   return hash_combine(C->getPermissions(),
                       hash_value(C->SectionName),
                       C->NumRelocs,
+                      C->getAlign(),
                       uint32_t(C->Header->SizeOfRawData),
-                      std::distance(C->Relocs.end(), C->Relocs.begin()),
                       C->Checksum);
 }
 
@@ -123,6 +123,7 @@ bool ICF::equalsConstant(const SectionChunk *A, const SectionChunk *B) {
   // Compare section attributes and contents.
   return A->getPermissions() == B->getPermissions() &&
          A->SectionName == B->SectionName &&
+         A->getAlign() == B->getAlign() &&
          A->Header->SizeOfRawData == B->Header->SizeOfRawData &&
          A->Checksum == B->Checksum &&
          A->getContents() == B->getContents();
@@ -157,7 +158,7 @@ bool ICF::partition(ChunkIterator Begin, ChunkIterator End, Comparator Eq) {
     });
     if (Bound == End)
       return R;
-    size_t ID = NextID++;
+    uint64_t ID = NextID++;
     std::for_each(It, Bound, [&](SectionChunk *SC) { SC->GroupID = ID; });
     It = Bound;
     R = true;
@@ -247,7 +248,7 @@ void ICF::run(const std::vector<Chunk *> &Vec) {
         SectionChunk *SC = *It++;
         if (Config->Verbose)
           llvm::outs() << "  Removed " << SC->getDebugName() << "\n";
-        SC->replaceWith(Head);
+        Head->replace(SC);
       }
     }
   }

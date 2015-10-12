@@ -5,7 +5,7 @@ The check converts the usage of null pointer constants (eg. ``NULL``, ``0``)
 to use the new C++11 ``nullptr`` keyword.
 
 Example
-=======
+-------
 
 .. code-block:: c++
 
@@ -36,15 +36,15 @@ transforms to:
 
 
 User defined macros
-===================
+-------------------
 
-By default this transform will only replace the ``NULL`` macro and will skip any
+By default this check will only replace the ``NULL`` macro and will skip any
 user-defined macros that behaves like ``NULL``. The user can use the
 :option:``UserNullMacros`` option to specify a comma-separated list of macro
 names that will be transformed along with ``NULL``.
 
 Example
--------
+^^^^^^^
 
 .. code-block:: c++
 
@@ -62,4 +62,4 @@ transforms to:
     int *p = nullptr;
   }
 
-  if the ``UserNullMacros`` option is set to ``MY_NULL``.
+if the ``UserNullMacros`` option is set to ``MY_NULL``.

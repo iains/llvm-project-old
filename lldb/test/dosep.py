@@ -32,7 +32,9 @@ ulimit -c unlimited
 echo core.%p | sudo tee /proc/sys/kernel/core_pattern
 """
 
+# system packages and modules
 import asyncore
+import distutils.version
 import fnmatch
 import multiprocessing
 import multiprocessing.pool
@@ -41,30 +43,17 @@ import platform
 import Queue
 import re
 import signal
-import subprocess
 import sys
 import threading
-import test_results
+
+# Add our local test_runner/lib dir to the python path.
+sys.path.append(os.path.join(os.path.dirname(__file__), "test_runner", "lib"))
+
+# Our packages and modules
 import dotest_channels
 import dotest_args
-
-
-def get_timeout_command():
-    """Search for a suitable timeout command."""
-    if not sys.platform.startswith("win32"):
-        try:
-            subprocess.call("timeout", stderr=subprocess.PIPE)
-            return "timeout"
-        except OSError:
-            pass
-    try:
-        subprocess.call("gtimeout", stderr=subprocess.PIPE)
-        return "gtimeout"
-    except OSError:
-        pass
-    return None
-
-timeout_command = get_timeout_command()
+import lldb_utils
+import process_control
 
 # Status codes for running command with timeout.
 eTimedOut, ePassed, eFailed = 124, 0, 1
@@ -170,67 +159,119 @@ def parse_test_results(output):
             unexpected_successes = unexpected_successes + int(unexpected_success_count.group(1))
         if error_count is not None:
             failures = failures + int(error_count.group(1))
-        pass
     return passes, failures, unexpected_successes
 
 
-def call_with_timeout(command, timeout, name, inferior_pid_events):
-    """Run command with a timeout if possible.
-    -s QUIT will create a coredump if they are enabled on your system
-    """
-    process = None
-    if timeout_command and timeout != "0":
-        command = [timeout_command, '-s', 'QUIT', timeout] + command
+class DoTestProcessDriver(process_control.ProcessDriver):
+    """Drives the dotest.py inferior process and handles bookkeeping."""
+    def __init__(self, output_file, output_file_lock, pid_events, file_name,
+                 soft_terminate_timeout):
+        super(DoTestProcessDriver, self).__init__(
+            soft_terminate_timeout=soft_terminate_timeout)
+        self.output_file = output_file
+        self.output_lock = lldb_utils.OptionalWith(output_file_lock)
+        self.pid_events = pid_events
+        self.results = None
+        self.file_name = file_name
 
+    def write(self, content):
+        with self.output_lock:
+            self.output_file.write(content)
+
+    def on_process_started(self):
+        if self.pid_events:
+            self.pid_events.put_nowait(('created', self.process.pid))
+
+    def on_process_exited(self, command, output, was_timeout, exit_status):
+        if self.pid_events:
+            # No point in culling out those with no exit_status (i.e.
+            # those we failed to kill). That would just cause
+            # downstream code to try to kill it later on a Ctrl-C. At
+            # this point, a best-effort-to-kill already took place. So
+            # call it destroyed here.
+            self.pid_events.put_nowait(('destroyed', self.process.pid))
+
+        # Override the exit status if it was a timeout.
+        if was_timeout:
+            exit_status = eTimedOut
+
+        # If we didn't end up with any output, call it empty for
+        # stdout/stderr.
+        if output is None:
+            output = ('', '')
+
+        # Now parse the output.
+        passes, failures, unexpected_successes = parse_test_results(output)
+        if exit_status == 0:
+            # stdout does not have any useful information from 'dotest.py',
+            # only stderr does.
+            report_test_pass(self.file_name, output[1])
+        else:
+            report_test_failure(self.file_name, command, output[1])
+
+        # Save off the results for the caller.
+        self.results = (
+            self.file_name,
+            exit_status,
+            passes,
+            failures,
+            unexpected_successes)
+
+
+def get_soft_terminate_timeout():
+    # Defaults to 10 seconds, but can set
+    # LLDB_TEST_SOFT_TERMINATE_TIMEOUT to a floating point
+    # number in seconds.  This value indicates how long
+    # the test runner will wait for the dotest inferior to
+    # handle a timeout via a soft terminate before it will
+    # assume that failed and do a hard terminate.
+
+    # TODO plumb through command-line option
+    return float(os.environ.get('LLDB_TEST_SOFT_TERMINATE_TIMEOUT', 10.0))
+
+
+def want_core_on_soft_terminate():
+    # TODO plumb through command-line option
+    if platform.system() == 'Linux':
+        return True
+    else:
+        return False
+
+
+def call_with_timeout(command, timeout, name, inferior_pid_events):
+    # Add our worker index (if we have one) to all test events
+    # from this inferior.
     if GET_WORKER_INDEX is not None:
         try:
             worker_index = GET_WORKER_INDEX()
             command.extend([
-                "--event-add-entries", "worker_index={}:int".format(worker_index)])
-        except:
-            # Ctrl-C does bad things to multiprocessing.Manager.dict() lookup.
+                "--event-add-entries",
+                "worker_index={}:int".format(worker_index)])
+        except:  # pylint: disable=bare-except
+            # Ctrl-C does bad things to multiprocessing.Manager.dict()
+            # lookup.  Just swallow it.
             pass
 
-    # Specifying a value for close_fds is unsupported on Windows when using
-    # subprocess.PIPE
-    if os.name != "nt":
-        process = subprocess.Popen(command,
-                                   stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE,
-                                   close_fds=True)
-    else:
-        process = subprocess.Popen(command,
-                                   stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE)
-    inferior_pid = process.pid
-    if inferior_pid_events:
-        inferior_pid_events.put_nowait(('created', inferior_pid))
-    output = process.communicate()
+    # Create the inferior dotest.py ProcessDriver.
+    soft_terminate_timeout = get_soft_terminate_timeout()
+    want_core = want_core_on_soft_terminate()
 
-    # The inferior should now be entirely wrapped up.
-    exit_status = process.returncode
-    if exit_status is None:
-        raise Exception(
-            "no exit status available after the inferior dotest.py "
-            "should have completed")
+    process_driver = DoTestProcessDriver(
+        sys.stdout,
+        output_lock,
+        inferior_pid_events,
+        name,
+        soft_terminate_timeout)
 
-    if inferior_pid_events:
-        inferior_pid_events.put_nowait(('destroyed', inferior_pid))
+    # Run it with a timeout.
+    process_driver.run_command_with_timeout(command, timeout, want_core)
 
-    passes, failures, unexpected_successes = parse_test_results(output)
-    if exit_status == 0:
-        # stdout does not have any useful information from 'dotest.py',
-        # only stderr does.
-        report_test_pass(name, output[1])
-    else:
-        # TODO need to differentiate a failing test from a run that
-        # was broken out of by a SIGTERM/SIGKILL, reporting those as
-        # an error.  If a signal-based completion, need to call that
-        # an error.
-        report_test_failure(name, command, output[1])
-    return name, exit_status, passes, failures, unexpected_successes
+    # Return the results.
+    if not process_driver.results:
+        # This is truly exceptional.  Even a failing or timed out
+        # binary should have called the results-generation code.
+        raise Exception("no test results were generated whatsoever")
+    return process_driver.results
 
 
 def process_dir(root, files, test_root, dotest_argv, inferior_pid_events):
@@ -278,7 +319,8 @@ def process_dir_worker_multiprocessing(
 
     # Shut off interrupt handling in the child process.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     # Setup the global state for the worker process.
     setup_global_variables(
@@ -888,7 +930,7 @@ def inprocess_exec_test_runner(test_work_items):
     return test_results
 
 def walk_and_invoke(test_directory, test_subdir, dotest_argv,
-                    test_runner_func):
+                    num_workers, test_runner_func):
     """Look for matched files and invoke test driver on each one.
     In single-threaded mode, each test driver is invoked directly.
     In multi-threaded mode, submit each test driver to a worker
@@ -910,7 +952,8 @@ def walk_and_invoke(test_directory, test_subdir, dotest_argv,
         forwarding_func = RESULTS_FORMATTER.handle_event
         RESULTS_LISTENER_CHANNEL = (
             dotest_channels.UnpicklingForwardingListenerChannel(
-                RUNNER_PROCESS_ASYNC_MAP, "localhost", 0, forwarding_func))
+                RUNNER_PROCESS_ASYNC_MAP, "localhost", 0,
+                2 * num_workers, forwarding_func))
         dotest_argv.append("--results-port")
         dotest_argv.append(str(RESULTS_LISTENER_CHANNEL.address[1]))
 
@@ -950,7 +993,6 @@ def getExpectedTimeouts(platform_name):
 
     if target.startswith("linux"):
         expected_timeout |= {
-            "TestProcessAttach.py",
             "TestConnectRemote.py",
             "TestCreateAfterAttach.py",
             "TestEvents.py",
@@ -1060,43 +1102,87 @@ def get_test_runner_strategies(num_threads):
     }
 
 
-def _remove_option(args, option_name, removal_count):
+def _remove_option(
+        args, long_option_name, short_option_name, takes_arg):
     """Removes option and related option arguments from args array.
+
+    This method removes all short/long options that match the given
+    arguments.
+
     @param args the array of command line arguments (in/out)
-    @param option_name the full command line representation of the
-    option that will be removed (including '--' or '-').
-    @param the count of elements to remove.  A value of 1 will remove
-    just the found option, while 2 will remove the option and its first
-    argument.
+
+    @param long_option_name the full command line representation of the
+    long-form option that will be removed (including '--').
+
+    @param short_option_name the short version of the command line option
+    that will be removed (including '-').
+
+    @param takes_arg True if the option takes an argument.
+
     """
-    try:
-        index = args.index(option_name)
-        # Handle the exact match case.
-        del args[index:index+removal_count]
-        return
-    except ValueError:
-        # Thanks to argparse not handling options with known arguments
-        # like other options parsing libraries (see
-        # https://bugs.python.org/issue9334), we need to support the
-        # --results-formatter-options={second-level-arguments} (note
-        # the equal sign to fool the first-level arguments parser into
-        # not treating the second-level arguments as first-level
-        # options). We're certainly at risk of getting this wrong
-        # since now we're forced into the business of trying to figure
-        # out what is an argument (although I think this
-        # implementation will suffice).
-        regex_string = "^" + option_name + "="
-        regex = re.compile(regex_string)
+    if long_option_name is not None:
+        regex_string = "^" + long_option_name + "="
+        long_regex = re.compile(regex_string)
+    if short_option_name is not None:
+        # Short options we only match the -X and assume
+        # any arg is one command line argument jammed together.
+        # i.e. -O--abc=1 is a single argument in the args list.
+        # We don't handle -O --abc=1, as argparse doesn't handle
+        # it, either.
+        regex_string = "^" + short_option_name
+        short_regex = re.compile(regex_string)
+
+    def remove_long_internal():
+        """Removes one matching long option from args.
+        @returns True if one was found and removed; False otherwise.
+        """
+        try:
+            index = args.index(long_option_name)
+            # Handle the exact match case.
+            if takes_arg:
+                removal_count = 2
+            else:
+                removal_count = 1
+            del args[index:index+removal_count]
+            return True
+        except ValueError:
+            # Thanks to argparse not handling options with known arguments
+            # like other options parsing libraries (see
+            # https://bugs.python.org/issue9334), we need to support the
+            # --results-formatter-options={second-level-arguments} (note
+            # the equal sign to fool the first-level arguments parser into
+            # not treating the second-level arguments as first-level
+            # options). We're certainly at risk of getting this wrong
+            # since now we're forced into the business of trying to figure
+            # out what is an argument (although I think this
+            # implementation will suffice).
+            for index in range(len(args)):
+                match = long_regex.search(args[index])
+                if match:
+                    del args[index]
+                    return True
+            return False
+
+    def remove_short_internal():
+        """Removes one matching short option from args.
+        @returns True if one was found and removed; False otherwise.
+        """
         for index in range(len(args)):
-            match = regex.match(args[index])
+            match = short_regex.search(args[index])
             if match:
                 del args[index]
-                return
-        print "failed to find regex '{}'".format(regex_string)
+                return True
+        return False
 
-    # We didn't find the option but we should have.
-    raise Exception("failed to find option '{}' in args '{}'".format(
-        option_name, args))
+    removal_count = 0
+    while long_option_name is not None and remove_long_internal():
+        removal_count += 1
+    while short_option_name is not None and remove_short_internal():
+        removal_count += 1
+    if removal_count == 0:
+        raise Exception(
+            "failed to find at least one of '{}', '{}' in options".format(
+                long_option_name, short_option_name))
 
 
 def adjust_inferior_options(dotest_argv):
@@ -1124,17 +1210,66 @@ def adjust_inferior_options(dotest_argv):
     # we'll have inferiors spawn with the --results-port option and
     # strip the original test runner options.
     if dotest_options.results_file is not None:
-        _remove_option(dotest_argv, "--results-file", 2)
+        _remove_option(dotest_argv, "--results-file", None, True)
     if dotest_options.results_port is not None:
-        _remove_option(dotest_argv, "--results-port", 2)
+        _remove_option(dotest_argv, "--results-port", None, True)
     if dotest_options.results_formatter is not None:
-        _remove_option(dotest_argv, "--results-formatter", 2)
+        _remove_option(dotest_argv, "--results-formatter", None, True)
     if dotest_options.results_formatter_options is not None:
-        _remove_option(dotest_argv, "--results-formatter-options", 2)
+        _remove_option(dotest_argv, "--results-formatter-option", "-O",
+                       True)
 
     # Remove test runner name if present.
     if dotest_options.test_runner_name is not None:
-        _remove_option(dotest_argv, "--test-runner-name", 2)
+        _remove_option(dotest_argv, "--test-runner-name", None, True)
+
+
+def is_darwin_version_lower_than(target_version):
+    """Checks that os is Darwin and version is lower than target_version.
+
+    @param target_version the StrictVersion indicating the version
+    we're checking against.
+
+    @return True if the OS is Darwin (OS X) and the version number of
+    the OS is less than target_version; False in all other cases.
+    """
+    if platform.system() != 'Darwin':
+        # Can't be Darwin lower than a certain version.
+        return False
+
+    system_version = distutils.version.StrictVersion(platform.mac_ver()[0])
+    return cmp(system_version, target_version) < 0
+
+
+def default_test_runner_name(num_threads):
+    """Returns the default test runner name for the configuration.
+
+    @param num_threads the number of threads/workers this test runner is
+    supposed to use.
+
+    @return the test runner name that should be used by default when
+    no test runner was explicitly called out on the command line.
+    """
+    if num_threads == 1:
+        # Use the serial runner.
+        test_runner_name = "serial"
+    elif os.name == "nt":
+        # Currently the multiprocessing test runner with ctrl-c
+        # support isn't running correctly on nt.  Use the pool
+        # support without ctrl-c.
+        test_runner_name = "threading-pool"
+    elif is_darwin_version_lower_than(
+            distutils.version.StrictVersion("10.10.0")):
+        # OS X versions before 10.10 appear to have an issue using
+        # the threading test runner.  Fall back to multiprocessing.
+        # Supports Ctrl-C.
+        test_runner_name = "multiprocessing"
+    else:
+        # For everyone else, use the ctrl-c-enabled threading support.
+        # Should use fewer system resources than the multprocessing
+        # variant.
+        test_runner_name = "threading"
+    return test_runner_name
 
 
 def main(print_details_on_success, num_threads, test_subdir,
@@ -1167,15 +1302,14 @@ def main(print_details_on_success, num_threads, test_subdir,
     """
 
     # Do not shut down on sighup.
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     dotest_argv = sys.argv[1:]
 
-    global output_on_success, RESULTS_FORMATTER, output_lock
+    global output_on_success, RESULTS_FORMATTER
     output_on_success = print_details_on_success
     RESULTS_FORMATTER = results_formatter
-    if RESULTS_FORMATTER is not None:
-        RESULTS_FORMATTER.set_lock(output_lock)
 
     # We can't use sys.path[0] to determine the script directory
     # because it doesn't work under a debugger
@@ -1207,31 +1341,26 @@ def main(print_details_on_success, num_threads, test_subdir,
     # If the user didn't specify a test runner strategy, determine
     # the default now based on number of threads and OS type.
     if not test_runner_name:
-        if num_threads == 1:
-            # Use the serial runner.
-            test_runner_name = "serial"
-        elif os.name == "nt":
-            # Currently the multiprocessing test runner with ctrl-c
-            # support isn't running correctly on nt.  Use the pool
-            # support without ctrl-c.
-            test_runner_name = "multiprocessing-pool"
-        else:
-            # For everyone else, use the ctrl-c-enabled
-            # multiprocessing support.
-            test_runner_name = "multiprocessing"
+        test_runner_name = default_test_runner_name(num_threads)
 
     if test_runner_name not in runner_strategies_by_name:
-        raise Exception("specified testrunner name '{}' unknown. "
-               "Valid choices: {}".format(
-                   test_runner_name,
-                   runner_strategies_by_name.keys()))
+        raise Exception(
+            "specified testrunner name '{}' unknown. Valid choices: {}".format(
+                test_runner_name,
+                runner_strategies_by_name.keys()))
     test_runner_func = runner_strategies_by_name[test_runner_name]
 
     summary_results = walk_and_invoke(
-        test_directory, test_subdir, dotest_argv, test_runner_func)
+        test_directory, test_subdir, dotest_argv,
+        num_threads, test_runner_func)
 
     (timed_out, passed, failed, unexpected_successes, pass_count,
      fail_count) = summary_results
+
+    # The results formatter - if present - is done now.  Tell it to
+    # terminate.
+    if results_formatter is not None:
+        results_formatter.send_terminate_as_needed()
 
     timed_out = set(timed_out)
     num_test_files = len(passed) + len(failed)

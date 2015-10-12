@@ -827,10 +827,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     F->addFnAttr(llvm::Attribute::NoInline);
 
     // OptimizeNone wins over OptimizeForSize, MinSize, AlwaysInline.
-    assert(!F->hasFnAttribute(llvm::Attribute::OptimizeForSize) &&
-           "OptimizeNone and OptimizeForSize on same function!");
-    assert(!F->hasFnAttribute(llvm::Attribute::MinSize) &&
-           "OptimizeNone and MinSize on same function!");
+    F->removeFnAttr(llvm::Attribute::OptimizeForSize);
+    F->removeFnAttr(llvm::Attribute::MinSize);
     assert(!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
            "OptimizeNone and AlwaysInline on same function!");
 
@@ -2827,7 +2825,7 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   // String pointer.
   llvm::Constant *C = nullptr;
   if (isUTF16) {
-    ArrayRef<uint16_t> Arr = llvm::makeArrayRef<uint16_t>(
+    auto Arr = llvm::makeArrayRef(
         reinterpret_cast<uint16_t *>(const_cast<char *>(Entry.first().data())),
         Entry.first().size() / 2);
     C = llvm::ConstantDataArray::get(VMContext, Arr);

@@ -30,7 +30,7 @@ using namespace lldb;
 using namespace lldb_private;
 
 CompilerType::CompilerType (TypeSystem *type_system,
-                            void* type) :
+                            lldb::opaque_compiler_type_t type) :
     m_type (type),
     m_type_system (type_system)
 {
@@ -369,12 +369,12 @@ CompilerType::GetDisplayTypeName () const
 }
 
 uint32_t
-CompilerType::GetTypeInfo (CompilerType *pointee_or_element_clang_type) const
+CompilerType::GetTypeInfo (CompilerType *pointee_or_element_compiler_type) const
 {
     if (!IsValid())
         return 0;
     
-    return m_type_system->GetTypeInfo(m_type, pointee_or_element_clang_type);
+    return m_type_system->GetTypeInfo(m_type, pointee_or_element_compiler_type);
 }
 
 
@@ -399,7 +399,7 @@ CompilerType::GetTypeClass () const
 }
 
 void
-CompilerType::SetCompilerType (TypeSystem* type_system, void*  type)
+CompilerType::SetCompilerType (TypeSystem* type_system, lldb::opaque_compiler_type_t type)
 {
     m_type_system = type_system;
     m_type = type;
@@ -730,7 +730,7 @@ CompilerType::GetVirtualBaseClassAtIndex (size_t idx, uint32_t *bit_offset_ptr) 
 
 uint32_t
 CompilerType::GetIndexOfFieldWithName (const char* name,
-                                       CompilerType* field_clang_type_ptr,
+                                       CompilerType* field_compiler_type_ptr,
                                        uint64_t *bit_offset_ptr,
                                        uint32_t *bitfield_bit_size_ptr,
                                        bool *is_bitfield_ptr) const
@@ -739,11 +739,11 @@ CompilerType::GetIndexOfFieldWithName (const char* name,
     std::string field_name;
     for (unsigned index = 0; index < count; index++)
     {
-        CompilerType field_clang_type (GetFieldAtIndex(index, field_name, bit_offset_ptr, bitfield_bit_size_ptr, is_bitfield_ptr));
+        CompilerType field_compiler_type (GetFieldAtIndex(index, field_name, bit_offset_ptr, bitfield_bit_size_ptr, is_bitfield_ptr));
         if (strcmp(field_name.c_str(), name) == 0)
         {
-            if (field_clang_type_ptr)
-                *field_clang_type_ptr = field_clang_type;
+            if (field_compiler_type_ptr)
+                *field_compiler_type_ptr = field_compiler_type;
             return index;
         }
     }
@@ -752,36 +752,36 @@ CompilerType::GetIndexOfFieldWithName (const char* name,
 
 
 CompilerType
-CompilerType::GetChildClangTypeAtIndex (ExecutionContext *exe_ctx,
-                                        size_t idx,
-                                        bool transparent_pointers,
-                                        bool omit_empty_base_classes,
-                                        bool ignore_array_bounds,
-                                        std::string& child_name,
-                                        uint32_t &child_byte_size,
-                                        int32_t &child_byte_offset,
-                                        uint32_t &child_bitfield_bit_size,
-                                        uint32_t &child_bitfield_bit_offset,
-                                        bool &child_is_base_class,
-                                        bool &child_is_deref_of_parent,
-                                        ValueObject *valobj) const
+CompilerType::GetChildCompilerTypeAtIndex (ExecutionContext *exe_ctx,
+                                           size_t idx,
+                                           bool transparent_pointers,
+                                           bool omit_empty_base_classes,
+                                           bool ignore_array_bounds,
+                                           std::string& child_name,
+                                           uint32_t &child_byte_size,
+                                           int32_t &child_byte_offset,
+                                           uint32_t &child_bitfield_bit_size,
+                                           uint32_t &child_bitfield_bit_offset,
+                                           bool &child_is_base_class,
+                                           bool &child_is_deref_of_parent,
+                                           ValueObject *valobj) const
 {
     if (!IsValid())
         return CompilerType();
-    return m_type_system->GetChildClangTypeAtIndex(m_type,
-                                                   exe_ctx,
-                                                   idx,
-                                                   transparent_pointers,
-                                                   omit_empty_base_classes,
-                                                   ignore_array_bounds,
-                                                   child_name,
-                                                   child_byte_size,
-                                                   child_byte_offset,
-                                                   child_bitfield_bit_size,
-                                                   child_bitfield_bit_offset,
-                                                   child_is_base_class,
-                                                   child_is_deref_of_parent,
-                                                   valobj);
+    return m_type_system->GetChildCompilerTypeAtIndex(m_type,
+                                                      exe_ctx,
+                                                      idx,
+                                                      transparent_pointers,
+                                                      omit_empty_base_classes,
+                                                      ignore_array_bounds,
+                                                      child_name,
+                                                      child_byte_size,
+                                                      child_byte_offset,
+                                                      child_bitfield_bit_size,
+                                                      child_bitfield_bit_offset,
+                                                      child_is_base_class,
+                                                      child_is_deref_of_parent,
+                                                      valobj);
 }
 
 // Look for a child member (doesn't include base classes, but it does include
@@ -851,6 +851,21 @@ CompilerType::GetTemplateArgument (size_t idx,
     return CompilerType();
 }
 
+CompilerType
+CompilerType::GetTypeForFormatters () const
+{
+    if (IsValid())
+        return m_type_system->GetTypeForFormatters(m_type);
+    return CompilerType();
+}
+
+LazyBool
+CompilerType::ShouldPrintAsOneLiner () const
+{
+    if (IsValid())
+        return m_type_system->ShouldPrintAsOneLiner(m_type);
+    return eLazyBoolCalculate;
+}
 
 // Get the index of the child of "clang_type" whose name matches. This function
 // doesn't descend into the children, but only looks one level deep and name
@@ -1255,10 +1270,10 @@ CompilerType::WriteToMemory (lldb_private::ExecutionContext *exe_ctx,
 }
 
 //clang::CXXRecordDecl *
-//CompilerType::GetAsCXXRecordDecl (lldb::clang_type_t opaque_clang_qual_type)
+//CompilerType::GetAsCXXRecordDecl (lldb::opaque_compiler_type_t opaque_compiler_qual_type)
 //{
-//    if (opaque_clang_qual_type)
-//        return clang::QualType::getFromOpaquePtr(opaque_clang_qual_type)->getAsCXXRecordDecl();
+//    if (opaque_compiler_qual_type)
+//        return clang::QualType::getFromOpaquePtr(opaque_compiler_qual_type)->getAsCXXRecordDecl();
 //    return NULL;
 //}
 

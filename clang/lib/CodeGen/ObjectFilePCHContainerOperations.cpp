@@ -67,6 +67,13 @@ class PCHContainerGenerator : public ASTConsumer {
       return !Ty->isDependentType() && !Ty->isUndeducedType();
     }
 
+    bool VisitImportDecl(ImportDecl *D) {
+      auto *Import = cast<ImportDecl>(D);
+      if (!Import->getImportedOwningModule())
+        DI.EmitImportDecl(*Import);
+      return true;
+    }
+
     bool VisitTypeDecl(TypeDecl *D) {
       QualType QualTy = Ctx.getTypeDeclType(D);
       if (!QualTy.isNull() && CanRepresent(QualTy.getTypePtr()))
@@ -135,7 +142,6 @@ public:
     CodeGenOpts.ThreadModel = "single";
     CodeGenOpts.DebugTypeExtRefs = true;
     CodeGenOpts.setDebugInfo(CodeGenOptions::FullDebugInfo);
-    CodeGenOpts.SplitDwarfFile = OutputFileName;
   }
 
   ~PCHContainerGenerator() override = default;
@@ -194,6 +200,7 @@ public:
 
     M->setTargetTriple(Ctx.getTargetInfo().getTriple().getTriple());
     M->setDataLayout(Ctx.getTargetInfo().getDataLayoutString());
+    Builder->getModuleDebugInfo()->setDwoId(Buffer->Signature);
 
     // Finalize the Builder.
     if (Builder)

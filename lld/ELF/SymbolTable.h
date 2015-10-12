@@ -61,6 +61,10 @@ public:
     return EntrySym->getReplacement();
   }
 
+  template <class ELFT>
+  void addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
+                       typename llvm::object::ELFFile<ELFT>::uintX_t Value);
+
 private:
   Symbol *insert(SymbolBody *New);
   template <class ELFT> void addELFFile(ELFFileBase *File);
@@ -68,8 +72,10 @@ private:
   void addLazy(Lazy *New);
   void addMemberFile(Lazy *Body);
 
-  template <class ELFT> void init();
+  template <class ELFT> void init(uint16_t EMachine);
   template <class ELFT> void resolve(SymbolBody *Body);
+  template <class ELFT>
+  void dupError(const SymbolBody &Old, const SymbolBody &New);
 
   std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
 

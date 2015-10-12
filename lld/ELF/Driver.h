@@ -16,11 +16,6 @@
 namespace lld {
 namespace elf2 {
 
-class LinkerDriver;
-extern LinkerDriver *Driver;
-
-class InputFile;
-
 // Entry point of the ELF linker.
 void link(ArrayRef<const char *> Args);
 
@@ -28,6 +23,9 @@ class ArgParser {
 public:
   // Parses command line options.
   llvm::opt::InputArgList parse(ArrayRef<const char *> Args);
+
+private:
+  llvm::BumpPtrAllocator Alloc;
 };
 
 class LinkerDriver {

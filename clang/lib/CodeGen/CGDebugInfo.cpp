@@ -1676,9 +1676,13 @@ llvm::DIType *CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
 llvm::DIModule *
 CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod,
                                   bool CreateSkeletonCU) {
-  auto &ModRef = ModuleRefCache[Mod.FullModuleName];
-  if (ModRef)
-    return cast<llvm::DIModule>(ModRef);
+  // Use the Module pointer as the key into the cache. This is a
+  // nullptr if the "Module" is a PCH, which is safe because we don't
+  // support chained PCH debug info, so there can only be a single PCH.
+  const Module *M = Mod.getModuleOrNull();
+  auto ModRef = ModuleCache.find(M);
+  if (ModRef != ModuleCache.end())
+    return cast<llvm::DIModule>(ModRef->second);
 
   // Macro definitions that were defined with "-D" on the command line.
   SmallString<128> ConfigMacros;
@@ -1703,19 +1707,25 @@ CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod,
     }
   }
 
-  if (CreateSkeletonCU) {
+  bool IsRootModule = M ? !M->Parent : true;
+  if (CreateSkeletonCU && IsRootModule) {
     llvm::DIBuilder DIB(CGM.getModule());
-    DIB.createCompileUnit(TheCU->getSourceLanguage(), Mod.FullModuleName,
-                          Mod.Path, TheCU->getProducer(), true, StringRef(), 0,
-                          Mod.ASTFile, llvm::DIBuilder::FullDebug,
-                          Mod.Signature);
+    DIB.createCompileUnit(TheCU->getSourceLanguage(), Mod.getModuleName(),
+                          Mod.getPath(), TheCU->getProducer(), true,
+                          StringRef(), 0, Mod.getASTFile(),
+                          llvm::DIBuilder::FullDebug, Mod.getSignature());
     DIB.finalize();
   }
-  llvm::DIModule *M =
-      DBuilder.createModule(TheCU, Mod.FullModuleName, ConfigMacros, Mod.Path,
-                            CGM.getHeaderSearchOpts().Sysroot);
-  ModRef.reset(M);
-  return M;
+  llvm::DIModule *Parent =
+      IsRootModule ? nullptr
+                   : getOrCreateModuleRef(
+                         ExternalASTSource::ASTSourceDescriptor(*M->Parent),
+                         CreateSkeletonCU);
+  llvm::DIModule *DIMod =
+      DBuilder.createModule(Parent, Mod.getModuleName(), ConfigMacros,
+                            Mod.getPath(), CGM.getHeaderSearchOpts().Sysroot);
+  ModuleCache[M].reset(DIMod);
+  return DIMod;
 }
 
 llvm::DIType *CGDebugInfo::CreateTypeDefinition(const ObjCInterfaceType *Ty,
@@ -2161,7 +2171,14 @@ ObjCInterfaceDecl *CGDebugInfo::getObjCInterfaceDecl(QualType Ty) {
 
 llvm::DIModule *CGDebugInfo::getParentModuleOrNull(const Decl *D) {
   ExternalASTSource::ASTSourceDescriptor Info;
-  if (ClangModuleMap) {
+  if (DebugTypeExtRefs && D->isFromASTFile()) {
+    // Record a reference to an imported clang module or precompiled header.
+    auto *Reader = CGM.getContext().getExternalSource();
+    auto Idx = D->getOwningModuleID();
+    auto Info = Reader->getSourceDescriptor(Idx);
+    if (Info)
+      return getOrCreateModuleRef(*Info, /*SkeletonCU=*/true);
+  } else if (ClangModuleMap) {
     // We are building a clang module or a precompiled header.
     //
     // TODO: When D is a CXXRecordDecl or a C++ Enum, the ODR applies
@@ -2179,14 +2196,6 @@ llvm::DIModule *CGDebugInfo::getParentModuleOrNull(const Decl *D) {
     }
   }
 
-  if (DebugTypeExtRefs && D->isFromASTFile()) {
-    // Record a reference to an imported clang module or precompiled header.
-    auto *Reader = CGM.getContext().getExternalSource();
-    auto Idx = D->getOwningModuleID();
-    auto Info = Reader->getSourceDescriptor(Idx);
-    if (Info)
-      return getOrCreateModuleRef(*Info, /*SkeletonCU=*/true);
-  }
   return nullptr;
 }
 
@@ -3453,6 +3462,12 @@ CGDebugInfo::getOrCreateNameSpace(const NamespaceDecl *NSDecl) {
   NameSpaceCache[NSDecl].reset(NS);
   return NS;
 }
+
+void CGDebugInfo::setDwoId(uint64_t Signature) {
+  assert(TheCU && "no main compile unit");
+  TheCU->setDWOId(Signature);
+}
+
 
 void CGDebugInfo::finalize() {
   // Creating types might create further types - invalidating the current

@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "InputFiles.h"
-#include "Chunks.h"
+#include "InputSection.h"
 #include "Error.h"
 #include "Symbols.h"
 #include "llvm/ADT/STLExtras.h"
@@ -27,60 +27,68 @@ template <class ELFT> static uint16_t getEMachine(const ELFFileBase &B) {
   return cast<ObjectFile<ELFT>>(B).getEMachine();
 }
 
-static uint16_t getEMachine(const ELFFileBase &B) {
-  ELFKind K = B.getELFKind();
-  switch (K) {
+uint16_t ELFFileBase::getEMachine() const {
+  switch (EKind) {
   case ELF32BEKind:
-    return getEMachine<ELF32BE>(B);
+    return ::getEMachine<ELF32BE>(*this);
   case ELF32LEKind:
-    return getEMachine<ELF32LE>(B);
+    return ::getEMachine<ELF32LE>(*this);
   case ELF64BEKind:
-    return getEMachine<ELF64BE>(B);
+    return ::getEMachine<ELF64BE>(*this);
   case ELF64LEKind:
-    return getEMachine<ELF64LE>(B);
+    return ::getEMachine<ELF64LE>(*this);
   }
   llvm_unreachable("Invalid kind");
 }
 
 bool ELFFileBase::isCompatibleWith(const ELFFileBase &Other) const {
   return getELFKind() == Other.getELFKind() &&
-         getEMachine(*this) == getEMachine(Other);
+         getEMachine() == Other.getEMachine();
 }
 
-template <class ELFT> void ELFData<ELFT>::openELF(MemoryBufferRef MB) {
-  // Parse a memory buffer as a ELF file.
+namespace {
+class ECRAII {
   std::error_code EC;
-  ELFObj = llvm::make_unique<ELFFile<ELFT>>(MB.getBuffer(), EC);
-  error(EC);
+
+public:
+  std::error_code &getEC() { return EC; }
+  ~ECRAII() { error(EC); }
+};
 }
+
+template <class ELFT>
+ELFData<ELFT>::ELFData(MemoryBufferRef MB)
+    : ELFObj(MB.getBuffer(), ECRAII().getEC()) {}
 
 template <class ELFT>
 typename ELFData<ELFT>::Elf_Sym_Range
 ELFData<ELFT>::getSymbolsHelper(bool Local) {
   if (!Symtab)
     return Elf_Sym_Range(nullptr, nullptr);
-  Elf_Sym_Range Syms = ELFObj->symbols(Symtab);
+  Elf_Sym_Range Syms = ELFObj.symbols(Symtab);
   uint32_t NumSymbols = std::distance(Syms.begin(), Syms.end());
   uint32_t FirstNonLocal = Symtab->sh_info;
   if (FirstNonLocal > NumSymbols)
     error("Invalid sh_info in symbol table");
   if (!Local)
-    return llvm::make_range(Syms.begin() + FirstNonLocal, Syms.end());
-  else
-    // Skip over dummy symbol.
-    return llvm::make_range(Syms.begin() + 1, Syms.begin() + FirstNonLocal);
+    return make_range(Syms.begin() + FirstNonLocal, Syms.end());
+  // +1 to skip over dummy symbol.
+  return make_range(Syms.begin() + 1, Syms.begin() + FirstNonLocal);
 }
 
 template <class ELFT>
 typename ELFData<ELFT>::Elf_Sym_Range ELFData<ELFT>::getNonLocalSymbols() {
   if (!Symtab)
     return Elf_Sym_Range(nullptr, nullptr);
-  ErrorOr<StringRef> StringTableOrErr =
-      ELFObj->getStringTableForSymtab(*Symtab);
+  ErrorOr<StringRef> StringTableOrErr = ELFObj.getStringTableForSymtab(*Symtab);
   error(StringTableOrErr.getError());
   StringTable = *StringTableOrErr;
   return getSymbolsHelper(false);
 }
+
+template <class ELFT>
+ObjectFile<ELFT>::ObjectFile(MemoryBufferRef M)
+    : ObjectFileBase(getStaticELFKind<ELFT>(), M), ELFData<ELFT>(M) {}
 
 template <class ELFT>
 typename ObjectFile<ELFT>::Elf_Sym_Range ObjectFile<ELFT>::getLocalSymbols() {
@@ -88,25 +96,23 @@ typename ObjectFile<ELFT>::Elf_Sym_Range ObjectFile<ELFT>::getLocalSymbols() {
 }
 
 template <class ELFT> void elf2::ObjectFile<ELFT>::parse() {
-  this->openELF(MB);
-
   // Read section and symbol tables.
-  initializeChunks();
+  initializeSections();
   initializeSymbols();
 }
 
-template <class ELFT> void elf2::ObjectFile<ELFT>::initializeChunks() {
-  uint64_t Size = this->ELFObj->getNumSections();
-  Chunks.resize(Size);
+template <class ELFT> void elf2::ObjectFile<ELFT>::initializeSections() {
+  uint64_t Size = this->ELFObj.getNumSections();
+  Sections.resize(Size);
   unsigned I = 0;
-  for (const Elf_Shdr &Sec : this->ELFObj->sections()) {
+  for (const Elf_Shdr &Sec : this->ELFObj.sections()) {
     switch (Sec.sh_type) {
     case SHT_SYMTAB:
       this->Symtab = &Sec;
       break;
     case SHT_SYMTAB_SHNDX: {
       ErrorOr<ArrayRef<Elf_Word>> ErrorOrTable =
-          this->ELFObj->getSHNDXTable(Sec);
+          this->ELFObj.getSHNDXTable(Sec);
       error(ErrorOrTable);
       SymtabSHNDX = *ErrorOrTable;
       break;
@@ -119,14 +125,14 @@ template <class ELFT> void elf2::ObjectFile<ELFT>::initializeChunks() {
       uint32_t RelocatedSectionIndex = Sec.sh_info;
       if (RelocatedSectionIndex >= Size)
         error("Invalid relocated section index");
-      SectionChunk<ELFT> *RelocatedSection = Chunks[RelocatedSectionIndex];
+      InputSection<ELFT> *RelocatedSection = Sections[RelocatedSectionIndex];
       if (!RelocatedSection)
         error("Unsupported relocation reference");
       RelocatedSection->RelocSections.push_back(&Sec);
       break;
     }
     default:
-      Chunks[I] = new (Alloc) SectionChunk<ELFT>(this, &Sec);
+      Sections[I] = new (Alloc) InputSection<ELFT>(this, &Sec);
       break;
     }
     ++I;
@@ -157,13 +163,12 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   case SHN_COMMON:
     return new (Alloc) DefinedCommon<ELFT>(Name, *Sym);
   case SHN_XINDEX:
-    SecIndex = this->ELFObj->getExtendedSymbolTableIndex(Sym, this->Symtab,
-                                                         SymtabSHNDX);
+    SecIndex = this->ELFObj.getExtendedSymbolTableIndex(Sym, this->Symtab,
+                                                        SymtabSHNDX);
     break;
   }
 
-  if (SecIndex >= Chunks.size() ||
-      (SecIndex != 0 && !Chunks[SecIndex]))
+  if (SecIndex >= Sections.size() || (SecIndex != 0 && !Sections[SecIndex]))
     error("Invalid section index");
 
   switch (Sym->getBinding()) {
@@ -171,12 +176,12 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
     error("unexpected binding");
   case STB_GLOBAL:
   case STB_WEAK:
-    return new (Alloc) DefinedRegular<ELFT>(Name, *Sym, *Chunks[SecIndex]);
+    return new (Alloc) DefinedRegular<ELFT>(Name, *Sym, *Sections[SecIndex]);
   }
 }
 
 void ArchiveFile::parse() {
-  auto ArchiveOrErr = Archive::create(MB);
+  ErrorOr<std::unique_ptr<Archive>> ArchiveOrErr = Archive::create(MB);
   error(ArchiveOrErr, "Failed to parse archive");
   File = std::move(*ArchiveOrErr);
 
@@ -205,10 +210,12 @@ MemoryBufferRef ArchiveFile::getMember(const Archive::Symbol *Sym) {
   return *Ret;
 }
 
-template <class ELFT> void SharedFile<ELFT>::parse() {
-  this->openELF(MB);
+template <class ELFT>
+SharedFile<ELFT>::SharedFile(MemoryBufferRef M)
+    : SharedFileBase(getStaticELFKind<ELFT>(), M), ELFData<ELFT>(M) {}
 
-  for (const Elf_Shdr &Sec : this->ELFObj->sections()) {
+template <class ELFT> void SharedFile<ELFT>::parse() {
+  for (const Elf_Shdr &Sec : this->ELFObj.sections()) {
     if (Sec.sh_type == SHT_DYNSYM) {
       this->Symtab = &Sec;
       break;

@@ -1,8 +1,9 @@
+# REQUIRES: x86
+
 # RUN: llvm-mc -filetype=obj -triple=x86_64-unknown-linux %s -o %t
 # RUN: lld -flavor gnu2 %t -o %t2
 # RUN: llvm-readobj -file-headers -sections -program-headers -symbols %t2 \
 # RUN:   | FileCheck %s
-# REQUIRES: x86
 
 # exits with return code 42 on linux
 .globl _start;
@@ -53,6 +54,22 @@ _start:
 # CHECK-NEXT:   }
 # CHECK-NEXT:   Section {
 # CHECK-NEXT:     Index: 1
+# CHECK-NEXT:     Name: .bss
+# CHECK-NEXT:     Type: SHT_NOBITS (0x8)
+# CHECK-NEXT:     Flags [ (0x3)
+# CHECK-NEXT:       SHF_ALLOC (0x2)
+# CHECK-NEXT:       SHF_WRITE (0x1)
+# CHECK-NEXT:     ]
+# CHECK-NEXT:     Address: 0x11000
+# CHECK-NEXT:     Offset: 0x1000
+# CHECK-NEXT:     Size: 0
+# CHECK-NEXT:     Link: 0
+# CHECK-NEXT:     Info: 0
+# CHECK-NEXT:     AddressAlignment: 4
+# CHECK-NEXT:     EntrySize: 0
+# CHECK-NEXT:   }
+# CHECK-NEXT:   Section {
+# CHECK-NEXT:     Index: 2
 # CHECK-NEXT:     Name: .text
 # CHECK-NEXT:     Type: SHT_PROGBITS (0x1)
 # CHECK-NEXT:     Flags [ (0x6)
@@ -68,25 +85,9 @@ _start:
 # CHECK-NEXT:     EntrySize: 0
 # CHECK-NEXT:   }
 # CHECK-NEXT:   Section {
-# CHECK-NEXT:     Index: 2
+# CHECK-NEXT:     Index: 3
 # CHECK-NEXT:     Name: .data
 # CHECK-NEXT:     Type: SHT_PROGBITS (0x1)
-# CHECK-NEXT:     Flags [ (0x3)
-# CHECK-NEXT:       SHF_ALLOC (0x2)
-# CHECK-NEXT:       SHF_WRITE (0x1)
-# CHECK-NEXT:     ]
-# CHECK-NEXT:     Address: 0x11010
-# CHECK-NEXT:     Offset: 0x1010
-# CHECK-NEXT:     Size: 0
-# CHECK-NEXT:     Link: 0
-# CHECK-NEXT:     Info: 0
-# CHECK-NEXT:     AddressAlignment: 4
-# CHECK-NEXT:     EntrySize: 0
-# CHECK-NEXT:   }
-# CHECK-NEXT:   Section {
-# CHECK-NEXT:     Index: 3
-# CHECK-NEXT:     Name: .bss
-# CHECK-NEXT:     Type: SHT_NOBITS (0x8)
 # CHECK-NEXT:     Flags [ (0x3)
 # CHECK-NEXT:       SHF_ALLOC (0x2)
 # CHECK-NEXT:       SHF_WRITE (0x1)
@@ -145,7 +146,7 @@ _start:
 # CHECK-NEXT:     Binding: Global (0x1)
 # CHECK-NEXT:     Type: None (0x0)
 # CHECK-NEXT:     Other: 0
-# CHECK-NEXT:     Section: .text (0x1)
+# CHECK-NEXT:     Section: .text
 # CHECK-NEXT:   }
 # CHECK-NEXT: ]
 # CHECK-NEXT: ProgramHeaders [
@@ -176,8 +177,10 @@ _start:
 # CHECK-NEXT:   }
 # CHECK-NEXT: ]
 
-# RUN: not lld -flavor gnu2 %t 2>&1 | FileCheck --check-prefix=NO_O %s
-# NO_O: -o must be specified.
+# RUN: echo " -o %t2" > %t.responsefile
+# RUN: lld -flavor gnu2 %t @%t.responsefile
+# RUN: llvm-readobj -file-headers -sections -program-headers -symbols %t2 \
+# RUN:   | FileCheck %s
 
 # RUN: not lld -flavor gnu2 %t.foo -o %t2 2>&1 | \
 # RUN:  FileCheck --check-prefix=MISSING %s
@@ -199,4 +202,4 @@ _start:
 
 # RUN: llvm-mc -filetype=obj -triple=x86_64-unknown-linux %s -o %t
 # RUN: not lld -flavor gnu2 %t %t -o %t2 2>&1 | FileCheck --check-prefix=DUP %s
-# DUP: duplicate symbol: _start
+# DUP: duplicate symbol: _start in {{.*}} and {{.*}}

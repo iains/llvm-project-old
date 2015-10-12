@@ -24,7 +24,7 @@
 #include "lldb/Core/Value.h"
 #include "lldb/Core/VMRange.h"
 
-#include "lldb/Expression/ClangExpressionDeclMap.h"
+#include "Plugins/ExpressionParser/Clang/ClangExpressionDeclMap.h"
 #include "Plugins/ExpressionParser/Clang/ClangExpressionVariable.h"
 
 #include "lldb/Host/Endian.h"
@@ -3013,8 +3013,9 @@ DWARFExpression::AddressRangeForLocationListEntry(const DWARFCompileUnit* dwarf_
                     // Not supported entry type
                     return false;
             }
-            return true;
     }
+    assert (false && "Not supported location list type");
+    return false;
 }
 
 static bool

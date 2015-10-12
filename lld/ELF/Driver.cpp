@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 
 using namespace llvm;
 
@@ -59,19 +60,50 @@ static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
   return createELFFile<ObjectFile>(MB);
 }
 
+// Makes a path by concatenating Dir and File.
+// If Dir starts with '=' the result will be preceded by Sysroot,
+// which can be set with --sysroot command line switch.
+static std::string buildSysrootedPath(StringRef Dir, StringRef File) {
+  SmallString<128> Path;
+  if (Dir.startswith("="))
+    sys::path::append(Path, Config->Sysroot, Dir.substr(1), File);
+  else
+    sys::path::append(Path, Dir, File);
+  return Path.str().str();
+}
+
+// Searches a given library from input search paths, which are filled
+// from -L command line switches. Returns a path to an existent library file.
+static std::string searchLibrary(StringRef Path) {
+  std::vector<std::string> Names;
+  if (Path[0] == ':') {
+    Names.push_back(Path.drop_front().str());
+  } else {
+    Names.push_back((Twine("lib") + Path + ".so").str());
+    Names.push_back((Twine("lib") + Path + ".a").str());
+  }
+  for (StringRef Dir : Config->InputSearchPaths) {
+    for (const std::string &Name : Names) {
+      std::string FullPath = buildSysrootedPath(Dir, Name);
+      if (sys::fs::exists(FullPath))
+        return FullPath;
+    }
+  }
+  error(Twine("Unable to find library -l") + Path);
+}
+
 void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Parse command line options.
   opt::InputArgList Args = Parser.parse(ArgsArr);
 
-  // Handle -o
   if (auto *Arg = Args.getLastArg(OPT_output))
     Config->OutputFile = Arg->getValue();
-  if (Config->OutputFile.empty())
-    error("-o must be specified.");
 
-  // Handle -dynamic-linker
   if (auto *Arg = Args.getLastArg(OPT_dynamic_linker))
     Config->DynamicLinker = Arg->getValue();
+
+  if (auto *Arg = Args.getLastArg(OPT_sysroot))
+    Config->Sysroot = Arg->getValue();
 
   std::vector<StringRef> RPaths;
   for (auto *Arg : Args.filtered(OPT_rpath))
@@ -79,20 +111,29 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (!RPaths.empty())
     Config->RPath = llvm::join(RPaths.begin(), RPaths.end(), ":");
 
-  if (Args.hasArg(OPT_shared))
-    Config->Shared = true;
+  for (auto *Arg : Args.filtered(OPT_L))
+    Config->InputSearchPaths.push_back(Arg->getValue());
 
-  if (Args.hasArg(OPT_discard_all))
-    Config->DiscardAll = true;
+  if (auto *Arg = Args.getLastArg(OPT_entry))
+    Config->Entry = Arg->getValue();
 
-  if (Args.hasArg(OPT_discard_locals))
-    Config->DiscardLocals = true;
+  Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
+  Config->DiscardAll = Args.hasArg(OPT_discard_all);
+  Config->DiscardLocals = Args.hasArg(OPT_discard_locals);
+  Config->DiscardNone = Args.hasArg(OPT_discard_none);
+  Config->ExportDynamic = Args.hasArg(OPT_export_dynamic);
+  Config->NoInhibitExec = Args.hasArg(OPT_noinhibit_exec);
+  Config->Shared = Args.hasArg(OPT_shared);
 
   // Create a list of input files.
   std::vector<MemoryBufferRef> Inputs;
 
-  for (auto *Arg : Args.filtered(OPT_INPUT)) {
+  for (auto *Arg : Args.filtered(OPT_l, OPT_INPUT)) {
     StringRef Path = Arg->getValue();
+    if (Arg->getOption().getID() == OPT_l) {
+      Inputs.push_back(openFile(searchLibrary(Path)));
+      continue;
+    }
     Inputs.push_back(openFile(Path));
   }
 

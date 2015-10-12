@@ -25,7 +25,7 @@
 #include "lldb/Core/Timer.h"
 #include "lldb/Core/Value.h"
 
-#include "lldb/Expression/ClangModulesDeclVendor.h"
+#include "Plugins/ExpressionParser/Clang/ClangModulesDeclVendor.h"
 
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Host.h"
@@ -34,12 +34,14 @@
 #include "lldb/Interpreter/OptionValueProperties.h"
 
 #include "lldb/Symbol/Block.h"
+#include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Symbol/CompilerDecl.h"
 #include "lldb/Symbol/CompilerDeclContext.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolVendor.h"
+#include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Symbol/VariableList.h"
 
 #include "Plugins/Language/CPlusPlus/CPlusPlusLanguage.h"
@@ -380,14 +382,14 @@ SymbolFileDWARF::GetTypes (SymbolContextScope *sc_scope,
         }
     }
 
-    std::set<CompilerType> clang_type_set;
+    std::set<CompilerType> compiler_type_set;
     size_t num_types_added = 0;
     for (Type *type : type_set)
     {
-        CompilerType clang_type = type->GetForwardCompilerType ();
-        if (clang_type_set.find(clang_type) == clang_type_set.end())
+        CompilerType compiler_type = type->GetForwardCompilerType ();
+        if (compiler_type_set.find(compiler_type) == compiler_type_set.end())
         {
-            clang_type_set.insert(clang_type);
+            compiler_type_set.insert(compiler_type);
             type_list.Insert (type->shared_from_this());
             ++num_types_added;
         }
@@ -1108,6 +1110,7 @@ struct ParseDWARFLineTableCallbackInfo
 {
     LineTable* line_table;
     std::unique_ptr<LineSequence> sequence_ap;
+    lldb::addr_t addr_mask;
 };
 
 //----------------------------------------------------------------------
@@ -1137,7 +1140,7 @@ ParseDWARFLineTableCallback(dw_offset_t offset, const DWARFDebugLine::State& sta
             assert(info->sequence_ap.get());
         }
         line_table->AppendLineEntryToSequence (info->sequence_ap.get(),
-                                               state.address,
+                                               state.address & info->addr_mask,
                                                state.line,
                                                state.column,
                                                state.file,
@@ -1177,6 +1180,28 @@ SymbolFileDWARF::ParseCompileUnitLineTable (const SymbolContext &sc)
                 {
                     ParseDWARFLineTableCallbackInfo info;
                     info.line_table = line_table_ap.get();
+
+                    /*
+                     * MIPS:
+                     * The SymbolContext may not have a valid target, thus we may not be able
+                     * to call Address::GetOpcodeLoadAddress() which would clear the bit #0
+                     * for MIPS. Use ArchSpec to clear the bit #0.
+                    */
+                    ArchSpec arch;
+                    GetObjectFile()->GetArchitecture(arch);
+                    switch (arch.GetMachine())
+                    {
+                    case llvm::Triple::mips:
+                    case llvm::Triple::mipsel:
+                    case llvm::Triple::mips64:
+                    case llvm::Triple::mips64el:
+                        info.addr_mask = ~((lldb::addr_t)1);
+                        break;
+                    default:
+                        info.addr_mask = ~((lldb::addr_t)0);
+                        break;
+                    }
+
                     lldb::offset_t offset = cu_line_offset;
                     DWARFDebugLine::ParseStatementTable(get_debug_line_data(), &offset, ParseDWARFLineTableCallback, &info);
                     if (m_debug_map_symfile)
@@ -1505,21 +1530,21 @@ SymbolFileDWARF::ResolveTypeUID (const DWARFDIE &die, bool assert_not_being_pars
 
 // This function is used when SymbolFileDWARFDebugMap owns a bunch of
 // SymbolFileDWARF objects to detect if this DWARF file is the one that
-// can resolve a clang_type.
+// can resolve a compiler_type.
 bool
-SymbolFileDWARF::HasForwardDeclForClangType (const CompilerType &clang_type)
+SymbolFileDWARF::HasForwardDeclForClangType (const CompilerType &compiler_type)
 {
-    CompilerType clang_type_no_qualifiers = ClangASTContext::RemoveFastQualifiers(clang_type);
-    return GetForwardDeclClangTypeToDie().count (clang_type_no_qualifiers.GetOpaqueQualType());
+    CompilerType compiler_type_no_qualifiers = ClangASTContext::RemoveFastQualifiers(compiler_type);
+    return GetForwardDeclClangTypeToDie().count (compiler_type_no_qualifiers.GetOpaqueQualType());
 }
 
 
 bool
-SymbolFileDWARF::CompleteType (CompilerType &clang_type)
+SymbolFileDWARF::CompleteType (CompilerType &compiler_type)
 {
     // We have a struct/union/class/enum that needs to be fully resolved.
-    CompilerType clang_type_no_qualifiers = ClangASTContext::RemoveFastQualifiers(clang_type);
-    auto die_it = GetForwardDeclClangTypeToDie().find (clang_type_no_qualifiers.GetOpaqueQualType());
+    CompilerType compiler_type_no_qualifiers = ClangASTContext::RemoveFastQualifiers(compiler_type);
+    auto die_it = GetForwardDeclClangTypeToDie().find (compiler_type_no_qualifiers.GetOpaqueQualType());
     if (die_it == GetForwardDeclClangTypeToDie().end())
     {
         // We have already resolved this type...
@@ -1544,10 +1569,10 @@ SymbolFileDWARF::CompleteType (CompilerType &clang_type)
                                                                   dwarf_die.GetID(),
                                                                   dwarf_die.GetTagAsCString(),
                                                                   type->GetName().AsCString());
-    assert (clang_type);
+    assert (compiler_type);
     DWARFASTParser *dwarf_ast = dwarf_die.GetDWARFParser();
     if (dwarf_ast)
-        return dwarf_ast->CompleteTypeFromDWARF (dwarf_die, type, clang_type);
+        return dwarf_ast->CompleteTypeFromDWARF (dwarf_die, type, compiler_type);
     return false;
 }
 

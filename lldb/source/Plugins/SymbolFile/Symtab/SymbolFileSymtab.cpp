@@ -12,7 +12,6 @@
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/RegularExpression.h"
 #include "lldb/Core/Timer.h"
-#include "lldb/Symbol/ClangExternalASTSourceCommon.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/ObjectFile.h"
@@ -292,7 +291,7 @@ SymbolFileSymtab::ResolveTypeUID(lldb::user_id_t type_uid)
 }
 
 bool
-SymbolFileSymtab::CompleteType (lldb_private::CompilerType& clang_opaque_type)
+SymbolFileSymtab::CompleteType (lldb_private::CompilerType& compiler_type)
 {
     return false;
 }

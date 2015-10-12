@@ -1072,6 +1072,25 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
       return true;
   }
 
+  if (getLangOpts().CUDA && getLangOpts().CUDATargetOverloads) {
+    CUDAFunctionTarget NewTarget = IdentifyCUDATarget(New),
+                       OldTarget = IdentifyCUDATarget(Old);
+    if (NewTarget == CFT_InvalidTarget || NewTarget == CFT_Global)
+      return false;
+
+    assert((OldTarget != CFT_InvalidTarget) && "Unexpected invalid target.");
+
+    // Don't allow mixing of HD with other kinds. This guarantees that
+    // we have only one viable function with this signature on any
+    // side of CUDA compilation .
+    if ((NewTarget == CFT_HostDevice) || (OldTarget == CFT_HostDevice))
+      return false;
+
+    // Allow overloading of functions with same signature, but
+    // different CUDA target attributes.
+    return NewTarget != OldTarget;
+  }
+
   // The signatures match; this is not an overload.
   return false;
 }
@@ -8508,6 +8527,13 @@ bool clang::isBetterOverloadCandidate(Sema &S, const OverloadCandidate &Cand1,
     return true;
   }
 
+  if (S.getLangOpts().CUDA && S.getLangOpts().CUDATargetOverloads &&
+      Cand1.Function && Cand2.Function) {
+    FunctionDecl *Caller = dyn_cast<FunctionDecl>(S.CurContext);
+    return S.IdentifyCUDAPreference(Caller, Cand1.Function) >
+           S.IdentifyCUDAPreference(Caller, Cand2.Function);
+  }
+
   return false;
 }
 
@@ -9925,6 +9951,10 @@ public:
           EliminateAllExceptMostSpecializedTemplate();
       }
     }
+
+    if (S.getLangOpts().CUDA && S.getLangOpts().CUDATargetOverloads &&
+        Matches.size() > 1)
+      EliminateSuboptimalCudaMatches();
   }
   
 private:
@@ -10100,9 +10130,13 @@ private:
         ++I;
       else {
         Matches[I] = Matches[--N];
-        Matches.set_size(N);
+        Matches.resize(N);
       }
     }
+  }
+
+  void EliminateSuboptimalCudaMatches() {
+    S.EraseUnwantedCUDAMatches(dyn_cast<FunctionDecl>(S.CurContext), Matches);
   }
 
 public:
@@ -10777,6 +10811,8 @@ bool Sema::buildOverloadedCallSet(Scope *S, Expr *Fn,
       CallExpr *CE = new (Context) CallExpr(
           Context, Fn, Args, Context.DependentTy, VK_RValue, RParenLoc);
       CE->setTypeDependent(true);
+      CE->setValueDependent(true);
+      CE->setInstantiationDependent(true);
       *Result = CE;
       return true;
     }
@@ -11628,16 +11664,6 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
     FoundDecl = MemExpr->getFoundDecl();
     Qualifier = MemExpr->getQualifier();
     UnbridgedCasts.restore();
-
-    if (const EnableIfAttr *Attr = CheckEnableIf(Method, Args, true)) {
-      Diag(MemExprE->getLocStart(),
-           diag::err_ovl_no_viable_member_function_in_call)
-          << Method << Method->getSourceRange();
-      Diag(Method->getLocation(),
-           diag::note_ovl_candidate_disabled_by_enable_if_attr)
-          << Attr->getCond()->getSourceRange() << Attr->getMessage();
-      return ExprError();
-    }
   } else {
     UnresolvedMemberExpr *UnresExpr = cast<UnresolvedMemberExpr>(NakedMemExpr);
     Qualifier = UnresExpr->getQualifier();
@@ -11800,6 +11826,21 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
 
   if (CheckFunctionCall(Method, TheCall, Proto))
     return ExprError();
+
+  // In the case the method to call was not selected by the overloading
+  // resolution process, we still need to handle the enable_if attribute. Do
+  // that here, so it will not hide previous -- and more relevant -- errors
+  if (isa<MemberExpr>(NakedMemExpr)) {
+    if (const EnableIfAttr *Attr = CheckEnableIf(Method, Args, true)) {
+      Diag(MemExprE->getLocStart(),
+           diag::err_ovl_no_viable_member_function_in_call)
+          << Method << Method->getSourceRange();
+      Diag(Method->getLocation(),
+           diag::note_ovl_candidate_disabled_by_enable_if_attr)
+          << Attr->getCond()->getSourceRange() << Attr->getMessage();
+      return ExprError();
+    }
+  }
 
   if ((isa<CXXConstructorDecl>(CurContext) || 
        isa<CXXDestructorDecl>(CurContext)) && 
