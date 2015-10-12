@@ -70,7 +70,7 @@ public:
   void setSectionIndex(unsigned I) { SectionIndex = I; }
 
   // Returns the size of the section in the output file.
-  uintX_t getSize() { return Header.sh_size; }
+  uintX_t getSize() const { return Header.sh_size; }
   void setSize(uintX_t Val) { Header.sh_size = Val; }
   uintX_t getFlags() { return Header.sh_flags; }
   uintX_t getFileOff() { return Header.sh_offset; }
@@ -313,12 +313,20 @@ template <class ELFT>
 class DynamicSection final : public OutputSectionBase<ELFT::Is64Bits> {
   typedef OutputSectionBase<ELFT::Is64Bits> Base;
   typedef typename Base::HeaderT HeaderT;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Rel Elf_Rel;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Rela Elf_Rela;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Dyn Elf_Dyn;
 
 public:
   DynamicSection(SymbolTable &SymTab, HashTableSection<ELFT> &HashSec,
                  RelocationSection<ELFT> &RelaDynSec);
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
+
+  OutputSection<ELFT> *PreInitArraySec = nullptr;
+  OutputSection<ELFT> *InitArraySec = nullptr;
+  OutputSection<ELFT> *FiniArraySec = nullptr;
 
 private:
   HashTableSection<ELFT> &HashSec;

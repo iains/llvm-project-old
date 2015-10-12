@@ -23,6 +23,9 @@
 #include "CF.h"
 #include "Cocoa.h"
 #include "CoreMedia.h"
+#include "NSDictionary.h"
+#include "NSSet.h"
+#include "NSString.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -655,4 +658,115 @@ ObjCLanguage::GetPossibleFormattersMatches (ValueObject& valobj, lldb::DynamicVa
     }
     
     return result;
+}
+
+std::unique_ptr<Language::TypeScavenger>
+ObjCLanguage::GetTypeScavenger ()
+{
+    class ObjCTypeScavenger : public Language::TypeScavenger
+    {
+    private:
+        class ObjCScavengerResult : public Language::TypeScavenger::Result
+        {
+        public:
+            ObjCScavengerResult (CompilerType type) :
+                Language::TypeScavenger::Result(),
+                m_compiler_type(type)
+            {
+            }
+            
+            bool
+            IsValid () override
+            {
+                return m_compiler_type.IsValid();
+            }
+            
+            bool
+            DumpToStream (Stream& stream,
+                          bool print_help_if_available) override
+            {
+                if (IsValid())
+                {
+                    m_compiler_type.DumpTypeDescription(&stream);
+                    stream.EOL();
+                    return true;
+                }
+                return false;
+            }
+
+            virtual ~ObjCScavengerResult() = default;
+        private:
+            CompilerType m_compiler_type;
+        };
+        
+    protected:
+        ObjCTypeScavenger() = default;
+        
+        virtual ~ObjCTypeScavenger() = default;
+        
+        bool
+        Find_Impl (ExecutionContextScope *exe_scope,
+                   const char *key,
+                   ResultSet &results) override
+        {
+            bool result = false;
+            
+            Target* target = exe_scope->CalculateTarget().get();
+            if (target)
+            {
+                if (auto clang_modules_decl_vendor = target->GetClangModulesDeclVendor())
+                {
+                    std::vector <clang::NamedDecl*> decls;
+                    ConstString key_cs(key);
+                    
+                    if (clang_modules_decl_vendor->FindDecls(key_cs, false, UINT32_MAX, decls) > 0 &&
+                        decls.size() > 0)
+                    {
+                        CompilerType module_type = ClangASTContext::GetTypeForDecl(decls.front());
+                        result = true;
+                        std::unique_ptr<Language::TypeScavenger::Result> result(new ObjCScavengerResult(module_type));
+                        results.insert(std::move(result));
+                    }
+                }
+            }
+            
+            if (!result)
+            {
+                Process* process = exe_scope->CalculateProcess().get();
+                if (process)
+                {
+                    const bool create_on_demand = false;
+                    auto objc_runtime = process->GetObjCLanguageRuntime(create_on_demand);
+                    if (objc_runtime)
+                    {
+                        auto decl_vendor = objc_runtime->GetDeclVendor();
+                        if (decl_vendor)
+                        {
+                            std::vector<clang::NamedDecl *> decls;
+                            ConstString name(key);
+                            decl_vendor->FindDecls(name, true, UINT32_MAX, decls);
+                            for (auto decl : decls)
+                            {
+                                if (decl)
+                                {
+                                    if (CompilerType candidate = ClangASTContext::GetTypeForDecl(decl))
+                                    {
+                                        result = true;
+                                        std::unique_ptr<Language::TypeScavenger::Result> result(new ObjCScavengerResult(candidate));
+                                        results.insert(std::move(result));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        friend class lldb_private::ObjCLanguage;
+    };
+    
+    return std::unique_ptr<TypeScavenger>(new ObjCTypeScavenger());
 }

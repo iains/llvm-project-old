@@ -23,41 +23,15 @@ using namespace llvm;
 using namespace lld;
 using namespace lld::elf2;
 
-namespace lld {
-namespace elf2 {
-Configuration *Config;
+Configuration *lld::elf2::Config;
+LinkerDriver *lld::elf2::Driver;
 
-void link(ArrayRef<const char *> Args) {
+void lld::elf2::link(ArrayRef<const char *> Args) {
   Configuration C;
+  LinkerDriver D;
   Config = &C;
-  LinkerDriver().link(Args.slice(1));
-}
-
-}
-}
-
-// Opens a file. Path has to be resolved already.
-// Newly created memory buffers are owned by this driver.
-MemoryBufferRef LinkerDriver::openFile(StringRef Path) {
-  ErrorOr<std::unique_ptr<MemoryBuffer>> MBOrErr = MemoryBuffer::getFile(Path);
-  error(MBOrErr, Twine("cannot open ") + Path);
-  std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
-  MemoryBufferRef MBRef = MB->getMemBufferRef();
-  OwningMBs.push_back(std::move(MB)); // take ownership
-  return MBRef;
-}
-
-static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
-  using namespace llvm::sys::fs;
-  file_magic Magic = identify_magic(MB.getBuffer());
-
-  if (Magic == file_magic::archive)
-    return make_unique<ArchiveFile>(MB);
-
-  if (Magic == file_magic::elf_shared_object)
-    return createELFFile<SharedFile>(MB);
-
-  return createELFFile<ObjectFile>(MB);
+  Driver = &D;
+  Driver->link(Args.slice(1));
 }
 
 // Makes a path by concatenating Dir and File.
@@ -79,7 +53,8 @@ static std::string searchLibrary(StringRef Path) {
   if (Path[0] == ':') {
     Names.push_back(Path.drop_front().str());
   } else {
-    Names.push_back((Twine("lib") + Path + ".so").str());
+    if (!Config->Static)
+      Names.push_back((Twine("lib") + Path + ".so").str());
     Names.push_back((Twine("lib") + Path + ".a").str());
   }
   for (StringRef Dir : Config->InputSearchPaths) {
@@ -90,6 +65,31 @@ static std::string searchLibrary(StringRef Path) {
     }
   }
   error(Twine("Unable to find library -l") + Path);
+}
+
+// Opens and parses a file. Path has to be resolved already.
+// Newly created memory buffers are owned by this driver.
+void LinkerDriver::addFile(StringRef Path) {
+  using namespace llvm::sys::fs;
+  auto MBOrErr = MemoryBuffer::getFile(Path);
+  error(MBOrErr, Twine("cannot open ") + Path);
+  std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
+  MemoryBufferRef MBRef = MB->getMemBufferRef();
+  OwningMBs.push_back(std::move(MB)); // take MB ownership
+
+  switch (identify_magic(MBRef.getBuffer())) {
+  case file_magic::unknown:
+    readLinkerScript(MBRef);
+    return;
+  case file_magic::archive:
+    Symtab.addFile(make_unique<ArchiveFile>(MBRef));
+    return;
+  case file_magic::elf_shared_object:
+    Symtab.addFile(createELFFile<SharedFile>(MBRef));
+    return;
+  default:
+    Symtab.addFile(createELFFile<ObjectFile>(MBRef));
+  }
 }
 
 void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
@@ -117,38 +117,45 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (auto *Arg = Args.getLastArg(OPT_entry))
     Config->Entry = Arg->getValue();
 
+  if (auto *Arg = Args.getLastArg(OPT_soname))
+    Config->SoName = Arg->getValue();
+
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
   Config->DiscardAll = Args.hasArg(OPT_discard_all);
   Config->DiscardLocals = Args.hasArg(OPT_discard_locals);
   Config->DiscardNone = Args.hasArg(OPT_discard_none);
   Config->ExportDynamic = Args.hasArg(OPT_export_dynamic);
   Config->NoInhibitExec = Args.hasArg(OPT_noinhibit_exec);
+  Config->NoUndefined = Args.hasArg(OPT_no_undefined);
   Config->Shared = Args.hasArg(OPT_shared);
 
-  // Create a list of input files.
-  std::vector<MemoryBufferRef> Inputs;
-
-  for (auto *Arg : Args.filtered(OPT_l, OPT_INPUT)) {
-    StringRef Path = Arg->getValue();
-    if (Arg->getOption().getID() == OPT_l) {
-      Inputs.push_back(openFile(searchLibrary(Path)));
-      continue;
+  for (auto *Arg : Args) {
+    switch (Arg->getOption().getID()) {
+    case OPT_l:
+      addFile(searchLibrary(Arg->getValue()));
+      break;
+    case OPT_INPUT:
+      addFile(Arg->getValue());
+      break;
+    case OPT_Bstatic:
+      Config->Static = true;
+      break;
+    case OPT_Bdynamic:
+      Config->Static = false;
+      break;
+    case OPT_whole_archive:
+      Config->WholeArchive = true;
+      break;
+    case OPT_no_whole_archive:
+      Config->WholeArchive = false;
+      break;
+    default:
+      break;
     }
-    Inputs.push_back(openFile(Path));
   }
 
-  if (Inputs.empty())
+  if (Symtab.getObjectFiles().empty())
     error("no input files.");
-
-  // Create a symbol table.
-  SymbolTable Symtab;
-
-  // Parse all input files and put all symbols to the symbol table.
-  // The symbol table will take care of name resolution.
-  for (MemoryBufferRef MB : Inputs) {
-    std::unique_ptr<InputFile> File = createFile(MB);
-    Symtab.addFile(std::move(File));
-  }
 
   // Write the result.
   const ELFFileBase *FirstObj = Symtab.getFirstELF();

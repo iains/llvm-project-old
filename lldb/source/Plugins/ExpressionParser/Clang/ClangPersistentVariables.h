@@ -13,6 +13,8 @@
 #include "ClangExpressionVariable.h"
 #include "ClangModulesDeclVendor.h"
 
+#include "lldb/Expression/ExpressionVariable.h"
+
 #include "llvm/ADT/DenseMap.h"
 
 namespace lldb_private
@@ -26,7 +28,7 @@ namespace lldb_private
 /// ClangPersistentVariable for more discussion.  Also provides an increasing,
 /// 0-based counter for naming result variables.
 //----------------------------------------------------------------------
-class ClangPersistentVariables : public ExpressionVariableList
+class ClangPersistentVariables : public PersistentExpressionState
 {
 public:
     
@@ -34,16 +36,26 @@ public:
     /// Constructor
     //----------------------------------------------------------------------
     ClangPersistentVariables ();
+    
+    ~ClangPersistentVariables () { }
+    
+    //------------------------------------------------------------------
+    // llvm casting support
+    //------------------------------------------------------------------
+    static bool classof(const PersistentExpressionState *pv)
+    {
+        return pv->getKind() == PersistentExpressionState::eKindClang;
+    }
 
     lldb::ExpressionVariableSP
-    CreatePersistentVariable (const lldb::ValueObjectSP &valobj_sp);
+    CreatePersistentVariable (const lldb::ValueObjectSP &valobj_sp) override;
 
-    ClangExpressionVariable *
+    lldb::ExpressionVariableSP
     CreatePersistentVariable (ExecutionContextScope *exe_scope,
                               const ConstString &name, 
-                              const TypeFromUser& user_type, 
+                              const CompilerType& compiler_type, 
                               lldb::ByteOrder byte_order, 
-                              uint32_t addr_byte_size);
+                              uint32_t addr_byte_size) override;
 
     //----------------------------------------------------------------------
     /// Return the next entry in the sequence of strings "$0", "$1", ... for
@@ -53,10 +65,13 @@ public:
     ///     A string that contains the next persistent variable name.
     //----------------------------------------------------------------------
     ConstString
-    GetNextPersistentVariableName ();
+    GetNextPersistentVariableName () override;
     
     void
-    RemovePersistentVariable (lldb::ExpressionVariableSP variable);
+    RemovePersistentVariable (lldb::ExpressionVariableSP variable) override;
+    
+    lldb::addr_t
+    LookupSymbol (const ConstString &name) override { return LLDB_INVALID_ADDRESS; }
 
     void
     RegisterPersistentType (const ConstString &name,

@@ -1,7 +1,7 @@
 # REQUIRES: x86
 
 # RUN: llvm-mc -filetype=obj -triple=x86_64-unknown-linux %s -o %t
-# RUN: lld -flavor gnu2 %t -o %t2
+# RUN: ld.lld2 %t -o %t2
 # RUN: llvm-readobj -file-headers -sections -program-headers -symbols %t2 \
 # RUN:   | FileCheck %s
 
@@ -54,22 +54,6 @@ _start:
 # CHECK-NEXT:   }
 # CHECK-NEXT:   Section {
 # CHECK-NEXT:     Index: 1
-# CHECK-NEXT:     Name: .bss
-# CHECK-NEXT:     Type: SHT_NOBITS (0x8)
-# CHECK-NEXT:     Flags [ (0x3)
-# CHECK-NEXT:       SHF_ALLOC (0x2)
-# CHECK-NEXT:       SHF_WRITE (0x1)
-# CHECK-NEXT:     ]
-# CHECK-NEXT:     Address: 0x11000
-# CHECK-NEXT:     Offset: 0x1000
-# CHECK-NEXT:     Size: 0
-# CHECK-NEXT:     Link: 0
-# CHECK-NEXT:     Info: 0
-# CHECK-NEXT:     AddressAlignment: 4
-# CHECK-NEXT:     EntrySize: 0
-# CHECK-NEXT:   }
-# CHECK-NEXT:   Section {
-# CHECK-NEXT:     Index: 2
 # CHECK-NEXT:     Name: .text
 # CHECK-NEXT:     Type: SHT_PROGBITS (0x1)
 # CHECK-NEXT:     Flags [ (0x6)
@@ -85,9 +69,25 @@ _start:
 # CHECK-NEXT:     EntrySize: 0
 # CHECK-NEXT:   }
 # CHECK-NEXT:   Section {
-# CHECK-NEXT:     Index: 3
+# CHECK-NEXT:     Index: 2
 # CHECK-NEXT:     Name: .data
 # CHECK-NEXT:     Type: SHT_PROGBITS (0x1)
+# CHECK-NEXT:     Flags [ (0x3)
+# CHECK-NEXT:       SHF_ALLOC (0x2)
+# CHECK-NEXT:       SHF_WRITE (0x1)
+# CHECK-NEXT:     ]
+# CHECK-NEXT:     Address: 0x11010
+# CHECK-NEXT:     Offset: 0x1010
+# CHECK-NEXT:     Size: 0
+# CHECK-NEXT:     Link: 0
+# CHECK-NEXT:     Info: 0
+# CHECK-NEXT:     AddressAlignment: 4
+# CHECK-NEXT:     EntrySize: 0
+# CHECK-NEXT:   }
+# CHECK-NEXT:   Section {
+# CHECK-NEXT:     Index: 3
+# CHECK-NEXT:     Name: .bss
+# CHECK-NEXT:     Type: SHT_NOBITS (0x8)
 # CHECK-NEXT:     Flags [ (0x3)
 # CHECK-NEXT:       SHF_ALLOC (0x2)
 # CHECK-NEXT:       SHF_WRITE (0x1)
@@ -177,6 +177,8 @@ _start:
 # CHECK-NEXT:   }
 # CHECK-NEXT: ]
 
+
+# Test for the response file
 # RUN: echo " -o %t2" > %t.responsefile
 # RUN: lld -flavor gnu2 %t @%t.responsefile
 # RUN: llvm-readobj -file-headers -sections -program-headers -symbols %t2 \

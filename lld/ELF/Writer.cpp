@@ -35,33 +35,31 @@ static const int VAStart = 0x10000;
 
 namespace {
 
-static uint32_t convertSectionFlagsToPHDRFlags(uint64_t Flags) {
+static uint32_t toPHDRFlags(uint64_t Flags) {
   uint32_t Ret = PF_R;
   if (Flags & SHF_WRITE)
     Ret |= PF_W;
-
   if (Flags & SHF_EXECINSTR)
     Ret |= PF_X;
-
   return Ret;
 }
 
-template <bool Is64Bits>
-class ProgramHeader {
-public:
-  typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
-  typedef
-    typename std::conditional<Is64Bits, Elf64_Phdr, Elf32_Phdr>::type HeaderT;
+template <class ELFT> struct ProgramHeader {
+  typedef typename ELFFile<ELFT>::uintX_t uintX_t;
+  typedef typename ELFFile<ELFT>::Elf_Phdr Elf_Phdr;
 
-  ProgramHeader(uintX_t p_type, uintX_t p_flags) {
-    std::memset(&Header, 0, sizeof(HeaderT));
-    Header.p_type = p_type;
-    Header.p_flags = p_flags;
+  ProgramHeader(uintX_t Type, uintX_t Flags, uintX_t FileOff, uintX_t VA) {
+    std::memset(&Header, 0, sizeof(Elf_Phdr));
+    Header.p_type = Type;
+    Header.p_flags = Flags;
     Header.p_align = PageSize;
+    Header.p_offset = FileOff;
+    Header.p_vaddr = VA;
+    Header.p_paddr = VA;
   }
 
-  void setValuesFromSection(OutputSectionBase<Is64Bits> &Sec) {
-    Header.p_flags = convertSectionFlagsToPHDRFlags(Sec.getFlags());
+  void setValuesFromSection(OutputSectionBase<ELFT::Is64Bits> &Sec) {
+    Header.p_flags = toPHDRFlags(Sec.getFlags());
     Header.p_offset = Sec.getFileOff();
     Header.p_vaddr = Sec.getVA();
     Header.p_paddr = Header.p_vaddr;
@@ -70,19 +68,7 @@ public:
     Header.p_align = Sec.getAlign();
   }
 
-  template <endianness E>
-  void writeHeaderTo(typename ELFFile<ELFType<E, Is64Bits>>::Elf_Phdr *PHDR) {
-    PHDR->p_type = Header.p_type;
-    PHDR->p_flags = Header.p_flags;
-    PHDR->p_offset = Header.p_offset;
-    PHDR->p_vaddr = Header.p_vaddr;
-    PHDR->p_paddr = Header.p_paddr;
-    PHDR->p_filesz = Header.p_filesz;
-    PHDR->p_memsz = Header.p_memsz;
-    PHDR->p_align = Header.p_align;
-  }
-
-  HeaderT Header;
+  Elf_Phdr Header;
   bool Closed = false;
 };
 
@@ -130,10 +116,10 @@ private:
   unsigned getNumSections() const { return OutputSections.size() + 1; }
 
   llvm::BumpPtrAllocator PAlloc;
-  std::vector<ProgramHeader<ELFT::Is64Bits> *> PHDRs;
-  ProgramHeader<ELFT::Is64Bits> FileHeaderPHDR{PT_LOAD, PF_R};
-  ProgramHeader<ELFT::Is64Bits> InterpPHDR{PT_INTERP, 0};
-  ProgramHeader<ELFT::Is64Bits> DynamicPHDR{PT_DYNAMIC, 0};
+  std::vector<ProgramHeader<ELFT> *> PHDRs;
+  ProgramHeader<ELFT> FileHeaderPHDR{PT_LOAD, PF_R, 0, 0};
+  ProgramHeader<ELFT> InterpPHDR{PT_INTERP, 0, 0, 0};
+  ProgramHeader<ELFT> DynamicPHDR{PT_DYNAMIC, 0, 0, 0};
 
   uintX_t FileSize;
   uintX_t ProgramHeaderOff;
@@ -188,8 +174,8 @@ namespace {
 template <bool Is64Bits> struct SectionKey {
   typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
   StringRef Name;
-  uint32_t sh_type;
-  uintX_t sh_flags;
+  uint32_t Type;
+  uintX_t Flags;
 };
 }
 namespace llvm {
@@ -202,12 +188,12 @@ template <bool Is64Bits> struct DenseMapInfo<SectionKey<Is64Bits>> {
                                 0};
   }
   static unsigned getHashValue(const SectionKey<Is64Bits> &Val) {
-    return hash_combine(Val.Name, Val.sh_type, Val.sh_flags);
+    return hash_combine(Val.Name, Val.Type, Val.Flags);
   }
   static bool isEqual(const SectionKey<Is64Bits> &LHS,
                       const SectionKey<Is64Bits> &RHS) {
     return DenseMapInfo<StringRef>::isEqual(LHS.Name, RHS.Name) &&
-           LHS.sh_type == RHS.sh_type && LHS.sh_flags == RHS.sh_flags;
+           LHS.Type == RHS.Type && LHS.Flags == RHS.Flags;
   }
 };
 }
@@ -267,9 +253,12 @@ void Writer<ELFT>::scanRelocs(const InputSection<ELFT> &C) {
 }
 
 template <class ELFT>
-static void undefError(const SymbolTable &S, const SymbolBody &Sym) {
+static void reportUndefined(const SymbolTable &S, const SymbolBody &Sym) {
   typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
   typedef typename ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
+
+  if (Config->Shared && !Config->NoUndefined)
+    return;
 
   const Elf_Sym &SymE = cast<ELFSymbolBody<ELFT>>(Sym).Sym;
   ELFFileBase *SymFile = nullptr;
@@ -317,7 +306,7 @@ template <class ELFT> void Writer<ELFT>::createSections() {
       OutputSection<ELFT> *&Sec = Map[Key];
       if (!Sec) {
         Sec = new (CAlloc.Allocate()) OutputSection<ELFT>(
-            PltSec, GotSec, BssSec, Key.Name, Key.sh_type, Key.sh_flags);
+            PltSec, GotSec, BssSec, Key.Name, Key.Type, Key.Flags);
         OutputSections.push_back(Sec);
       }
       Sec->addSection(C);
@@ -325,10 +314,19 @@ template <class ELFT> void Writer<ELFT>::createSections() {
     }
   }
 
-  if (OutputSection<ELFT> *OS =
-          Map.lookup({".init_array", SHT_INIT_ARRAY, SHF_WRITE | SHF_ALLOC})) {
+  DynamicSec.PreInitArraySec =
+      Map.lookup({".preinit_array", SHT_PREINIT_ARRAY, SHF_WRITE | SHF_ALLOC});
+  DynamicSec.InitArraySec =
+      Map.lookup({".init_array", SHT_INIT_ARRAY, SHF_WRITE | SHF_ALLOC});
+  DynamicSec.FiniArraySec =
+      Map.lookup({".fini_array", SHT_FINI_ARRAY, SHF_WRITE | SHF_ALLOC});
+
+  if (OutputSection<ELFT> *OS = DynamicSec.InitArraySec) {
     Symtab.addSyntheticSym<ELFT>("__init_array_start", *OS, 0);
     Symtab.addSyntheticSym<ELFT>("__init_array_end", *OS, OS->getSize());
+  } else {
+    Symtab.addIgnoredSym<ELFT>("__init_array_start");
+    Symtab.addIgnoredSym<ELFT>("__init_array_end");
   }
 
   // FIXME: Try to avoid the extra walk over all global symbols.
@@ -337,7 +335,7 @@ template <class ELFT> void Writer<ELFT>::createSections() {
     StringRef Name = P.first;
     SymbolBody *Body = P.second->Body;
     if (Body->isStrongUndefined())
-      undefError<ELFT>(Symtab, *Body);
+      reportUndefined<ELFT>(Symtab, *Body);
 
     if (auto *C = dyn_cast<DefinedCommon<ELFT>>(Body))
       CommonSymbols.push_back(C);
@@ -368,7 +366,6 @@ template <class ELFT> void Writer<ELFT>::createSections() {
   BssSec.setSize(Off);
 
   OutputSections.push_back(&SymTabSec);
-  OutputSections.push_back(&StrTabSec);
 
   if (needsDynamicSections()) {
     if (needsInterpSection())
@@ -389,16 +386,57 @@ template <class ELFT> void Writer<ELFT>::createSections() {
       OutputSections.begin(), OutputSections.end(),
       [](OutputSectionBase<ELFT::Is64Bits> *A,
          OutputSectionBase<ELFT::Is64Bits> *B) {
-        // Place SHF_ALLOC sections first.
-        return (A->getFlags() & SHF_ALLOC) && !(B->getFlags() & SHF_ALLOC);
+        uintX_t AFlags = A->getFlags();
+        uintX_t BFlags = B->getFlags();
+
+        // Allocatable sections go first to reduce the total PT_LOAD size and
+        // so debug info doesn't change addresses in actual code.
+        bool AIsAlloc = AFlags & SHF_ALLOC;
+        bool BIsAlloc = BFlags & SHF_ALLOC;
+        if (AIsAlloc != BIsAlloc)
+          return AIsAlloc;
+
+        // We don't have any special requirements for the relative order of
+        // two non allocatable sections.
+        if (!AIsAlloc)
+          return false;
+
+        // We want the read only sections first so that they go in the PT_LOAD
+        // covering the program headers at the start of the file.
+        bool AIsWritable = AFlags & SHF_WRITE;
+        bool BIsWritable = BFlags & SHF_WRITE;
+        if (AIsWritable != BIsWritable)
+          return BIsWritable;
+
+        // For a corresponding reason, put non exec sections first (the program
+        // header PT_LOAD is not executable).
+        bool AIsExec = AFlags & SHF_EXECINSTR;
+        bool BIsExec = BFlags & SHF_EXECINSTR;
+        if (AIsExec != BIsExec)
+          return BIsExec;
+
+        // If we got here we know that both A and B and in the same PT_LOAD.
+        // The last requirement we have is to put nobits section last. The
+        // reason is that the only thing the dynamic linker will see about
+        // them is a p_memsz that is larger than p_filesz. Seeing that it
+        // zeros the end of the PT_LOAD, so that has to correspond to the
+        // nobits sections.
+        return A->getType() != SHT_NOBITS && B->getType() == SHT_NOBITS;
       });
+
+  // Always put StrTabSec last so that no section names are added to it after
+  // it's finalized.
+  OutputSections.push_back(&StrTabSec);
 
   for (unsigned I = 0, N = OutputSections.size(); I < N; ++I)
     OutputSections[I]->setSectionIndex(I + 1);
+
+  // Fill the DynStrSec early.
+  DynamicSec.finalize();
 }
 
 template <class ELFT>
-static bool outputSectionHasPHDR(OutputSectionBase<ELFT::Is64Bits> *Sec) {
+static bool needsPHDR(OutputSectionBase<ELFT::Is64Bits> *Sec) {
   return Sec->getFlags() & SHF_ALLOC;
 }
 
@@ -420,7 +458,6 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
   if (needsInterpSection())
     PHDRs.push_back(&InterpPHDR);
 
-  ProgramHeader<ELFT::Is64Bits> *LastPHDR = &FileHeaderPHDR;
   // Create a PHDR for the file header.
   PHDRs.push_back(&FileHeaderPHDR);
   FileHeaderPHDR.Header.p_vaddr = getVAStart();
@@ -432,24 +469,21 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
     Sec->finalize();
 
     if (Sec->getSize()) {
-      uintX_t Flags = convertSectionFlagsToPHDRFlags(Sec->getFlags());
-      if (LastPHDR->Header.p_flags != Flags ||
-          !outputSectionHasPHDR<ELFT>(Sec)) {
+      uintX_t Flags = toPHDRFlags(Sec->getFlags());
+      ProgramHeader<ELFT> *Last = PHDRs.back();
+      if (Last->Header.p_flags != Flags || !needsPHDR<ELFT>(Sec)) {
         // Flags changed. End current PHDR and potentially create a new one.
-        if (!LastPHDR->Closed) {
-          LastPHDR->Header.p_filesz = FileOff - LastPHDR->Header.p_offset;
-          LastPHDR->Header.p_memsz = VA - LastPHDR->Header.p_vaddr;
-          LastPHDR->Closed = true;
+        if (!Last->Closed) {
+          Last->Header.p_filesz = FileOff - Last->Header.p_offset;
+          Last->Header.p_memsz = VA - Last->Header.p_vaddr;
+          Last->Closed = true;
         }
 
-        if (outputSectionHasPHDR<ELFT>(Sec)) {
-          LastPHDR = new (PAlloc) ProgramHeader<ELFT::Is64Bits>(PT_LOAD, Flags);
-          PHDRs.push_back(LastPHDR);
+        if (needsPHDR<ELFT>(Sec)) {
           VA = RoundUpToAlignment(VA, PageSize);
           FileOff = RoundUpToAlignment(FileOff, PageSize);
-          LastPHDR->Header.p_offset = FileOff;
-          LastPHDR->Header.p_vaddr = VA;
-          LastPHDR->Header.p_paddr = VA;
+          PHDRs.push_back(new (PAlloc)
+                              ProgramHeader<ELFT>(PT_LOAD, Flags, FileOff, VA));
         }
       }
     }
@@ -515,9 +549,11 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   EHdr->e_shstrndx = StrTabSec.getSectionIndex();
 
   // If nothing was merged into the file header PT_LOAD, set the size correctly.
-  if (FileHeaderPHDR.Header.p_filesz == PageSize)
-    FileHeaderPHDR.Header.p_filesz = FileHeaderPHDR.Header.p_memsz =
-        sizeof(Elf_Ehdr) + sizeof(Elf_Phdr) * PHDRs.size();
+  if (FileHeaderPHDR.Header.p_filesz == PageSize) {
+    uint64_t Size = sizeof(Elf_Ehdr) + sizeof(Elf_Phdr) * PHDRs.size();
+    FileHeaderPHDR.Header.p_filesz = Size;
+    FileHeaderPHDR.Header.p_memsz = Size;
+  }
 
   if (needsInterpSection())
     InterpPHDR.setValuesFromSection(InterpSec);
@@ -525,8 +561,8 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
     DynamicPHDR.setValuesFromSection(DynamicSec);
 
   auto PHdrs = reinterpret_cast<Elf_Phdr *>(Buf + EHdr->e_phoff);
-  for (ProgramHeader<ELFT::Is64Bits> *PHDR : PHDRs)
-    PHDR->template writeHeaderTo<ELFT::TargetEndianness>(PHdrs++);
+  for (ProgramHeader<ELFT> *PHDR : PHDRs)
+    *PHdrs++ = PHDR->Header;
 
   auto SHdrs = reinterpret_cast<Elf_Shdr *>(Buf + EHdr->e_shoff);
   // First entry is null.

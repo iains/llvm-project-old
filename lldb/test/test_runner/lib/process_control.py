@@ -297,17 +297,23 @@ class UnixProcessHelper(ProcessHelper):
                 log_file.write("skipping soft_terminate(): no process id")
             return False
 
-        # Don't kill if it's already dead.
-        popen_process.poll()
-        if popen_process.returncode is not None:
-            # It has a returncode.  It has already stopped.
-            if log_file:
-                log_file.write(
-                    "requested to terminate pid {} but it has already "
-                    "terminated, returncode {}".format(
-                        popen_process.pid, popen_process.returncode))
-            # Move along...
-            return False
+        # We only do the process liveness check if we're not using
+        # process groups.  With process groups, checking if the main
+        # inferior process is dead and short circuiting here is no
+        # good - children of it in the process group could still be
+        # alive, and they should be killed during a timeout.
+        if not popen_process.using_process_groups:
+            # Don't kill if it's already dead.
+            popen_process.poll()
+            if popen_process.returncode is not None:
+                # It has a returncode.  It has already stopped.
+                if log_file:
+                    log_file.write(
+                        "requested to terminate pid {} but it has already "
+                        "terminated, returncode {}".format(
+                            popen_process.pid, popen_process.returncode))
+                # Move along...
+                return False
 
         # Good to go.
         return True
@@ -605,3 +611,48 @@ class ProcessDriver(object):
             self.io_thread.output,
             not completed_normally,
             self.returncode)
+
+
+def patched_init(self, *args, **kwargs):
+    self.original_init(*args, **kwargs)
+    # Initialize our condition variable that protects wait()/poll().
+    self.wait_condition = threading.Condition()
+
+
+def patched_wait(self):
+    self.wait_condition.acquire()
+    try:
+        result = self.original_wait()
+        # The process finished.  Signal the condition.
+        self.wait_condition.notify_all()
+        return result
+    finally:
+        self.wait_condition.release()
+
+
+def patched_poll(self):
+    self.wait_condition.acquire()
+    try:
+        result = self.original_poll()
+        if self.returncode is not None:
+            # We did complete, and we have the return value.
+            # Signal the event to indicate we're done.
+            self.wait_condition.notify_all()
+        return result
+    finally:
+        self.wait_condition.release()
+
+
+def patch_up_subprocess_popen():
+    subprocess.Popen.original_init = subprocess.Popen.__init__
+    subprocess.Popen.__init__ = patched_init
+
+    subprocess.Popen.original_wait = subprocess.Popen.wait
+    subprocess.Popen.wait = patched_wait
+
+    subprocess.Popen.original_poll = subprocess.Popen.poll
+    subprocess.Popen.poll = patched_poll
+
+# Replace key subprocess.Popen() threading-unprotected methods with
+# threading-protected versions.
+patch_up_subprocess_popen()

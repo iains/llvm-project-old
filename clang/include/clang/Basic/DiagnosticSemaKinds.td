@@ -2410,15 +2410,19 @@ def warn_availability_version_ordering : Warning<
 def warn_mismatched_availability: Warning<
   "availability does not match previous declaration">, InGroup<Availability>;
 def warn_mismatched_availability_override : Warning<
-  "overriding method %select{introduced after|"
-  "deprecated before|obsoleted before}0 overridden method on %1 (%2 vs. %3)">, 
-  InGroup<Availability>;
+  "%select{|overriding }4method %select{introduced after|"
+  "deprecated before|obsoleted before}0 "
+  "%select{the protocol method it implements|overridden method}4 "
+  "on %1 (%2 vs. %3)">, InGroup<Availability>;
 def warn_mismatched_availability_override_unavail : Warning<
-  "overriding method cannot be unavailable on %0 when its overridden method is "
+  "%select{|overriding }1method cannot be unavailable on %0 when "
+  "%select{the protocol method it implements|its overridden method}1 is "
   "available">,
   InGroup<Availability>;
 def note_overridden_method : Note<
   "overridden method is here">;
+def note_protocol_method : Note<
+  "protocol method is here">;
 
 // Thread Safety Attributes
 def warn_invalid_capability_name : Warning<
@@ -6198,6 +6202,9 @@ def err_atomic_op_needs_atomic : Error<
 def err_atomic_op_needs_non_const_atomic : Error<
   "address argument to atomic operation must be a pointer to non-const _Atomic "
   "type (%0 invalid)">;
+def err_atomic_op_needs_non_const_pointer : Error<
+  "address argument to atomic operation must be a pointer to non-const "
+  "type (%0 invalid)">;
 def err_atomic_op_needs_trivial_copy : Error<
   "address argument to atomic operation must be a pointer to a "
   "trivially-copyable type (%0 invalid)">;
@@ -7445,6 +7452,8 @@ def err_opencl_ptrptr_kernel_param : Error<
   "kernel parameter cannot be declared as a pointer to a pointer">;
 def err_opencl_private_ptr_kernel_param : Error<
   "kernel parameter cannot be declared as a pointer to the __private address space">;
+def err_opencl_non_kernel_variable : Error<
+  "non-kernel function variable cannot be declared in %0 address space">;
 def err_static_function_scope : Error<
   "variables in function scope cannot be declared static">;
 def err_opencl_bitfields : Error<
@@ -7472,7 +7481,7 @@ def err_sampler_argument_required : Error<
 def err_wrong_sampler_addressspace: Error<
   "sampler type cannot be used with the __local and __global address space qualifiers">;
 def err_opencl_global_invalid_addr_space : Error<
-  "global variables must have a constant address space qualifier">;
+  "program scope variable must reside in %0 address space">;
 def err_opencl_no_main : Error<"%select{function|kernel}0 cannot be called 'main'">;
 def err_opencl_kernel_attr :
   Error<"attribute %0 can only be applied to a kernel function">;

@@ -1168,9 +1168,21 @@ void SelectionDAGBuilder::visitCatchRet(const CatchReturnInst &I) {
   MachineBasicBlock *TargetMBB = FuncInfo.MBBMap[I.getSuccessor()];
   FuncInfo.MBB->addSuccessor(TargetMBB);
 
+  // Figure out the funclet membership for the catchret's successor.
+  // This will be used by the FuncletLayout pass to determine how to order the
+  // BB's.
+  MachineModuleInfo &MMI = DAG.getMachineFunction().getMMI();
+  WinEHFuncInfo &EHInfo =
+      MMI.getWinEHFuncInfo(DAG.getMachineFunction().getFunction());
+  const BasicBlock *SuccessorColor = EHInfo.CatchRetSuccessorColorMap[&I];
+  assert(SuccessorColor && "No parent funclet for catchret!");
+  MachineBasicBlock *SuccessorColorMBB = FuncInfo.MBBMap[SuccessorColor];
+  assert(SuccessorColorMBB && "No MBB for SuccessorColor!");
+
   // Create the terminator node.
   SDValue Ret = DAG.getNode(ISD::CATCHRET, getCurSDLoc(), MVT::Other,
-                            getControlRoot(), DAG.getBasicBlock(TargetMBB));
+                            getControlRoot(), DAG.getBasicBlock(TargetMBB),
+                            DAG.getBasicBlock(SuccessorColorMBB));
   DAG.setRoot(Ret);
 }
 
@@ -1203,7 +1215,7 @@ findUnwindDestinations(FunctionLoweringInfo &FuncInfo,
       // Stop on landingpads. They are not funclets.
       UnwindDests.push_back(FuncInfo.MBBMap[EHPadBB]);
       break;
-    } else if (isa<CleanupPadInst>(Pad) || isa<LandingPadInst>(Pad)) {
+    } else if (isa<CleanupPadInst>(Pad)) {
       // Stop on cleanup pads. Cleanups are always funclet entries for all known
       // personalities.
       UnwindDests.push_back(FuncInfo.MBBMap[EHPadBB]);
@@ -2207,7 +2219,8 @@ void SelectionDAGBuilder::visitIndirectBr(const IndirectBrInst &I) {
 
 void SelectionDAGBuilder::visitUnreachable(const UnreachableInst &I) {
   if (DAG.getTarget().Options.TrapUnreachable)
-    DAG.setRoot(DAG.getNode(ISD::TRAP, getCurSDLoc(), MVT::Other, DAG.getRoot()));
+    DAG.setRoot(
+        DAG.getNode(ISD::TRAP, getCurSDLoc(), MVT::Other, DAG.getRoot()));
 }
 
 void SelectionDAGBuilder::visitFSub(const User &I) {
@@ -4394,15 +4407,9 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                                    N);
           return nullptr;
         }
-      } else if (AI)
+      } else {
         SDV = DAG.getDbgValue(Variable, Expression, N.getNode(), N.getResNo(),
                               true, 0, dl, SDNodeOrder);
-      else {
-        // Can't do anything with other non-AI cases yet.
-        DEBUG(dbgs() << "Dropping debug info for " << DI << "\n");
-        DEBUG(dbgs() << "non-AllocaInst issue for Address: \n\t");
-        DEBUG(Address->dump());
-        return nullptr;
       }
       DAG.AddDbgValue(SDV, N.getNode(), isParameter);
     } else {

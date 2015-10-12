@@ -10,11 +10,15 @@
 #ifndef LLD_ELF_DRIVER_H
 #define LLD_ELF_DRIVER_H
 
+#include "SymbolTable.h"
 #include "lld/Core/LLVM.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Option/ArgList.h"
 
 namespace lld {
 namespace elf2 {
+
+extern class LinkerDriver *Driver;
 
 // Entry point of the ELF linker.
 void link(ArrayRef<const char *> Args);
@@ -31,15 +35,11 @@ private:
 class LinkerDriver {
 public:
   void link(ArrayRef<const char *> Args);
+  void addFile(StringRef Path);
 
 private:
+  SymbolTable Symtab;
   ArgParser Parser;
-
-  // Opens a file. Path has to be resolved already.
-  MemoryBufferRef openFile(StringRef Path);
-
-  // Driver is the owner of all opened files.
-  // InputFiles have MemoryBufferRefs to them.
   std::vector<std::unique_ptr<MemoryBuffer>> OwningMBs;
 };
 
@@ -50,6 +50,9 @@ enum {
 #include "Options.inc"
 #undef OPTION
 };
+
+// Parses a linker script. Calling this function updates the Symtab and Config.
+void readLinkerScript(MemoryBufferRef MB);
 
 } // namespace elf2
 } // namespace lld

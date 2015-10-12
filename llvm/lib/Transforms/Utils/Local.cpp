@@ -1136,7 +1136,7 @@ DbgDeclareInst *llvm::FindAllocaDbgDeclare(Value *V) {
 }
 
 bool llvm::replaceDbgDeclareForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
-                                      DIBuilder &Builder, bool Deref) {
+                                      DIBuilder &Builder, bool Deref, int Offset) {
   DbgDeclareInst *DDI = FindAllocaDbgDeclare(AI);
   if (!DDI)
     return false;
@@ -1145,13 +1145,21 @@ bool llvm::replaceDbgDeclareForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
   auto *DIExpr = DDI->getExpression();
   assert(DIVar && "Missing variable");
 
-  if (Deref) {
+  if (Deref || Offset) {
     // Create a copy of the original DIDescriptor for user variable, prepending
     // "deref" operation to a list of address elements, as new llvm.dbg.declare
     // will take a value storing address of the memory for variable, not
     // alloca itself.
     SmallVector<uint64_t, 4> NewDIExpr;
-    NewDIExpr.push_back(dwarf::DW_OP_deref);
+    if (Deref)
+      NewDIExpr.push_back(dwarf::DW_OP_deref);
+    if (Offset > 0) {
+      NewDIExpr.push_back(dwarf::DW_OP_plus);
+      NewDIExpr.push_back(Offset);
+    } else if (Offset < 0) {
+      NewDIExpr.push_back(dwarf::DW_OP_minus);
+      NewDIExpr.push_back(-Offset);
+    }
     if (DIExpr)
       NewDIExpr.append(DIExpr->elements_begin(), DIExpr->elements_end());
     DIExpr = Builder.createExpression(NewDIExpr);
@@ -1378,7 +1386,8 @@ bool llvm::removeUnreachableBlocks(Function &F) {
   return true;
 }
 
-void llvm::combineMetadata(Instruction *K, const Instruction *J, ArrayRef<unsigned> KnownIDs) {
+void llvm::combineMetadata(Instruction *K, const Instruction *J,
+                           ArrayRef<unsigned> KnownIDs) {
   SmallVector<std::pair<unsigned, MDNode *>, 4> Metadata;
   K->dropUnknownNonDebugMetadata(KnownIDs);
   K->getAllMetadataOtherThanDebugLoc(Metadata);
@@ -1416,8 +1425,20 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J, ArrayRef<unsign
         // Only set the !nonnull if it is present in both instructions.
         K->setMetadata(Kind, JMD);
         break;
+      case LLVMContext::MD_invariant_group:
+        // Preserve !invariant.group in K.
+        break;
     }
   }
+  // Set !invariant.group from J if J has it. If both instructions have it
+  // then we will just pick it from J - even when they are different.
+  // Also make sure that K is load or store - f.e. combining bitcast with load
+  // could produce bitcast with invariant.group metadata, which is invalid.
+  // FIXME: we should try to preserve both invariant.group md if they are
+  // different, but right now instruction can only have one invariant.group.
+  if (auto *JMD = J->getMetadata(LLVMContext::MD_invariant_group))
+    if (isa<LoadInst>(K) || isa<StoreInst>(K))
+      K->setMetadata(LLVMContext::MD_invariant_group, JMD);
 }
 
 unsigned llvm::replaceDominatedUsesWith(Value *From, Value *To,

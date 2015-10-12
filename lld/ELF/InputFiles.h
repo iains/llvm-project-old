@@ -25,6 +25,7 @@ namespace elf2 {
 
 using llvm::object::Archive;
 
+class InputFile;
 class Lazy;
 class SymbolBody;
 
@@ -115,6 +116,7 @@ protected:
   llvm::object::ELFFile<ELFT> ELFObj;
   const Elf_Shdr *Symtab = nullptr;
   StringRef StringTable;
+  void initStringTable();
   Elf_Sym_Range getNonLocalSymbols();
   Elf_Sym_Range getSymbolsHelper(bool);
 };
@@ -175,6 +177,7 @@ public:
   MemoryBufferRef getMember(const Archive::Symbol *Sym);
 
   llvm::MutableArrayRef<Lazy> getLazySymbols() { return LazySymbols; }
+  std::vector<MemoryBufferRef> getMembers();
 
 private:
   std::unique_ptr<Archive> File;
@@ -184,10 +187,15 @@ private:
 
 // .so file.
 class SharedFileBase : public ELFFileBase {
+protected:
+  StringRef SoName;
+
 public:
   SharedFileBase(ELFKind EKind, MemoryBufferRef M)
       : ELFFileBase(SharedKind, EKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == SharedKind; }
+  StringRef getSoName() const { return SoName; }
+  virtual void parseSoName() = 0;
 };
 
 template <class ELFT>
@@ -211,6 +219,7 @@ public:
 
   explicit SharedFile(MemoryBufferRef M);
 
+  void parseSoName() override;
   void parse() override;
 };
 

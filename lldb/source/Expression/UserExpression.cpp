@@ -34,6 +34,7 @@
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Symbol/Type.h"
+#include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Symbol/VariableList.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Process.h"
@@ -264,7 +265,7 @@ UserExpression::FinalizeJITExecution (Stream &error_stream,
 
     Error dematerialize_error;
 
-    m_dematerializer_sp->Dematerialize(dematerialize_error, result, function_stack_bottom, function_stack_top);
+    m_dematerializer_sp->Dematerialize(dematerialize_error, function_stack_bottom, function_stack_top);
 
     if (!dematerialize_error.Success())
     {
@@ -272,6 +273,8 @@ UserExpression::FinalizeJITExecution (Stream &error_stream,
         return false;
     }
 
+    result = GetResultAfterDematerialization(exe_ctx.GetBestExecutionContextScope());
+    
     if (result)
         result->TransferAddress();
 
@@ -586,7 +589,7 @@ UserExpression::Evaluate (ExecutionContext &exe_ctx,
 
             if (options.GetResultIsInternal() && expr_result && process)
             {
-                process->GetTarget().GetPersistentVariables().RemovePersistentVariable (expr_result);
+                process->GetTarget().GetPersistentExpressionStateForLanguage(language)->RemovePersistentVariable (expr_result);
             }
 
             if (execution_results != lldb::eExpressionCompleted)

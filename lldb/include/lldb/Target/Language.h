@@ -13,6 +13,8 @@
 // C Includes
 // C++ Includes
 #include <functional>
+#include <memory>
+#include <set>
 #include <vector>
 
 // Other libraries and framework includes
@@ -29,6 +31,42 @@ class Language :
 public PluginInterface
 {
 public:
+    
+    class TypeScavenger
+    {
+    public:
+        class Result
+        {
+        public:
+            virtual bool
+            IsValid () = 0;
+            
+            virtual bool
+            DumpToStream (Stream& stream,
+                          bool print_help_if_available) = 0;
+            
+            virtual ~Result() = default;
+        };
+        
+        typedef std::set<std::unique_ptr<Result>> ResultSet;
+        
+        virtual ~TypeScavenger () = default;
+        
+        size_t
+        Find (ExecutionContextScope *exe_scope,
+              const char *key,
+              ResultSet &results,
+              bool append = true);
+        
+    protected:
+        TypeScavenger () = default;
+        
+        virtual bool
+        Find_Impl (ExecutionContextScope *exe_scope,
+                   const char *key,
+                   ResultSet &results) = 0;
+    };
+
     ~Language() override;
     
     static Language*
@@ -40,6 +78,9 @@ public:
     
     virtual lldb::LanguageType
     GetLanguageType () const = 0;
+    
+    bool
+    IsTopLevelFunction (Function& function);
     
     virtual lldb::TypeCategoryImplSP
     GetFormatters ();
@@ -61,6 +102,9 @@ public:
 
     virtual lldb_private::formatters::StringPrinter::EscapingHelper
     GetStringPrinterEscapingHelper (lldb_private::formatters::StringPrinter::GetPrintableElementType);
+    
+    virtual std::unique_ptr<TypeScavenger>
+    GetTypeScavenger ();
     
     // These are accessors for general information about the Languages lldb knows about:
     
@@ -88,7 +132,6 @@ public:
     
     static bool
     LanguageIsPascal (lldb::LanguageType language);
-    
 
 protected:
     //------------------------------------------------------------------

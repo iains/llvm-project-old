@@ -713,6 +713,7 @@
 		6D95DC001B9DC057000E318A /* DIERef.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6D95DBFD1B9DC057000E318A /* DIERef.cpp */; };
 		6D95DC011B9DC057000E318A /* HashedNameToDIE.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6D95DBFE1B9DC057000E318A /* HashedNameToDIE.cpp */; };
 		6D95DC021B9DC057000E318A /* SymbolFileDWARFDwo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6D95DBFF1B9DC057000E318A /* SymbolFileDWARFDwo.cpp */; };
+		6D99A3631BBC2F3200979793 /* ArmUnwindInfo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6D99A3621BBC2F3200979793 /* ArmUnwindInfo.cpp */; };
 		8C2D6A53197A1EAF006989C9 /* MemoryHistory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8C2D6A52197A1EAF006989C9 /* MemoryHistory.cpp */; };
 		8C2D6A5E197A250F006989C9 /* MemoryHistoryASan.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8C2D6A5A197A1FDC006989C9 /* MemoryHistoryASan.cpp */; };
 		8CCB017E19BA28A80009FD44 /* ThreadCollection.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8CCB017A19BA283D0009FD44 /* ThreadCollection.cpp */; };
@@ -779,6 +780,7 @@
 		94B6385D1B8FB178004FE1E4 /* CPlusPlusLanguage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94B6385B1B8FB174004FE1E4 /* CPlusPlusLanguage.cpp */; };
 		94B638631B8FB7F1004FE1E4 /* ObjCPlusPlusLanguage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94B638621B8FB7F1004FE1E4 /* ObjCPlusPlusLanguage.cpp */; };
 		94B6E76213D88365005F417F /* ValueObjectSyntheticFilter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94B6E76113D88362005F417F /* ValueObjectSyntheticFilter.cpp */; };
+		94B9E5121BBF20F4000A48DC /* NSString.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94B9E5111BBF20F4000A48DC /* NSString.cpp */; };
 		94BA8B6D176F8C9B005A91B5 /* Range.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94BA8B6C176F8C9B005A91B5 /* Range.cpp */; };
 		94BA8B70176F97CE005A91B5 /* CommandHistory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94BA8B6F176F97CE005A91B5 /* CommandHistory.cpp */; };
 		94CB255C16B069770059775D /* DataVisualization.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94CB255816B069770059775D /* DataVisualization.cpp */; };
@@ -2403,6 +2405,8 @@
 		6D95DBFF1B9DC057000E318A /* SymbolFileDWARFDwo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SymbolFileDWARFDwo.cpp; sourceTree = "<group>"; };
 		6D95DC031B9DC06F000E318A /* DIERef.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DIERef.h; sourceTree = "<group>"; };
 		6D95DC041B9DC06F000E318A /* SymbolFileDWARFDwo.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SymbolFileDWARFDwo.h; sourceTree = "<group>"; };
+		6D99A3611BBC2F1600979793 /* ArmUnwindInfo.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ArmUnwindInfo.h; path = include/lldb/Symbol/ArmUnwindInfo.h; sourceTree = "<group>"; };
+		6D99A3621BBC2F3200979793 /* ArmUnwindInfo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ArmUnwindInfo.cpp; path = source/Symbol/ArmUnwindInfo.cpp; sourceTree = "<group>"; };
 		8C2D6A52197A1EAF006989C9 /* MemoryHistory.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = MemoryHistory.cpp; path = source/Target/MemoryHistory.cpp; sourceTree = "<group>"; };
 		8C2D6A54197A1EBE006989C9 /* MemoryHistory.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = MemoryHistory.h; path = include/lldb/Target/MemoryHistory.h; sourceTree = "<group>"; };
 		8C2D6A5A197A1FDC006989C9 /* MemoryHistoryASan.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = MemoryHistoryASan.cpp; sourceTree = "<group>"; };
@@ -2520,6 +2524,10 @@
 		94B638621B8FB7F1004FE1E4 /* ObjCPlusPlusLanguage.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ObjCPlusPlusLanguage.cpp; path = Language/ObjCPlusPlus/ObjCPlusPlusLanguage.cpp; sourceTree = "<group>"; };
 		94B6E76013D8833C005F417F /* ValueObjectSyntheticFilter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ValueObjectSyntheticFilter.h; path = include/lldb/Core/ValueObjectSyntheticFilter.h; sourceTree = "<group>"; };
 		94B6E76113D88362005F417F /* ValueObjectSyntheticFilter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ValueObjectSyntheticFilter.cpp; path = source/Core/ValueObjectSyntheticFilter.cpp; sourceTree = "<group>"; };
+		94B9E50E1BBEFDFE000A48DC /* NSDictionary.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = NSDictionary.h; path = Language/ObjC/NSDictionary.h; sourceTree = "<group>"; };
+		94B9E50F1BBF0069000A48DC /* NSSet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = NSSet.h; path = Language/ObjC/NSSet.h; sourceTree = "<group>"; };
+		94B9E5101BBF20B7000A48DC /* NSString.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = NSString.h; path = Language/ObjC/NSString.h; sourceTree = "<group>"; };
+		94B9E5111BBF20F4000A48DC /* NSString.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = NSString.cpp; path = Language/ObjC/NSString.cpp; sourceTree = "<group>"; };
 		94BA8B6C176F8C9B005A91B5 /* Range.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Range.cpp; path = source/Utility/Range.cpp; sourceTree = "<group>"; };
 		94BA8B6E176F8CA0005A91B5 /* Range.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Range.h; path = include/lldb/Utility/Range.h; sourceTree = "<group>"; };
 		94BA8B6F176F97CE005A91B5 /* CommandHistory.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CommandHistory.cpp; path = source/Interpreter/CommandHistory.cpp; sourceTree = "<group>"; };
@@ -4207,6 +4215,8 @@
 		26BC7C4B10F1B6C100F91463 /* Symbol */ = {
 			isa = PBXGroup;
 			children = (
+				6D99A3621BBC2F3200979793 /* ArmUnwindInfo.cpp */,
+				6D99A3611BBC2F1600979793 /* ArmUnwindInfo.h */,
 				26BC7C5510F1B6E900F91463 /* Block.h */,
 				26BC7F1310F1B8EC00F91463 /* Block.cpp */,
 				26BC7C5610F1B6E900F91463 /* ClangASTContext.h */,
@@ -5337,9 +5347,13 @@
 				949EED9F1BA74B64008C63CF /* CoreMedia.h */,
 				949EED9E1BA74B64008C63CF /* CoreMedia.cpp */,
 				949EEDA41BA765B5008C63CF /* NSArray.cpp */,
+				94B9E50E1BBEFDFE000A48DC /* NSDictionary.h */,
 				949EEDA51BA765B5008C63CF /* NSDictionary.cpp */,
 				949EEDA61BA765B5008C63CF /* NSIndexPath.cpp */,
+				94B9E50F1BBF0069000A48DC /* NSSet.h */,
 				949EEDA71BA765B5008C63CF /* NSSet.cpp */,
+				94B9E5101BBF20B7000A48DC /* NSString.h */,
+				94B9E5111BBF20F4000A48DC /* NSString.cpp */,
 			);
 			name = Formatters;
 			sourceTree = "<group>";
@@ -6289,8 +6303,10 @@
 				4984BA161B979973008658D4 /* ExpressionVariable.cpp in Sources */,
 				2689004C13353E0400698AC0 /* SourceManager.cpp in Sources */,
 				2689004D13353E0400698AC0 /* State.cpp in Sources */,
+				6D99A3631BBC2F3200979793 /* ArmUnwindInfo.cpp in Sources */,
 				4984BA131B978C55008658D4 /* ClangExpressionVariable.cpp in Sources */,
 				3F81691A1ABA2419001DA9DF /* NameMatches.cpp in Sources */,
+				94B9E5121BBF20F4000A48DC /* NSString.cpp in Sources */,
 				AF0E22F018A09FB20009B7D1 /* AppleGetItemInfoHandler.cpp in Sources */,
 				2689004E13353E0400698AC0 /* Stream.cpp in Sources */,
 				2689004F13353E0400698AC0 /* StreamFile.cpp in Sources */,

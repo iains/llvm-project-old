@@ -201,6 +201,8 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("AlignAfterOpenBracket", Style.AlignAfterOpenBracket);
     IO.mapOptional("AlignConsecutiveAssignments",
                    Style.AlignConsecutiveAssignments);
+    IO.mapOptional("AlignConsecutiveDeclarations",
+                   Style.AlignConsecutiveDeclarations);
     IO.mapOptional("AlignEscapedNewlinesLeft", Style.AlignEscapedNewlinesLeft);
     IO.mapOptional("AlignOperands", Style.AlignOperands);
     IO.mapOptional("AlignTrailingComments", Style.AlignTrailingComments);
@@ -416,6 +418,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.AlignOperands = true;
   LLVMStyle.AlignTrailingComments = true;
   LLVMStyle.AlignConsecutiveAssignments = false;
+  LLVMStyle.AlignConsecutiveDeclarations = false;
   LLVMStyle.AllowAllParametersOfDeclarationOnNextLine = true;
   LLVMStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_All;
   LLVMStyle.AllowShortBlocksOnASingleLine = false;
@@ -1823,6 +1826,7 @@ LangOptions getFormattingLangOpts(const FormatStyle &Style) {
   LangOpts.ObjC1 = 1;
   LangOpts.ObjC2 = 1;
   LangOpts.MicrosoftExt = 1; // To get kw___try, kw___finally.
+  LangOpts.DeclSpecKeyword = 1; // To get __declspec.
   return LangOpts;
 }
 

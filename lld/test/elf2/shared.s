@@ -14,7 +14,7 @@
 // SO-NEXT: Flags [
 // SO-NEXT: ]
 // SO-NEXT: Address:
-// SO-NEXT: Offset: 0x300C
+// SO-NEXT: Offset: 0x2030
 // SO-NEXT: Size:
 // SO-NEXT: Link:
 // SO-NEXT: Info:
@@ -39,14 +39,14 @@
 // CHECK-NEXT: }
 
 // test that .hash is linked to .dynsym
-// CHECK:        Index: 5
+// CHECK:        Index: 2
 // CHECK-NEXT:   Name: .dynsym
 // CHECK-NEXT:   Type: SHT_DYNSYM
 // CHECK-NEXT:   Flags [
 // CHECK-NEXT:     SHF_ALLOC
 // CHECK-NEXT:   ]
 // CHECK-NEXT:   Address: [[DYNSYMADDR:.*]]
-// CHECK-NEXT:   Offset: 0x201C
+// CHECK-NEXT:   Offset: 0x101C
 // CHECK-NEXT:   Size:
 // CHECK-NEXT:   Link: [[DYNSTR:.*]]
 // CHECK-NEXT:   Info: 1
@@ -60,7 +60,7 @@
 // CHECK-NEXT:   )
 // CHECK-NEXT: }
 // CHECK-NEXT: Section {
-// CHECK-NEXT:   Index: 6
+// CHECK-NEXT:   Index: 3
 // CHECK-NEXT:    Name: .hash
 // CHECK-NEXT:    Type: SHT_HASH
 // CHECK-NEXT:    Flags [
@@ -69,28 +69,10 @@
 // CHECK-NEXT:    Address: [[HASHADDR:.*]]
 // CHECK-NEXT:    Offset:
 // CHECK-NEXT:    Size:
-// CHECK-NEXT:    Link: 5
+// CHECK-NEXT:    Link: 2
 // CHECK-NEXT:    Info: 0
 // CHECK-NEXT:    AddressAlignment: 4
 // CHECK-NEXT:    EntrySize: 4
-
-
-// CHECK:        Name: .dynamic
-// CHECK-NEXT:   Type: SHT_DYNAMIC
-// CHECK-NEXT:   Flags [
-// CHECK-NEXT:     SHF_ALLOC
-// CHECK-NEXT:     SHF_WRITE
-// CHECK-NEXT:   ]
-// CHECK-NEXT:   Address: [[ADDR:.*]]
-// CHECK-NEXT:   Offset: [[OFFSET:.*]]
-// CHECK-NEXT:   Size: [[SIZE:.*]]
-// CHECK-NEXT:   Link: [[DYNSTR]]
-// CHECK-NEXT:   Info: 0
-// CHECK-NEXT:   AddressAlignment: [[ALIGN:.*]]
-// CHECK-NEXT:   EntrySize: 8
-// CHECK-NEXT:   SectionData (
-// CHECK:        )
-// CHECK-NEXT: }
 
 // CHECK:        Index: [[DYNSTR]]
 // CHECK-NEXT:   Name: .dynstr
@@ -117,7 +99,39 @@
 // CHECK-NEXT: Address: [[RELADDR:.*]]
 // CHECK-NEXT: Offset:
 // CHECK-NEXT: Size: [[RELSIZE:.*]]
+// CHECK-NEXT: Link:
+// CHECK-NEXT: Info:
+// CHECK-NEXT: AddressAlignment:
+// CHECK-NEXT: EntrySize: [[RELENT:.*]]
 
+// CHECK:        Name: .dynamic
+// CHECK-NEXT:   Type: SHT_DYNAMIC
+// CHECK-NEXT:   Flags [
+// CHECK-NEXT:     SHF_ALLOC
+// CHECK-NEXT:     SHF_WRITE
+// CHECK-NEXT:   ]
+// CHECK-NEXT:   Address: [[ADDR:.*]]
+// CHECK-NEXT:   Offset: [[OFFSET:.*]]
+// CHECK-NEXT:   Size: [[SIZE:.*]]
+// CHECK-NEXT:   Link: [[DYNSTR]]
+// CHECK-NEXT:   Info: 0
+// CHECK-NEXT:   AddressAlignment: [[ALIGN:.*]]
+// CHECK-NEXT:   EntrySize: 8
+// CHECK-NEXT:   SectionData (
+// CHECK:        )
+// CHECK-NEXT: }
+
+// CHECK:      Name: .symtab
+// CHECK-NEXT: Type: SHT_SYMTAB
+// CHECK-NEXT: Flags [
+// CHECK-NEXT: ]
+// CHECK-NEXT: Address:
+// CHECK-NEXT: Offset:
+// CHECK-NEXT: Size:
+// CHECK-NEXT: Link:
+// CHECK-NEXT: Info:
+// CHECK-NEXT: AddressAlignment:
+// CHECK-NEXT: EntrySize: [[SYMENT:.*]]
 
 // CHECK:      Symbols [
 // CHECK-NEXT:   Symbol {
@@ -131,7 +145,7 @@
 // CHECK-NEXT:   }
 // CHECK-NEXT:   Symbol {
 // CHECK-NEXT:     Name: _start
-// CHECK-NEXT:     Value: 0x11000
+// CHECK-NEXT:     Value: 0x12000
 // CHECK-NEXT:     Size: 0
 // CHECK-NEXT:     Binding: Global
 // CHECK-NEXT:     Type: None
@@ -170,7 +184,7 @@
 // CHECK-NEXT:   }
 // CHECK-NEXT:   Symbol {
 // CHECK-NEXT:     Name: _start@
-// CHECK-NEXT:     Value: 0x11000
+// CHECK-NEXT:     Value: 0x12000
 // CHECK-NEXT:     Size: 0
 // CHECK-NEXT:     Binding: Global
 // CHECK-NEXT:     Type: Non
@@ -231,7 +245,9 @@
 // CHECK-NEXT:   Tag        Type                 Name/Value
 // CHECK-NEXT:   0x00000011 REL                  [[RELADDR]]
 // CHECK-NEXT:   0x00000012 RELSZ                [[RELSIZE]] (bytes)
+// CHECK-NEXT:   0x00000013 RELENT               [[RELENT]] (bytes)
 // CHECK-NEXT:   0x00000006 SYMTAB               [[DYNSYMADDR]]
+// CHECK-NEXT:   0x0000000B SYMENT               [[SYMENT]] (bytes)
 // CHECK-NEXT:   0x00000005 STRTAB               [[DYNSTRADDR]]
 // CHECK-NEXT:   0x0000000A STRSZ
 // CHECK-NEXT:   0x00000004 HASH                 [[HASHADDR]]

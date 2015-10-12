@@ -183,29 +183,45 @@ DynamicSection<ELFT>::DynamicSection(SymbolTable &SymTab,
 }
 
 template <class ELFT> void DynamicSection<ELFT>::finalize() {
+  if (this->Header.sh_size)
+    return; // Already finalized.
+
   typename Base::HeaderT &Header = this->Header;
   Header.sh_link = DynStrSec.getSectionIndex();
 
   unsigned NumEntries = 0;
   if (RelaDynSec.hasRelocs()) {
     ++NumEntries; // DT_RELA / DT_REL
-    ++NumEntries; // DT_RELASZ / DTRELSZ
+    ++NumEntries; // DT_RELASZ / DT_RELSZ
+    ++NumEntries; // DT_RELAENT / DT_RELENT
   }
   ++NumEntries; // DT_SYMTAB
+  ++NumEntries; // DT_SYMENT
   ++NumEntries; // DT_STRTAB
   ++NumEntries; // DT_STRSZ
   ++NumEntries; // DT_HASH
 
-  StringRef RPath = Config->RPath;
-  if (!RPath.empty()) {
+  if (!Config->RPath.empty()) {
     ++NumEntries; // DT_RUNPATH
-    DynStrSec.add(RPath);
+    DynStrSec.add(Config->RPath);
   }
+
+  if (!Config->SoName.empty()) {
+    ++NumEntries; // DT_SONAME
+    DynStrSec.add(Config->SoName);
+  }
+
+  if (PreInitArraySec)
+    NumEntries += 2;
+  if (InitArraySec)
+    NumEntries += 2;
+  if (FiniArraySec)
+    NumEntries += 2;
 
   const std::vector<std::unique_ptr<SharedFileBase>> &SharedFiles =
       SymTab.getSharedFiles();
   for (const std::unique_ptr<SharedFileBase> &File : SharedFiles)
-    DynStrSec.add(File->getName());
+    DynStrSec.add(File->getSoName());
   NumEntries += SharedFiles.size();
 
   ++NumEntries; // DT_NULL
@@ -214,55 +230,57 @@ template <class ELFT> void DynamicSection<ELFT>::finalize() {
 }
 
 template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
-  typedef typename std::conditional<ELFT::Is64Bits, Elf64_Dyn, Elf32_Dyn>::type
-      Elf_Dyn;
   auto *P = reinterpret_cast<Elf_Dyn *>(Buf);
+
+  auto WritePtr = [&](int32_t Tag, uint64_t Val) {
+    P->d_tag = Tag;
+    P->d_un.d_ptr = Val;
+    ++P;
+  };
+
+  auto WriteVal = [&](int32_t Tag, uint32_t Val) {
+    P->d_tag = Tag;
+    P->d_un.d_val = Val;
+    ++P;
+  };
 
   if (RelaDynSec.hasRelocs()) {
     bool IsRela = RelaDynSec.isRela();
-    P->d_tag = IsRela ? DT_RELA : DT_REL;
-    P->d_un.d_ptr = RelaDynSec.getVA();
-    ++P;
-
-    P->d_tag = IsRela ? DT_RELASZ : DT_RELSZ;
-    P->d_un.d_val = RelaDynSec.getSize();
-    ++P;
+    WritePtr(IsRela ? DT_RELA : DT_REL, RelaDynSec.getVA());
+    WriteVal(IsRela ? DT_RELASZ : DT_RELSZ, RelaDynSec.getSize());
+    WriteVal(IsRela ? DT_RELAENT : DT_RELENT,
+             IsRela ? sizeof(Elf_Rela) : sizeof(Elf_Rel));
   }
 
-  P->d_tag = DT_SYMTAB;
-  P->d_un.d_ptr = DynSymSec.getVA();
-  ++P;
+  WritePtr(DT_SYMTAB, DynSymSec.getVA());
+  WritePtr(DT_SYMENT, sizeof(Elf_Sym));
+  WritePtr(DT_STRTAB, DynStrSec.getVA());
+  WriteVal(DT_STRSZ, DynStrSec.data().size());
+  WritePtr(DT_HASH, HashSec.getVA());
 
-  P->d_tag = DT_STRTAB;
-  P->d_un.d_ptr = DynStrSec.getVA();
-  ++P;
+  if (!Config->RPath.empty())
+    WriteVal(DT_RUNPATH, DynStrSec.getFileOff(Config->RPath));
 
-  P->d_tag = DT_STRSZ;
-  P->d_un.d_val = DynStrSec.data().size();
-  ++P;
+  if (!Config->SoName.empty())
+    WriteVal(DT_SONAME, DynStrSec.getFileOff(Config->SoName));
 
-  P->d_tag = DT_HASH;
-  P->d_un.d_ptr = HashSec.getVA();
-  ++P;
-
-  StringRef RPath = Config->RPath;
-  if (!RPath.empty()) {
-    P->d_tag = DT_RUNPATH;
-    P->d_un.d_val = DynStrSec.getFileOff(RPath);
-    ++P;
-  }
+  auto WriteArray = [&](int32_t T1, int32_t T2,
+                        const OutputSection<ELFT> *Sec) {
+    if (!Sec)
+      return;
+    WritePtr(T1, Sec->getVA());
+    WriteVal(T2, Sec->getSize());
+  };
+  WriteArray(DT_PREINIT_ARRAY, DT_PREINIT_ARRAYSZ, PreInitArraySec);
+  WriteArray(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, InitArraySec);
+  WriteArray(DT_FINI_ARRAY, DT_FINI_ARRAYSZ, FiniArraySec);
 
   const std::vector<std::unique_ptr<SharedFileBase>> &SharedFiles =
       SymTab.getSharedFiles();
-  for (const std::unique_ptr<SharedFileBase> &File : SharedFiles) {
-    P->d_tag = DT_NEEDED;
-    P->d_un.d_val = DynStrSec.getFileOff(File->getName());
-    ++P;
-  }
+  for (const std::unique_ptr<SharedFileBase> &File : SharedFiles)
+    WriteVal(DT_NEEDED, DynStrSec.getFileOff(File->getSoName()));
 
-  P->d_tag = DT_NULL;
-  P->d_un.d_val = 0;
-  ++P;
+  WriteVal(DT_NULL, 0);
 }
 
 template <class ELFT>

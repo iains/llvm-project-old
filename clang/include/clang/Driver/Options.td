@@ -516,6 +516,8 @@ def fdiagnostics_show_category_EQ : Joined<["-"], "fdiagnostics-show-category=">
 def fdiagnostics_show_template_tree : Flag<["-"], "fdiagnostics-show-template-tree">,
     Group<f_Group>, Flags<[CC1Option]>,
     HelpText<"Print a template comparison tree for differing templates">;
+def fdeclspec : Flag<["-"], "fdeclspec">, Group<f_clang_Group>,
+  HelpText<"Allow __declspec as a keyword">, Flags<[CC1Option]>;
 def fdollars_in_identifiers : Flag<["-"], "fdollars-in-identifiers">, Group<f_Group>,
   HelpText<"Allow '$' in identifiers">, Flags<[CC1Option]>;
 def fdwarf2_cfi_asm : Flag<["-"], "fdwarf2-cfi-asm">, Group<clang_ignored_f_Group>;
@@ -808,6 +810,8 @@ def fno_diagnostics_fixit_info : Flag<["-"], "fno-diagnostics-fixit-info">, Grou
 def fno_diagnostics_show_option : Flag<["-"], "fno-diagnostics-show-option">, Group<f_Group>;
 def fno_diagnostics_show_note_include_stack : Flag<["-"], "fno-diagnostics-show-note-include-stack">,
     Flags<[CC1Option]>, Group<f_Group>;
+def fno_declspec : Flag<["-"], "fno-declspec">, Group<f_clang_Group>,
+  HelpText<"Disallow __declspec as a keyword">, Flags<[CC1Option]>;
 def fno_dollars_in_identifiers : Flag<["-"], "fno-dollars-in-identifiers">, Group<f_Group>,
   HelpText<"Disallow '$' in identifiers">, Flags<[CC1Option]>;
 def fno_elide_constructors : Flag<["-"], "fno-elide-constructors">, Group<f_Group>,
@@ -1109,14 +1113,16 @@ def gline_tables_only : Flag<["-"], "gline-tables-only">, Group<g_Group>,
   HelpText<"Emit debug line number tables only">, Flags<[CC1Option]>;
 def gmlt : Flag<["-"], "gmlt">, Alias<gline_tables_only>;
 def g0 : Flag<["-"], "g0">, Group<g_Group>;
-def g1 : Flag<["-"], "g1">, Group<g_Group>;
+def g1 : Flag<["-"], "g1">, Group<g_Group>, Alias<gline_tables_only>;
 def g2 : Flag<["-"], "g2">, Group<g_Group>;
 def g3 : Flag<["-"], "g3">, Group<g_Group>;
 def ggdb : Flag<["-"], "ggdb">, Group<g_Group>;
-def ggdb0 : Flag<["-"], "ggdb0">, Group<g_Group>;
-def ggdb1 : Flag<["-"], "ggdb1">, Group<g_Group>;
-def ggdb2 : Flag<["-"], "ggdb2">, Group<g_Group>;
-def ggdb3 : Flag<["-"], "ggdb3">, Group<g_Group>;
+def ggdb0 : Flag<["-"], "ggdb0">, Alias<g0>;
+// Redirect ggdb1 to <gline_tables_only>, not <g1>,
+// because aliases of aliases aren't allowed.
+def ggdb1 : Flag<["-"], "ggdb1">, Alias<gline_tables_only>;
+def ggdb2 : Flag<["-"], "ggdb2">, Alias<g2>;
+def ggdb3 : Flag<["-"], "ggdb3">, Alias<g3>;
 def gdwarf_2 : Flag<["-"], "gdwarf-2">, Group<g_Group>,
   HelpText<"Generate source-level debug information with dwarf version 2">, Flags<[CC1Option,CC1AsOption]>;
 def gdwarf_3 : Flag<["-"], "gdwarf-3">, Group<g_Group>,

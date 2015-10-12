@@ -28,15 +28,26 @@ bool SymbolTable::shouldUseRela() const {
 }
 
 void SymbolTable::addFile(std::unique_ptr<InputFile> File) {
-  File->parse();
-  InputFile *FileP = File.release();
-  if (auto *AF = dyn_cast<ArchiveFile>(FileP)) {
+  if (auto *AF = dyn_cast<ArchiveFile>(File.get())) {
+    File.release();
     ArchiveFiles.emplace_back(AF);
+    if (Config->WholeArchive) {
+      for (MemoryBufferRef &MBRef : AF->getMembers())
+        addFile(createELFFile<ObjectFile>(MBRef));
+      return;
+    }
+    AF->parse();
     for (Lazy &Sym : AF->getLazySymbols())
       addLazy(&Sym);
     return;
   }
-  addELFFile(cast<ELFFileBase>(FileP));
+  if (auto *S = dyn_cast<SharedFileBase>(File.get())) {
+    S->parseSoName();
+    if (!IncludedSoNames.insert(S->getSoName()).second)
+      return;
+  }
+  File->parse();
+  addELFFile(cast<ELFFileBase>(File.release()));
 }
 
 static TargetInfo *createTarget(uint16_t EMachine) {
@@ -70,6 +81,13 @@ void SymbolTable::addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
   resolve<ELFT>(Sym);
 }
 
+template <class ELFT> void SymbolTable::addIgnoredSym(StringRef Name) {
+  DefinedAbsolute<ELFT>::IgnoreUndef.setVisibility(STV_HIDDEN);
+  auto Sym = new (Alloc)
+      DefinedAbsolute<ELFT>(Name, DefinedAbsolute<ELFT>::IgnoreUndef);
+  resolve<ELFT>(Sym);
+}
+
 template <class ELFT> void SymbolTable::init(uint16_t EMachine) {
   Target.reset(createTarget(EMachine));
   if (Config->Shared)
@@ -91,10 +109,7 @@ template <class ELFT> void SymbolTable::init(uint16_t EMachine) {
   // an undefined symbol in the .o files.
   // Given that the symbol is effectively unused, we just create a dummy
   // hidden one to avoid the undefined symbol error.
-  DefinedAbsolute<ELFT>::IgnoreUndef.setVisibility(STV_HIDDEN);
-  auto Got = new (Alloc) DefinedAbsolute<ELFT>(
-      "_GLOBAL_OFFSET_TABLE_", DefinedAbsolute<ELFT>::IgnoreUndef);
-  resolve<ELFT>(Got);
+  addIgnoredSym<ELFT>("_GLOBAL_OFFSET_TABLE_");
 }
 
 template <class ELFT> void SymbolTable::addELFFile(ELFFileBase *File) {
@@ -211,7 +226,7 @@ void SymbolTable::addLazy(Lazy *New) {
   if (Sym->Body == New)
     return;
   SymbolBody *Existing = Sym->Body;
-  if (Existing->isDefined() || Existing->isLazy())
+  if (Existing->isDefined() || Existing->isLazy() || Existing->isWeak())
     return;
   Sym->Body = New;
   assert(Existing->isUndefined() && "Unexpected symbol kind.");
@@ -230,17 +245,18 @@ void SymbolTable::addMemberFile(Lazy *Body) {
 
 namespace lld {
 namespace elf2 {
-template void SymbolTable::addSyntheticSym(StringRef Name,
-                                           OutputSection<ELF32LE> &Section,
-                                           ELFFile<ELF32LE>::uintX_t Value);
-template void SymbolTable::addSyntheticSym(StringRef Name,
-                                           OutputSection<ELF32BE> &Section,
-                                           ELFFile<ELF32BE>::uintX_t Value);
-template void SymbolTable::addSyntheticSym(StringRef Name,
-                                           OutputSection<ELF64LE> &Section,
-                                           ELFFile<ELF64LE>::uintX_t Value);
-template void SymbolTable::addSyntheticSym(StringRef Name,
-                                           OutputSection<ELF64BE> &Section,
-                                           ELFFile<ELF64BE>::uintX_t Value);
+template void SymbolTable::addSyntheticSym(StringRef, OutputSection<ELF32LE> &,
+                                           ELFFile<ELF32LE>::uintX_t);
+template void SymbolTable::addSyntheticSym(StringRef, OutputSection<ELF32BE> &,
+                                           ELFFile<ELF32BE>::uintX_t);
+template void SymbolTable::addSyntheticSym(StringRef, OutputSection<ELF64LE> &,
+                                           ELFFile<ELF64LE>::uintX_t);
+template void SymbolTable::addSyntheticSym(StringRef, OutputSection<ELF64BE> &,
+                                           ELFFile<ELF64BE>::uintX_t);
+
+template void SymbolTable::addIgnoredSym<ELF32LE>(StringRef);
+template void SymbolTable::addIgnoredSym<ELF32BE>(StringRef);
+template void SymbolTable::addIgnoredSym<ELF64LE>(StringRef);
+template void SymbolTable::addIgnoredSym<ELF64BE>(StringRef);
 }
 }

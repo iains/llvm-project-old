@@ -21,16 +21,20 @@ struct Configuration {
   llvm::StringRef DynamicLinker;
   llvm::StringRef Entry;
   llvm::StringRef OutputFile = "a.out";
+  llvm::StringRef SoName;
   llvm::StringRef Sysroot;
   std::string RPath;
   std::vector<llvm::StringRef> InputSearchPaths;
-  bool AllowMultipleDefinition = false;
-  bool DiscardAll = false;
-  bool DiscardLocals = false;
-  bool DiscardNone = false;
-  bool ExportDynamic = false;
-  bool NoInhibitExec = false;
-  bool Shared = false;
+  bool AllowMultipleDefinition;
+  bool DiscardAll;
+  bool DiscardLocals;
+  bool DiscardNone;
+  bool ExportDynamic;
+  bool NoInhibitExec;
+  bool NoUndefined;
+  bool Shared;
+  bool Static = false;
+  bool WholeArchive = false;
 };
 
 extern Configuration *Config;
