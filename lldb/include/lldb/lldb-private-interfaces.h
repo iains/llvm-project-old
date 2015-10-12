@@ -14,6 +14,8 @@
 
 #include "lldb/lldb-private.h"
 
+#include <set>
+
 namespace lldb_private
 {
     typedef lldb::ABISP (*ABICreateInstance) (const ArchSpec &arch);
@@ -46,7 +48,8 @@ namespace lldb_private
     typedef lldb::MemoryHistorySP (*MemoryHistoryCreateInstance) (const lldb::ProcessSP &process_sp);
     typedef lldb::InstrumentationRuntimeType (*InstrumentationRuntimeGetType) ();
     typedef lldb::InstrumentationRuntimeSP (*InstrumentationRuntimeCreateInstance) (const lldb::ProcessSP &process_sp);
-    typedef lldb::TypeSystemSP (*TypeSystemCreateInstance) (lldb::LanguageType language, const lldb_private::ArchSpec &arch);
+    typedef lldb::TypeSystemSP (*TypeSystemCreateInstance) (lldb::LanguageType language, Module *module, Target *target);
+    typedef void (*TypeSystemEnumerateSupportedLanguages) (std::set<lldb::LanguageType> &languages_for_types, std::set<lldb::LanguageType> &languages_for_expressions);
     typedef int (*ComparisonFunction)(const void *, const void *);
     typedef void (*DebuggerInitializeCallback)(Debugger &debugger);
 

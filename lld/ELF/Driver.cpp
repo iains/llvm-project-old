@@ -12,14 +12,16 @@
 #include "Error.h"
 #include "InputFiles.h"
 #include "SymbolTable.h"
+#include "Target.h"
 #include "Writer.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
+#include <utility>
 
 using namespace llvm;
 using namespace llvm::ELF;
+using namespace llvm::object;
 
 using namespace lld;
 using namespace lld::elf2;
@@ -32,92 +34,52 @@ void lld::elf2::link(ArrayRef<const char *> Args) {
   LinkerDriver D;
   Config = &C;
   Driver = &D;
-  Driver->link(Args.slice(1));
+  Driver->main(Args.slice(1));
 }
 
-static void setELFType(StringRef Emul) {
-  if (Emul == "elf_i386") {
-    Config->ElfKind = ELF32LEKind;
-    Config->EMachine = EM_386;
-    return;
-  }
-  if (Emul == "elf_x86_64") {
-    Config->ElfKind = ELF64LEKind;
-    Config->EMachine = EM_X86_64;
-    return;
-  }
-  if (Emul == "elf32ppc") {
-    Config->ElfKind = ELF32BEKind;
-    Config->EMachine = EM_PPC;
-    return;
-  }
-  if (Emul == "elf64ppc") {
-    Config->ElfKind = ELF64BEKind;
-    Config->EMachine = EM_PPC64;
-    return;
-  }
-  error(Twine("Unknown emulation: ") + Emul);
+static std::pair<ELFKind, uint16_t> parseEmulation(StringRef S) {
+  Config->Emulation = S;
+  if (S == "elf32btsmip")
+    return {ELF32BEKind, EM_MIPS};
+  if (S == "elf32ltsmip")
+    return {ELF32LEKind, EM_MIPS};
+  if (S == "elf32ppc")
+    return {ELF32BEKind, EM_PPC};
+  if (S == "elf64ppc")
+    return {ELF64BEKind, EM_PPC64};
+  if (S == "elf_i386")
+    return {ELF32LEKind, EM_386};
+  if (S == "elf_x86_64")
+    return {ELF64LEKind, EM_X86_64};
+  error("Unknown emulation: " + S);
 }
 
-// Makes a path by concatenating Dir and File.
-// If Dir starts with '=' the result will be preceded by Sysroot,
-// which can be set with --sysroot command line switch.
-static std::string buildSysrootedPath(StringRef Dir, StringRef File) {
-  SmallString<128> Path;
-  if (Dir.startswith("="))
-    sys::path::append(Path, Config->Sysroot, Dir.substr(1), File);
-  else
-    sys::path::append(Path, Dir, File);
-  return Path.str().str();
-}
-
-// Searches a given library from input search paths, which are filled
-// from -L command line switches. Returns a path to an existent library file.
-static std::string searchLibrary(StringRef Path) {
-  std::vector<std::string> Names;
-  if (Path[0] == ':') {
-    Names.push_back(Path.drop_front().str());
-  } else {
-    if (!Config->Static)
-      Names.push_back((Twine("lib") + Path + ".so").str());
-    Names.push_back((Twine("lib") + Path + ".a").str());
+static TargetInfo *createTarget() {
+  switch (Config->EMachine) {
+  case EM_386:
+    return new X86TargetInfo();
+  case EM_AARCH64:
+    return new AArch64TargetInfo();
+  case EM_ARM:
+    return new ARMTargetInfo();
+  case EM_MIPS:
+    return new MipsTargetInfo();
+  case EM_PPC:
+    return new PPCTargetInfo();
+  case EM_PPC64:
+    return new PPC64TargetInfo();
+  case EM_X86_64:
+    return new X86_64TargetInfo();
   }
-  for (StringRef Dir : Config->InputSearchPaths) {
-    for (const std::string &Name : Names) {
-      std::string FullPath = buildSysrootedPath(Dir, Name);
-      if (sys::fs::exists(FullPath))
-        return FullPath;
-    }
-  }
-  error(Twine("Unable to find library -l") + Path);
-}
-
-template <template <class> class T>
-std::unique_ptr<ELFFileBase>
-LinkerDriver::createELFInputFile(MemoryBufferRef MB) {
-  std::unique_ptr<ELFFileBase> File = createELFFile<T>(MB);
-  const ELFKind ElfKind = File->getELFKind();
-  const uint16_t EMachine = File->getEMachine();
-
-  // Grab target from the first input file if wasn't set by -m option.
-  if (Config->ElfKind == ELFNoneKind) {
-    Config->ElfKind = ElfKind;
-    Config->EMachine = EMachine;
-    return File;
-  }
-  if (ElfKind == Config->ElfKind && EMachine == Config->EMachine)
-    return File;
-
-  if (const ELFFileBase *First = Symtab.getFirstELF())
-    error(MB.getBufferIdentifier() + " is incompatible with " +
-          First->getName());
-  error(MB.getBufferIdentifier() + " is incompatible with target architecture");
+  error("Unknown target machine");
 }
 
 // Opens and parses a file. Path has to be resolved already.
 // Newly created memory buffers are owned by this driver.
 void LinkerDriver::addFile(StringRef Path) {
   using namespace llvm::sys::fs;
+  if (Config->Verbose)
+    llvm::outs() << Path << "\n";
   auto MBOrErr = MemoryBuffer::getFile(Path);
   error(MBOrErr, Twine("cannot open ") + Path);
   std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
@@ -126,16 +88,23 @@ void LinkerDriver::addFile(StringRef Path) {
 
   switch (identify_magic(MBRef.getBuffer())) {
   case file_magic::unknown:
-    readLinkerScript(MBRef);
+    readLinkerScript(&Alloc, MBRef);
     return;
   case file_magic::archive:
-    Symtab.addFile(make_unique<ArchiveFile>(MBRef));
+    if (WholeArchive) {
+      auto File = make_unique<ArchiveFile>(MBRef);
+      for (MemoryBufferRef &MB : File->getMembers())
+        Files.push_back(createELFFile<ObjectFile>(MB));
+      OwningArchives.emplace_back(std::move(File));
+      return;
+    }
+    Files.push_back(make_unique<ArchiveFile>(MBRef));
     return;
   case file_magic::elf_shared_object:
-    Symtab.addFile(createELFInputFile<SharedFile>(MBRef));
+    Files.push_back(createELFFile<SharedFile>(MBRef));
     return;
   default:
-    Symtab.addFile(createELFInputFile<ObjectFile>(MBRef));
+    Files.push_back(createELFFile<ObjectFile>(MBRef));
   }
 }
 
@@ -146,14 +115,33 @@ getString(opt::InputArgList &Args, unsigned Key, StringRef Default = "") {
   return Default;
 }
 
-void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
+void LinkerDriver::main(ArrayRef<const char *> ArgsArr) {
   initSymbols();
 
-  // Parse command line options.
-  opt::InputArgList Args = Parser.parse(ArgsArr);
+  opt::InputArgList Args = parseArgs(&Alloc, ArgsArr);
+  createFiles(Args);
 
+  switch (Config->ElfKind) {
+  case ELF32LEKind:
+    link<ELF32LE>(Args);
+    return;
+  case ELF32BEKind:
+    link<ELF32BE>(Args);
+    return;
+  case ELF64LEKind:
+    link<ELF64LE>(Args);
+    return;
+  case ELF64BEKind:
+    link<ELF64BE>(Args);
+    return;
+  default:
+    error("-m or at least a .o file required");
+  }
+}
+
+void LinkerDriver::createFiles(opt::InputArgList &Args) {
   for (auto *Arg : Args.filtered(OPT_L))
-    Config->InputSearchPaths.push_back(Arg->getValue());
+    Config->SearchPaths.push_back(Arg->getValue());
 
   std::vector<StringRef> RPaths;
   for (auto *Arg : Args.filtered(OPT_rpath))
@@ -161,8 +149,11 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (!RPaths.empty())
     Config->RPath = llvm::join(RPaths.begin(), RPaths.end(), ":");
 
-  if (auto *Arg = Args.getLastArg(OPT_m))
-    setELFType(Arg->getValue());
+  if (auto *Arg = Args.getLastArg(OPT_m)) {
+    std::pair<ELFKind, uint16_t> P = parseEmulation(Arg->getValue());
+    Config->ElfKind = P.first;
+    Config->EMachine = P.second;
+  }
 
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
   Config->DiscardAll = Args.hasArg(OPT_discard_all);
@@ -173,12 +164,13 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   Config->NoInhibitExec = Args.hasArg(OPT_noinhibit_exec);
   Config->NoUndefined = Args.hasArg(OPT_no_undefined);
   Config->Shared = Args.hasArg(OPT_shared);
+  Config->Verbose = Args.hasArg(OPT_verbose);
 
   Config->DynamicLinker = getString(Args, OPT_dynamic_linker);
   Config->Entry = getString(Args, OPT_entry);
   Config->Fini = getString(Args, OPT_fini, "_fini");
   Config->Init = getString(Args, OPT_init, "_init");
-  Config->OutputFile = getString(Args, OPT_output);
+  Config->OutputFile = getString(Args, OPT_o);
   Config->SoName = getString(Args, OPT_soname);
   Config->Sysroot = getString(Args, OPT_sysroot);
 
@@ -192,7 +184,14 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
       addFile(searchLibrary(Arg->getValue()));
       break;
     case OPT_INPUT:
+    case OPT_script:
       addFile(Arg->getValue());
+      break;
+    case OPT_as_needed:
+      Config->AsNeeded = true;
+      break;
+    case OPT_no_as_needed:
+      Config->AsNeeded = false;
       break;
     case OPT_Bstatic:
       Config->Static = true;
@@ -201,23 +200,51 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
       Config->Static = false;
       break;
     case OPT_whole_archive:
-      Config->WholeArchive = true;
+      WholeArchive = true;
       break;
     case OPT_no_whole_archive:
-      Config->WholeArchive = false;
+      WholeArchive = false;
       break;
     }
   }
 
-  if (Symtab.getObjectFiles().empty())
+  if (Files.empty())
     error("no input files.");
+}
+
+template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
+  SymbolTable<ELFT> Symtab;
+  Target.reset(createTarget());
+
+  if (!Config->Shared) {
+    // Add entry symbol.
+    Config->EntrySym = Symtab.addUndefined(
+        Config->Entry.empty() ? Target->getDefaultEntry() : Config->Entry);
+
+    // In the assembly for 32 bit x86 the _GLOBAL_OFFSET_TABLE_ symbol
+    // is magical and is used to produce a R_386_GOTPC relocation.
+    // The R_386_GOTPC relocation value doesn't actually depend on the
+    // symbol value, so it could use an index of STN_UNDEF which, according
+    // to the spec, means the symbol value is 0.
+    // Unfortunately both gas and MC keep the _GLOBAL_OFFSET_TABLE_ symbol in
+    // the object file.
+    // The situation is even stranger on x86_64 where the assembly doesn't
+    // need the magical symbol, but gas still puts _GLOBAL_OFFSET_TABLE_ as
+    // an undefined symbol in the .o files.
+    // Given that the symbol is effectively unused, we just create a dummy
+    // hidden one to avoid the undefined symbol error.
+    Symtab.addIgnoredSym("_GLOBAL_OFFSET_TABLE_");
+  }
+
+  for (std::unique_ptr<InputFile> &F : Files)
+    Symtab.addFile(std::move(F));
 
   for (auto *Arg : Args.filtered(OPT_undefined))
-    Symtab.addUndefinedSym(Arg->getValue());
+    Symtab.addUndefinedOpt(Arg->getValue());
 
   if (Config->OutputFile.empty())
     Config->OutputFile = "a.out";
 
   // Write the result to the file.
-  writeResult(&Symtab);
+  writeResult<ELFT>(&Symtab);
 }

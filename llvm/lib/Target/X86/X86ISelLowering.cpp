@@ -1607,6 +1607,10 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::CONCAT_VECTORS,     MVT::v64i1, Legal);
     setOperationAction(ISD::INSERT_SUBVECTOR,   MVT::v32i1, Custom);
     setOperationAction(ISD::INSERT_SUBVECTOR,   MVT::v64i1, Custom);
+    setOperationAction(ISD::INSERT_SUBVECTOR,   MVT::v32i16, Custom);
+    setOperationAction(ISD::INSERT_SUBVECTOR,   MVT::v64i8, Custom);
+    setOperationAction(ISD::EXTRACT_VECTOR_ELT, MVT::v32i16, Custom);
+    setOperationAction(ISD::EXTRACT_VECTOR_ELT, MVT::v64i8, Custom);
     setOperationAction(ISD::SELECT,             MVT::v32i1, Custom);
     setOperationAction(ISD::SELECT,             MVT::v64i1, Custom);
     setOperationAction(ISD::SIGN_EXTEND,        MVT::v32i8, Custom);
@@ -1618,6 +1622,8 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::ZERO_EXTEND,        MVT::v64i8, Custom);
     setOperationAction(ISD::INSERT_VECTOR_ELT,  MVT::v32i1, Custom);
     setOperationAction(ISD::INSERT_VECTOR_ELT,  MVT::v64i1, Custom);
+    setOperationAction(ISD::INSERT_VECTOR_ELT,  MVT::v32i16, Custom);
+    setOperationAction(ISD::INSERT_VECTOR_ELT,  MVT::v64i8, Custom);
     setOperationAction(ISD::VSELECT,            MVT::v32i16, Legal);
     setOperationAction(ISD::VSELECT,            MVT::v64i8, Legal);
     setOperationAction(ISD::TRUNCATE,           MVT::v32i1, Custom);
@@ -2695,10 +2701,6 @@ SDValue X86TargetLowering::LowerFormalArguments(
   }
 
   MachineModuleInfo &MMI = MF.getMMI();
-  const Function *WinEHParent = nullptr;
-  if (MMI.hasWinEHFuncInfo(Fn))
-    WinEHParent = MMI.getWinEHParent(Fn);
-  bool IsWinEHParent = WinEHParent && WinEHParent == Fn;
 
   // Figure out if XMM registers are in use.
   assert(!(Subtarget->useSoftFloat() &&
@@ -2855,7 +2857,7 @@ SDValue X86TargetLowering::LowerFormalArguments(
 
   FuncInfo->setArgumentStackSize(StackSize);
 
-  if (IsWinEHParent) {
+  if (MMI.hasWinEHFuncInfo(Fn)) {
     if (Is64Bit) {
       int UnwindHelpFI = MFI->CreateStackObject(8, 8, /*isSS=*/false);
       SDValue StackSlot = DAG.getFrameIndex(UnwindHelpFI, MVT::i64);
@@ -14177,6 +14179,33 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget *Subtarget,
                          DAG.getNode(ISD::SETCC, dl, OpVT, Op0, Op1, CC));
   }
 
+  // Lower using XOP integer comparisons.
+  if ((VT == MVT::v16i8 || VT == MVT::v8i16 ||
+       VT == MVT::v4i32 || VT == MVT::v2i64) && Subtarget->hasXOP()) {
+    // Translate compare code to XOP PCOM compare mode.
+    unsigned CmpMode = 0;
+    switch (SetCCOpcode) {
+    default: llvm_unreachable("Unexpected SETCC condition");
+    case ISD::SETULT:
+    case ISD::SETLT: CmpMode = 0x00; break;
+    case ISD::SETULE:
+    case ISD::SETLE: CmpMode = 0x01; break;
+    case ISD::SETUGT:
+    case ISD::SETGT: CmpMode = 0x02; break;
+    case ISD::SETUGE:
+    case ISD::SETGE: CmpMode = 0x03; break;
+    case ISD::SETEQ: CmpMode = 0x04; break;
+    case ISD::SETNE: CmpMode = 0x05; break;
+    }
+
+    // Are we comparing unsigned or signed integers?
+    unsigned Opc = ISD::isUnsignedIntSetCC(SetCCOpcode)
+      ? X86ISD::VPCOMU : X86ISD::VPCOM;
+
+    return DAG.getNode(Opc, dl, VT, Op0, Op1,
+                       DAG.getConstant(CmpMode, dl, MVT::i8));
+  }
+
   // We are handling one of the integer comparisons here.  Since SSE only has
   // GT and EQ comparisons for integer, swapping operands and multiple
   // operations may be required for some comparisons.
@@ -19849,6 +19878,8 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::VPMADDWD:           return "X86ISD::VPMADDWD";
   case X86ISD::VPSHA:              return "X86ISD::VPSHA";
   case X86ISD::VPSHL:              return "X86ISD::VPSHL";
+  case X86ISD::VPCOM:              return "X86ISD::VPCOM";
+  case X86ISD::VPCOMU:             return "X86ISD::VPCOMU";
   case X86ISD::FMADD:              return "X86ISD::FMADD";
   case X86ISD::FMSUB:              return "X86ISD::FMSUB";
   case X86ISD::FNMADD:             return "X86ISD::FNMADD";
@@ -22907,15 +22938,15 @@ static SDValue PerformEXTRACT_VECTOR_ELTCombine(SDNode *N, SelectionDAG &DAG,
                          InputVector.getNode()->getOperand(0));
 
     // The mmx is indirect: (i64 extract_elt (v1i64 bitcast (x86mmx ...))).
-    SDValue MMXSrcOp = MMXSrc.getOperand(0);
     if (MMXSrc.getOpcode() == ISD::EXTRACT_VECTOR_ELT && MMXSrc.hasOneUse() &&
-        MMXSrc.getValueType() == MVT::i64 && MMXSrcOp.hasOneUse() &&
-        MMXSrcOp.getOpcode() == ISD::BITCAST &&
-        MMXSrcOp.getValueType() == MVT::v1i64 &&
-        MMXSrcOp.getOperand(0).getValueType() == MVT::x86mmx)
-      return DAG.getNode(X86ISD::MMX_MOVD2W, SDLoc(InputVector),
-                         N->getValueType(0),
-                         MMXSrcOp.getOperand(0));
+        MMXSrc.getValueType() == MVT::i64) {
+      SDValue MMXSrcOp = MMXSrc.getOperand(0);
+      if (MMXSrcOp.hasOneUse() && MMXSrcOp.getOpcode() == ISD::BITCAST &&
+          MMXSrcOp.getValueType() == MVT::v1i64 &&
+          MMXSrcOp.getOperand(0).getValueType() == MVT::x86mmx)
+        return DAG.getNode(X86ISD::MMX_MOVD2W, SDLoc(InputVector),
+                           N->getValueType(0), MMXSrcOp.getOperand(0));
+    }
   }
 
   EVT VT = N->getValueType(0);

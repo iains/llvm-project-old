@@ -34,7 +34,6 @@ else()
     lldb-platform.cpp
     lldb-server.cpp
     LLDBServerUtilities.cpp
-    ../../source/lldb.cpp
     )
 
   # The Darwin linker doesn't understand --start-group/--end-group.

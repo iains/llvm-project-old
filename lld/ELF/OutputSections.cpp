@@ -20,51 +20,6 @@ using namespace llvm::ELF;
 using namespace lld;
 using namespace lld::elf2;
 
-template <> DynamicSection<ELF32BE> *Out<ELF32BE>::Dynamic = nullptr;
-template <> DynamicSection<ELF32LE> *Out<ELF32LE>::Dynamic = nullptr;
-template <> DynamicSection<ELF64BE> *Out<ELF64BE>::Dynamic = nullptr;
-template <> DynamicSection<ELF64LE> *Out<ELF64LE>::Dynamic = nullptr;
-template <> GotSection<ELF32BE> *Out<ELF32BE>::Got = nullptr;
-template <> GotSection<ELF32LE> *Out<ELF32LE>::Got = nullptr;
-template <> GotSection<ELF64BE> *Out<ELF64BE>::Got = nullptr;
-template <> GotSection<ELF64LE> *Out<ELF64LE>::Got = nullptr;
-template <> HashTableSection<ELF32BE> *Out<ELF32BE>::HashTab = nullptr;
-template <> HashTableSection<ELF32LE> *Out<ELF32LE>::HashTab = nullptr;
-template <> HashTableSection<ELF64BE> *Out<ELF64BE>::HashTab = nullptr;
-template <> HashTableSection<ELF64LE> *Out<ELF64LE>::HashTab = nullptr;
-template <> InterpSection<false> *Out<ELF32BE>::Interp = nullptr;
-template <> InterpSection<false> *Out<ELF32LE>::Interp = nullptr;
-template <> InterpSection<true> *Out<ELF64BE>::Interp = nullptr;
-template <> InterpSection<true> *Out<ELF64LE>::Interp = nullptr;
-template <> OutputSection<ELF32BE> *Out<ELF32BE>::Bss = nullptr;
-template <> OutputSection<ELF32LE> *Out<ELF32LE>::Bss = nullptr;
-template <> OutputSection<ELF64BE> *Out<ELF64BE>::Bss = nullptr;
-template <> OutputSection<ELF64LE> *Out<ELF64LE>::Bss = nullptr;
-template <> PltSection<ELF32BE> *Out<ELF32BE>::Plt = nullptr;
-template <> PltSection<ELF32LE> *Out<ELF32LE>::Plt = nullptr;
-template <> PltSection<ELF64BE> *Out<ELF64BE>::Plt = nullptr;
-template <> PltSection<ELF64LE> *Out<ELF64LE>::Plt = nullptr;
-template <> RelocationSection<ELF32BE> *Out<ELF32BE>::RelaDyn = nullptr;
-template <> RelocationSection<ELF32LE> *Out<ELF32LE>::RelaDyn = nullptr;
-template <> RelocationSection<ELF64BE> *Out<ELF64BE>::RelaDyn = nullptr;
-template <> RelocationSection<ELF64LE> *Out<ELF64LE>::RelaDyn = nullptr;
-template <> StringTableSection<false> *Out<ELF32BE>::DynStrTab = nullptr;
-template <> StringTableSection<false> *Out<ELF32LE>::DynStrTab = nullptr;
-template <> StringTableSection<true> *Out<ELF64BE>::DynStrTab = nullptr;
-template <> StringTableSection<true> *Out<ELF64LE>::DynStrTab = nullptr;
-template <> StringTableSection<false> *Out<ELF32BE>::StrTab = nullptr;
-template <> StringTableSection<false> *Out<ELF32LE>::StrTab = nullptr;
-template <> StringTableSection<true> *Out<ELF64BE>::StrTab = nullptr;
-template <> StringTableSection<true> *Out<ELF64LE>::StrTab = nullptr;
-template <> SymbolTableSection<ELF32BE> *Out<ELF32BE>::DynSymTab = nullptr;
-template <> SymbolTableSection<ELF32LE> *Out<ELF32LE>::DynSymTab = nullptr;
-template <> SymbolTableSection<ELF64BE> *Out<ELF64BE>::DynSymTab = nullptr;
-template <> SymbolTableSection<ELF64LE> *Out<ELF64LE>::DynSymTab = nullptr;
-template <> SymbolTableSection<ELF32BE> *Out<ELF32BE>::SymTab = nullptr;
-template <> SymbolTableSection<ELF32LE> *Out<ELF32LE>::SymTab = nullptr;
-template <> SymbolTableSection<ELF64BE> *Out<ELF64BE>::SymTab = nullptr;
-template <> SymbolTableSection<ELF64LE> *Out<ELF64LE>::SymTab = nullptr;
-
 template <bool Is64Bits>
 OutputSectionBase<Is64Bits>::OutputSectionBase(StringRef Name, uint32_t sh_type,
                                                uintX_t sh_flags)
@@ -83,14 +38,14 @@ GotSection<ELFT>::GotSection()
 }
 
 template <class ELFT> void GotSection<ELFT>::addEntry(SymbolBody *Sym) {
-  Sym->setGotIndex(Entries.size());
+  Sym->GotIndex = Entries.size();
   Entries.push_back(Sym);
 }
 
 template <class ELFT>
 typename GotSection<ELFT>::uintX_t
 GotSection<ELFT>::getEntryAddr(const SymbolBody &B) const {
-  return this->getVA() + B.getGotIndex() * this->getAddrSize();
+  return this->getVA() + B.GotIndex * this->getAddrSize();
 }
 
 template <class ELFT> void GotSection<ELFT>::writeTo(uint8_t *Buf) {
@@ -113,25 +68,29 @@ PltSection<ELFT>::PltSection()
 }
 
 template <class ELFT> void PltSection<ELFT>::writeTo(uint8_t *Buf) {
-  uintptr_t Start = reinterpret_cast<uintptr_t>(Buf);
+  uint8_t *Start = Buf;
   for (const SymbolBody *E : Entries) {
-    uint64_t GotEntryAddr = Out<ELFT>::Got->getEntryAddr(*E);
-    uintptr_t InstPos = reinterpret_cast<uintptr_t>(Buf);
-    uint64_t PltEntryAddr = (InstPos - Start) + this->getVA();
-    Target->writePltEntry(Buf, GotEntryAddr, PltEntryAddr);
-    Buf += 8;
+    uint64_t Got = Out<ELFT>::Got->getEntryAddr(*E);
+    uint64_t Plt = Buf - Start + this->getVA();
+    Target->writePltEntry(Buf, Got, Plt);
+    Buf += Target->getPltEntrySize();
   }
 }
 
 template <class ELFT> void PltSection<ELFT>::addEntry(SymbolBody *Sym) {
-  Sym->setPltIndex(Entries.size());
+  Sym->PltIndex = Entries.size();
   Entries.push_back(Sym);
 }
 
 template <class ELFT>
 typename PltSection<ELFT>::uintX_t
 PltSection<ELFT>::getEntryAddr(const SymbolBody &B) const {
-  return this->getVA() + B.getPltIndex() * EntrySize;
+  return this->getVA() + B.PltIndex * Target->getPltEntrySize();
+}
+
+template <class ELFT>
+void PltSection<ELFT>::finalize() {
+  this->Header.sh_size = Entries.size() * Target->getPltEntrySize();
 }
 
 template <class ELFT>
@@ -157,8 +116,10 @@ template <class ELFT> void RelocationSection<ELFT>::writeTo(uint8_t *Buf) {
     OutputSection<ELFT> *OutSec = C.getOutputSection();
     uint32_t SymIndex = RI.getSymbol(IsMips64EL);
     const ObjectFile<ELFT> &File = *C.getFile();
-    const SymbolBody *Body = File.getSymbolBody(SymIndex);
+    SymbolBody *Body = File.getSymbolBody(SymIndex);
     const ELFFile<ELFT> &Obj = File.getObj();
+    if (Body)
+      Body = Body->repl();
 
     uint32_t Type = RI.getType(IsMips64EL);
 
@@ -273,7 +234,7 @@ template <class ELFT> void HashTableSection<ELFT>::writeTo(uint8_t *Buf) {
 }
 
 template <class ELFT>
-DynamicSection<ELFT>::DynamicSection(SymbolTable &SymTab)
+DynamicSection<ELFT>::DynamicSection(SymbolTable<ELFT> &SymTab)
     : OutputSectionBase<ELFT::Is64Bits>(".dynamic", llvm::ELF::SHT_DYNAMIC,
                                         llvm::ELF::SHF_ALLOC |
                                             llvm::ELF::SHF_WRITE),
@@ -319,11 +280,12 @@ template <class ELFT> void DynamicSection<ELFT>::finalize() {
   if (FiniArraySec)
     NumEntries += 2;
 
-  const std::vector<std::unique_ptr<SharedFileBase>> &SharedFiles =
-      SymTab.getSharedFiles();
-  for (const std::unique_ptr<SharedFileBase> &File : SharedFiles)
-    Out<ELFT>::DynStrTab->add(File->getSoName());
-  NumEntries += SharedFiles.size();
+  for (const std::unique_ptr<SharedFile<ELFT>> &F : SymTab.getSharedFiles()) {
+    if (!F->isNeeded())
+      continue;
+    Out<ELFT>::DynStrTab->add(F->getSoName());
+    ++NumEntries;
+  }
 
   if (Symbol *S = SymTab.getSymbols().lookup(Config->Init))
     InitSym = dyn_cast<ELFSymbolBody<ELFT>>(S->Body);
@@ -397,10 +359,9 @@ template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
   WriteArray(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, InitArraySec);
   WriteArray(DT_FINI_ARRAY, DT_FINI_ARRAYSZ, FiniArraySec);
 
-  const std::vector<std::unique_ptr<SharedFileBase>> &SharedFiles =
-      SymTab.getSharedFiles();
-  for (const std::unique_ptr<SharedFileBase> &File : SharedFiles)
-    WriteVal(DT_NEEDED, Out<ELFT>::DynStrTab->getFileOff(File->getSoName()));
+  for (const std::unique_ptr<SharedFile<ELFT>> &F : SymTab.getSharedFiles())
+    if (F->isNeeded())
+      WriteVal(DT_NEEDED, Out<ELFT>::DynStrTab->getFileOff(F->getSoName()));
 
   if (InitSym)
     WritePtr(DT_INIT, getSymVA<ELFT>(*InitSym));
@@ -471,6 +432,14 @@ lld::elf2::getLocalSymVA(const typename ELFFile<ELFT>::Elf_Sym *Sym,
         Sym, File.getSymbolTable(), File.getSymbolTableShndx());
   ArrayRef<InputSection<ELFT> *> Sections = File.getSections();
   InputSection<ELFT> *Section = Sections[SecIndex];
+
+  // According to the ELF spec reference to a local symbol from outside
+  // the group are not allowed. Unfortunately .eh_frame breaks that rule
+  // and must be treated specially. For now we just replace the symbol with
+  // 0.
+  if (Section == &InputSection<ELFT>::Discarded)
+    return 0;
+
   OutputSection<ELFT> *OutSec = Section->getOutputSection();
   return OutSec->getVA() + Section->getOutputSectionOff() + Sym->st_value;
 }
@@ -530,10 +499,23 @@ bool lld::elf2::includeInDynamicSymtab(const SymbolBody &B) {
 }
 
 template <class ELFT>
-bool lld::elf2::shouldKeepInSymtab(StringRef SymName,
+bool lld::elf2::shouldKeepInSymtab(const ObjectFile<ELFT> &File,
+                                   StringRef SymName,
                                    const typename ELFFile<ELFT>::Elf_Sym &Sym) {
   if (Sym.getType() == STT_SECTION)
     return false;
+
+  // If sym references a section in a discarded group, don't keep it.
+  uint32_t SecIndex = Sym.st_shndx;
+  if (SecIndex != SHN_ABS) {
+    if (SecIndex == SHN_XINDEX)
+      SecIndex = File.getObj().getExtendedSymbolTableIndex(
+          &Sym, File.getSymbolTable(), File.getSymbolTableShndx());
+    ArrayRef<InputSection<ELFT> *> Sections = File.getSections();
+    const InputSection<ELFT> *Section = Sections[SecIndex];
+    if (Section == &InputSection<ELFT>::Discarded)
+      return false;
+  }
 
   if (Config->DiscardNone)
     return true;
@@ -544,7 +526,7 @@ bool lld::elf2::shouldKeepInSymtab(StringRef SymName,
 
 template <class ELFT>
 SymbolTableSection<ELFT>::SymbolTableSection(
-    SymbolTable &Table, StringTableSection<ELFT::Is64Bits> &StrTabSec)
+    SymbolTable<ELFT> &Table, StringTableSection<ELFT::Is64Bits> &StrTabSec)
     : OutputSectionBase<ELFT::Is64Bits>(
           StrTabSec.isDynamic() ? ".dynsym" : ".symtab",
           StrTabSec.isDynamic() ? llvm::ELF::SHT_DYNSYM : llvm::ELF::SHT_SYMTAB,
@@ -586,16 +568,18 @@ template <class ELFT>
 void SymbolTableSection<ELFT>::writeLocalSymbols(uint8_t *&Buf) {
   // Iterate over all input object files to copy their local symbols
   // to the output symbol table pointed by Buf.
-  for (const std::unique_ptr<ObjectFileBase> &FileB : Table.getObjectFiles()) {
-    auto &File = cast<ObjectFile<ELFT>>(*FileB);
-    Elf_Sym_Range Syms = File.getLocalSymbols();
+  for (const std::unique_ptr<ObjectFile<ELFT>> &File : Table.getObjectFiles()) {
+    Elf_Sym_Range Syms = File->getLocalSymbols();
     for (const Elf_Sym &Sym : Syms) {
-      ErrorOr<StringRef> SymName = Sym.getName(File.getStringTable());
-      if (SymName && !shouldKeepInSymtab<ELFT>(*SymName, Sym))
+      ErrorOr<StringRef> SymNameOrErr = Sym.getName(File->getStringTable());
+      error(SymNameOrErr);
+      StringRef SymName = *SymNameOrErr;
+      if (!shouldKeepInSymtab<ELFT>(*File, SymName, Sym))
         continue;
+
       auto *ESym = reinterpret_cast<Elf_Sym *>(Buf);
       Buf += sizeof(*ESym);
-      ESym->st_name = (SymName) ? StrTabSec.getFileOff(*SymName) : 0;
+      ESym->st_name = StrTabSec.getFileOff(SymName);
       ESym->st_size = Sym.st_size;
       ESym->setBindingAndType(Sym.getBinding(), Sym.getType());
       uint32_t SecIndex = Sym.st_shndx;
@@ -604,9 +588,9 @@ void SymbolTableSection<ELFT>::writeLocalSymbols(uint8_t *&Buf) {
         ESym->st_shndx = SHN_ABS;
       } else {
         if (SecIndex == SHN_XINDEX)
-          SecIndex = File.getObj().getExtendedSymbolTableIndex(
-              &Sym, File.getSymbolTable(), File.getSymbolTableShndx());
-        ArrayRef<InputSection<ELFT> *> Sections = File.getSections();
+          SecIndex = File->getObj().getExtendedSymbolTableIndex(
+              &Sym, File->getSymbolTable(), File->getSymbolTableShndx());
+        ArrayRef<InputSection<ELFT> *> Sections = File->getSections();
         const InputSection<ELFT> *Section = Sections[SecIndex];
         const OutputSection<ELFT> *OutSec = Section->getOutputSection();
         ESym->st_shndx = OutSec->getSectionIndex();
@@ -768,13 +752,17 @@ template bool includeInSymtab<ELF32BE>(const SymbolBody &);
 template bool includeInSymtab<ELF64LE>(const SymbolBody &);
 template bool includeInSymtab<ELF64BE>(const SymbolBody &);
 
-template bool shouldKeepInSymtab<ELF32LE>(StringRef,
+template bool shouldKeepInSymtab<ELF32LE>(const ObjectFile<ELF32LE> &,
+                                          StringRef,
                                           const ELFFile<ELF32LE>::Elf_Sym &);
-template bool shouldKeepInSymtab<ELF32BE>(StringRef,
+template bool shouldKeepInSymtab<ELF32BE>(const ObjectFile<ELF32BE> &,
+                                          StringRef,
                                           const ELFFile<ELF32BE>::Elf_Sym &);
-template bool shouldKeepInSymtab<ELF64LE>(StringRef,
+template bool shouldKeepInSymtab<ELF64LE>(const ObjectFile<ELF64LE> &,
+                                          StringRef,
                                           const ELFFile<ELF64LE>::Elf_Sym &);
-template bool shouldKeepInSymtab<ELF64BE>(StringRef,
+template bool shouldKeepInSymtab<ELF64BE>(const ObjectFile<ELF64BE> &,
+                                          StringRef,
                                           const ELFFile<ELF64BE>::Elf_Sym &);
 }
 }

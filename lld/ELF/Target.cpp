@@ -9,6 +9,7 @@
 
 #include "Target.h"
 #include "Error.h"
+#include "OutputSections.h"
 #include "Symbols.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -36,6 +37,7 @@ X86TargetInfo::X86TargetInfo() {
   PCRelReloc = R_386_PC32;
   GotReloc = R_386_GLOB_DAT;
   GotRefReloc = R_386_GOT32;
+  VAStart = 0x10000;
 }
 
 void X86TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
@@ -63,8 +65,7 @@ static void add32le(uint8_t *L, int32_t V) { write32le(L, read32le(L) + V); }
 static void or32le(uint8_t *L, int32_t V) { write32le(L, read32le(L) | V); }
 
 void X86TargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                                uint64_t BaseAddr, uint64_t SymVA,
-                                uint64_t GotVA) const {
+                                uint64_t BaseAddr, uint64_t SymVA) const {
   typedef ELFFile<ELF32LE>::Elf_Rel Elf_Rel;
   auto &Rel = *reinterpret_cast<const Elf_Rel *>(RelP);
 
@@ -72,7 +73,7 @@ void X86TargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
   uint8_t *Loc = Buf + Offset;
   switch (Type) {
   case R_386_GOT32:
-    add32le(Loc, SymVA - GotVA);
+    add32le(Loc, SymVA - Out<ELF32LE>::Got->getVA());
     break;
   case R_386_PC32:
     add32le(Loc, SymVA - (BaseAddr + Offset));
@@ -91,6 +92,14 @@ X86_64TargetInfo::X86_64TargetInfo() {
   GotReloc = R_X86_64_GLOB_DAT;
   GotRefReloc = R_X86_64_PC32;
   RelativeReloc = R_X86_64_RELATIVE;
+
+  // On freebsd x86_64 the first page cannot be mmaped.
+  // On linux that is controled by vm.mmap_min_addr. At least on some x86_64
+  // installs that is 65536, so the first 15 pages cannot be used.
+  // Given that, the smallest value that can be used in here is 0x10000.
+  // If using 2MB pages, the smallest page aligned address that works is
+  // 0x200000, but it looks like every OS uses 4k pages for executables.
+  VAStart = 0x10000;
 }
 
 void X86_64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
@@ -158,7 +167,7 @@ bool X86_64TargetInfo::isRelRelative(uint32_t Type) const {
 
 void X86_64TargetInfo::relocateOne(uint8_t *Buf, const void *RelP,
                                    uint32_t Type, uint64_t BaseAddr,
-                                   uint64_t SymVA, uint64_t GotVA) const {
+                                   uint64_t SymVA) const {
   typedef ELFFile<ELF64LE>::Elf_Rela Elf_Rela;
   auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
 
@@ -192,6 +201,9 @@ void X86_64TargetInfo::relocateOne(uint8_t *Buf, const void *RelP,
 PPC64TargetInfo::PPC64TargetInfo() {
   // PCRelReloc = FIXME
   // GotReloc = FIXME
+  PltEntrySize = 32;
+  PageSize = 65536;
+  VAStart = 0x10000000;
 }
 void PPC64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
                                     uint64_t PltEntryAddr) const {}
@@ -202,8 +214,7 @@ bool PPC64TargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
   return false;
 }
 void PPC64TargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                                  uint64_t BaseAddr, uint64_t SymVA,
-                                  uint64_t GotVA) const {
+                                  uint64_t BaseAddr, uint64_t SymVA) const {
   typedef ELFFile<ELF64BE>::Elf_Rela Elf_Rela;
   auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
 
@@ -225,6 +236,8 @@ void PPC64TargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
 PPCTargetInfo::PPCTargetInfo() {
   // PCRelReloc = FIXME
   // GotReloc = FIXME
+  PageSize = 65536;
+  VAStart = 0x10000000;
 }
 void PPCTargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
                                   uint64_t PltEntryAddr) const {}
@@ -235,12 +248,12 @@ bool PPCTargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
   return false;
 }
 void PPCTargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                                uint64_t BaseAddr, uint64_t SymVA,
-                                uint64_t GotVA) const {}
+                                uint64_t BaseAddr, uint64_t SymVA) const {}
 
 ARMTargetInfo::ARMTargetInfo() {
   // PCRelReloc = FIXME
   // GotReloc = FIXME
+  VAStart = 0x8000;
 }
 void ARMTargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
                                   uint64_t PltEntryAddr) const {}
@@ -251,12 +264,12 @@ bool ARMTargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
   return false;
 }
 void ARMTargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                                uint64_t BaseAddr, uint64_t SymVA,
-                                uint64_t GotVA) const {}
+                                uint64_t BaseAddr, uint64_t SymVA) const {}
 
 AArch64TargetInfo::AArch64TargetInfo() {
   // PCRelReloc = FIXME
   // GotReloc = FIXME
+  VAStart = 0x400000;
 }
 void AArch64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
                                       uint64_t PltEntryAddr) const {}
@@ -285,7 +298,7 @@ static uint64_t getAArch64Page(uint64_t Expr) {
 
 void AArch64TargetInfo::relocateOne(uint8_t *Buf, const void *RelP,
                                     uint32_t Type, uint64_t BaseAddr,
-                                    uint64_t SymVA, uint64_t GotVA) const {
+                                    uint64_t SymVA) const {
   typedef ELFFile<ELF64LE>::Elf_Rela Elf_Rela;
   auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
 
@@ -336,6 +349,8 @@ MipsTargetInfo::MipsTargetInfo() {
   // PCRelReloc = FIXME
   // GotReloc = FIXME
   DefaultEntry = "__start";
+  PageSize = 65536;
+  VAStart = 0x400000;
 }
 
 void MipsTargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
@@ -350,7 +365,6 @@ bool MipsTargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
 }
 
 void MipsTargetInfo::relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                                 uint64_t BaseAddr, uint64_t SymVA,
-                                 uint64_t GotVA) const {}
+                                 uint64_t BaseAddr, uint64_t SymVA) const {}
 }
 }

@@ -18,6 +18,9 @@
 namespace lld {
 namespace elf2 {
 
+class InputFile;
+class SymbolBody;
+
 enum ELFKind {
   ELFNoneKind,
   ELF32LEKind,
@@ -27,16 +30,20 @@ enum ELFKind {
 };
 
 struct Configuration {
+  SymbolBody *EntrySym = nullptr;
+  InputFile *FirstElf = nullptr;
   llvm::StringRef DynamicLinker;
   llvm::StringRef Entry;
+  llvm::StringRef Emulation;
   llvm::StringRef Fini;
   llvm::StringRef Init;
   llvm::StringRef OutputFile;
   llvm::StringRef SoName;
   llvm::StringRef Sysroot;
   std::string RPath;
-  std::vector<llvm::StringRef> InputSearchPaths;
+  std::vector<llvm::StringRef> SearchPaths;
   bool AllowMultipleDefinition;
+  bool AsNeeded = false;
   bool DiscardAll;
   bool DiscardLocals;
   bool DiscardNone;
@@ -44,10 +51,10 @@ struct Configuration {
   bool ExportDynamic;
   bool NoInhibitExec;
   bool NoUndefined;
-  bool ZNow = false;
   bool Shared;
   bool Static = false;
-  bool WholeArchive = false;
+  bool Verbose;
+  bool ZNow = false;
   ELFKind ElfKind = ELFNoneKind;
   uint16_t EMachine = llvm::ELF::EM_NONE;
 };

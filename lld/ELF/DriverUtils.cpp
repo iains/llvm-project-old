@@ -17,6 +17,8 @@
 #include "Error.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/StringSaver.h"
 
 using namespace llvm;
@@ -49,7 +51,8 @@ public:
 };
 
 // Parses a given list of options.
-opt::InputArgList ArgParser::parse(ArrayRef<const char *> Argv) {
+opt::InputArgList lld::elf2::parseArgs(llvm::BumpPtrAllocator *A,
+                                       ArrayRef<const char *> Argv) {
   // Make InputArgList from string vectors.
   ELFOptTable Table;
   unsigned MissingIndex;
@@ -57,7 +60,7 @@ opt::InputArgList ArgParser::parse(ArrayRef<const char *> Argv) {
 
   // Expand response files. '@<filename>' is replaced by the file's contents.
   SmallVector<const char *, 256> Vec(Argv.data(), Argv.data() + Argv.size());
-  StringSaver Saver(Alloc);
+  StringSaver Saver(*A);
   llvm::cl::ExpandResponseFiles(Saver, llvm::cl::TokenizeGNUCommandLine, Vec);
 
   // Parse options and then do error checking.
@@ -74,4 +77,44 @@ opt::InputArgList ArgParser::parse(ArrayRef<const char *> Argv) {
     error("unknown argument(s) found");
 
   return Args;
+}
+
+std::string lld::elf2::findFromSearchPaths(StringRef Path) {
+  for (StringRef Dir : Config->SearchPaths) {
+    std::string FullPath = buildSysrootedPath(Dir, Path);
+    if (sys::fs::exists(FullPath))
+      return FullPath;
+  }
+  return "";
+}
+
+// Searches a given library from input search paths, which are filled
+// from -L command line switches. Returns a path to an existent library file.
+std::string lld::elf2::searchLibrary(StringRef Path) {
+  std::vector<std::string> Names;
+  if (Path[0] == ':') {
+    Names.push_back(Path.drop_front());
+  } else {
+    if (!Config->Static)
+      Names.push_back(("lib" + Path + ".so").str());
+    Names.push_back(("lib" + Path + ".a").str());
+  }
+  for (const std::string &Name : Names) {
+    std::string S = findFromSearchPaths(Name);
+    if (!S.empty())
+      return S;
+  }
+  error("Unable to find library -l" + Path);
+}
+
+// Makes a path by concatenating Dir and File.
+// If Dir starts with '=' the result will be preceded by Sysroot,
+// which can be set with --sysroot command line switch.
+std::string lld::elf2::buildSysrootedPath(StringRef Dir, StringRef File) {
+  SmallString<128> Path;
+  if (Dir.startswith("="))
+    sys::path::append(Path, Config->Sysroot, Dir.substr(1), File);
+  else
+    sys::path::append(Path, Dir, File);
+  return Path.str();
 }

@@ -18,6 +18,7 @@
 #include "SymbolTable.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/StringSaver.h"
 
 using namespace llvm;
 using namespace lld;
@@ -26,7 +27,8 @@ using namespace lld::elf2;
 namespace {
 class LinkerScript {
 public:
-  LinkerScript(StringRef S) : Tokens(tokenize(S)) {}
+  LinkerScript(BumpPtrAllocator *A, StringRef S)
+      : Saver(*A), Tokens(tokenize(S)) {}
   void run();
 
 private:
@@ -36,12 +38,17 @@ private:
   bool atEOF() { return Tokens.size() == Pos; }
   void expect(StringRef Expect);
 
+  void addFile(StringRef Path);
+
   void readAsNeeded();
   void readEntry();
   void readGroup();
+  void readInclude();
   void readOutput();
   void readOutputFormat();
+  void readSearchDir();
 
+  StringSaver Saver;
   std::vector<StringRef> Tokens;
   size_t Pos = 0;
 };
@@ -52,12 +59,16 @@ void LinkerScript::run() {
     StringRef Tok = next();
     if (Tok == "ENTRY") {
       readEntry();
-    } else if (Tok == "GROUP") {
+    } else if (Tok == "GROUP" || Tok == "INPUT") {
       readGroup();
+    } else if (Tok == "INCLUDE") {
+      readInclude();
     } else if (Tok == "OUTPUT") {
       readOutput();
     } else if (Tok == "OUTPUT_FORMAT") {
       readOutputFormat();
+    } else if (Tok == "SEARCH_DIR") {
+      readSearchDir();
     } else {
       error("unknown directive: " + Tok);
     }
@@ -124,14 +135,35 @@ void LinkerScript::expect(StringRef Expect) {
     error(Expect + " expected, but got " + Tok);
 }
 
+void LinkerScript::addFile(StringRef S) {
+  if (S.startswith("/")) {
+    Driver->addFile(S);
+  } else if (S.startswith("=")) {
+    if (Config->Sysroot.empty())
+      Driver->addFile(S.substr(1));
+    else
+      Driver->addFile(Saver.save(Config->Sysroot + "/" + S.substr(1)));
+  } else if (S.startswith("-l")) {
+    Driver->addFile(searchLibrary(S.substr(2)));
+  } else {
+    std::string Path = findFromSearchPaths(S);
+    if (Path.empty())
+      error("Unable to find " + S);
+    Driver->addFile(Saver.save(Path));
+  }
+}
+
 void LinkerScript::readAsNeeded() {
   expect("(");
+  bool Orig = Config->AsNeeded;
+  Config->AsNeeded = true;
   for (;;) {
     StringRef Tok = next();
     if (Tok == ")")
-      return;
-    Driver->addFile(Tok);
+      break;
+    addFile(Tok);
   }
+  Config->AsNeeded = Orig;
 }
 
 void LinkerScript::readEntry() {
@@ -153,8 +185,18 @@ void LinkerScript::readGroup() {
       readAsNeeded();
       continue;
     }
-    Driver->addFile(Tok);
+    addFile(Tok);
   }
+}
+
+void LinkerScript::readInclude() {
+  StringRef Tok = next();
+  auto MBOrErr = MemoryBuffer::getFile(Tok);
+  error(MBOrErr, Twine("cannot open ") + Tok);
+  std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
+  StringRef S = Saver.save(MB->getMemBufferRef().getBuffer());
+  std::vector<StringRef> V = tokenize(S);
+  Tokens.insert(Tokens.begin() + Pos, V.begin(), V.end());
 }
 
 void LinkerScript::readOutput() {
@@ -173,7 +215,13 @@ void LinkerScript::readOutputFormat() {
   expect(")");
 }
 
+void LinkerScript::readSearchDir() {
+  expect("(");
+  Config->SearchPaths.push_back(next());
+  expect(")");
+}
+
 // Entry point. The other functions or classes are private to this file.
-void lld::elf2::readLinkerScript(MemoryBufferRef MB) {
-  LinkerScript(MB.getBuffer()).run();
+void lld::elf2::readLinkerScript(BumpPtrAllocator *A, MemoryBufferRef MB) {
+  LinkerScript(A, MB.getBuffer()).run();
 }

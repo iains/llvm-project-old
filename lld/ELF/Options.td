@@ -14,6 +14,8 @@ def allow_multiple_definition: Flag<["--"], "allow-multiple-definition">,
 
 def allow_shlib_undefined : Flag<["--", "-"], "allow-shlib-undefined">;
 
+def as_needed : Flag<["--"], "as-needed">;
+
 def disable_new_dtags : Flag<["--"], "disable-new-dtags">,
   HelpText<"Disable new dynamic tags">;
 
@@ -52,6 +54,8 @@ def m : Separate<["-"], "m">,
 
 def no_allow_shlib_undefined : Flag<["--"], "no-allow-shlib-undefined">;
 
+def no_as_needed : Flag<["--"], "no-as-needed">;
+
 def no_whole_archive : Flag<["--"], "no-whole-archive">,
   HelpText<"Restores the default behavior of loading archive members">;
 
@@ -61,11 +65,13 @@ def noinhibit_exec : Flag<["--"], "noinhibit-exec">,
 def no_undefined : Flag<["--"], "no-undefined">,
   HelpText<"Report unresolved symbols even if the linker is creating a shared library">;
 
-def output : Separate<["-"], "o">, MetaVarName<"<path>">,
+def o : Separate<["-"], "o">, MetaVarName<"<path>">,
   HelpText<"Path to file to write output">;
 
 def rpath : Separate<["-"], "rpath">,
   HelpText<"Add a DT_RUNPATH to the output">;
+
+def script : Separate<["--"], "script">, HelpText<"Read linker script">;
 
 def shared : Flag<["-"], "shared">,
   HelpText<"Build a shared object">;
@@ -78,6 +84,8 @@ def sysroot : Joined<["--"], "sysroot=">,
 
 def undefined : Joined<["--"], "undefined=">,
   HelpText<"Force undefined symbol during linking">;
+
+def verbose : Flag<["--"], "verbose">;
 
 def whole_archive : Flag<["--"], "whole-archive">,
   HelpText<"Force load of all members in a static library">;
@@ -98,21 +106,21 @@ def alias_entry_e : Separate<["-"], "e">, Alias<entry>;
 def alias_fini_fini : Joined<["-"], "fini=">, Alias<fini>;
 def alias_init_init : Joined<["-"], "init=">, Alias<init>;
 def alias_l__library : Joined<["--"], "library=">, Alias<l>;
+def alias_o_output : Joined<["--"], "output=">, Alias<o>;
 def alias_rpath_rpath : Joined<["-"], "rpath=">, Alias<rpath>;
 def alias_soname_h : Separate<["-"], "h">, Alias<soname>;
 def alias_soname_soname : Separate<["-"], "soname">, Alias<soname>;
+def alias_script_T : Separate<["-"], "T">, Alias<script>;
 def alias_undefined_u : Separate<["-"], "u">, Alias<undefined>;
 
 // Options listed below are silently ignored now.
 def O3 : Flag<["-"], "O3">;
-def as_needed : Flag<["--"], "as-needed">;
 def build_id : Flag<["--"], "build-id">;
 def eh_frame_hdr : Flag<["--"], "eh-frame-hdr">;
 def end_group : Flag<["--"], "end-group">;
 def gc_sections : Flag<["--"], "gc-sections">;
 def hash_style : Joined<["--"], "hash-style=">;
 def no_add_needed : Flag<["--"], "no-add-needed">;
-def no_as_needed : Flag<["--"], "no-as-needed">;
 def no_fatal_warnings : Flag<["--"], "no-fatal-warnings">;
 def start_group : Flag<["--"], "start-group">;
 def strip_all : Flag<["--"], "strip-all">;

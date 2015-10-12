@@ -112,7 +112,7 @@ just_do_benchmarks_test = False
 
 dont_do_dsym_test = False
 dont_do_dwarf_test = False
-dont_do_dwo_test = sys.platform == 'darwin'
+dont_do_dwo_test = False
 
 # The blacklist is optional (-b blacklistFile) and allows a central place to skip
 # testclass's and/or testclass.testmethod's.
@@ -264,6 +264,9 @@ results_file_object = None
 results_formatter_name = None
 results_formatter_object = None
 results_formatter_options = None
+
+# The names of all tests. Used to assert we don't have two tests with the same base name.
+all_tests = set()
 
 def usage(parser):
     parser.print_help()
@@ -1288,6 +1291,7 @@ def visit(prefix, dir, names):
     global filters
     global fs4all
     global excluded
+    global all_tests
 
     if set(dir.split(os.sep)).intersection(excluded):
         #print "Detected an excluded dir component: %s" % dir
@@ -1298,6 +1302,11 @@ def visit(prefix, dir, names):
             continue
 
         if '.py' == os.path.splitext(name)[1] and name.startswith(prefix):
+
+            if name in all_tests:
+                raise Exception("Found multiple tests with the name %s" % name)
+            all_tests.add(name)
+
             # Try to match the regexp pattern, if specified.
             if regexp:
                 import re
@@ -1513,11 +1522,12 @@ if __name__ == "__main__":
 
     target_platform = lldb.DBG.GetSelectedPlatform().GetTriple().split('-')[2]
 
-    # By default, both dsym and dwarf tests are performed.
-    # Use @dsym_test or @dwarf_test decorators, defined in lldbtest.py, to mark a test
-    # as a dsym or dwarf test.  Use '-N dsym' or '-N dwarf' to exclude dsym or dwarf
-    # tests from running.
-    dont_do_dsym_test = dont_do_dsym_test or "linux" in target_platform or "freebsd" in target_platform or "windows" in target_platform
+    # By default, both dsym, dwarf and dwo tests are performed.
+    # Use @dsym_test, @dwarf_test or @dwo_test decorators, defined in lldbtest.py, to mark a test as
+    # a dsym, dwarf or dwo test.  Use '-N dsym', '-N dwarf' or '-N dwo' to exclude dsym, dwarf or
+    # dwo tests from running.
+    dont_do_dsym_test = dont_do_dsym_test or any(platform in target_platform for platform in ["linux", "freebsd", "windows"])
+    dont_do_dwo_test = dont_do_dwo_test or any(platform in target_platform for platform in ["darwin", "macosx", "ios"])
 
     # Don't do debugserver tests on everything except OS X.
     dont_do_debugserver_test = "linux" in target_platform or "freebsd" in target_platform or "windows" in target_platform
@@ -1575,6 +1585,7 @@ if __name__ == "__main__":
     lldb.just_do_benchmarks_test = just_do_benchmarks_test
     lldb.dont_do_dsym_test = dont_do_dsym_test
     lldb.dont_do_dwarf_test = dont_do_dwarf_test
+    lldb.dont_do_dwo_test = dont_do_dwo_test
     lldb.dont_do_debugserver_test = dont_do_debugserver_test
     lldb.dont_do_llgs_test = dont_do_llgs_test
 

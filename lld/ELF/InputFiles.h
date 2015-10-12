@@ -37,9 +37,6 @@ public:
   Kind kind() const { return FileKind; }
   virtual ~InputFile() {}
 
-  // Reads a file (constructors don't do that).
-  virtual void parse() = 0;
-
   StringRef getName() const { return MB.getBufferIdentifier(); }
 
 protected:
@@ -50,10 +47,12 @@ private:
   const Kind FileKind;
 };
 
-class ELFFileBase : public InputFile {
+template <typename ELFT> class ELFFileBase : public InputFile {
 public:
-  ELFFileBase(Kind K, ELFKind EKind, MemoryBufferRef M)
-      : InputFile(K, M), EKind(EKind) {}
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
+
+  ELFFileBase(Kind K, ELFKind EKind, MemoryBufferRef M);
   static bool classof(const InputFile *F) {
     Kind K = F->kind();
     return K == ObjectKind || K == SharedKind;
@@ -61,26 +60,24 @@ public:
 
   ELFKind getELFKind() const { return EKind; }
 
-  uint16_t getEMachine() const;
+  const llvm::object::ELFFile<ELFT> &getObj() const { return ELFObj; }
+  llvm::object::ELFFile<ELFT> &getObj() { return ELFObj; }
+
+  uint16_t getEMachine() const { return getObj().getHeader()->e_machine; }
+  uint8_t getOSABI() const {
+    return getObj().getHeader()->e_ident[llvm::ELF::EI_OSABI];
+  }
+
+  StringRef getStringTable() const { return StringTable; }
 
 protected:
   const ELFKind EKind;
-};
-
-// .o file.
-class ObjectFileBase : public ELFFileBase {
-public:
-  ObjectFileBase(ELFKind EKind, MemoryBufferRef M)
-      : ELFFileBase(ObjectKind, EKind, M) {}
-  static bool classof(const InputFile *F) { return F->kind() == ObjectKind; }
-
-  ArrayRef<SymbolBody *> getSymbols() { return SymbolBodies; }
-
-protected:
-  // List of all symbols referenced or defined by this file.
-  std::vector<SymbolBody *> SymbolBodies;
-
-  llvm::BumpPtrAllocator Alloc;
+  llvm::object::ELFFile<ELFT> ELFObj;
+  const Elf_Shdr *Symtab = nullptr;
+  StringRef StringTable;
+  void initStringTable();
+  Elf_Sym_Range getNonLocalSymbols();
+  Elf_Sym_Range getSymbolsHelper(bool);
 };
 
 template <class ELFT> static ELFKind getStaticELFKind() {
@@ -94,48 +91,29 @@ template <class ELFT> static ELFKind getStaticELFKind() {
   return ELF64BEKind;
 }
 
-template <class ELFT> class ELFData {
-public:
-  ELFData(MemoryBufferRef MB);
-  typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
-  typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
-
-  const llvm::object::ELFFile<ELFT> &getObj() const { return ELFObj; }
-  llvm::object::ELFFile<ELFT> &getObj() { return ELFObj; }
-
-  uint16_t getEMachine() const { return getObj().getHeader()->e_machine; }
-  uint8_t getOSABI() const {
-    return getObj().getHeader()->e_ident[llvm::ELF::EI_OSABI];
-  }
-
-  StringRef getStringTable() const { return StringTable; }
-
-protected:
-  llvm::object::ELFFile<ELFT> ELFObj;
-  const Elf_Shdr *Symtab = nullptr;
-  StringRef StringTable;
-  void initStringTable();
-  Elf_Sym_Range getNonLocalSymbols();
-  Elf_Sym_Range getSymbolsHelper(bool);
-};
-
-template <class ELFT>
-class ObjectFile : public ObjectFileBase, public ELFData<ELFT> {
+// .o file.
+template <class ELFT> class ObjectFile : public ELFFileBase<ELFT> {
+  typedef ELFFileBase<ELFT> Base;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Word Elf_Word;
 
-public:
-  using ELFData<ELFT>::getEMachine;
+  typedef llvm::support::detail::packed_endian_specific_integral<
+      uint32_t, ELFT::TargetEndianness, 2> GroupEntryType;
+  StringRef getShtGroupSignature(const Elf_Shdr &Sec);
+  ArrayRef<GroupEntryType> getShtGroupEntries(const Elf_Shdr &Sec);
 
+public:
   static bool classof(const InputFile *F) {
-    return F->kind() == ObjectKind &&
-           cast<ELFFileBase>(F)->getELFKind() == getStaticELFKind<ELFT>();
+    return F->kind() == Base::ObjectKind &&
+           cast<ELFFileBase<ELFT>>(F)->getELFKind() == getStaticELFKind<ELFT>();
   }
 
+  ArrayRef<SymbolBody *> getSymbols() { return this->SymbolBodies; }
+
   explicit ObjectFile(MemoryBufferRef M);
-  void parse() override;
+  void parse(llvm::DenseSet<StringRef> &Comdats);
 
   ArrayRef<InputSection<ELFT> *> getSections() const { return Sections; }
 
@@ -143,7 +121,7 @@ public:
     uint32_t FirstNonLocal = this->Symtab->sh_info;
     if (SymbolIndex < FirstNonLocal)
       return nullptr;
-    return SymbolBodies[SymbolIndex - FirstNonLocal]->repl();
+    return this->SymbolBodies[SymbolIndex - FirstNonLocal];
   }
 
   Elf_Sym_Range getLocalSymbols();
@@ -152,7 +130,7 @@ public:
   ArrayRef<Elf_Word> getSymbolTableShndx() const { return SymtabSHNDX; };
 
 private:
-  void initializeSections();
+  void initializeSections(llvm::DenseSet<StringRef> &Comdats);
   void initializeSymbols();
 
   SymbolBody *createSymbolBody(StringRef StringTable, const Elf_Sym *Sym);
@@ -161,13 +139,18 @@ private:
   std::vector<InputSection<ELFT> *> Sections;
 
   ArrayRef<Elf_Word> SymtabSHNDX;
+
+  // List of all symbols referenced or defined by this file.
+  std::vector<SymbolBody *> SymbolBodies;
+
+  llvm::BumpPtrAllocator Alloc;
 };
 
 class ArchiveFile : public InputFile {
 public:
   explicit ArchiveFile(MemoryBufferRef M) : InputFile(ArchiveKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == ArchiveKind; }
-  void parse() override;
+  void parse();
 
   // Returns a memory buffer for a given symbol. An empty memory buffer
   // is returned if we have already returned the same memory buffer.
@@ -184,45 +167,54 @@ private:
 };
 
 // .so file.
-class SharedFileBase : public ELFFileBase {
-protected:
-  StringRef SoName;
-
-public:
-  SharedFileBase(ELFKind EKind, MemoryBufferRef M)
-      : ELFFileBase(SharedKind, EKind, M) {}
-  static bool classof(const InputFile *F) { return F->kind() == SharedKind; }
-  StringRef getSoName() const { return SoName; }
-  virtual void parseSoName() = 0;
-};
-
-template <class ELFT>
-class SharedFile : public SharedFileBase, public ELFData<ELFT> {
+template <class ELFT> class SharedFile : public ELFFileBase<ELFT> {
+  typedef ELFFileBase<ELFT> Base;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
 
   std::vector<SharedSymbol<ELFT>> SymbolBodies;
+  StringRef SoName;
 
 public:
-  using ELFData<ELFT>::getEMachine;
+  StringRef getSoName() const { return SoName; }
   llvm::MutableArrayRef<SharedSymbol<ELFT>> getSharedSymbols() {
     return SymbolBodies;
   }
 
   static bool classof(const InputFile *F) {
-    return F->kind() == SharedKind &&
-           cast<ELFFileBase>(F)->getELFKind() == getStaticELFKind<ELFT>();
+    return F->kind() == Base::SharedKind &&
+           cast<ELFFileBase<ELFT>>(F)->getELFKind() == getStaticELFKind<ELFT>();
   }
 
   explicit SharedFile(MemoryBufferRef M);
 
-  void parseSoName() override;
-  void parse() override;
+  void parseSoName();
+  void parse();
+
+  // Used for --as-needed
+  bool AsNeeded = false;
+  bool IsUsed = false;
+  bool isNeeded() const { return !AsNeeded || IsUsed; }
 };
 
+template <typename T>
+std::unique_ptr<InputFile> createELFFileAux(MemoryBufferRef MB) {
+  std::unique_ptr<T> Ret = llvm::make_unique<T>(MB);
+
+  if (!Config->FirstElf)
+    Config->FirstElf = Ret.get();
+
+  if (Config->ElfKind == ELFNoneKind) {
+    Config->ElfKind = Ret->getELFKind();
+    Config->EMachine = Ret->getEMachine();
+  }
+
+  return std::move(Ret);
+}
+
 template <template <class> class T>
-std::unique_ptr<ELFFileBase> createELFFile(MemoryBufferRef MB) {
+std::unique_ptr<InputFile> createELFFile(MemoryBufferRef MB) {
   using namespace llvm;
 
   std::pair<unsigned char, unsigned char> Type =
@@ -232,13 +224,13 @@ std::unique_ptr<ELFFileBase> createELFFile(MemoryBufferRef MB) {
 
   if (Type.first == ELF::ELFCLASS32) {
     if (Type.second == ELF::ELFDATA2LSB)
-      return make_unique<T<object::ELF32LE>>(MB);
-    return make_unique<T<object::ELF32BE>>(MB);
+      return createELFFileAux<T<object::ELF32LE>>(MB);
+    return createELFFileAux<T<object::ELF32BE>>(MB);
   }
   if (Type.first == ELF::ELFCLASS64) {
     if (Type.second == ELF::ELFDATA2LSB)
-      return make_unique<T<object::ELF64LE>>(MB);
-    return make_unique<T<object::ELF64BE>>(MB);
+      return createELFFileAux<T<object::ELF64LE>>(MB);
+    return createELFFileAux<T<object::ELF64BE>>(MB);
   }
   error("Invalid file class: " + MB.getBufferIdentifier());
 }

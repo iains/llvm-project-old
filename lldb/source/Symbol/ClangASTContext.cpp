@@ -13,6 +13,7 @@
 // C++ Includes
 #include <mutex> // std::once
 #include <string>
+#include <vector>
 
 // Other libraries and framework includes
 
@@ -367,38 +368,90 @@ ClangASTContext::GetPluginVersion()
 }
 
 lldb::TypeSystemSP
-ClangASTContext::CreateInstance (lldb::LanguageType language, const lldb_private::ArchSpec &arch)
+ClangASTContext::CreateInstance (lldb::LanguageType language,
+                                 lldb_private::Module *module,
+                                 Target *target)
 {
     if (ClangASTContextSupportsLanguage(language))
     {
-        std::shared_ptr<ClangASTContext> ast_sp(new ClangASTContext);
-        if (ast_sp)
+        ArchSpec arch;
+        if (module)
+            arch = module->GetArchitecture();
+        else if (target)
+            arch = target->GetArchitecture();
+
+        if (arch.IsValid())
         {
-            if (arch.IsValid())
+            ArchSpec fixed_arch = arch;
+            // LLVM wants this to be set to iOS or MacOSX; if we're working on
+            // a bare-boards type image, change the triple for llvm's benefit.
+            if (fixed_arch.GetTriple().getVendor() == llvm::Triple::Apple &&
+                fixed_arch.GetTriple().getOS() == llvm::Triple::UnknownOS)
             {
-                ArchSpec fixed_arch = arch;
-                // LLVM wants this to be set to iOS or MacOSX; if we're working on
-                // a bare-boards type image, change the triple for llvm's benefit.
-                if (fixed_arch.GetTriple().getVendor() == llvm::Triple::Apple &&
-                    fixed_arch.GetTriple().getOS() == llvm::Triple::UnknownOS)
+                if (fixed_arch.GetTriple().getArch() == llvm::Triple::arm ||
+                    fixed_arch.GetTriple().getArch() == llvm::Triple::aarch64 ||
+                    fixed_arch.GetTriple().getArch() == llvm::Triple::thumb)
                 {
-                    if (fixed_arch.GetTriple().getArch() == llvm::Triple::arm ||
-                        fixed_arch.GetTriple().getArch() == llvm::Triple::aarch64 ||
-                        fixed_arch.GetTriple().getArch() == llvm::Triple::thumb)
-                    {
-                        fixed_arch.GetTriple().setOS(llvm::Triple::IOS);
-                    }
-                    else
-                    {
-                        fixed_arch.GetTriple().setOS(llvm::Triple::MacOSX);
-                    }
+                    fixed_arch.GetTriple().setOS(llvm::Triple::IOS);
                 }
-                ast_sp->SetArchitecture (fixed_arch);
+                else
+                {
+                    fixed_arch.GetTriple().setOS(llvm::Triple::MacOSX);
+                }
+            }
+
+            if (module)
+            {
+                std::shared_ptr<ClangASTContext> ast_sp(new ClangASTContext);
+                if (ast_sp)
+                {
+                    ast_sp->SetArchitecture (fixed_arch);
+                }
+                return ast_sp;
+            }
+            else if (target)
+            {
+                std::shared_ptr<ClangASTContextForExpressions> ast_sp(new ClangASTContextForExpressions(*target));
+                if (ast_sp)
+                {
+                    ast_sp->SetArchitecture(fixed_arch);
+                    ast_sp->m_scratch_ast_source_ap.reset (new ClangASTSource(target->shared_from_this()));
+                    ast_sp->m_scratch_ast_source_ap->InstallASTContext(ast_sp->getASTContext());
+                    llvm::IntrusiveRefCntPtr<clang::ExternalASTSource> proxy_ast_source(ast_sp->m_scratch_ast_source_ap->CreateProxy());
+                    ast_sp->SetExternalSource(proxy_ast_source);
+                    return ast_sp;
+                }
             }
         }
-        return ast_sp;
     }
     return lldb::TypeSystemSP();
+}
+
+void
+ClangASTContext::EnumerateSupportedLanguages(std::set<lldb::LanguageType> &languages_for_types, std::set<lldb::LanguageType> &languages_for_expressions)
+{
+    static std::vector<lldb::LanguageType> s_supported_languages_for_types({
+        lldb::eLanguageTypeC89,
+        lldb::eLanguageTypeC,
+        lldb::eLanguageTypeC11,
+        lldb::eLanguageTypeC_plus_plus,
+        lldb::eLanguageTypeC99,
+        lldb::eLanguageTypeObjC,
+        lldb::eLanguageTypeObjC_plus_plus,
+        lldb::eLanguageTypeC_plus_plus_03,
+        lldb::eLanguageTypeC_plus_plus_11,
+        lldb::eLanguageTypeC11,
+        lldb::eLanguageTypeC_plus_plus_14});
+    
+    static std::vector<lldb::LanguageType> s_supported_languages_for_expressions({
+        lldb::eLanguageTypeC_plus_plus,
+        lldb::eLanguageTypeObjC_plus_plus,
+        lldb::eLanguageTypeC_plus_plus_03,
+        lldb::eLanguageTypeC_plus_plus_11,
+        lldb::eLanguageTypeC_plus_plus_14});
+
+    languages_for_types.insert(s_supported_languages_for_types.begin(), s_supported_languages_for_types.end());
+    languages_for_expressions.insert(s_supported_languages_for_expressions.begin(), s_supported_languages_for_expressions.end());
 }
 
 
@@ -407,7 +460,8 @@ ClangASTContext::Initialize()
 {
     PluginManager::RegisterPlugin (GetPluginNameStatic(),
                                    "clang base AST context plug-in",
-                                   CreateInstance);
+                                   CreateInstance,
+                                   EnumerateSupportedLanguages);
 }
 
 void
@@ -2539,14 +2593,16 @@ ClangASTContext::IsArrayType (lldb::opaque_compiler_type_t type,
     {
         default:
             break;
-            
+
         case clang::Type::ConstantArray:
             if (element_type_ptr)
                 element_type_ptr->SetCompilerType (getASTContext(), llvm::cast<clang::ConstantArrayType>(qual_type)->getElementType());
             if (size)
                 *size = llvm::cast<clang::ConstantArrayType>(qual_type)->getSize().getLimitedValue(ULLONG_MAX);
+            if (is_incomplete)
+                *is_incomplete = false;
             return true;
-            
+
         case clang::Type::IncompleteArray:
             if (element_type_ptr)
                 element_type_ptr->SetCompilerType (getASTContext(), llvm::cast<clang::IncompleteArrayType>(qual_type)->getElementType());
@@ -2555,21 +2611,25 @@ ClangASTContext::IsArrayType (lldb::opaque_compiler_type_t type,
             if (is_incomplete)
                 *is_incomplete = true;
             return true;
-            
+
         case clang::Type::VariableArray:
             if (element_type_ptr)
                 element_type_ptr->SetCompilerType (getASTContext(), llvm::cast<clang::VariableArrayType>(qual_type)->getElementType());
             if (size)
                 *size = 0;
+            if (is_incomplete)
+                *is_incomplete = false;
             return true;
-            
+
         case clang::Type::DependentSizedArray:
             if (element_type_ptr)
                 element_type_ptr->SetCompilerType (getASTContext(), llvm::cast<clang::DependentSizedArrayType>(qual_type)->getElementType());
             if (size)
                 *size = 0;
+            if (is_incomplete)
+                *is_incomplete = false;
             return true;
-            
+
         case clang::Type::Typedef:
             return IsArrayType(llvm::cast<clang::TypedefType>(qual_type)->getDecl()->getUnderlyingType().getAsOpaquePtr(),
                                element_type_ptr,

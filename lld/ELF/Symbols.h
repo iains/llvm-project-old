@@ -24,6 +24,7 @@ class InputFile;
 class SymbolBody;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
+template <class ELFT> class SharedFile;
 
 // Initializes global objects defined in this file.
 // Called at the beginning of main().
@@ -63,6 +64,7 @@ public:
   bool isUsedInRegularObj() const { return IsUsedInRegularObj; }
   bool isUsedInDynamicReloc() const { return IsUsedInDynamicReloc; }
   void setUsedInDynamicReloc() { IsUsedInDynamicReloc = true; }
+  bool isTLS() const { return IsTLS; }
 
   // Returns the symbol name.
   StringRef getName() const { return Name; }
@@ -76,13 +78,10 @@ public:
   }
   void setDynamicSymbolTableIndex(unsigned V) { DynamicSymbolTableIndex = V; }
 
-  unsigned getGotIndex() const { return GotIndex; }
+  uint32_t GotIndex = -1;
+  uint32_t PltIndex = -1;
   bool isInGot() const { return GotIndex != -1U; }
-  void setGotIndex(unsigned I) { GotIndex = I; }
-
-  unsigned getPltIndex() const { return PltIndex; }
   bool isInPlt() const { return PltIndex != -1U; }
-  void setPltIndex(unsigned I) { PltIndex = I; }
 
   // A SymbolBody has a backreference to a Symbol. Originally they are
   // doubly-linked. A backreference will never change. But the pointer
@@ -99,9 +98,10 @@ public:
   template <class ELFT> int compare(SymbolBody *Other);
 
 protected:
-  SymbolBody(Kind K, StringRef Name, bool IsWeak, uint8_t Visibility)
+  SymbolBody(Kind K, StringRef Name, bool IsWeak, uint8_t Visibility,
+             bool IsTLS)
       : SymbolKind(K), IsWeak(IsWeak), MostConstrainingVisibility(Visibility),
-        Name(Name) {
+        IsTLS(IsTLS), Name(Name) {
     IsUsedInRegularObj = K != SharedKind && K != LazyKind;
     IsUsedInDynamicReloc = 0;
   }
@@ -111,9 +111,8 @@ protected:
   unsigned MostConstrainingVisibility : 2;
   unsigned IsUsedInRegularObj : 1;
   unsigned IsUsedInDynamicReloc : 1;
+  unsigned IsTLS : 1;
   unsigned DynamicSymbolTableIndex = 0;
-  unsigned GotIndex = -1;
-  unsigned PltIndex = -1;
   StringRef Name;
   Symbol *Backref = nullptr;
 };
@@ -130,7 +129,7 @@ protected:
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
   ELFSymbolBody(Kind K, StringRef Name, const Elf_Sym &Sym)
       : SymbolBody(K, Name, Sym.getBinding() == llvm::ELF::STB_WEAK,
-                   Sym.getVisibility()),
+                   Sym.getVisibility(), Sym.getType() == llvm::ELF::STT_TLS),
         Sym(Sym) {}
 
 public:
@@ -265,8 +264,10 @@ public:
     return S->kind() == Base::SharedKind;
   }
 
-  SharedSymbol(StringRef Name, const Elf_Sym &Sym)
-      : Defined<ELFT>(Base::SharedKind, Name, Sym) {}
+  SharedSymbol(SharedFile<ELFT> *F, StringRef Name, const Elf_Sym &Sym)
+      : Defined<ELFT>(Base::SharedKind, Name, Sym), File(F) {}
+
+  SharedFile<ELFT> *File;
 };
 
 // This class represents a symbol defined in an archive file. It is
@@ -277,7 +278,7 @@ public:
 class Lazy : public SymbolBody {
 public:
   Lazy(ArchiveFile *F, const llvm::object::Archive::Symbol S)
-      : SymbolBody(LazyKind, S.getName(), false, llvm::ELF::STV_DEFAULT),
+      : SymbolBody(LazyKind, S.getName(), false, llvm::ELF::STV_DEFAULT, false),
         File(F), Sym(S) {}
 
   static bool classof(const SymbolBody *S) { return S->kind() == LazyKind; }

@@ -43,6 +43,7 @@
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Symbol/VariableList.h"
+#include "lldb/Symbol/TypeMap.h"
 
 #include "Plugins/Language/CPlusPlus/CPlusPlusLanguage.h"
 #include "Plugins/Language/ObjC/ObjCLanguage.h"
@@ -1554,6 +1555,8 @@ SymbolFileDWARF::CompleteType (CompilerType &compiler_type)
     DWARFDebugInfo* debug_info = DebugInfo();
     DWARFDIE dwarf_die = debug_info->GetDIE(die_it->getSecond());
 
+    assert(UserIDMatches(die_it->getSecond().GetUID()) && "CompleteType called on the wrong SymbolFile");
+
     // Once we start resolving this type, remove it from the forward declaration
     // map in case anyone child members or other types require this type to get resolved.
     // The type will get resolved when all of the calls to SymbolFileDWARF::ResolveClangOpaqueTypeDefinition
@@ -2840,7 +2843,7 @@ SymbolFileDWARF::FindTypes (const SymbolContext& sc,
                             const CompilerDeclContext *parent_decl_ctx, 
                             bool append, 
                             uint32_t max_matches, 
-                            TypeList& types)
+                            TypeMap& types)
 {
     DWARFDebugInfo* info = DebugInfo();
     if (info == NULL)
@@ -3054,6 +3057,17 @@ SymbolFileDWARF::GetTypeForDIE (const DWARFDIE &die)
             CompileUnit* lldb_cu = GetCompUnitForDWARFCompUnit(die.GetCU());
             assert (lldb_cu);
             SymbolContext sc(lldb_cu);
+            const DWARFDebugInfoEntry* parent_die = die.GetParent().GetDIE();
+            while (parent_die != nullptr)
+                {
+                    if (parent_die->Tag() == DW_TAG_subprogram)
+                        break;
+                    parent_die = parent_die->GetParent();
+                }
+            SymbolContext sc_backup = sc;
+            if (parent_die != nullptr && !GetFunction(DWARFDIE(die.GetCU(),parent_die), sc))
+                sc = sc_backup;
+
             type_sp = ParseType(sc, die, NULL);
         }
         else if (type_ptr != DIE_IS_BEING_PARSED)

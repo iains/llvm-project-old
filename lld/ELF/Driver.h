@@ -23,28 +23,28 @@ extern class LinkerDriver *Driver;
 // Entry point of the ELF linker.
 void link(ArrayRef<const char *> Args);
 
-class ArgParser {
-public:
-  // Parses command line options.
-  llvm::opt::InputArgList parse(ArrayRef<const char *> Args);
-
-private:
-  llvm::BumpPtrAllocator Alloc;
-};
-
 class LinkerDriver {
 public:
-  void link(ArrayRef<const char *> Args);
+  void main(ArrayRef<const char *> Args);
+  void createFiles(llvm::opt::InputArgList &Args);
+  template <class ELFT> void link(llvm::opt::InputArgList &Args);
+
   void addFile(StringRef Path);
 
 private:
   template <template <class> class T>
-  std::unique_ptr<ELFFileBase> createELFInputFile(MemoryBufferRef MB);
+  std::unique_ptr<InputFile> createELFInputFile(MemoryBufferRef MB);
 
-  SymbolTable Symtab;
-  ArgParser Parser;
+  llvm::BumpPtrAllocator Alloc;
+  bool WholeArchive = false;
+  std::vector<std::unique_ptr<InputFile>> Files;
+  std::vector<std::unique_ptr<ArchiveFile>> OwningArchives;
   std::vector<std::unique_ptr<MemoryBuffer>> OwningMBs;
 };
+
+// Parses command line options.
+llvm::opt::InputArgList parseArgs(llvm::BumpPtrAllocator *A,
+                                  ArrayRef<const char *> Args);
 
 // Create enum with OPT_xxx values for each option in Options.td
 enum {
@@ -55,7 +55,11 @@ enum {
 };
 
 // Parses a linker script. Calling this function updates the Symtab and Config.
-void readLinkerScript(MemoryBufferRef MB);
+void readLinkerScript(llvm::BumpPtrAllocator *A, MemoryBufferRef MB);
+
+std::string findFromSearchPaths(StringRef Path);
+std::string searchLibrary(StringRef Path);
+std::string buildSysrootedPath(llvm::StringRef Dir, llvm::StringRef File);
 
 } // namespace elf2
 } // namespace lld

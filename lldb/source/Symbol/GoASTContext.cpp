@@ -22,6 +22,7 @@
 #include "lldb/Symbol/GoASTContext.h"
 #include "lldb/Symbol/Type.h"
 #include "lldb/Target/ExecutionContext.h"
+#include "lldb/Target/Target.h"
 
 #include "Plugins/SymbolFile/DWARF/DWARFASTParserGo.h"
 
@@ -321,10 +322,16 @@ GoASTContext::GetPluginVersion()
 }
 
 lldb::TypeSystemSP
-GoASTContext::CreateInstance (lldb::LanguageType language, const lldb_private::ArchSpec &arch)
+GoASTContext::CreateInstance (lldb::LanguageType language, Module *module, Target *target)
 {
     if (language == eLanguageTypeGo)
     {
+        ArchSpec arch;
+        if (module)
+            arch = module->GetArchitecture();
+        else if (target)
+            arch = target->GetArchitecture();
+
         if (arch.IsValid())
         {
             std::shared_ptr<GoASTContext> go_ast_sp(new GoASTContext);
@@ -335,13 +342,26 @@ GoASTContext::CreateInstance (lldb::LanguageType language, const lldb_private::A
     return lldb::TypeSystemSP();
 }
 
+void
+GoASTContext::EnumerateSupportedLanguages(std::set<lldb::LanguageType> &languages_for_types, std::set<lldb::LanguageType> &languages_for_expressions)
+{
+    static std::vector<lldb::LanguageType> s_supported_languages_for_types({
+        lldb::eLanguageTypeGo});
+    
+    static std::vector<lldb::LanguageType> s_supported_languages_for_expressions({});
+    
+    languages_for_types.insert(s_supported_languages_for_types.begin(), s_supported_languages_for_types.end());
+    languages_for_expressions.insert(s_supported_languages_for_expressions.begin(), s_supported_languages_for_expressions.end());
+}
+
 
 void
 GoASTContext::Initialize()
 {
     PluginManager::RegisterPlugin (GetPluginNameStatic(),
                                    "AST context plug-in",
-                                   CreateInstance);
+                                   CreateInstance,
+                                   EnumerateSupportedLanguages);
 }
 
 void

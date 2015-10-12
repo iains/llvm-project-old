@@ -267,7 +267,7 @@ set(ALL_SANITIZER_COMMON_SUPPORTED_ARCH ${X86} ${X86_64} ${PPC64}
 set(ALL_ASAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
     ${MIPS32} ${MIPS64} ${PPC64})
 set(ALL_DFSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
-set(ALL_LSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
+set(ALL_LSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64})
 set(ALL_MSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
 set(ALL_PROFILE_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${PPC64}
     ${MIPS32} ${MIPS64})
@@ -353,7 +353,9 @@ if(APPLE)
       DARWIN_10.4_ARCHS
       ${toolchain_arches})
     message(STATUS "OSX 10.4 supported arches: ${DARWIN_10.4_ARCHS}")
-    if(DARWIN_10.4_ARCHES)
+    if(DARWIN_10.4_ARCHS)
+      # don't include the Haswell slice in the 10.4 compatibility library
+      list(REMOVE_ITEM DARWIN_10.4_ARCHS x86_64h)
       list(APPEND BUILTIN_SUPPORTED_OS 10.4)
     endif()
 

@@ -455,7 +455,7 @@ static bool isValidAssumeForContext(Value *V, const Query &Q) {
       for (BasicBlock::const_iterator I =
              std::next(BasicBlock::const_iterator(Q.CxtI)),
                                       IE(Inv); I != IE; ++I)
-        if (!isSafeToSpeculativelyExecute(I) && !isAssumeLikeIntrinsic(I))
+        if (!isSafeToSpeculativelyExecute(&*I) && !isAssumeLikeIntrinsic(&*I))
           return false;
 
       return !isEphemeralValueOf(Inv, Q.CxtI);
@@ -472,14 +472,14 @@ static bool isValidAssumeForContext(Value *V, const Query &Q) {
     // of the block); the common case is that the assume will come first.
     for (BasicBlock::iterator I = std::next(BasicBlock::iterator(Inv)),
          IE = Inv->getParent()->end(); I != IE; ++I)
-      if (I == Q.CxtI)
+      if (&*I == Q.CxtI)
         return true;
 
     // The context must come first...
     for (BasicBlock::const_iterator I =
            std::next(BasicBlock::const_iterator(Q.CxtI)),
                                     IE(Inv); I != IE; ++I)
-      if (!isSafeToSpeculativelyExecute(I) && !isAssumeLikeIntrinsic(I))
+      if (!isSafeToSpeculativelyExecute(&*I) && !isAssumeLikeIntrinsic(&*I))
         return false;
 
     return !isEphemeralValueOf(Inv, Q.CxtI);
@@ -1065,7 +1065,8 @@ static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
   }
   case Instruction::BitCast: {
     Type *SrcTy = I->getOperand(0)->getType();
-    if ((SrcTy->isIntegerTy() || SrcTy->isPointerTy()) &&
+    if ((SrcTy->isIntegerTy() || SrcTy->isPointerTy() ||
+         SrcTy->isFloatingPointTy()) &&
         // TODO: For now, not handling conversions like:
         // (bitcast i64 %x to <2 x i32>)
         !I->getType()->isVectorTy()) {
@@ -1378,6 +1379,12 @@ static void computeKnownBitsFromOperator(Operator *I, APInt &KnownZero,
         KnownZero |= APInt::getHighBitsSet(BitWidth, BitWidth - LowBits);
         break;
       }
+      case Intrinsic::fabs: {
+        Type *Ty = II->getType();
+        APInt SignBit = APInt::getSignBit(Ty->getScalarSizeInBits());
+        KnownZero |= APInt::getSplat(Ty->getPrimitiveSizeInBits(), SignBit);
+        break;
+      }
       case Intrinsic::x86_sse42_crc32_64_64:
         KnownZero |= APInt::getHighBitsSet(64, 32);
         break;
@@ -1477,8 +1484,9 @@ void computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
   unsigned BitWidth = KnownZero.getBitWidth();
 
   assert((V->getType()->isIntOrIntVectorTy() ||
+          V->getType()->isFPOrFPVectorTy() ||
           V->getType()->getScalarType()->isPointerTy()) &&
-         "Not integer or pointer type!");
+         "Not integer, floating point, or pointer type!");
   assert((DL.getTypeSizeInBits(V->getType()->getScalarType()) == BitWidth) &&
          (!V->getType()->isIntOrIntVectorTy() ||
           V->getType()->getScalarSizeInBits() == BitWidth) &&
@@ -2990,20 +2998,7 @@ static bool isDereferenceableFromAttribute(const Value *V, const DataLayout &DL,
 
 static bool isAligned(const Value *Base, APInt Offset, unsigned Align,
                       const DataLayout &DL) {
-  APInt BaseAlign(Offset.getBitWidth(), 0);
-  if (const AllocaInst *AI = dyn_cast<AllocaInst>(Base))
-    BaseAlign = AI->getAlignment();
-  else if (const GlobalVariable *GV = dyn_cast<GlobalVariable>(Base))
-    BaseAlign = GV->getAlignment();
-  else if (const Argument *A = dyn_cast<Argument>(Base))
-    BaseAlign = A->getParamAlignment();
-  else if (auto CS = ImmutableCallSite(Base))
-    BaseAlign = CS.getAttributes().getParamAlignment(AttributeSet::ReturnIndex);
-  else if (const LoadInst *LI = dyn_cast<LoadInst>(Base))
-    if (MDNode *MD = LI->getMetadata(LLVMContext::MD_align)) {
-      ConstantInt *CI = mdconst::extract<ConstantInt>(MD->getOperand(0));
-      BaseAlign = CI->getLimitedValue();
-    }
+  APInt BaseAlign(Offset.getBitWidth(), getAlignment(Base, DL));
 
   if (!BaseAlign) {
     Type *Ty = Base->getType()->getPointerElementType();
@@ -3640,16 +3635,17 @@ bool llvm::isKnownNotFullPoison(const Instruction *PoisonI) {
   SmallSet<const Value *, 16> YieldsPoison;
   YieldsPoison.insert(PoisonI);
 
-  for (const Instruction *I = PoisonI, *E = BB->end(); I != E;
-       I = I->getNextNode()) {
-    if (I != PoisonI) {
-      const Value *NotPoison = getGuaranteedNonFullPoisonOp(I);
+  for (BasicBlock::const_iterator I = PoisonI->getIterator(), E = BB->end();
+       I != E; ++I) {
+    if (&*I != PoisonI) {
+      const Value *NotPoison = getGuaranteedNonFullPoisonOp(&*I);
       if (NotPoison != nullptr && YieldsPoison.count(NotPoison)) return true;
-      if (!isGuaranteedToTransferExecutionToSuccessor(I)) return false;
+      if (!isGuaranteedToTransferExecutionToSuccessor(&*I))
+        return false;
     }
 
     // Mark poison that propagates from I through uses of I.
-    if (YieldsPoison.count(I)) {
+    if (YieldsPoison.count(&*I)) {
       for (const User *User : I->users()) {
         const Instruction *UserI = cast<Instruction>(User);
         if (UserI->getParent() == BB && propagatesFullPoison(UserI))

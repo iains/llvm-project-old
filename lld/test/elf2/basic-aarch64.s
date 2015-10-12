@@ -31,7 +31,7 @@ _start:
 # CHECK-NEXT:   ]
 # CHECK-NEXT:   HeaderSize: 64
 # CHECK-NEXT:   ProgramHeaderEntrySize: 56
-# CHECK-NEXT:   ProgramHeaderCount: 2
+# CHECK-NEXT:   ProgramHeaderCount: 3
 # CHECK-NEXT:   SectionHeaderEntrySize: 64
 # CHECK-NEXT:   SectionHeaderCount: 6
 # CHECK-NEXT:   StringTableSectionIndex: 5
@@ -59,7 +59,7 @@ _start:
 # CHECK-NEXT:       SHF_ALLOC (0x2)
 # CHECK-NEXT:       SHF_EXECINSTR (0x4)
 # CHECK-NEXT:     ]
-# CHECK-NEXT:     Address: 0x11000
+# CHECK-NEXT:     Address: 0x401000
 # CHECK-NEXT:     Offset: 0x1000
 # CHECK-NEXT:     Size: 12
 # CHECK-NEXT:     Link: 0
@@ -75,7 +75,7 @@ _start:
 # CHECK-NEXT:       SHF_ALLOC (0x2)
 # CHECK-NEXT:       SHF_WRITE (0x1)
 # CHECK-NEXT:     ]
-# CHECK-NEXT:     Address: 0x1100C
+# CHECK-NEXT:     Address: 0x40100C
 # CHECK-NEXT:     Offset: 0x100C
 # CHECK-NEXT:     Size: 0
 # CHECK-NEXT:     Link: 0
@@ -91,7 +91,7 @@ _start:
 # CHECK-NEXT:       SHF_ALLOC (0x2)
 # CHECK-NEXT:       SHF_WRITE (0x1)
 # CHECK-NEXT:     ]
-# CHECK-NEXT:     Address: 0x1100C
+# CHECK-NEXT:     Address: 0x40100C
 # CHECK-NEXT:     Offset: 0x100C
 # CHECK-NEXT:     Size: 0
 # CHECK-NEXT:     Link: 0
@@ -140,7 +140,7 @@ _start:
 # CHECK-NEXT:   }
 # CHECK-NEXT:   Symbol {
 # CHECK-NEXT:     Name: $x.0 (41)
-# CHECK-NEXT:     Value: 0x11000
+# CHECK-NEXT:     Value: 0x401000
 # CHECK-NEXT:     Size: 0
 # CHECK-NEXT:     Binding: Local (0x0)
 # CHECK-NEXT:     Type: None (0x0)
@@ -159,12 +159,24 @@ _start:
 # CHECK-NEXT: ]
 # CHECK-NEXT: ProgramHeaders [
 # CHECK-NEXT:   ProgramHeader {
+# CHECK-NEXT:     Type: PT_PHDR (0x6)
+# CHECK-NEXT:     Offset: 0x40
+# CHECK-NEXT:     VirtualAddress: 0x400040
+# CHECK-NEXT:     PhysicalAddress: 0x400040
+# CHECK-NEXT:     FileSize: 168
+# CHECK-NEXT:     MemSize: 168
+# CHECK-NEXT:     Flags [ (0x4)
+# CHECK-NEXT:       PF_R (0x4)
+# CHECK-NEXT:     ]
+# CHECK-NEXT:     Alignment: 8
+# CHECK-NEXT:   }
+# CHECK-NEXT:   ProgramHeader {
 # CHECK-NEXT:     Type: PT_LOAD (0x1)
 # CHECK-NEXT:     Offset: 0x0
-# CHECK-NEXT:     VirtualAddress: 0x10000
-# CHECK-NEXT:     PhysicalAddress: 0x10000
-# CHECK-NEXT:     FileSize: 176
-# CHECK-NEXT:     MemSize: 176
+# CHECK-NEXT:     VirtualAddress: 0x400000
+# CHECK-NEXT:     PhysicalAddress: 0x400000
+# CHECK-NEXT:     FileSize: 232
+# CHECK-NEXT:     MemSize: 232
 # CHECK-NEXT:     Flags [
 # CHECK-NEXT:       PF_R
 # CHECK-NEXT:     ]
@@ -173,8 +185,8 @@ _start:
 # CHECK-NEXT:   ProgramHeader {
 # CHECK-NEXT:     Type: PT_LOAD (0x1)
 # CHECK-NEXT:     Offset: 0x1000
-# CHECK-NEXT:     VirtualAddress: 0x11000
-# CHECK-NEXT:     PhysicalAddress: 0x11000
+# CHECK-NEXT:     VirtualAddress: 0x401000
+# CHECK-NEXT:     PhysicalAddress: 0x401000
 # CHECK-NEXT:     FileSize: 12
 # CHECK-NEXT:     MemSize: 12
 # CHECK-NEXT:     Flags [ (0x5)
