@@ -25,6 +25,10 @@ class SymbolBody;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
 
+// Initializes global objects defined in this file.
+// Called at the beginning of main().
+void initSymbols();
+
 // A real symbol object, SymbolBody, is usually accessed indirectly
 // through a Symbol. There's always one Symbol for each symbol name.
 // The resolver updates SymbolBody pointers as it resolves symbols.
@@ -53,7 +57,6 @@ public:
   bool isWeak() const { return IsWeak; }
   bool isUndefined() const { return SymbolKind == UndefinedKind; }
   bool isDefined() const { return SymbolKind <= DefinedLast; }
-  bool isStrongUndefined() const { return !IsWeak && isUndefined(); }
   bool isCommon() const { return SymbolKind == DefinedCommonKind; }
   bool isLazy() const { return SymbolKind == LazyKind; }
   bool isShared() const { return SymbolKind == SharedKind; }
@@ -88,7 +91,7 @@ public:
   // has chosen the object among other objects having the same name,
   // you can access P->Backref->Body to get the resolver's result.
   void setBackref(Symbol *P) { Backref = P; }
-  SymbolBody *getReplacement() { return Backref ? Backref->Body : this; }
+  SymbolBody *repl() { return Backref ? Backref->Body : this; }
 
   // Decides which symbol should "win" in the symbol table, this or
   // the Other. Returns 1 if this wins, -1 if the Other wins, or 0 if
@@ -104,7 +107,7 @@ protected:
   }
 
   const unsigned SymbolKind : 8;
-  const unsigned IsWeak : 1;
+  unsigned IsWeak : 1;
   unsigned MostConstrainingVisibility : 2;
   unsigned IsUsedInRegularObj : 1;
   unsigned IsUsedInDynamicReloc : 1;
@@ -235,7 +238,8 @@ template <class ELFT> class Undefined : public ELFSymbolBody<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  static Elf_Sym Synthetic;
+  static Elf_Sym Required;
+  static Elf_Sym Optional;
 
   Undefined(StringRef N, const Elf_Sym &Sym)
       : ELFSymbolBody<ELFT>(Base::UndefinedKind, N, Sym) {}
@@ -243,10 +247,14 @@ public:
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::UndefinedKind;
   }
+
+  bool canKeepUndefined() const { return &this->Sym == &Optional; }
 };
 
 template <class ELFT>
-typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Synthetic;
+typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Required;
+template <class ELFT>
+typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Optional;
 
 template <class ELFT> class SharedSymbol : public Defined<ELFT> {
   typedef Defined<ELFT> Base;
@@ -277,6 +285,9 @@ public:
   // Returns an object file for this symbol, or a nullptr if the file
   // was already returned.
   std::unique_ptr<InputFile> getMember();
+
+  void setWeak() { IsWeak = true; }
+  void setUsedInRegularObj() { IsUsedInRegularObj = true; }
 
 private:
   ArchiveFile *File;

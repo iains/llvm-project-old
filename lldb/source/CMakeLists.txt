@@ -1,16 +1,5 @@
 include_directories(.)
 
-if (__ANDROID_NDK__ OR (CMAKE_SYSTEM_NAME MATCHES "Windows"))
-  set(LLDB_DEFAULT_DISABLE_LIBEDIT 1)
-else()
-  set(LLDB_DEFAULT_DISABLE_LIBEDIT 0)
-endif ()
-
-set(LLDB_DISABLE_LIBEDIT ${LLDB_DEFAULT_DISABLE_LIBEDIT} CACHE BOOL "Disables the use of editline.")
-if (LLDB_DISABLE_LIBEDIT)
-  add_definitions( -DLLDB_DISABLE_LIBEDIT )
-endif()
-
 if ( CMAKE_SYSTEM_NAME MATCHES "Linux" )
 include_directories(
   Plugins/Process/Linux
@@ -25,8 +14,19 @@ include_directories(
   )
 endif ()
 
+if ( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
+  set(LLDB_VERS_GENERATED_FILE ${LLDB_BINARY_DIR}/source/LLDB_vers.c)
+  add_custom_command(OUTPUT ${LLDB_VERS_GENERATED_FILE}
+    COMMAND ${LLDB_SOURCE_DIR}/scripts/generate-vers.pl
+            ${LLDB_SOURCE_DIR}/lldb.xcodeproj/project.pbxproj liblldb_core
+            > ${LLDB_VERS_GENERATED_FILE})
+
+  set_source_files_properties(${LLDB_VERS_GENERATED_FILE} PROPERTIES GENERATED 1)
+endif ()
+
 add_lldb_library(lldbBase
   lldb.cpp
+   ${LLDB_VERS_GENERATED_FILE}
   )
 
 add_subdirectory(Breakpoint)

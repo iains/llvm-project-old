@@ -211,16 +211,16 @@ class ObjCDataFormatterTestCase(TestBase):
 
     def nscontainers_data_formatter_commands(self):
         self.expect('frame variable newArray newDictionary newMutableDictionary cfdict_ref mutable_dict_ref cfarray_ref mutable_array_ref',
-                    substrs = ['(NSArray *) newArray = ','@"50 objects"',
+                    substrs = ['(NSArray *) newArray = ','@"50 elements"',
                     '(NSDictionary *) newDictionary = ',' 12 key/value pairs',
                     '(NSDictionary *) newMutableDictionary = ',' 21 key/value pairs',
-                    '(CFDictionaryRef) cfdict_ref = ','@"3 entries"',
-                    '(CFMutableDictionaryRef) mutable_dict_ref = ','@"12 entries"',
-                    '(CFArrayRef) cfarray_ref = ','@"3 objects"',
-                    '(CFMutableArrayRef) mutable_array_ref = ','@"11 objects"'])
+                    '(CFDictionaryRef) cfdict_ref = ','3 key/value pairs',
+                    '(CFMutableDictionaryRef) mutable_dict_ref = ','12 key/value pairs',
+                    '(CFArrayRef) cfarray_ref = ','@"3 elements"',
+                    '(CFMutableArrayRef) mutable_array_ref = ','@"11 elements"'])
 
         self.expect('frame variable nscounted_set',
-                    substrs = ['(NSCountedSet *) nscounted_set = ','5 objects'])
+                    substrs = ['(NSCountedSet *) nscounted_set = ','5 elements'])
 
         self.expect('frame variable iset1 iset2 imset',
                     substrs = ['4 indexes','512 indexes','10 indexes'])
@@ -387,7 +387,6 @@ class ObjCDataFormatterTestCase(TestBase):
         self.addTearDownHook(cleanup)
 
         # check formatters for common Objective-C types
-        self.runCmd("log timers enable")
         expect_strings = ['(CFGregorianUnits) cf_greg_units = 1 years, 3 months, 5 days, 12 hours, 5 minutes 7 seconds',
          '(CFRange) cf_range = location=4 length=4',
          '(NSPoint) ns_point = (x = 4, y = 4)',
@@ -414,7 +413,6 @@ class ObjCDataFormatterTestCase(TestBase):
             
         self.expect("frame variable",
              substrs = expect_strings)
-        self.runCmd('log timers dump')
 
 
     def kvo_data_formatter_commands(self):

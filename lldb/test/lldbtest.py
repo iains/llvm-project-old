@@ -567,6 +567,23 @@ def dwarf_test(func):
     wrapper.__dwarf_test__ = True
     return wrapper
 
+def dwo_test(func):
+    """Decorate the item as a dwo test."""
+    if isinstance(func, type) and issubclass(func, unittest2.TestCase):
+        raise Exception("@dwo_test can only be used to decorate a test method")
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            if lldb.dont_do_dwo_test:
+                self.skipTest("dwo tests")
+        except AttributeError:
+            pass
+        return func(self, *args, **kwargs)
+
+    # Mark this function as such to separate them from the regular tests.
+    wrapper.__dwo_test__ = True
+    return wrapper
+
 def debugserver_test(func):
     """Decorate the item as a debugserver test."""
     if isinstance(func, type) and issubclass(func, unittest2.TestCase):
@@ -657,10 +674,13 @@ def expectedFailureAll(bugnumber=None, oslist=None, compiler=None, compiler_vers
     return expectedFailure(fn, bugnumber)
 
 def expectedFailureDwarf(bugnumber=None):
-    return expectedFailureAll(bugnumber==bugnumber, debug_info="dwarf")
+    return expectedFailureAll(bugnumber=bugnumber, debug_info="dwarf")
+
+def expectedFailureDwo(bugnumber=None):
+    return expectedFailureAll(bugnumber=bugnumber, debug_info="dwo")
 
 def expectedFailureDsym(bugnumber=None):
-    return expectedFailureAll(bugnumber==bugnumber, debug_info="dsym")
+    return expectedFailureAll(bugnumber=bugnumber, debug_info="dsym")
 
 def expectedFailureCompiler(compiler, compiler_version=None, bugnumber=None):
     if compiler_version is None:
@@ -938,6 +958,24 @@ def skipUnlessGoInstalled(func):
         if not compiler:
             self.skipTest("skipping because go compiler not found")
         else:
+            # Ensure the version is the minimum version supported by
+            # the LLDB go support.
+            match_version = re.search(r"(\d+\.\d+(\.\d+)?)", compiler)
+            if not match_version:
+                # Couldn't determine version.
+                self.skipTest(
+                    "skipping because go version could not be parsed "
+                    "out of {}".format(compiler))
+            else:
+                from distutils.version import StrictVersion
+                min_strict_version = StrictVersion("1.4.0")
+                compiler_strict_version = StrictVersion(match_version.group(1))
+                if compiler_strict_version < min_strict_version:
+                    self.skipTest(
+                        "skipping because available go version ({}) does "
+                        "not meet minimum required go version ({})".format(
+                            compiler_strict_version,
+                            min_strict_version))
             func(*args, **kwargs)
     return wrapper
 
@@ -1060,6 +1098,9 @@ def skipIf(bugnumber=None, oslist=None, compiler=None, compiler_version=None, ar
 
 def skipIfDebugInfo(bugnumber=None, debug_info=None):
     return skipIf(bugnumber=bugnumber, debug_info=debug_info)
+
+def skipIfDWO(bugnumber=None):
+    return skipIfDebugInfo(bugnumber, ["dwo"])
 
 def skipIfDwarf(bugnumber=None):
     return skipIfDebugInfo(bugnumber, ["dwarf"])
@@ -2123,6 +2164,16 @@ class Base(unittest2.TestCase):
         if not module.buildDwarf(self, architecture, compiler, dictionary, clean):
             raise Exception("Don't know how to build binary with dwarf")
 
+    def buildDwo(self, architecture=None, compiler=None, dictionary=None, clean=True):
+        """Platform specific way to build binaries with dwarf maps."""
+        if lldb.skip_build_and_cleanup:
+            return
+        module = builder_module()
+        if target_is_android():
+            dictionary = append_android_envs(dictionary)
+        if not module.buildDwo(self, architecture, compiler, dictionary, clean):
+            raise Exception("Don't know how to build binary with dwo")
+
     def buildGo(self):
         """Build the default go binary.
         """
@@ -2240,6 +2291,14 @@ class LLDBTestCaseFactory(type):
                 dwarf_method_name = attrname + "_dwarf"
                 dwarf_test_method.__name__ = dwarf_method_name
                 newattrs[dwarf_method_name] = dwarf_test_method
+                
+                @dwo_test
+                def dwo_test_method(self, attrvalue=attrvalue):
+                    self.debug_info = "dwo"
+                    return attrvalue(self)
+                dwo_method_name = attrname + "_dwo"
+                dwo_test_method.__name__ = dwo_method_name
+                newattrs[dwo_method_name] = dwo_test_method
             else:
                 newattrs[attrname] = attrvalue
         return super(LLDBTestCaseFactory, cls).__new__(cls, name, bases, newattrs)
@@ -2416,6 +2475,18 @@ class TestBase(Base):
             error = lldb.remote_platform.MakeDirectory(remote_test_dir, 0700)
             if error.Success():
                 lldb.remote_platform.SetWorkingDirectory(remote_test_dir)
+
+                # This function removes all files from the current working directory while leaving
+                # the directories in place. The cleaup is required to reduce the disk space required
+                # by the test suit while leaving the directories untached is neccessary because
+                # sub-directories might belong to an other test
+                def clean_working_directory():
+                    # TODO: Make it working on Windows when we need it for remote debugging support
+                    # TODO: Replace the heuristic to remove the files with a logic what collects the
+                    # list of files we have to remove during test runs.
+                    shell_cmd = lldb.SBPlatformShellCommand("rm %s/*" % remote_test_dir)
+                    lldb.remote_platform.Run(shell_cmd)
+                self.addTearDownHook(clean_working_directory)
             else:
                 print "error: making remote directory '%s': %s" % (remote_test_dir, error)
     
@@ -2775,6 +2846,10 @@ class TestBase(Base):
             return self.buildDsym(architecture, compiler, dictionary, clean)
         elif self.debug_info == "dwarf":
             return self.buildDwarf(architecture, compiler, dictionary, clean)
+        elif self.debug_info == "dwo":
+            return self.buildDwo(architecture, compiler, dictionary, clean)
+        else:
+            self.fail("Can't build for debug info: %s" % self.debug_info)
 
     # =================================================
     # Misc. helper methods for debugging test execution

@@ -70,6 +70,29 @@ static TargetInfo *createTarget(uint16_t EMachine) {
   error("Unknown target machine");
 }
 
+void SymbolTable::addUndefinedSym(StringRef Name) {
+  switch (getFirstELF()->getELFKind()) {
+  case ELF32LEKind:
+    addUndefinedSym<ELF32LE>(Name);
+    break;
+  case ELF32BEKind:
+    addUndefinedSym<ELF32BE>(Name);
+    break;
+  case ELF64LEKind:
+    addUndefinedSym<ELF64LE>(Name);
+    break;
+  case ELF64BEKind:
+    addUndefinedSym<ELF64BE>(Name);
+    break;
+  default:
+    llvm_unreachable("Invalid kind");
+  }
+}
+
+template <class ELFT> void SymbolTable::addUndefinedSym(StringRef Name) {
+  resolve<ELFT>(new (Alloc) Undefined<ELFT>(Name, Undefined<ELFT>::Optional));
+}
+
 template <class ELFT>
 void SymbolTable::addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
                                   typename ELFFile<ELFT>::uintX_t Value) {
@@ -82,7 +105,6 @@ void SymbolTable::addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
 }
 
 template <class ELFT> void SymbolTable::addIgnoredSym(StringRef Name) {
-  DefinedAbsolute<ELFT>::IgnoreUndef.setVisibility(STV_HIDDEN);
   auto Sym = new (Alloc)
       DefinedAbsolute<ELFT>(Name, DefinedAbsolute<ELFT>::IgnoreUndef);
   resolve<ELFT>(Sym);
@@ -94,7 +116,7 @@ template <class ELFT> void SymbolTable::init(uint16_t EMachine) {
     return;
   EntrySym = new (Alloc) Undefined<ELFT>(
       Config->Entry.empty() ? Target->getDefaultEntry() : Config->Entry,
-      Undefined<ELFT>::Synthetic);
+      Undefined<ELFT>::Required);
   resolve<ELFT>(EntrySym);
 
   // In the assembly for 32 bit x86 the _GLOBAL_OFFSET_TABLE_ symbol is magical
@@ -113,21 +135,21 @@ template <class ELFT> void SymbolTable::init(uint16_t EMachine) {
 }
 
 template <class ELFT> void SymbolTable::addELFFile(ELFFileBase *File) {
-  if (const ELFFileBase *Old = getFirstELF()) {
-    if (!Old->isCompatibleWith(*File))
-      error(Twine(Old->getName() + " is incompatible with " + File->getName()));
-  } else {
+  const ELFFileBase *Old = getFirstELF();
+  if (auto *O = dyn_cast<ObjectFileBase>(File))
+    ObjectFiles.emplace_back(O);
+  else if (auto *S = dyn_cast<SharedFile<ELFT>>(File))
+    SharedFiles.emplace_back(S);
+
+  if (!Old)
     init<ELFT>(File->getEMachine());
-  }
 
   if (auto *O = dyn_cast<ObjectFileBase>(File)) {
-    ObjectFiles.emplace_back(O);
     for (SymbolBody *Body : O->getSymbols())
       resolve<ELFT>(Body);
   }
 
   if (auto *S = dyn_cast<SharedFile<ELFT>>(File)) {
-    SharedFiles.emplace_back(S);
     for (SharedSymbol<ELFT> &Body : S->getSharedSymbols())
       resolve<ELFT>(&Body);
   }
@@ -147,11 +169,13 @@ void SymbolTable::addELFFile(ELFFileBase *File) {
   case ELF64BEKind:
     addELFFile<ELF64BE>(File);
     break;
+  default:
+    llvm_unreachable("Invalid kind");
   }
 }
 
 template <class ELFT>
-void SymbolTable::dupError(const SymbolBody &Old, const SymbolBody &New) {
+void SymbolTable::reportConflict(const SymbolBody &Old, const SymbolBody &New) {
   typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
   typedef typename ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
 
@@ -189,6 +213,12 @@ template <class ELFT> void SymbolTable::resolve(SymbolBody *New) {
 
   if (Lazy *L = dyn_cast<Lazy>(Existing)) {
     if (New->isUndefined()) {
+      if (New->isWeak()) {
+        // See the explanation in SymbolTable::addLazy
+        L->setUsedInRegularObj();
+        L->setWeak();
+        return;
+      }
       addMemberFile(L);
       return;
     }
@@ -205,7 +235,7 @@ template <class ELFT> void SymbolTable::resolve(SymbolBody *New) {
   if (comp < 0)
     Sym->Body = New;
   else if (comp == 0)
-    dupError<ELFT>(*Existing, *New);
+    reportConflict<ELFT>(*Existing, *New);
 }
 
 Symbol *SymbolTable::insert(SymbolBody *New) {
@@ -226,10 +256,23 @@ void SymbolTable::addLazy(Lazy *New) {
   if (Sym->Body == New)
     return;
   SymbolBody *Existing = Sym->Body;
-  if (Existing->isDefined() || Existing->isLazy() || Existing->isWeak())
+  if (Existing->isDefined() || Existing->isLazy())
     return;
   Sym->Body = New;
   assert(Existing->isUndefined() && "Unexpected symbol kind.");
+
+  // Weak undefined symbols should not fetch members from archives.
+  // If we were to keep old symbol we would not know that an archive member was
+  // available if a strong undefined symbol shows up afterwards in the link.
+  // If a strong undefined symbol never shows up, this lazy symbol will
+  // get to the end of the link and must be treated as the weak undefined one.
+  // We set UsedInRegularObj in a similar way to what is done with shared
+  // symbols and mark it as weak to reduce how many special cases are needed.
+  if (Existing->isWeak()) {
+    New->setUsedInRegularObj();
+    New->setWeak();
+    return;
+  }
   addMemberFile(New);
 }
 

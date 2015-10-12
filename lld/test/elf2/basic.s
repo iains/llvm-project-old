@@ -180,7 +180,7 @@ _start:
 
 # Test for the response file
 # RUN: echo " -o %t2" > %t.responsefile
-# RUN: lld -flavor gnu2 %t @%t.responsefile
+# RUN: ld.lld2 %t @%t.responsefile
 # RUN: llvm-readobj -file-headers -sections -program-headers -symbols %t2 \
 # RUN:   | FileCheck %s
 
@@ -205,3 +205,6 @@ _start:
 # RUN: llvm-mc -filetype=obj -triple=x86_64-unknown-linux %s -o %t
 # RUN: not lld -flavor gnu2 %t %t -o %t2 2>&1 | FileCheck --check-prefix=DUP %s
 # DUP: duplicate symbol: _start in {{.*}} and {{.*}}
+
+# RUN: not lld -flavor gnu2 %t -o %t -m wrong_emul 2>&1 | FileCheck --check-prefix=UNKNOWN_EMUL %s
+# UNKNOWN_EMUL: Unknown emulation: wrong_emul

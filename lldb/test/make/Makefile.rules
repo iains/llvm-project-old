@@ -170,6 +170,11 @@ else
 	endif
 endif
 
+LIMIT_DEBUG_INFO_FLAGS =
+ifneq (,$(findstring clang,$(CC)))
+   LIMIT_DEBUG_INFO_FLAGS += -flimit-debug-info
+endif
+
 CFLAGS ?= -g -O0 -fno-builtin
 ifeq "$(OS)" "Darwin"
 	CFLAGS += $(ARCHFLAG) $(ARCH) $(FRAMEWORK_INCLUDES) $(CFLAGS_EXTRAS) -I$(LLDB_BASE_DIR)include
@@ -183,6 +188,10 @@ ifeq "$(OS)" "Darwin"
 	CFLAGS_NO_DEBUG = -O0 $(ARCHFLAG) $(ARCH) $(FRAMEWORK_INCLUDES) $(CFLAGS_EXTRAS) $(TRIPLE_CFLAGS)
 else
 	CFLAGS_NO_DEBUG = -O0 $(ARCHFLAG)$(ARCH) $(FRAMEWORK_INCLUDES) $(CFLAGS_EXTRAS) $(TRIPLE_CFLAGS)
+endif
+
+ifeq "$(MAKE_DWO)" "YES"
+	CFLAGS += -gsplit-dwarf
 endif
 
 CXXFLAGS += -std=c++11

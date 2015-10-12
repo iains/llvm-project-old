@@ -14,6 +14,9 @@ def allow_multiple_definition: Flag<["--"], "allow-multiple-definition">,
 
 def allow_shlib_undefined : Flag<["--", "-"], "allow-shlib-undefined">;
 
+def disable_new_dtags : Flag<["--"], "disable-new-dtags">,
+  HelpText<"Disable new dynamic tags">;
+
 def discard_all : Flag<["-"], "discard-all">,
   HelpText<"Delete all local symbols">;
 
@@ -26,14 +29,26 @@ def discard_none : Flag<["-"], "discard-none">,
 def dynamic_linker : Separate<["--", "-"], "dynamic-linker">,
   HelpText<"Which dynamic linker to use">;
 
+def enable_new_dtags : Flag<["--"], "enable-new-dtags">,
+  HelpText<"Enable new dynamic tags">;
+
 def entry : Separate<["--", "-"], "entry">, MetaVarName<"<entry>">,
   HelpText<"Name of entry point symbol">;
 
 def export_dynamic : Flag<["--", "-"], "export-dynamic">,
   HelpText<"Put symbols in the dynamic symbol table">;
 
+def fini : Separate<["-"], "fini">, MetaVarName<"<symbol>">,
+  HelpText<"Specify a finalizer function">;
+
+def init : Separate<["-"], "init">, MetaVarName<"<symbol>">,
+  HelpText<"Specify an initializer function">;
+
 def l : Joined<["-"], "l">, MetaVarName<"<libName>">,
   HelpText<"Root name of library to use">;
+
+def m : Separate<["-"], "m">,
+  HelpText<"Set target emulation">;
 
 def no_allow_shlib_undefined : Flag<["--"], "no-allow-shlib-undefined">;
 
@@ -61,8 +76,14 @@ def soname : Joined<["-"], "soname=">,
 def sysroot : Joined<["--"], "sysroot=">,
   HelpText<"Set the system root">;
 
+def undefined : Joined<["--"], "undefined=">,
+  HelpText<"Force undefined symbol during linking">;
+
 def whole_archive : Flag<["--"], "whole-archive">,
   HelpText<"Force load of all members in a static library">;
+
+def z : JoinedOrSeparate<["-"], "z">, MetaVarName<"<option>">,
+  HelpText<"Linker option extensions">;
 
 // Aliases
 def alias_Bdynamic_call_shared: Flag<["-"], "call_shared">, Alias<Bdynamic>;
@@ -74,25 +95,25 @@ def alias_L__library_path : Joined<["--"], "library-path=">, Alias<L>;
 def alias_discard_all_x: Flag<["-"], "x">, Alias<discard_all>;
 def alias_discard_locals_X: Flag<["-"], "X">, Alias<discard_locals>;
 def alias_entry_e : Separate<["-"], "e">, Alias<entry>;
+def alias_fini_fini : Joined<["-"], "fini=">, Alias<fini>;
+def alias_init_init : Joined<["-"], "init=">, Alias<init>;
 def alias_l__library : Joined<["--"], "library=">, Alias<l>;
 def alias_rpath_rpath : Joined<["-"], "rpath=">, Alias<rpath>;
 def alias_soname_h : Separate<["-"], "h">, Alias<soname>;
 def alias_soname_soname : Separate<["-"], "soname">, Alias<soname>;
+def alias_undefined_u : Separate<["-"], "u">, Alias<undefined>;
 
 // Options listed below are silently ignored now.
 def O3 : Flag<["-"], "O3">;
 def as_needed : Flag<["--"], "as-needed">;
 def build_id : Flag<["--"], "build-id">;
 def eh_frame_hdr : Flag<["--"], "eh-frame-hdr">;
-def enable_new_dtags : Flag<["--"], "enable-new-dtags">;
 def end_group : Flag<["--"], "end-group">;
 def gc_sections : Flag<["--"], "gc-sections">;
 def hash_style : Joined<["--"], "hash-style=">;
-def m : Separate<["-"], "m">;
 def no_add_needed : Flag<["--"], "no-add-needed">;
 def no_as_needed : Flag<["--"], "no-as-needed">;
 def no_fatal_warnings : Flag<["--"], "no-fatal-warnings">;
 def start_group : Flag<["--"], "start-group">;
 def strip_all : Flag<["--"], "strip-all">;
 def version_script : Separate<["--"], "version-script">;
-def z : Separate<["-"], "z">;

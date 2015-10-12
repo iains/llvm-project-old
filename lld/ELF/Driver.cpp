@@ -19,6 +19,7 @@
 #include "llvm/Support/Path.h"
 
 using namespace llvm;
+using namespace llvm::ELF;
 
 using namespace lld;
 using namespace lld::elf2;
@@ -32,6 +33,30 @@ void lld::elf2::link(ArrayRef<const char *> Args) {
   Config = &C;
   Driver = &D;
   Driver->link(Args.slice(1));
+}
+
+static void setELFType(StringRef Emul) {
+  if (Emul == "elf_i386") {
+    Config->ElfKind = ELF32LEKind;
+    Config->EMachine = EM_386;
+    return;
+  }
+  if (Emul == "elf_x86_64") {
+    Config->ElfKind = ELF64LEKind;
+    Config->EMachine = EM_X86_64;
+    return;
+  }
+  if (Emul == "elf32ppc") {
+    Config->ElfKind = ELF32BEKind;
+    Config->EMachine = EM_PPC;
+    return;
+  }
+  if (Emul == "elf64ppc") {
+    Config->ElfKind = ELF64BEKind;
+    Config->EMachine = EM_PPC64;
+    return;
+  }
+  error(Twine("Unknown emulation: ") + Emul);
 }
 
 // Makes a path by concatenating Dir and File.
@@ -67,6 +92,28 @@ static std::string searchLibrary(StringRef Path) {
   error(Twine("Unable to find library -l") + Path);
 }
 
+template <template <class> class T>
+std::unique_ptr<ELFFileBase>
+LinkerDriver::createELFInputFile(MemoryBufferRef MB) {
+  std::unique_ptr<ELFFileBase> File = createELFFile<T>(MB);
+  const ELFKind ElfKind = File->getELFKind();
+  const uint16_t EMachine = File->getEMachine();
+
+  // Grab target from the first input file if wasn't set by -m option.
+  if (Config->ElfKind == ELFNoneKind) {
+    Config->ElfKind = ElfKind;
+    Config->EMachine = EMachine;
+    return File;
+  }
+  if (ElfKind == Config->ElfKind && EMachine == Config->EMachine)
+    return File;
+
+  if (const ELFFileBase *First = Symtab.getFirstELF())
+    error(MB.getBufferIdentifier() + " is incompatible with " +
+          First->getName());
+  error(MB.getBufferIdentifier() + " is incompatible with target architecture");
+}
+
 // Opens and parses a file. Path has to be resolved already.
 // Newly created memory buffers are owned by this driver.
 void LinkerDriver::addFile(StringRef Path) {
@@ -85,25 +132,28 @@ void LinkerDriver::addFile(StringRef Path) {
     Symtab.addFile(make_unique<ArchiveFile>(MBRef));
     return;
   case file_magic::elf_shared_object:
-    Symtab.addFile(createELFFile<SharedFile>(MBRef));
+    Symtab.addFile(createELFInputFile<SharedFile>(MBRef));
     return;
   default:
-    Symtab.addFile(createELFFile<ObjectFile>(MBRef));
+    Symtab.addFile(createELFInputFile<ObjectFile>(MBRef));
   }
 }
 
+static StringRef
+getString(opt::InputArgList &Args, unsigned Key, StringRef Default = "") {
+  if (auto *Arg = Args.getLastArg(Key))
+    return Arg->getValue();
+  return Default;
+}
+
 void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
+  initSymbols();
+
   // Parse command line options.
   opt::InputArgList Args = Parser.parse(ArgsArr);
 
-  if (auto *Arg = Args.getLastArg(OPT_output))
-    Config->OutputFile = Arg->getValue();
-
-  if (auto *Arg = Args.getLastArg(OPT_dynamic_linker))
-    Config->DynamicLinker = Arg->getValue();
-
-  if (auto *Arg = Args.getLastArg(OPT_sysroot))
-    Config->Sysroot = Arg->getValue();
+  for (auto *Arg : Args.filtered(OPT_L))
+    Config->InputSearchPaths.push_back(Arg->getValue());
 
   std::vector<StringRef> RPaths;
   for (auto *Arg : Args.filtered(OPT_rpath))
@@ -111,23 +161,30 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (!RPaths.empty())
     Config->RPath = llvm::join(RPaths.begin(), RPaths.end(), ":");
 
-  for (auto *Arg : Args.filtered(OPT_L))
-    Config->InputSearchPaths.push_back(Arg->getValue());
-
-  if (auto *Arg = Args.getLastArg(OPT_entry))
-    Config->Entry = Arg->getValue();
-
-  if (auto *Arg = Args.getLastArg(OPT_soname))
-    Config->SoName = Arg->getValue();
+  if (auto *Arg = Args.getLastArg(OPT_m))
+    setELFType(Arg->getValue());
 
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
   Config->DiscardAll = Args.hasArg(OPT_discard_all);
   Config->DiscardLocals = Args.hasArg(OPT_discard_locals);
   Config->DiscardNone = Args.hasArg(OPT_discard_none);
+  Config->EnableNewDtags = !Args.hasArg(OPT_disable_new_dtags);
   Config->ExportDynamic = Args.hasArg(OPT_export_dynamic);
   Config->NoInhibitExec = Args.hasArg(OPT_noinhibit_exec);
   Config->NoUndefined = Args.hasArg(OPT_no_undefined);
   Config->Shared = Args.hasArg(OPT_shared);
+
+  Config->DynamicLinker = getString(Args, OPT_dynamic_linker);
+  Config->Entry = getString(Args, OPT_entry);
+  Config->Fini = getString(Args, OPT_fini, "_fini");
+  Config->Init = getString(Args, OPT_init, "_init");
+  Config->OutputFile = getString(Args, OPT_output);
+  Config->SoName = getString(Args, OPT_soname);
+  Config->Sysroot = getString(Args, OPT_sysroot);
+
+  for (auto *Arg : Args.filtered(OPT_z))
+    if (Arg->getValue() == StringRef("now"))
+      Config->ZNow = true;
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
@@ -149,28 +206,18 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     case OPT_no_whole_archive:
       Config->WholeArchive = false;
       break;
-    default:
-      break;
     }
   }
 
   if (Symtab.getObjectFiles().empty())
     error("no input files.");
 
-  // Write the result.
-  const ELFFileBase *FirstObj = Symtab.getFirstELF();
-  switch (FirstObj->getELFKind()) {
-  case ELF32LEKind:
-    writeResult<object::ELF32LE>(&Symtab);
-    return;
-  case ELF32BEKind:
-    writeResult<object::ELF32BE>(&Symtab);
-    return;
-  case ELF64LEKind:
-    writeResult<object::ELF64LE>(&Symtab);
-    return;
-  case ELF64BEKind:
-    writeResult<object::ELF64BE>(&Symtab);
-    return;
-  }
+  for (auto *Arg : Args.filtered(OPT_undefined))
+    Symtab.addUndefinedSym(Arg->getValue());
+
+  if (Config->OutputFile.empty())
+    Config->OutputFile = "a.out";
+
+  // Write the result to the file.
+  writeResult(&Symtab);
 }

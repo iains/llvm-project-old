@@ -18,8 +18,6 @@ namespace elf2 {
 
 template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
-template <class ELFT> class PltSection;
-template <class ELFT> class GotSection;
 
 // This corresponds to a section of an input file.
 template <class ELFT> class InputSection {
@@ -37,8 +35,7 @@ public:
 
   // Write this section to a mmap'ed file, assuming Buf is pointing to
   // beginning of the output section.
-  void writeTo(uint8_t *Buf, const OutputSection<ELFT> &BssSec,
-               const PltSection<ELFT> &PltSec, const GotSection<ELFT> &GotSec);
+  void writeTo(uint8_t *Buf);
 
   StringRef getSectionName() const;
   const Elf_Shdr *getSectionHdr() const { return Header; }
@@ -53,8 +50,8 @@ public:
   }
   void setOutputSectionOff(uint64_t V) { OutputSectionOff = V; }
 
-  void setOutputSection(OutputSection<ELFT> *O) { Out = O; }
-  OutputSection<ELFT> *getOutputSection() const { return Out; }
+  void setOutputSection(OutputSection<ELFT> *O) { OutSec = O; }
+  OutputSection<ELFT> *getOutputSection() const { return OutSec; }
 
   // Relocation sections that refer to this one.
   SmallVector<const Elf_Shdr *, 1> RelocSections;
@@ -64,9 +61,7 @@ private:
   void relocate(uint8_t *Buf,
                 llvm::iterator_range<
                     const llvm::object::Elf_Rel_Impl<ELFT, isRela> *> Rels,
-                const ObjectFile<ELFT> &File, uintX_t BaseAddr,
-                const OutputSection<ELFT> &BssSec,
-                const PltSection<ELFT> &PltSec, const GotSection<ELFT> &GotSec);
+                const ObjectFile<ELFT> &File, uintX_t BaseAddr);
 
   // The offset from beginning of the output sections this section was assigned
   // to. The writer sets a value.
@@ -75,7 +70,7 @@ private:
   // The file this section is from.
   ObjectFile<ELFT> *File;
 
-  OutputSection<ELFT> *Out = nullptr;
+  OutputSection<ELFT> *OutSec = nullptr;
 
   const Elf_Shdr *Header;
 };

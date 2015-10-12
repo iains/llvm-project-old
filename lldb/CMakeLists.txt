@@ -4,7 +4,20 @@ include(cmake/modules/LLDBStandalone.cmake)
 include(cmake/modules/LLDBConfig.cmake)
 include(cmake/modules/AddLLDB.cmake)
 
-#add_subdirectory(include)
+if (__ANDROID_NDK__ OR (CMAKE_SYSTEM_NAME MATCHES "Windows"))
+  set(LLDB_DEFAULT_DISABLE_LIBEDIT 1)
+else()
+  set(LLDB_DEFAULT_DISABLE_LIBEDIT 0)
+endif ()
+
+# We need libedit support to go down both the source and
+# the scripts directories.
+set(LLDB_DISABLE_LIBEDIT ${LLDB_DEFAULT_DISABLE_LIBEDIT} CACHE BOOL "Disables the use of editline.")
+if (LLDB_DISABLE_LIBEDIT)
+  add_definitions( -DLLDB_DISABLE_LIBEDIT )
+endif()
+
+# add_subdirectory(include)
 add_subdirectory(docs)
 if (NOT LLDB_DISABLE_PYTHON)
   add_subdirectory(scripts)

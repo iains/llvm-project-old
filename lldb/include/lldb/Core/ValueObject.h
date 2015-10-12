@@ -610,11 +610,12 @@ public:
     GetLocationAsCString ();
 
     const char *
-    GetSummaryAsCString ();
+    GetSummaryAsCString (lldb::LanguageType lang = lldb::eLanguageTypeUnknown);
     
     bool
     GetSummaryAsCString (TypeSummaryImpl* summary_ptr,
-                         std::string& destination);
+                         std::string& destination,
+                         lldb::LanguageType lang = lldb::eLanguageTypeUnknown);
     
     bool
     GetSummaryAsCString (std::string& destination,
@@ -1240,6 +1241,9 @@ protected:
     
     bool
     IsChecksumEmpty ();
+    
+    void
+    SetPreferredDisplayLanguageIfNeeded (lldb::LanguageType);
     
 private:
     //------------------------------------------------------------------

@@ -58,8 +58,10 @@ public:
   SymbolBody *getEntrySym() const {
     if (!EntrySym)
       return nullptr;
-    return EntrySym->getReplacement();
+    return EntrySym->repl();
   }
+
+  void addUndefinedSym(StringRef Name);
 
   template <class ELFT>
   void addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
@@ -73,11 +75,12 @@ private:
   void addELFFile(ELFFileBase *File);
   void addLazy(Lazy *New);
   void addMemberFile(Lazy *Body);
+  template <class ELFT> void addUndefinedSym(StringRef Name);
 
   template <class ELFT> void init(uint16_t EMachine);
   template <class ELFT> void resolve(SymbolBody *Body);
   template <class ELFT>
-  void dupError(const SymbolBody &Old, const SymbolBody &New);
+  void reportConflict(const SymbolBody &Old, const SymbolBody &New);
 
   std::vector<std::unique_ptr<ArchiveFile>> ArchiveFiles;
 

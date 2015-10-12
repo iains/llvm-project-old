@@ -18,15 +18,15 @@
 
 // Should just remove the '=' symbol if --sysroot is not specified.
 // Case 1: relative path
-// RUN: cd %t && lld -flavor gnu2 -o %t/r %t/m.o -L=lib -l:libls.a
+// RUN: cd %t && ld.lld2 -o %t/r %t/m.o -L=lib -l:libls.a
 // Case 2: absolute path
-// RUN: cd %p && lld -flavor gnu2 -o %t/r %t/m.o -L=%t/lib -l:libls.a
+// RUN: cd %p && ld.lld2 -o %t/r %t/m.o -L=%t/lib -l:libls.a
 
 // RUN: cd %p
 
 // Should substitute SysRoot if specified
-// RUN: lld -flavor gnu2 -o %t/r %t/m.o --sysroot=%t -L=lib -l:libls.a
-// RUN: lld -flavor gnu2 -o %t/r %t/m.o --sysroot=%t -L=/lib -l:libls.a
+// RUN: ld.lld2 -o %t/r %t/m.o --sysroot=%t -L=lib -l:libls.a
+// RUN: ld.lld2 -o %t/r %t/m.o --sysroot=%t -L=/lib -l:libls.a
 
 // Should not substitute SysRoot if the directory name does not start with '='
 // RUN: not lld -flavor gnu2 -o %t/r %r/m.o --sysroot=%t -Llib -l:libls.a

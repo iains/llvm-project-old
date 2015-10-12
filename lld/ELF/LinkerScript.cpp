@@ -37,7 +37,9 @@ private:
   void expect(StringRef Expect);
 
   void readAsNeeded();
+  void readEntry();
   void readGroup();
+  void readOutput();
   void readOutputFormat();
 
   std::vector<StringRef> Tokens;
@@ -48,8 +50,12 @@ private:
 void LinkerScript::run() {
   while (!atEOF()) {
     StringRef Tok = next();
-    if (Tok == "GROUP") {
+    if (Tok == "ENTRY") {
+      readEntry();
+    } else if (Tok == "GROUP") {
       readGroup();
+    } else if (Tok == "OUTPUT") {
+      readOutput();
     } else if (Tok == "OUTPUT_FORMAT") {
       readOutputFormat();
     } else {
@@ -128,6 +134,15 @@ void LinkerScript::readAsNeeded() {
   }
 }
 
+void LinkerScript::readEntry() {
+  // -e <symbol> takes predecence over ENTRY(<symbol>).
+  expect("(");
+  StringRef Tok = next();
+  if (Config->Entry.empty())
+    Config->Entry = Tok;
+  expect(")");
+}
+
 void LinkerScript::readGroup() {
   expect("(");
   for (;;) {
@@ -140,6 +155,15 @@ void LinkerScript::readGroup() {
     }
     Driver->addFile(Tok);
   }
+}
+
+void LinkerScript::readOutput() {
+  // -o <file> takes predecence over OUTPUT(<file>).
+  expect("(");
+  StringRef Tok = next();
+  if (Config->OutputFile.empty())
+    Config->OutputFile = Tok;
+  expect(")");
 }
 
 void LinkerScript::readOutputFormat() {
