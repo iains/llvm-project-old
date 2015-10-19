@@ -32,6 +32,7 @@ $
 """
 
 import abc
+import gc
 import glob
 import os, sys, traceback
 import os.path
@@ -475,11 +476,8 @@ def python_api_test(func):
         raise Exception("@python_api_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_python_api_test:
-                self.skipTest("python api tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_python_api_test:
+            self.skipTest("python api tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from lldb command line tests.
@@ -492,11 +490,8 @@ def lldbmi_test(func):
         raise Exception("@lldbmi_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_lldbmi_test:
-                self.skipTest("lldb-mi tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_lldbmi_test:
+            self.skipTest("lldb-mi tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from lldb command line tests.
@@ -509,11 +504,8 @@ def benchmarks_test(func):
         raise Exception("@benchmarks_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if not lldb.just_do_benchmarks_test:
-                self.skipTest("benchmarks tests")
-        except AttributeError:
-            pass
+        if not lldb.just_do_benchmarks_test:
+            self.skipTest("benchmarks tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -539,11 +531,8 @@ def dsym_test(func):
         raise Exception("@dsym_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_dsym_test:
-                self.skipTest("dsym tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_dsym_test:
+            self.skipTest("dsym tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -556,11 +545,8 @@ def dwarf_test(func):
         raise Exception("@dwarf_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_dwarf_test:
-                self.skipTest("dwarf tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_dwarf_test:
+            self.skipTest("dwarf tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -573,11 +559,8 @@ def dwo_test(func):
         raise Exception("@dwo_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_dwo_test:
-                self.skipTest("dwo tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_dwo_test:
+            self.skipTest("dwo tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -590,11 +573,8 @@ def debugserver_test(func):
         raise Exception("@debugserver_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_debugserver_test:
-                self.skipTest("debugserver tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_debugserver_test:
+            self.skipTest("debugserver tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -607,11 +587,8 @@ def llgs_test(func):
         raise Exception("@llgs_test can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.dont_do_llgs_test:
-                self.skipTest("llgs tests")
-        except AttributeError:
-            pass
+        if lldb.dont_do_llgs_test:
+            self.skipTest("llgs tests")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -624,11 +601,8 @@ def not_remote_testsuite_ready(func):
         raise Exception("@not_remote_testsuite_ready can only be used to decorate a test method")
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            if lldb.lldbtest_remote_sandbox or lldb.remote_platform:
-                self.skipTest("not ready for remote testsuite")
-        except AttributeError:
-            pass
+        if lldb.lldbtest_remote_sandbox or lldb.remote_platform:
+            self.skipTest("not ready for remote testsuite")
         return func(self, *args, **kwargs)
 
     # Mark this function as such to separate them from the regular tests.
@@ -2570,6 +2544,11 @@ class TestBase(Base):
     def tearDown(self):
         #import traceback
         #traceback.print_stack()
+
+        # Ensure all the references to SB objects have gone away so that we can
+        # be sure that all test-specific resources have been freed before we
+        # attempt to delete the targets.
+        gc.collect()
 
         # Delete the target(s) from the debugger as a general cleanup step.
         # This includes terminating the process for each target, if any.

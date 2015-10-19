@@ -15,6 +15,7 @@
 
 namespace lld {
 namespace elf2 {
+template <class ELFT> class OutputSectionBase;
 struct Symbol;
 
 // SymbolTable is a bucket of all known symbols, including defined,
@@ -33,14 +34,6 @@ public:
 
   void addFile(std::unique_ptr<InputFile> File);
 
-  const ELFFileBase<ELFT> *getFirstELF() const {
-    if (!ObjectFiles.empty())
-      return ObjectFiles[0].get();
-    if (!SharedFiles.empty())
-      return SharedFiles[0].get();
-    return nullptr;
-  }
-
   bool shouldUseRela() const;
 
   const llvm::MapVector<StringRef, Symbol *> &getSymbols() const {
@@ -57,17 +50,20 @@ public:
 
   SymbolBody *addUndefined(StringRef Name);
   SymbolBody *addUndefinedOpt(StringRef Name);
-  void addSyntheticSym(StringRef Name, OutputSection<ELFT> &Section,
+  void addSyntheticSym(StringRef Name, OutputSectionBase<ELFT> &Section,
                        typename llvm::object::ELFFile<ELFT>::uintX_t Value);
   void addIgnoredSym(StringRef Name);
+  bool isUndefined(StringRef Name);
+  void scanShlibUndefined();
 
 private:
   Symbol *insert(SymbolBody *New);
   void addELFFile(ELFFileBase<ELFT> *File);
   void addLazy(Lazy *New);
   void addMemberFile(Lazy *Body);
-  void init(uint16_t EMachine);
+  void checkCompatibility(std::unique_ptr<InputFile> &File);
   void resolve(SymbolBody *Body);
+  SymbolBody *find(StringRef Name);
   void reportConflict(const Twine &Message, const SymbolBody &Old,
                       const SymbolBody &New, bool Warning);
 

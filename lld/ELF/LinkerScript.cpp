@@ -9,7 +9,7 @@
 //
 // This file contains the parser/evaluator of the linker script.
 // It does not construct an AST but consume linker script directives directly.
-// Results are written to Symtab or Config object.
+// Results are written to Driver or Config object.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +18,7 @@
 #include "SymbolTable.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/StringSaver.h"
 
 using namespace llvm;
@@ -45,6 +46,7 @@ private:
   void readGroup();
   void readInclude();
   void readOutput();
+  void readOutputArch();
   void readOutputFormat();
   void readSearchDir();
 
@@ -57,6 +59,8 @@ private:
 void LinkerScript::run() {
   while (!atEOF()) {
     StringRef Tok = next();
+    if (Tok == ";")
+      continue;
     if (Tok == "ENTRY") {
       readEntry();
     } else if (Tok == "GROUP" || Tok == "INPUT") {
@@ -65,6 +69,8 @@ void LinkerScript::run() {
       readInclude();
     } else if (Tok == "OUTPUT") {
       readOutput();
+    } else if (Tok == "OUTPUT_ARCH") {
+      readOutputArch();
     } else if (Tok == "OUTPUT_FORMAT") {
       readOutputFormat();
     } else if (Tok == "SEARCH_DIR") {
@@ -136,7 +142,7 @@ void LinkerScript::expect(StringRef Expect) {
 }
 
 void LinkerScript::addFile(StringRef S) {
-  if (S.startswith("/")) {
+  if (sys::path::is_absolute(S)) {
     Driver->addFile(S);
   } else if (S.startswith("=")) {
     if (Config->Sysroot.empty())
@@ -192,7 +198,7 @@ void LinkerScript::readGroup() {
 void LinkerScript::readInclude() {
   StringRef Tok = next();
   auto MBOrErr = MemoryBuffer::getFile(Tok);
-  error(MBOrErr, Twine("cannot open ") + Tok);
+  error(MBOrErr, "cannot open " + Tok);
   std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
   StringRef S = Saver.save(MB->getMemBufferRef().getBuffer());
   std::vector<StringRef> V = tokenize(S);
@@ -208,9 +214,24 @@ void LinkerScript::readOutput() {
   expect(")");
 }
 
+void LinkerScript::readOutputArch() {
+  // Error checking only for now.
+  expect("(");
+  next();
+  expect(")");
+}
+
 void LinkerScript::readOutputFormat() {
   // Error checking only for now.
   expect("(");
+  next();
+  StringRef Tok = next();
+  if (Tok == ")")
+   return;
+  if (Tok != ",")
+    error("unexpected token: " + Tok);
+  next();
+  expect(",");
   next();
   expect(")");
 }

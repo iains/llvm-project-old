@@ -20,7 +20,6 @@ class SymbolBody;
 
 class TargetInfo {
 public:
-  llvm::StringRef getDefaultEntry() const { return DefaultEntry; }
   unsigned getPageSize() const { return PageSize; }
   uint64_t getVAStart() const { return VAStart; }
   unsigned getPCRelReloc() const { return PCRelReloc; }
@@ -28,108 +27,41 @@ public:
   unsigned getGotRefReloc() const { return GotRefReloc; }
   unsigned getRelativeReloc() const { return RelativeReloc; }
   unsigned getPltEntrySize() const { return PltEntrySize; }
+  virtual unsigned getPLTRefReloc(unsigned Type) const;
   virtual void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
                              uint64_t PltEntryAddr) const = 0;
   virtual bool isRelRelative(uint32_t Type) const;
   virtual bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const = 0;
   virtual bool relocPointsToGot(uint32_t Type) const;
   virtual bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const = 0;
-  virtual void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                           uint64_t BaseAddr, uint64_t SymVA) const = 0;
+  virtual void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
+                           uint32_t Type, uint64_t BaseAddr,
+                           uint64_t SymVA) const = 0;
 
   virtual ~TargetInfo();
 
 protected:
   unsigned PageSize = 4096;
-  uint64_t VAStart;
+
+  // On freebsd x86_64 the first page cannot be mmaped.
+  // On linux that is controled by vm.mmap_min_addr. At least on some x86_64
+  // installs that is 65536, so the first 15 pages cannot be used.
+  // Given that, the smallest value that can be used in here is 0x10000.
+  // If using 2MB pages, the smallest page aligned address that works is
+  // 0x200000, but it looks like every OS uses 4k pages for executables.
+  uint64_t VAStart = 0x10000;
+
   unsigned PCRelReloc;
   unsigned GotRefReloc;
   unsigned GotReloc;
   unsigned RelativeReloc;
   unsigned PltEntrySize = 8;
-  llvm::StringRef DefaultEntry = "_start";
 };
 
-class X86TargetInfo final : public TargetInfo {
-public:
-  X86TargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocPointsToGot(uint32_t Type) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
-
-class X86_64TargetInfo final : public TargetInfo {
-public:
-  X86_64TargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-  bool isRelRelative(uint32_t Type) const override;
-};
-
-class PPC64TargetInfo final : public TargetInfo {
-public:
-  PPC64TargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
-
-class PPCTargetInfo final : public TargetInfo {
-public:
-  PPCTargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
-
-class ARMTargetInfo final : public TargetInfo {
-public:
-  ARMTargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
-
-class AArch64TargetInfo final : public TargetInfo {
-public:
-  AArch64TargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
-
-class MipsTargetInfo final : public TargetInfo {
-public:
-  MipsTargetInfo();
-  void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
-  bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
-  bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, const void *RelP, uint32_t Type,
-                   uint64_t BaseAddr, uint64_t SymVA) const override;
-};
+uint64_t getPPC64TocBase();
 
 extern std::unique_ptr<TargetInfo> Target;
+TargetInfo *createTarget();
 }
 }
 

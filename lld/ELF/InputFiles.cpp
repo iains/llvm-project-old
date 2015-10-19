@@ -32,8 +32,8 @@ public:
 }
 
 template <class ELFT>
-ELFFileBase<ELFT>::ELFFileBase(Kind K, ELFKind EKind, MemoryBufferRef M)
-    : InputFile(K, M), EKind(EKind), ELFObj(MB.getBuffer(), ECRAII().getEC()) {}
+ELFFileBase<ELFT>::ELFFileBase(Kind K, MemoryBufferRef M)
+    : InputFile(K, M), ELFObj(MB.getBuffer(), ECRAII().getEC()) {}
 
 template <class ELFT>
 typename ELFFileBase<ELFT>::Elf_Sym_Range
@@ -67,7 +67,7 @@ ELFFileBase<ELFT>::getNonLocalSymbols() {
 
 template <class ELFT>
 ObjectFile<ELFT>::ObjectFile(MemoryBufferRef M)
-    : ELFFileBase<ELFT>(Base::ObjectKind, getStaticELFKind<ELFT>(), M) {}
+    : ELFFileBase<ELFT>(Base::ObjectKind, M) {}
 
 template <class ELFT>
 typename ObjectFile<ELFT>::Elf_Sym_Range ObjectFile<ELFT>::getLocalSymbols() {
@@ -173,28 +173,35 @@ template <class ELFT> void elf2::ObjectFile<ELFT>::initializeSymbols() {
 }
 
 template <class ELFT>
+InputSection<ELFT> *
+elf2::ObjectFile<ELFT>::getSection(const Elf_Sym &Sym) const {
+  uint32_t Index = Sym.st_shndx;
+  if (Index == ELF::SHN_XINDEX)
+    Index = this->ELFObj.getExtendedSymbolTableIndex(&Sym, this->Symtab,
+                                                     SymtabSHNDX);
+  else if (Index == ELF::SHN_UNDEF || Index >= ELF::SHN_LORESERVE)
+    return nullptr;
+
+  if (Index >= Sections.size() || !Index || !Sections[Index])
+    error("Invalid section index");
+  return Sections[Index];
+}
+
+template <class ELFT>
 SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
                                                      const Elf_Sym *Sym) {
   ErrorOr<StringRef> NameOrErr = Sym->getName(StringTable);
   error(NameOrErr.getError());
   StringRef Name = *NameOrErr;
 
-  uint32_t SecIndex = Sym->st_shndx;
-  switch (SecIndex) {
+  switch (Sym->st_shndx) {
   case SHN_ABS:
     return new (this->Alloc) DefinedAbsolute<ELFT>(Name, *Sym);
   case SHN_UNDEF:
     return new (this->Alloc) Undefined<ELFT>(Name, *Sym);
   case SHN_COMMON:
     return new (this->Alloc) DefinedCommon<ELFT>(Name, *Sym);
-  case SHN_XINDEX:
-    SecIndex = this->ELFObj.getExtendedSymbolTableIndex(Sym, this->Symtab,
-                                                        SymtabSHNDX);
-    break;
   }
-
-  if (SecIndex >= Sections.size() || !SecIndex || !Sections[SecIndex])
-    error("Invalid section index");
 
   switch (Sym->getBinding()) {
   default:
@@ -202,7 +209,7 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   case STB_GLOBAL:
   case STB_WEAK:
   case STB_GNU_UNIQUE: {
-    InputSection<ELFT> *Sec = Sections[SecIndex];
+    InputSection<ELFT> *Sec = getSection(*Sym);
     if (Sec == &InputSection<ELFT>::Discarded)
       return new (this->Alloc) Undefined<ELFT>(Name, *Sym);
     return new (this->Alloc) DefinedRegular<ELFT>(Name, *Sym, *Sec);
@@ -231,15 +238,14 @@ void ArchiveFile::parse() {
 // Returns a buffer pointing to a member file containing a given symbol.
 MemoryBufferRef ArchiveFile::getMember(const Archive::Symbol *Sym) {
   ErrorOr<Archive::child_iterator> ItOrErr = Sym->getMember();
-  error(ItOrErr,
-        Twine("Could not get the member for symbol ") + Sym->getName());
+  error(ItOrErr, "Could not get the member for symbol " + Sym->getName());
   Archive::child_iterator It = *ItOrErr;
 
   if (!Seen.insert(It->getChildOffset()).second)
     return MemoryBufferRef();
 
   ErrorOr<MemoryBufferRef> Ret = It->getMemoryBufferRef();
-  error(Ret, Twine("Could not get the buffer for the member defining symbol ") +
+  error(Ret, "Could not get the buffer for the member defining symbol " +
                  Sym->getName());
   return *Ret;
 }
@@ -250,9 +256,8 @@ std::vector<MemoryBufferRef> ArchiveFile::getMembers() {
   std::vector<MemoryBufferRef> Result;
   for (const Archive::Child &Child : File->children()) {
     ErrorOr<MemoryBufferRef> MbOrErr = Child.getMemoryBufferRef();
-    error(MbOrErr,
-          Twine("Could not get the buffer for a child of the archive ") +
-              File->getFileName());
+    error(MbOrErr, "Could not get the buffer for a child of the archive " +
+                       File->getFileName());
     Result.push_back(MbOrErr.get());
   }
   return Result;
@@ -260,7 +265,7 @@ std::vector<MemoryBufferRef> ArchiveFile::getMembers() {
 
 template <class ELFT>
 SharedFile<ELFT>::SharedFile(MemoryBufferRef M)
-    : ELFFileBase<ELFT>(Base::SharedKind, getStaticELFKind<ELFT>(), M) {
+    : ELFFileBase<ELFT>(Base::SharedKind, M) {
   AsNeeded = Config->AsNeeded;
 }
 
@@ -281,19 +286,19 @@ template <class ELFT> void SharedFile<ELFT>::parseSoName() {
   this->initStringTable();
   this->SoName = this->getName();
 
-  if (DynamicSec) {
-    auto *Begin =
-        reinterpret_cast<const Elf_Dyn *>(Obj.base() + DynamicSec->sh_offset);
-    const Elf_Dyn *End = Begin + DynamicSec->sh_size / sizeof(Elf_Dyn);
+  if (!DynamicSec)
+    return;
+  auto *Begin =
+      reinterpret_cast<const Elf_Dyn *>(Obj.base() + DynamicSec->sh_offset);
+  const Elf_Dyn *End = Begin + DynamicSec->sh_size / sizeof(Elf_Dyn);
 
-    for (const Elf_Dyn &Dyn : make_range(Begin, End)) {
-      if (Dyn.d_tag == DT_SONAME) {
-        uintX_t Val = Dyn.getVal();
-        if (Val >= this->StringTable.size())
-          error("Invalid DT_SONAME entry");
-        this->SoName = StringRef(this->StringTable.data() + Val);
-        break;
-      }
+  for (const Elf_Dyn &Dyn : make_range(Begin, End)) {
+    if (Dyn.d_tag == DT_SONAME) {
+      uintX_t Val = Dyn.getVal();
+      if (Val >= this->StringTable.size())
+        error("Invalid DT_SONAME entry");
+      this->SoName = StringRef(this->StringTable.data() + Val);
+      return;
     }
   }
 }
@@ -303,15 +308,52 @@ template <class ELFT> void SharedFile<ELFT>::parse() {
   uint32_t NumSymbols = std::distance(Syms.begin(), Syms.end());
   SymbolBodies.reserve(NumSymbols);
   for (const Elf_Sym &Sym : Syms) {
-    if (Sym.isUndefined())
-      continue;
-
     ErrorOr<StringRef> NameOrErr = Sym.getName(this->StringTable);
     error(NameOrErr.getError());
     StringRef Name = *NameOrErr;
 
-    SymbolBodies.emplace_back(this, Name, Sym);
+    if (Sym.isUndefined())
+      Undefs.push_back(Name);
+    else
+      SymbolBodies.emplace_back(this, Name, Sym);
   }
+}
+
+template <typename T>
+static std::unique_ptr<InputFile> createELFFileAux(MemoryBufferRef MB) {
+  std::unique_ptr<T> Ret = llvm::make_unique<T>(MB);
+
+  if (!Config->FirstElf)
+    Config->FirstElf = Ret.get();
+
+  if (Config->EKind == ELFNoneKind) {
+    Config->EKind = Ret->getELFKind();
+    Config->EMachine = Ret->getEMachine();
+  }
+
+  return std::move(Ret);
+}
+
+template <template <class> class T>
+std::unique_ptr<InputFile> lld::elf2::createELFFile(MemoryBufferRef MB) {
+  using namespace llvm;
+
+  std::pair<unsigned char, unsigned char> Type =
+    object::getElfArchType(MB.getBuffer());
+  if (Type.second != ELF::ELFDATA2LSB && Type.second != ELF::ELFDATA2MSB)
+    error("Invalid data encoding: " + MB.getBufferIdentifier());
+
+  if (Type.first == ELF::ELFCLASS32) {
+    if (Type.second == ELF::ELFDATA2LSB)
+      return createELFFileAux<T<object::ELF32LE>>(MB);
+    return createELFFileAux<T<object::ELF32BE>>(MB);
+  }
+  if (Type.first == ELF::ELFCLASS64) {
+    if (Type.second == ELF::ELFDATA2LSB)
+      return createELFFileAux<T<object::ELF64LE>>(MB);
+    return createELFFileAux<T<object::ELF64BE>>(MB);
+  }
+  error("Invalid file class: " + MB.getBufferIdentifier());
 }
 
 namespace lld {
@@ -321,14 +363,17 @@ template class ELFFileBase<llvm::object::ELF32BE>;
 template class ELFFileBase<llvm::object::ELF64LE>;
 template class ELFFileBase<llvm::object::ELF64BE>;
 
-template class elf2::ObjectFile<llvm::object::ELF32LE>;
-template class elf2::ObjectFile<llvm::object::ELF32BE>;
-template class elf2::ObjectFile<llvm::object::ELF64LE>;
-template class elf2::ObjectFile<llvm::object::ELF64BE>;
+template class ObjectFile<llvm::object::ELF32LE>;
+template class ObjectFile<llvm::object::ELF32BE>;
+template class ObjectFile<llvm::object::ELF64LE>;
+template class ObjectFile<llvm::object::ELF64BE>;
 
-template class elf2::SharedFile<llvm::object::ELF32LE>;
-template class elf2::SharedFile<llvm::object::ELF32BE>;
-template class elf2::SharedFile<llvm::object::ELF64LE>;
-template class elf2::SharedFile<llvm::object::ELF64BE>;
+template class SharedFile<llvm::object::ELF32LE>;
+template class SharedFile<llvm::object::ELF32BE>;
+template class SharedFile<llvm::object::ELF64LE>;
+template class SharedFile<llvm::object::ELF64BE>;
+
+template std::unique_ptr<InputFile> createELFFile<ObjectFile>(MemoryBufferRef);
+template std::unique_ptr<InputFile> createELFFile<SharedFile>(MemoryBufferRef);
 }
 }

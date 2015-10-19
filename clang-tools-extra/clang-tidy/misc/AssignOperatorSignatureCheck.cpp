@@ -51,25 +51,26 @@ void AssignOperatorSignatureCheck::registerMatchers(
           .bind("ArgumentType"),
       this);
 
-  Finder->addMatcher(cxxMethodDecl(IsSelfAssign, isConst()).bind("Const"),
-                     this);
+  Finder->addMatcher(
+      cxxMethodDecl(IsSelfAssign, anyOf(isConst(), isVirtual())).bind("cv"),
+      this);
 }
-
 
 void AssignOperatorSignatureCheck::check(
     const MatchFinder::MatchResult &Result) {
   const auto* Method = Result.Nodes.getNodeAs<CXXMethodDecl>("method");
   std::string Name = Method->getParent()->getName();
 
-  static const char *Messages[][2] = {
+  static const char *const Messages[][2] = {
       {"ReturnType", "operator=() should return '%0&'"},
       {"ArgumentType", "operator=() should take '%0 const&', '%0&&' or '%0'"},
-      {"Const", "operator=() should not be marked 'const'"},
+      {"cv", "operator=() should not be marked '%1'"}
   };
 
-  for (const auto& Message : Messages) {
+  for (const auto &Message : Messages) {
     if (Result.Nodes.getNodeAs<Decl>(Message[0]))
-      diag(Method->getLocStart(), Message[1]) << Name;
+      diag(Method->getLocStart(), Message[1])
+          << Name << (Method->isConst() ? "const" : "virtual");
   }
 }
 

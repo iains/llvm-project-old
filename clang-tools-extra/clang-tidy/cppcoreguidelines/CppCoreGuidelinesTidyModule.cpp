@@ -10,8 +10,13 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "../cert/VariadicFunctionDefCheck.h"
+#include "../misc/AssignOperatorSignatureCheck.h"
+#include "ProBoundsPointerArithmeticCheck.h"
 #include "ProTypeConstCastCheck.h"
 #include "ProTypeReinterpretCastCheck.h"
+#include "ProTypeStaticCastDowncastCheck.h"
+#include "ProTypeUnionAccessCheck.h"
 
 namespace clang {
 namespace tidy {
@@ -21,10 +26,20 @@ namespace cppcoreguidelines {
 class CppCoreGuidelinesModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
+    CheckFactories.registerCheck<ProBoundsPointerArithmeticCheck>(
+        "cppcoreguidelines-pro-bounds-pointer-arithmetic");
     CheckFactories.registerCheck<ProTypeConstCastCheck>(
         "cppcoreguidelines-pro-type-const-cast");
+    CheckFactories.registerCheck<VariadicFunctionDefCheck>(
+        "cppcoreguidelines-pro-type-vararg-def");
     CheckFactories.registerCheck<ProTypeReinterpretCastCheck>(
         "cppcoreguidelines-pro-type-reinterpret-cast");
+    CheckFactories.registerCheck<ProTypeStaticCastDowncastCheck>(
+        "cppcoreguidelines-pro-type-static-cast-downcast");
+    CheckFactories.registerCheck<ProTypeUnionAccessCheck>(
+        "cppcoreguidelines-pro-type-union-access");
+    CheckFactories.registerCheck<misc::AssignOperatorSignatureCheck>(
+        "cppcoreguidelines-c-copy-assignment-signature");
   }
 };
 

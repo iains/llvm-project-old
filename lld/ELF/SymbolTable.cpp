@@ -6,6 +6,13 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
+// Symbol table is a bag of all known symbols. We put all symbols of
+// all input files to the symbol table. The symbol Table is basically
+// a hash table with the logic to resolve symbol name conflicts using
+// the symbol types.
+//
+//===----------------------------------------------------------------------===//
 
 #include "SymbolTable.h"
 #include "Config.h"
@@ -22,23 +29,13 @@ using namespace lld::elf2;
 template <class ELFT> SymbolTable<ELFT>::SymbolTable() {}
 
 template <class ELFT> bool SymbolTable<ELFT>::shouldUseRela() const {
-  ELFKind K = getFirstELF()->getELFKind();
+  ELFKind K = cast<ELFFileBase<ELFT>>(Config->FirstElf)->getELFKind();
   return K == ELF64LEKind || K == ELF64BEKind;
 }
 
 template <class ELFT>
 void SymbolTable<ELFT>::addFile(std::unique_ptr<InputFile> File) {
-
-  if (auto *E = dyn_cast<ELFFileBase<ELFT>>(File.get())) {
-    if (E->getELFKind() != Config->ElfKind ||
-        E->getEMachine() != Config->EMachine) {
-      StringRef A = E->getName();
-      StringRef B = Config->Emulation;
-      if (B.empty())
-        B = Config->FirstElf->getName();
-      error(A + " is incompatible with " + B);
-    }
-  }
+  checkCompatibility(File);
 
   if (auto *AF = dyn_cast<ArchiveFile>(File.get())) {
     ArchiveFiles.emplace_back(std::move(File));
@@ -47,6 +44,7 @@ void SymbolTable<ELFT>::addFile(std::unique_ptr<InputFile> File) {
       addLazy(&Sym);
     return;
   }
+
   if (auto *S = dyn_cast<SharedFile<ELFT>>(File.get())) {
     S->parseSoName();
     if (!IncludedSoNames.insert(S->getSoName()).second)
@@ -74,7 +72,7 @@ SymbolBody *SymbolTable<ELFT>::addUndefinedOpt(StringRef Name) {
 
 template <class ELFT>
 void SymbolTable<ELFT>::addSyntheticSym(StringRef Name,
-                                        OutputSection<ELFT> &Section,
+                                        OutputSectionBase<ELFT> &Section,
                                         typename ELFFile<ELFT>::uintX_t Value) {
   typedef typename DefinedSynthetic<ELFT>::Elf_Sym Elf_Sym;
   auto ESym = new (Alloc) Elf_Sym;
@@ -88,6 +86,12 @@ template <class ELFT> void SymbolTable<ELFT>::addIgnoredSym(StringRef Name) {
   auto Sym = new (Alloc)
       DefinedAbsolute<ELFT>(Name, DefinedAbsolute<ELFT>::IgnoreUndef);
   resolve(Sym);
+}
+
+template <class ELFT> bool SymbolTable<ELFT>::isUndefined(StringRef Name) {
+  if (SymbolBody *Sym = find(Name))
+    return Sym->isUndefined();
+  return false;
 }
 
 template <class ELFT>
@@ -190,6 +194,13 @@ template <class ELFT> Symbol *SymbolTable<ELFT>::insert(SymbolBody *New) {
   return Sym;
 }
 
+template <class ELFT> SymbolBody *SymbolTable<ELFT>::find(StringRef Name) {
+  auto It = Symtab.find(Name);
+  if (It == Symtab.end())
+    return nullptr;
+  return It->second->Body;
+}
+
 template <class ELFT> void SymbolTable<ELFT>::addLazy(Lazy *New) {
   Symbol *Sym = insert(New);
   if (Sym->Body == New)
@@ -215,14 +226,39 @@ template <class ELFT> void SymbolTable<ELFT>::addLazy(Lazy *New) {
   addMemberFile(New);
 }
 
-template <class ELFT> void SymbolTable<ELFT>::addMemberFile(Lazy *Body) {
-  std::unique_ptr<InputFile> File = Body->getMember();
-
-  // getMember returns nullptr if the member was already read from the library.
-  if (!File)
+template <class ELFT>
+void SymbolTable<ELFT>::checkCompatibility(std::unique_ptr<InputFile> &File) {
+  auto *E = dyn_cast<ELFFileBase<ELFT>>(File.get());
+  if (!E)
     return;
+  if (E->getELFKind() == Config->EKind && E->getEMachine() == Config->EMachine)
+    return;
+  StringRef A = E->getName();
+  StringRef B = Config->Emulation;
+  if (B.empty())
+    B = Config->FirstElf->getName();
+  error(A + " is incompatible with " + B);
+}
 
-  addFile(std::move(File));
+template <class ELFT> void SymbolTable<ELFT>::addMemberFile(Lazy *Body) {
+  // getMember returns nullptr if the member was already read from the library.
+  if (std::unique_ptr<InputFile> File = Body->getMember())
+    addFile(std::move(File));
+}
+
+// This function takes care of the case in which shared libraries depend on
+// the user program (not the other way, which is usual). Shared libraries
+// may have undefined symbols, expecting that the user program provides
+// the definitions for them. An example is BSD's __progname symbol.
+// We need to put such symbols to the main program's .dynsym so that
+// shared libraries can find them.
+// Except this, we ignore undefined symbols in DSOs.
+template <class ELFT> void SymbolTable<ELFT>::scanShlibUndefined() {
+  for (std::unique_ptr<SharedFile<ELFT>> &File : SharedFiles)
+    for (StringRef U : File->getUndefinedSymbols())
+      if (SymbolBody *Sym = find(U))
+        if (Sym->isDefined())
+          Sym->setUsedInDynamicReloc();
 }
 
 template class lld::elf2::SymbolTable<ELF32LE>;

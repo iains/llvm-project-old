@@ -32,7 +32,11 @@ class ScriptInterpreterPython :
     public IOHandlerDelegateMultiline
 {
 public:
-    typedef void (*SWIGInitCallback) (void);
+#if PY_MAJOR_VERSION >= 3
+    typedef PyObject*(*SWIGInitCallback) (void);
+#else
+    typedef void(*SWIGInitCallback) (void);
+#endif
 
     typedef bool (*SWIGBreakpointCallbackFunction) (const char *python_function_name,
                                                     const char *session_dictionary_name,
@@ -520,6 +524,7 @@ public:
         PyGILState_STATE         m_GILState;
 	};
 protected:
+
     enum class AddLocation
     {
         Beginning,
@@ -553,9 +558,9 @@ protected:
         eIOHandlerBreakpoint,
         eIOHandlerWatchpoint
     };
-    PythonObject &
-    GetMainModule ();
-    
+
+    PythonObject &GetMainModule();
+
     PythonDictionary &
     GetSessionDictionary ();
     
@@ -564,7 +569,7 @@ protected:
 
     bool
     GetEmbeddedInterpreterModuleObjects ();
-    
+
     PythonObject m_saved_stdin;
     PythonObject m_saved_stdout;
     PythonObject m_saved_stderr;

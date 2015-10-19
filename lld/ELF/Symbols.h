@@ -6,6 +6,19 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
+// All symbols are handled as SymbolBodies regardless of their types.
+// This file defines various types of SymbolBodies.
+//
+// File-scope symbols in ELF objects are the only exception of SymbolBody
+// instantiation. We will never create SymbolBodies for them for performance
+// reason. They are often represented as nullptrs. This is fine for symbol
+// resolution because the symbol table naturally cares only about
+// externally-visible symbols. For relocations, you have to deal with both
+// local and non-local functions, and we have two different functions
+// where we need them.
+//
+//===----------------------------------------------------------------------===//
 
 #ifndef LLD_ELF_SYMBOLS_H
 #define LLD_ELF_SYMBOLS_H
@@ -24,6 +37,7 @@ class InputFile;
 class SymbolBody;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
+template <class ELFT> class OutputSectionBase;
 template <class ELFT> class SharedFile;
 
 // Initializes global objects defined in this file.
@@ -141,8 +155,7 @@ public:
   }
 };
 
-// The base class for any defined symbols, including absolute symbols,
-// etc.
+// The base class for any defined symbols, including absolute symbols, etc.
 template <class ELFT> class Defined : public ELFSymbolBody<ELFT> {
   typedef ELFSymbolBody<ELFT> Base;
 
@@ -180,8 +193,7 @@ template <class ELFT> class DefinedCommon : public Defined<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  typedef typename std::conditional<ELFT::Is64Bits, uint64_t, uint32_t>::type
-      uintX_t;
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
   DefinedCommon(StringRef N, const Elf_Sym &Sym)
       : Defined<ELFT>(Base::DefinedCommonKind, N, Sym) {
     MaxAlignment = Sym.st_value;
@@ -221,14 +233,14 @@ template <class ELFT> class DefinedSynthetic : public Defined<ELFT> {
 public:
   typedef typename Base::Elf_Sym Elf_Sym;
   DefinedSynthetic(StringRef N, const Elf_Sym &Sym,
-                   OutputSection<ELFT> &Section)
+                   OutputSectionBase<ELFT> &Section)
       : Defined<ELFT>(Base::DefinedSyntheticKind, N, Sym), Section(Section) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::DefinedSyntheticKind;
   }
 
-  const OutputSection<ELFT> &Section;
+  const OutputSectionBase<ELFT> &Section;
 };
 
 // Undefined symbol.

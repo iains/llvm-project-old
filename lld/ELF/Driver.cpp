@@ -54,26 +54,6 @@ static std::pair<ELFKind, uint16_t> parseEmulation(StringRef S) {
   error("Unknown emulation: " + S);
 }
 
-static TargetInfo *createTarget() {
-  switch (Config->EMachine) {
-  case EM_386:
-    return new X86TargetInfo();
-  case EM_AARCH64:
-    return new AArch64TargetInfo();
-  case EM_ARM:
-    return new ARMTargetInfo();
-  case EM_MIPS:
-    return new MipsTargetInfo();
-  case EM_PPC:
-    return new PPCTargetInfo();
-  case EM_PPC64:
-    return new PPC64TargetInfo();
-  case EM_X86_64:
-    return new X86_64TargetInfo();
-  }
-  error("Unknown target machine");
-}
-
 // Opens and parses a file. Path has to be resolved already.
 // Newly created memory buffers are owned by this driver.
 void LinkerDriver::addFile(StringRef Path) {
@@ -81,7 +61,7 @@ void LinkerDriver::addFile(StringRef Path) {
   if (Config->Verbose)
     llvm::outs() << Path << "\n";
   auto MBOrErr = MemoryBuffer::getFile(Path);
-  error(MBOrErr, Twine("cannot open ") + Path);
+  error(MBOrErr, "cannot open " + Path);
   std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
   MemoryBufferRef MBRef = MB->getMemBufferRef();
   OwningMBs.push_back(std::move(MB)); // take MB ownership
@@ -121,7 +101,7 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr) {
   opt::InputArgList Args = parseArgs(&Alloc, ArgsArr);
   createFiles(Args);
 
-  switch (Config->ElfKind) {
+  switch (Config->EKind) {
   case ELF32LEKind:
     link<ELF32LE>(Args);
     return;
@@ -151,11 +131,12 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
 
   if (auto *Arg = Args.getLastArg(OPT_m)) {
     std::pair<ELFKind, uint16_t> P = parseEmulation(Arg->getValue());
-    Config->ElfKind = P.first;
+    Config->EKind = P.first;
     Config->EMachine = P.second;
   }
 
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
+  Config->Bsymbolic = Args.hasArg(OPT_Bsymbolic);
   Config->DiscardAll = Args.hasArg(OPT_discard_all);
   Config->DiscardLocals = Args.hasArg(OPT_discard_locals);
   Config->DiscardNone = Args.hasArg(OPT_discard_none);
@@ -218,8 +199,13 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
 
   if (!Config->Shared) {
     // Add entry symbol.
-    Config->EntrySym = Symtab.addUndefined(
-        Config->Entry.empty() ? Target->getDefaultEntry() : Config->Entry);
+    if (Config->Entry.empty())
+      Config->Entry = (Config->EMachine == EM_MIPS) ? "__start" : "_start";
+
+    // Set either EntryAddr (if S is a number) or EntrySym (otherwise).
+    StringRef S = Config->Entry;
+    if (S.getAsInteger(0, Config->EntryAddr))
+      Config->EntrySym = Symtab.addUndefined(S);
 
     // In the assembly for 32 bit x86 the _GLOBAL_OFFSET_TABLE_ symbol
     // is magical and is used to produce a R_386_GOTPC relocation.
@@ -246,5 +232,6 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
     Config->OutputFile = "a.out";
 
   // Write the result to the file.
+  Symtab.scanShlibUndefined();
   writeResult<ELFT>(&Symtab);
 }

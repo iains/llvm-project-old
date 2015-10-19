@@ -695,34 +695,34 @@ def lea64mem : Operand<i64> {
 // X86 Complex Pattern Definitions.
 //
 
-// Define X86 specific addressing mode.
-def addr      : ComplexPattern<iPTR, 5, "SelectAddr", [], [SDNPWantParent]>;
-def lea32addr : ComplexPattern<i32, 5, "SelectLEAAddr",
+// Define X86-specific addressing mode.
+def addr      : ComplexPattern<iPTR, 5, "selectAddr", [], [SDNPWantParent]>;
+def lea32addr : ComplexPattern<i32, 5, "selectLEAAddr",
                                [add, sub, mul, X86mul_imm, shl, or, frameindex],
                                []>;
 // In 64-bit mode 32-bit LEAs can use RIP-relative addressing.
-def lea64_32addr : ComplexPattern<i32, 5, "SelectLEA64_32Addr",
+def lea64_32addr : ComplexPattern<i32, 5, "selectLEA64_32Addr",
                                   [add, sub, mul, X86mul_imm, shl, or,
                                    frameindex, X86WrapperRIP],
                                   []>;
 
-def tls32addr : ComplexPattern<i32, 5, "SelectTLSADDRAddr",
+def tls32addr : ComplexPattern<i32, 5, "selectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
-def tls32baseaddr : ComplexPattern<i32, 5, "SelectTLSADDRAddr",
+def tls32baseaddr : ComplexPattern<i32, 5, "selectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
-def lea64addr : ComplexPattern<i64, 5, "SelectLEAAddr",
+def lea64addr : ComplexPattern<i64, 5, "selectLEAAddr",
                         [add, sub, mul, X86mul_imm, shl, or, frameindex,
                          X86WrapperRIP], []>;
 
-def tls64addr : ComplexPattern<i64, 5, "SelectTLSADDRAddr",
+def tls64addr : ComplexPattern<i64, 5, "selectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
-def tls64baseaddr : ComplexPattern<i64, 5, "SelectTLSADDRAddr",
+def tls64baseaddr : ComplexPattern<i64, 5, "selectTLSADDRAddr",
                                [tglobaltlsaddr], []>;
 
-def vectoraddr : ComplexPattern<iPTR, 5, "SelectVectorAddr", [],[SDNPWantParent]>;
+def vectoraddr : ComplexPattern<iPTR, 5, "selectVectorAddr", [],[SDNPWantParent]>;
 
 //===----------------------------------------------------------------------===//
 // X86 Instruction Predicate Definitions.
@@ -773,6 +773,11 @@ def NoVLX_Or_NoBWI : Predicate<"!Subtarget->hasVLX() || !Subtarget->hasBWI()">;
 
 def HasPOPCNT    : Predicate<"Subtarget->hasPOPCNT()">;
 def HasAES       : Predicate<"Subtarget->hasAES()">;
+def HasFXSR      : Predicate<"Subtarget->hasFXSR()">;
+def HasXSAVE     : Predicate<"Subtarget->hasXSAVE()">;
+def HasXSAVEOPT  : Predicate<"Subtarget->hasXSAVEOPT()">;
+def HasXSAVEC    : Predicate<"Subtarget->hasXSAVEC()">;
+def HasXSAVES    : Predicate<"Subtarget->hasXSAVES()">;
 def HasPCLMUL    : Predicate<"Subtarget->hasPCLMUL()">;
 def HasFMA       : Predicate<"Subtarget->hasFMA()">;
 def UseFMAOnAVX  : Predicate<"Subtarget->hasFMA() && !Subtarget->hasAVX512()">;
@@ -2635,7 +2640,9 @@ def : MnemonicAlias<"fxrstorq",  "fxrstor64",  "att">;
 def : MnemonicAlias<"xsaveq",    "xsave64",    "att">;
 def : MnemonicAlias<"xrstorq",   "xrstor64",   "att">;
 def : MnemonicAlias<"xsaveoptq", "xsaveopt64", "att">;
-
+def : MnemonicAlias<"xrstorsq",  "xrstors64",  "att">;
+def : MnemonicAlias<"xsavecq",   "xsavec64",   "att">;
+def : MnemonicAlias<"xsavesq",   "xsaves64",   "att">;
 
 class CondCodeAlias<string Prefix,string Suffix, string OldCond, string NewCond,
                     string VariantName>
@@ -2681,8 +2688,8 @@ defm : IntegerCondCodeMnemonicAlias<"cmov", "", "intel">;
 //===----------------------------------------------------------------------===//
 
 // aad/aam default to base 10 if no operand is specified.
-def : InstAlias<"aad", (AAD8i8 10)>;
-def : InstAlias<"aam", (AAM8i8 10)>;
+def : InstAlias<"aad", (AAD8i8 10)>, Requires<[Not64BitMode]>;
+def : InstAlias<"aam", (AAM8i8 10)>, Requires<[Not64BitMode]>;
 
 // Disambiguate the mem/imm form of bt-without-a-suffix as btl.
 // Likewise for btc/btr/bts.

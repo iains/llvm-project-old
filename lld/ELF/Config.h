@@ -44,19 +44,22 @@ struct Configuration {
   std::vector<llvm::StringRef> SearchPaths;
   bool AllowMultipleDefinition;
   bool AsNeeded = false;
+  bool Bsymbolic;
   bool DiscardAll;
   bool DiscardLocals;
   bool DiscardNone;
   bool EnableNewDtags;
   bool ExportDynamic;
+  bool Mips64EL = false;
   bool NoInhibitExec;
   bool NoUndefined;
   bool Shared;
   bool Static = false;
   bool Verbose;
   bool ZNow = false;
-  ELFKind ElfKind = ELFNoneKind;
+  ELFKind EKind = ELFNoneKind;
   uint16_t EMachine = llvm::ELF::EM_NONE;
+  uint64_t EntryAddr = -1;
 };
 
 extern Configuration *Config;
