@@ -38,7 +38,6 @@ void lld::elf2::link(ArrayRef<const char *> Args) {
 }
 
 static std::pair<ELFKind, uint16_t> parseEmulation(StringRef S) {
-  Config->Emulation = S;
   if (S == "elf32btsmip")
     return {ELF32BEKind, EM_MIPS};
   if (S == "elf32ltsmip")
@@ -130,9 +129,11 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
     Config->RPath = llvm::join(RPaths.begin(), RPaths.end(), ":");
 
   if (auto *Arg = Args.getLastArg(OPT_m)) {
-    std::pair<ELFKind, uint16_t> P = parseEmulation(Arg->getValue());
+    StringRef S = Arg->getValue();
+    std::pair<ELFKind, uint16_t> P = parseEmulation(S);
     Config->EKind = P.first;
     Config->EMachine = P.second;
+    Config->Emulation = S;
   }
 
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
@@ -142,9 +143,11 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
   Config->DiscardNone = Args.hasArg(OPT_discard_none);
   Config->EnableNewDtags = !Args.hasArg(OPT_disable_new_dtags);
   Config->ExportDynamic = Args.hasArg(OPT_export_dynamic);
+  Config->GcSections = Args.hasArg(OPT_gc_sections);
   Config->NoInhibitExec = Args.hasArg(OPT_noinhibit_exec);
   Config->NoUndefined = Args.hasArg(OPT_no_undefined);
   Config->Shared = Args.hasArg(OPT_shared);
+  Config->StripAll = Args.hasArg(OPT_strip_all);
   Config->Verbose = Args.hasArg(OPT_verbose);
 
   Config->DynamicLinker = getString(Args, OPT_dynamic_linker);
@@ -155,9 +158,35 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
   Config->SoName = getString(Args, OPT_soname);
   Config->Sysroot = getString(Args, OPT_sysroot);
 
-  for (auto *Arg : Args.filtered(OPT_z))
-    if (Arg->getValue() == StringRef("now"))
+  if (auto *Arg = Args.getLastArg(OPT_O)) {
+    StringRef Val = Arg->getValue();
+    if (Val.getAsInteger(10, Config->Optimize))
+      error("Invalid optimization level");
+  }
+
+  if (auto *Arg = Args.getLastArg(OPT_hash_style)) {
+    StringRef S = Arg->getValue();
+    if (S == "gnu") {
+      Config->GnuHash = true;
+      Config->SysvHash = false;
+    } else if (S == "both") {
+      Config->GnuHash = true;
+    } else if (S != "sysv")
+      error("Unknown hash style: " + S);
+  }
+
+  for (auto *Arg : Args.filtered(OPT_undefined))
+    Config->Undefined.push_back(Arg->getValue());
+
+  for (auto *Arg : Args.filtered(OPT_z)) {
+    StringRef S = Arg->getValue();
+    if (S == "nodelete")
+      Config->ZNodelete = true;
+    else if (S == "now")
       Config->ZNow = true;
+    else if (S == "origin")
+      Config->ZOrigin = true;
+  }
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
@@ -225,13 +254,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   for (std::unique_ptr<InputFile> &F : Files)
     Symtab.addFile(std::move(F));
 
-  for (auto *Arg : Args.filtered(OPT_undefined))
-    Symtab.addUndefinedOpt(Arg->getValue());
+  for (StringRef S : Config->Undefined)
+    Symtab.addUndefinedOpt(S);
 
   if (Config->OutputFile.empty())
     Config->OutputFile = "a.out";
 
   // Write the result to the file.
   Symtab.scanShlibUndefined();
+  if (Config->GcSections)
+    markLive<ELFT>(&Symtab);
   writeResult<ELFT>(&Symtab);
 }

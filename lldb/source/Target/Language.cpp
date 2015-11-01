@@ -299,6 +299,17 @@ Language::GetLanguagesSupportingTypeSystems (std::set<lldb::LanguageType> &langu
     }
 }
 
+void
+Language::GetLanguagesSupportingREPLs (std::set<lldb::LanguageType> &languages)
+{
+    uint32_t idx = 0;
+    
+    while (REPLEnumerateSupportedLanguages enumerate = PluginManager::GetREPLEnumerateSupportedLanguagesCallbackAtIndex(idx++))
+    {
+        (*enumerate)(languages);
+    }
+}
+
 std::unique_ptr<Language::TypeScavenger>
 Language::GetTypeScavenger ()
 {
@@ -332,6 +343,12 @@ Language::GetFormatterPrefixSuffix (ValueObject& valobj, ConstString type_hint,
                                     std::string& prefix, std::string& suffix)
 {
     return false;
+}
+
+DumpValueObjectOptions::DeclPrintingHelper
+Language::GetDeclPrintingHelper ()
+{
+    return nullptr;
 }
 
 //----------------------------------------------------------------------

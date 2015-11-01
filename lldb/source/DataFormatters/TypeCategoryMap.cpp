@@ -9,8 +9,8 @@
 
 #include "lldb/DataFormatters/TypeCategoryMap.h"
 
+#include "lldb/Core/Log.h"
 #include "lldb/DataFormatters/FormatClasses.h"
-#include "lldb/DataFormatters/FormatManager.h"
 
 // C Includes
 // C++ Includes
@@ -385,7 +385,6 @@ TypeCategoryMap::LoopThrough(CallbackType callback, void* param)
             for (begin = m_active_categories.begin(); begin != end; begin++)
             {
                 lldb::TypeCategoryImplSP category = *begin;
-                ConstString type = ConstString(category->GetName());
                 if (!callback(param, category))
                     break;
             }

@@ -194,7 +194,11 @@ if (LLDB_DISABLE_PYTHON)
   add_definitions( -DLLDB_DISABLE_PYTHON )
 endif()
 
-include_directories(../clang/include)
+if (LLVM_EXTERNAL_CLANG_SOURCE_DIR)
+  include_directories(${LLVM_EXTERNAL_CLANG_SOURCE_DIR}/include)
+else ()
+  include_directories(${CMAKE_SOURCE_DIR}/tools/clang/include)
+endif ()
 include_directories("${CMAKE_CURRENT_BINARY_DIR}/../clang/include")
 
 # Disable GCC warnings
@@ -208,6 +212,12 @@ check_cxx_compiler_flag("-Wno-unknown-pragmas"
                         CXX_SUPPORTS_NO_UNKNOWN_PRAGMAS)
 if (CXX_SUPPORTS_NO_UNKNOWN_PRAGMAS)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-pragmas")
+endif ()
+
+check_cxx_compiler_flag("-Wno-strict-aliasing"
+                        CXX_SUPPORTS_NO_STRICT_ALIASING)
+if (CXX_SUPPORTS_NO_STRICT_ALIASING)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-strict-aliasing")
 endif ()
 
 # Disable Clang warnings
@@ -281,7 +291,11 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     )
 endif()
 
-if (NOT LIBXML2_FOUND)
+if (NOT LIBXML2_FOUND AND NOT (CMAKE_SYSTEM_NAME MATCHES "Windows"))
+  # Skip Libxml2 on Windows.  In CMake 3.4 and higher, the algorithm for
+  # finding libxml2 got "smarter", and it can now locate the version which is
+  # in gnuwin32, even though that version does not contain the headers that
+  # LLDB uses.
   find_package(LibXml2)
 endif()
 
@@ -301,7 +315,6 @@ if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
   ${DEBUG_SYMBOLS_LIBRARY})
 
 else()
-
   if (LIBXML2_FOUND)
     add_definitions( -DLIBXML2_DEFINED )
     list(APPEND system_libs ${LIBXML2_LIBRARIES})

@@ -14,8 +14,6 @@
 // Other libraries and framework includes
 // Project includes
 
-#include "lldb/Core/Debugger.h"
-
 using namespace lldb;
 using namespace lldb_private;
 
@@ -131,6 +129,14 @@ DataVisualization::Categories::GetCategory (const ConstString &category, lldb::T
 {
     entry = GetFormatManager().GetCategory(category, allow_create);
     return (entry.get() != NULL);
+}
+
+bool
+DataVisualization::Categories::GetCategory (lldb::LanguageType language, lldb::TypeCategoryImplSP &entry)
+{
+    if (LanguageCategory *lang_category = GetFormatManager().GetCategoryForLanguage(language))
+        entry = lang_category->GetCategory();
+    return (entry.get() != nullptr);
 }
 
 void

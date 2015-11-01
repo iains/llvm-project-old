@@ -47,13 +47,15 @@ namespace {
 class X86TargetInfo final : public TargetInfo {
 public:
   X86TargetInfo();
+  void writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const override;
+  void writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                         uint64_t PltEntryAddr) const override;
   void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
+                     uint64_t PltEntryAddr, int32_t Index) const override;
   bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
   bool relocPointsToGot(uint32_t Type) const override;
   bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                   uint32_t Type, uint64_t BaseAddr,
+  void relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type, uint64_t P,
                    uint64_t SA) const override;
 };
 
@@ -61,12 +63,15 @@ class X86_64TargetInfo final : public TargetInfo {
 public:
   X86_64TargetInfo();
   unsigned getPLTRefReloc(unsigned Type) const override;
+  void writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const override;
+  void writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                         uint64_t PltEntryAddr) const override;
   void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
+                     uint64_t PltEntryAddr, int32_t Index) const override;
+  bool relocNeedsCopy(uint32_t Type, const SymbolBody &S) const override;
   bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
   bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                   uint32_t Type, uint64_t BaseAddr,
+  void relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type, uint64_t P,
                    uint64_t SA) const override;
   bool isRelRelative(uint32_t Type) const override;
 };
@@ -74,12 +79,14 @@ public:
 class PPC64TargetInfo final : public TargetInfo {
 public:
   PPC64TargetInfo();
+  void writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const override;
+  void writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                         uint64_t PltEntryAddr) const override;
   void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
+                     uint64_t PltEntryAddr, int32_t Index) const override;
   bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
   bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                   uint32_t Type, uint64_t BaseAddr,
+  void relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type, uint64_t P,
                    uint64_t SA) const override;
   bool isRelRelative(uint32_t Type) const override;
 };
@@ -87,24 +94,28 @@ public:
 class AArch64TargetInfo final : public TargetInfo {
 public:
   AArch64TargetInfo();
+  void writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const override;
+  void writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                         uint64_t PltEntryAddr) const override;
   void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
+                     uint64_t PltEntryAddr, int32_t Index) const override;
   bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
   bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                   uint32_t Type, uint64_t BaseAddr,
+  void relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type, uint64_t P,
                    uint64_t SA) const override;
 };
 
 template <class ELFT> class MipsTargetInfo final : public TargetInfo {
 public:
   MipsTargetInfo();
+  void writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const override;
+  void writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                         uint64_t PltEntryAddr) const override;
   void writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                     uint64_t PltEntryAddr) const override;
+                     uint64_t PltEntryAddr, int32_t Index) const override;
   bool relocNeedsGot(uint32_t Type, const SymbolBody &S) const override;
   bool relocNeedsPlt(uint32_t Type, const SymbolBody &S) const override;
-  void relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                   uint32_t Type, uint64_t BaseAddr,
+  void relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type, uint64_t P,
                    uint64_t SA) const override;
 };
 } // anonymous namespace
@@ -134,6 +145,10 @@ TargetInfo *createTarget() {
 
 TargetInfo::~TargetInfo() {}
 
+bool TargetInfo::relocNeedsCopy(uint32_t Type, const SymbolBody &S) const {
+  return false;
+}
+
 unsigned TargetInfo::getPLTRefReloc(unsigned Type) const { return PCRelReloc; }
 
 bool TargetInfo::relocPointsToGot(uint32_t Type) const { return false; }
@@ -144,10 +159,15 @@ X86TargetInfo::X86TargetInfo() {
   PCRelReloc = R_386_PC32;
   GotReloc = R_386_GLOB_DAT;
   GotRefReloc = R_386_GOT32;
+  PltReloc = R_386_JUMP_SLOT;
 }
 
+void X86TargetInfo::writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const {}
+void X86TargetInfo::writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                                      uint64_t PltEntryAddr) const {}
+
 void X86TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                                  uint64_t PltEntryAddr) const {
+                                  uint64_t PltEntryAddr, int32_t Index) const {
   // jmpl *val; nop; nop
   const uint8_t Inst[] = {0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90};
   memcpy(Buf, Inst, sizeof(Inst));
@@ -167,20 +187,14 @@ bool X86TargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
   return Type == R_386_PLT32 || (Type == R_386_PC32 && S.isShared());
 }
 
-void X86TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
-                                uint32_t Type, uint64_t BaseAddr,
-                                uint64_t SA) const {
-  typedef ELFFile<ELF32LE>::Elf_Rel Elf_Rel;
-  auto &Rel = *reinterpret_cast<const Elf_Rel *>(RelP);
-
-  uint32_t Offset = Rel.r_offset;
-  uint8_t *Loc = Buf + Offset;
+void X86TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type,
+                                uint64_t P, uint64_t SA) const {
   switch (Type) {
   case R_386_GOT32:
     add32le(Loc, SA - Out<ELF32LE>::Got->getVA());
     break;
   case R_386_PC32:
-    add32le(Loc, SA - BaseAddr - Offset);
+    add32le(Loc, SA - P);
     break;
   case R_386_32:
     add32le(Loc, SA);
@@ -191,22 +205,66 @@ void X86TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd, const void *RelP,
 }
 
 X86_64TargetInfo::X86_64TargetInfo() {
+  CopyReloc = R_X86_64_COPY;
   PCRelReloc = R_X86_64_PC32;
   GotReloc = R_X86_64_GLOB_DAT;
   GotRefReloc = R_X86_64_PC32;
+  PltReloc = R_X86_64_JUMP_SLOT;
   RelativeReloc = R_X86_64_RELATIVE;
+  LazyRelocations = true;
+  PltEntrySize = 16;
+  PltZeroEntrySize = 16;
+}
+
+void X86_64TargetInfo::writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const {
+  // Skip 6 bytes of "jmpq *got(%rip)"
+  write32le(Buf, Plt + 6);
+}
+
+void X86_64TargetInfo::writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                                         uint64_t PltEntryAddr) const {
+  const uint8_t PltData[] = {
+      0xff, 0x35, 0x00, 0x00, 0x00, 0x00, // pushq GOT+8(%rip)
+      0xff, 0x25, 0x00, 0x00, 0x00, 0x00, // jmp *GOT+16(%rip)
+      0x0f, 0x1f, 0x40, 0x00              // nopl 0x0(rax)
+  };
+  // 1. NextPC = PltEntryAddr + 6,
+  // GotEntryAddr - NextPC + 8 = GotEntryAddr - PltEntryAddr + 2.
+  // 2. NextPC = PltEntryAddr + 6 + 6,
+  // GotEntryAddr - NextPC + 16 = GotEntryAddr - PltEntryAddr + 4.
+  memcpy(Buf, PltData, sizeof(PltData));
+  write32le(Buf + 2, GotEntryAddr - PltEntryAddr + 2); // GOT+8
+  write32le(Buf + 8, GotEntryAddr - PltEntryAddr + 4); // GOT+16
 }
 
 void X86_64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                                     uint64_t PltEntryAddr) const {
-  // jmpq *val(%rip); nop; nop
-  const uint8_t Inst[] = {0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90};
+                                     uint64_t PltEntryAddr,
+                                     int32_t Index) const {
+  const uint8_t Inst[] = {
+      0xff, 0x25, 0x00, 0x00, 0x00, 0x00, // jmpq *got(%rip)
+      0x68, 0x00, 0x00, 0x00, 0x00,       // pushq <relocation index>
+      0xe9, 0x00, 0x00, 0x00, 0x00        // jmpq plt[0]
+  };
   memcpy(Buf, Inst, sizeof(Inst));
 
-  uint64_t NextPC = PltEntryAddr + 6;
-  int64_t Delta = GotEntryAddr - NextPC;
-  assert(isInt<32>(Delta));
-  write32le(Buf + 2, Delta);
+  // 1. NextPC = PltEntryAddr + 6,
+  // GotEntryAddr - NextPC = GotEntryAddr - PltEntryAddr - 6.
+  // 2. Index is just and index of PLT record.
+  // 3. NextPC = PltEntryAddr + 6 + 5 + 5 = PltEntryAddr + 16,
+  // PltEntryAddr - Index * PltEntrySize - PltZeroEntrySize - NextPC =
+  // -Index * PltEntrySize - PltZeroEntrySize - 16.
+  write32le(Buf + 2, GotEntryAddr - PltEntryAddr - 6);
+  write32le(Buf + 7, Index);
+  write32le(Buf + 12, -Index * PltEntrySize - PltZeroEntrySize - 16);
+}
+
+bool X86_64TargetInfo::relocNeedsCopy(uint32_t Type,
+                                      const SymbolBody &S) const {
+  if (Type == R_X86_64_32S || Type == R_X86_64_32 || Type == R_X86_64_PC32 ||
+      Type == R_X86_64_64)
+    if (auto *SS = dyn_cast<SharedSymbol<ELF64LE>>(&S))
+      return SS->Sym.getType() == STT_OBJECT;
+  return false;
 }
 
 bool X86_64TargetInfo::relocNeedsGot(uint32_t Type, const SymbolBody &S) const {
@@ -214,21 +272,20 @@ bool X86_64TargetInfo::relocNeedsGot(uint32_t Type, const SymbolBody &S) const {
 }
 
 unsigned X86_64TargetInfo::getPLTRefReloc(unsigned Type) const {
-  switch (Type) {
-  case R_X86_64_32:
-    return R_X86_64_32;
-  case R_X86_64_PC32:
-  case R_X86_64_PLT32:
+  if (Type == R_X86_64_PLT32)
     return R_X86_64_PC32;
-  }
-  llvm_unreachable("Unexpected relocation");
+  return Type;
 }
 
 bool X86_64TargetInfo::relocNeedsPlt(uint32_t Type, const SymbolBody &S) const {
+  if (relocNeedsCopy(Type, S))
+    return false;
+
   switch (Type) {
   default:
     return false;
   case R_X86_64_32:
+  case R_X86_64_64:
   case R_X86_64_PC32:
     // This relocation is defined to have a value of (S + A - P).
     // The problems start when a non PIC program calls a function in a shared
@@ -268,28 +325,23 @@ bool X86_64TargetInfo::isRelRelative(uint32_t Type) const {
   case R_X86_64_PC32:
   case R_X86_64_PC16:
   case R_X86_64_PC8:
+  case R_X86_64_PLT32:
     return true;
   }
 }
 
-void X86_64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
-                                   const void *RelP, uint32_t Type,
-                                   uint64_t BaseAddr, uint64_t SA) const {
-  typedef ELFFile<ELF64LE>::Elf_Rela Elf_Rela;
-  auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
-
-  uint64_t Offset = Rel.r_offset;
-  uint8_t *Loc = Buf + Offset;
+void X86_64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type,
+                                   uint64_t P, uint64_t SA) const {
   switch (Type) {
   case R_X86_64_PC32:
   case R_X86_64_GOTPCREL:
   case R_X86_64_PLT32:
-    write32le(Loc, SA - BaseAddr - Offset);
+    write32le(Loc, SA - P);
     break;
   case R_X86_64_64:
     write64le(Loc, SA);
     break;
-  case R_X86_64_32: {
+  case R_X86_64_32:
   case R_X86_64_32S:
     if (Type == R_X86_64_32 && !isUInt<32>(SA))
       error("R_X86_64_32 out of range");
@@ -297,7 +349,6 @@ void X86_64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
       error("R_X86_64_32S out of range");
     write32le(Loc, SA);
     break;
-  }
   default:
     error("unrecognized reloc " + Twine(Type));
   }
@@ -307,21 +358,12 @@ void X86_64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
 // #higher(value), #highera(value), #highest(value), and #highesta(value)
 // macros defined in section 4.5.1. Relocation Types of the PPC-elf64abi
 // document.
-
-static uint16_t applyPPCLo(uint64_t V) { return V & 0xffff; }
-
-static uint16_t applyPPCHi(uint64_t V) { return (V >> 16) & 0xffff; }
-
-static uint16_t applyPPCHa(uint64_t V) { return ((V + 0x8000) >> 16) & 0xffff; }
-
-static uint16_t applyPPCHigher(uint64_t V) { return (V >> 32) & 0xffff; }
-
-static uint16_t applyPPCHighera(uint64_t V) {
-  return ((V + 0x8000) >> 32) & 0xffff;
-}
-
+static uint16_t applyPPCLo(uint64_t V) { return V; }
+static uint16_t applyPPCHi(uint64_t V) { return V >> 16; }
+static uint16_t applyPPCHa(uint64_t V) { return (V + 0x8000) >> 16; }
+static uint16_t applyPPCHigher(uint64_t V) { return V >> 32; }
+static uint16_t applyPPCHighera(uint64_t V) { return (V + 0x8000) >> 32; }
 static uint16_t applyPPCHighest(uint64_t V) { return V >> 48; }
-
 static uint16_t applyPPCHighesta(uint64_t V) { return (V + 0x8000) >> 48; }
 
 PPC64TargetInfo::PPC64TargetInfo() {
@@ -363,8 +405,11 @@ uint64_t getPPC64TocBase() {
   return TocVA + 0x8000;
 }
 
+void PPC64TargetInfo::writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const {}
+void PPC64TargetInfo::writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                                        uint64_t PltEntryAddr) const {}
 void PPC64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                                    uint64_t PltEntryAddr) const {
+                                    uint64_t PltEntryAddr, int32_t Index) const {
   uint64_t Off = GotEntryAddr - getPPC64TocBase();
 
   // FIXME: What we should do, in theory, is get the offset of the function
@@ -414,14 +459,8 @@ bool PPC64TargetInfo::isRelRelative(uint32_t Type) const {
   }
 }
 
-void PPC64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
-                                  const void *RelP, uint32_t Type,
-                                  uint64_t BaseAddr, uint64_t SA) const {
-  typedef ELFFile<ELF64BE>::Elf_Rela Elf_Rela;
-  auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
-
-  uint8_t *L = Buf + Rel.r_offset;
-  uint64_t P = BaseAddr + Rel.r_offset;
+void PPC64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type,
+                                  uint64_t P, uint64_t SA) const {
   uint64_t TB = getPPC64TocBase();
 
   // For a TOC-relative relocation, adjust the addend and proceed in terms of
@@ -440,59 +479,59 @@ void PPC64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
   case R_PPC64_ADDR16:
     if (!isInt<16>(SA))
       error("Relocation R_PPC64_ADDR16 overflow");
-    write16be(L, SA);
+    write16be(Loc, SA);
     break;
   case R_PPC64_ADDR16_DS:
     if (!isInt<16>(SA))
       error("Relocation R_PPC64_ADDR16_DS overflow");
-    write16be(L, (read16be(L) & 3) | (SA & ~3));
+    write16be(Loc, (read16be(Loc) & 3) | (SA & ~3));
     break;
   case R_PPC64_ADDR16_LO:
-    write16be(L, applyPPCLo(SA));
+    write16be(Loc, applyPPCLo(SA));
     break;
   case R_PPC64_ADDR16_LO_DS:
-    write16be(L, (read16be(L) & 3) | (applyPPCLo(SA) & ~3));
+    write16be(Loc, (read16be(Loc) & 3) | (applyPPCLo(SA) & ~3));
     break;
   case R_PPC64_ADDR16_HI:
-    write16be(L, applyPPCHi(SA));
+    write16be(Loc, applyPPCHi(SA));
     break;
   case R_PPC64_ADDR16_HA:
-    write16be(L, applyPPCHa(SA));
+    write16be(Loc, applyPPCHa(SA));
     break;
   case R_PPC64_ADDR16_HIGHER:
-    write16be(L, applyPPCHigher(SA));
+    write16be(Loc, applyPPCHigher(SA));
     break;
   case R_PPC64_ADDR16_HIGHERA:
-    write16be(L, applyPPCHighera(SA));
+    write16be(Loc, applyPPCHighera(SA));
     break;
   case R_PPC64_ADDR16_HIGHEST:
-    write16be(L, applyPPCHighest(SA));
+    write16be(Loc, applyPPCHighest(SA));
     break;
   case R_PPC64_ADDR16_HIGHESTA:
-    write16be(L, applyPPCHighesta(SA));
+    write16be(Loc, applyPPCHighesta(SA));
     break;
   case R_PPC64_ADDR14: {
     if ((SA & 3) != 0)
       error("Improper alignment for relocation R_PPC64_ADDR14");
 
     // Preserve the AA/LK bits in the branch instruction
-    uint8_t AALK = L[3];
-    write16be(L + 2, (AALK & 3) | (SA & 0xfffc));
+    uint8_t AALK = Loc[3];
+    write16be(Loc + 2, (AALK & 3) | (SA & 0xfffc));
     break;
   }
   case R_PPC64_REL16_LO:
-    write16be(L, applyPPCLo(SA - P));
+    write16be(Loc, applyPPCLo(SA - P));
     break;
   case R_PPC64_REL16_HI:
-    write16be(L, applyPPCHi(SA - P));
+    write16be(Loc, applyPPCHi(SA - P));
     break;
   case R_PPC64_REL16_HA:
-    write16be(L, applyPPCHa(SA - P));
+    write16be(Loc, applyPPCHa(SA - P));
     break;
   case R_PPC64_ADDR32:
     if (!isInt<32>(SA))
       error("Relocation R_PPC64_ADDR32 overflow");
-    write32be(L, SA);
+    write32be(Loc, SA);
     break;
   case R_PPC64_REL24: {
     // If we have an undefined weak symbol, we might get here with a symbol
@@ -519,36 +558,37 @@ void PPC64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
     uint32_t Mask = 0x03FFFFFC;
     if (!isInt<24>(SA - P))
       error("Relocation R_PPC64_REL24 overflow");
-    write32be(L, (read32be(L) & ~Mask) | ((SA - P) & Mask));
+    write32be(Loc, (read32be(Loc) & ~Mask) | ((SA - P) & Mask));
 
-    if (InPlt && L + 8 <= BufEnd &&
-        read32be(L + 4) == 0x60000000 /* nop */)
-      write32be(L + 4, 0xe8410028); // ld %r2, 40(%r1)
+    uint32_t Nop = 0x60000000;
+    if (InPlt && Loc + 8 <= BufEnd && read32be(Loc + 4) == Nop)
+      write32be(Loc + 4, 0xe8410028); // ld %r2, 40(%r1)
     break;
   }
   case R_PPC64_REL32:
     if (!isInt<32>(SA - P))
       error("Relocation R_PPC64_REL32 overflow");
-    write32be(L, SA - P);
+    write32be(Loc, SA - P);
     break;
   case R_PPC64_REL64:
-    write64be(L, SA - P);
+    write64be(Loc, SA - P);
     break;
   case R_PPC64_ADDR64:
   case R_PPC64_TOC:
-    write64be(L, SA);
+    write64be(Loc, SA);
     break;
   default:
     error("unrecognized reloc " + Twine(Type));
   }
 }
 
-AArch64TargetInfo::AArch64TargetInfo() {
-  // PCRelReloc = FIXME
-  // GotReloc = FIXME
-}
+AArch64TargetInfo::AArch64TargetInfo() {}
+
+void AArch64TargetInfo::writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const {}
+void AArch64TargetInfo::writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                                          uint64_t PltEntryAddr) const {}
 void AArch64TargetInfo::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                                      uint64_t PltEntryAddr) const {}
+                                      uint64_t PltEntryAddr, int32_t Index) const {}
 bool AArch64TargetInfo::relocNeedsGot(uint32_t Type,
                                       const SymbolBody &S) const {
   return false;
@@ -572,65 +612,77 @@ static uint64_t getAArch64Page(uint64_t Expr) {
   return Expr & (~static_cast<uint64_t>(0xFFF));
 }
 
-void AArch64TargetInfo::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
-                                    const void *RelP, uint32_t Type,
-                                    uint64_t BaseAddr, uint64_t SA) const {
-  typedef ELFFile<ELF64LE>::Elf_Rela Elf_Rela;
-  auto &Rel = *reinterpret_cast<const Elf_Rela *>(RelP);
-
-  uint8_t *L = Buf + Rel.r_offset;
-  uint64_t P = BaseAddr + Rel.r_offset;
+void AArch64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd,
+                                    uint32_t Type, uint64_t P,
+                                    uint64_t SA) const {
   switch (Type) {
   case R_AARCH64_ABS16:
     if (!isInt<16>(SA))
       error("Relocation R_AARCH64_ABS16 out of range");
-    write16le(L, SA);
+    write16le(Loc, SA);
     break;
   case R_AARCH64_ABS32:
     if (!isInt<32>(SA))
       error("Relocation R_AARCH64_ABS32 out of range");
-    write32le(L, SA);
+    write32le(Loc, SA);
     break;
   case R_AARCH64_ABS64:
     // No overflow check needed.
-    write64le(L, SA);
+    write64le(Loc, SA);
     break;
   case R_AARCH64_ADD_ABS_LO12_NC:
     // No overflow check needed.
     // This relocation stores 12 bits and there's no instruction
     // to do it. Instead, we do a 32 bits store of the value
-    // of r_addend bitwise-or'ed L. This assumes that the addend
-    // bits in L are zero.
-    or32le(L, (SA & 0xFFF) << 10);
+    // of r_addend bitwise-or'ed Loc. This assumes that the addend
+    // bits in Loc are zero.
+    or32le(Loc, (SA & 0xFFF) << 10);
     break;
   case R_AARCH64_ADR_PREL_LO21: {
     uint64_t X = SA - P;
     if (!isInt<21>(X))
       error("Relocation R_AARCH64_ADR_PREL_LO21 out of range");
-    updateAArch64Adr(L, X & 0x1FFFFF);
+    updateAArch64Adr(Loc, X & 0x1FFFFF);
     break;
   }
   case R_AARCH64_ADR_PREL_PG_HI21: {
     uint64_t X = getAArch64Page(SA) - getAArch64Page(P);
     if (!isInt<33>(X))
       error("Relocation R_AARCH64_ADR_PREL_PG_HI21 out of range");
-    updateAArch64Adr(L, (X >> 12) & 0x1FFFFF); // X[32:12]
+    updateAArch64Adr(Loc, (X >> 12) & 0x1FFFFF); // X[32:12]
     break;
   }
+  case R_AARCH64_PREL16:
+    if (!isInt<16>(SA))
+      error("Relocation R_AARCH64_PREL16 out of range");
+    write16le(Loc, SA - P);
+    break;
+  case R_AARCH64_PREL32:
+    if (!isInt<32>(SA))
+      error("Relocation R_AARCH64_PREL32 out of range");
+    write32le(Loc, SA - P);
+    break;
+  case R_AARCH64_PREL64:
+    // No overflow check needed.
+    write64le(Loc, SA - P);
+    break;
   default:
     error("unrecognized reloc " + Twine(Type));
   }
 }
 
 template <class ELFT> MipsTargetInfo<ELFT>::MipsTargetInfo() {
-  // PCRelReloc = FIXME
-  // GotReloc = FIXME
   PageSize = 65536;
 }
 
 template <class ELFT>
+void MipsTargetInfo<ELFT>::writeGotPltEntry(uint8_t *Buf, uint64_t Plt) const {}
+template <class ELFT>
+void MipsTargetInfo<ELFT>::writePltZeroEntry(uint8_t *Buf, uint64_t GotEntryAddr,
+                                       uint64_t PltEntryAddr) const {}
+template <class ELFT>
 void MipsTargetInfo<ELFT>::writePltEntry(uint8_t *Buf, uint64_t GotEntryAddr,
-                                         uint64_t PltEntryAddr) const {}
+                                         uint64_t PltEntryAddr, int32_t Index) const {}
 
 template <class ELFT>
 bool MipsTargetInfo<ELFT>::relocNeedsGot(uint32_t Type,
@@ -645,16 +697,13 @@ bool MipsTargetInfo<ELFT>::relocNeedsPlt(uint32_t Type,
 }
 
 template <class ELFT>
-void MipsTargetInfo<ELFT>::relocateOne(uint8_t *Buf, uint8_t *BufEnd,
-                                       const void *RelP, uint32_t Type,
-                                       uint64_t BaseAddr, uint64_t SA) const {
+void MipsTargetInfo<ELFT>::relocateOne(uint8_t *Loc, uint8_t *BufEnd,
+                                       uint32_t Type, uint64_t P,
+                                       uint64_t SA) const {
   const bool IsLE = ELFT::TargetEndianness == support::little;
-  typedef typename ELFFile<ELFT>::Elf_Rel Elf_Rel;
-  auto &Rel = *reinterpret_cast<const Elf_Rel *>(RelP);
-
   switch (Type) {
   case R_MIPS_32:
-    add32<IsLE>(Buf + Rel.r_offset, SA);
+    add32<IsLE>(Loc, SA);
     break;
   default:
     error("unrecognized reloc " + Twine(Type));

@@ -42,6 +42,7 @@ struct Configuration {
   llvm::StringRef Sysroot;
   std::string RPath;
   std::vector<llvm::StringRef> SearchPaths;
+  std::vector<llvm::StringRef> Undefined;
   bool AllowMultipleDefinition;
   bool AsNeeded = false;
   bool Bsymbolic;
@@ -50,16 +51,23 @@ struct Configuration {
   bool DiscardNone;
   bool EnableNewDtags;
   bool ExportDynamic;
+  bool GcSections;
+  bool GnuHash = false;
   bool Mips64EL = false;
   bool NoInhibitExec;
   bool NoUndefined;
   bool Shared;
   bool Static = false;
+  bool StripAll;
+  bool SysvHash = true;
   bool Verbose;
+  bool ZNodelete = false;
   bool ZNow = false;
+  bool ZOrigin = false;
   ELFKind EKind = ELFNoneKind;
   uint16_t EMachine = llvm::ELF::EM_NONE;
   uint64_t EntryAddr = -1;
+  unsigned Optimize = 0;
 };
 
 extern Configuration *Config;

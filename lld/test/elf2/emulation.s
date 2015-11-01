@@ -18,14 +18,14 @@
 # X86-64-NEXT:   Version: 1
 # X86-64-NEXT:   Entry: 0x100B0
 # X86-64-NEXT:   ProgramHeaderOffset: 0x40
-# X86-64-NEXT:   SectionHeaderOffset: 0x110
+# X86-64-NEXT:   SectionHeaderOffset: 0x118
 # X86-64-NEXT:   Flags [ (0x0)
 # X86-64-NEXT:   ]
 # X86-64-NEXT:   HeaderSize: 64
 # X86-64-NEXT:   ProgramHeaderEntrySize: 56
 # X86-64-NEXT:   ProgramHeaderCount: 2
 # X86-64-NEXT:   SectionHeaderEntrySize: 64
-# X86-64-NEXT:   SectionHeaderCount: 6
+# X86-64-NEXT:   SectionHeaderCount: 7
 # X86-64-NEXT:    StringTableSectionIndex: 5
 # X86-64-NEXT: }
 
@@ -49,14 +49,14 @@
 # X86-NEXT:   Version: 1
 # X86-NEXT:   Entry: 0x10074
 # X86-NEXT:   ProgramHeaderOffset: 0x34
-# X86-NEXT:   SectionHeaderOffset: 0xC0
+# X86-NEXT:   SectionHeaderOffset: 0xC8
 # X86-NEXT:   Flags [ (0x0)
 # X86-NEXT:   ]
 # X86-NEXT:   HeaderSize: 52
 # X86-NEXT:   ProgramHeaderEntrySize: 32
 # X86-NEXT:   ProgramHeaderCount: 2
 # X86-NEXT:   SectionHeaderEntrySize: 40
-# X86-NEXT:   SectionHeaderCount: 6
+# X86-NEXT:   SectionHeaderCount: 7
 # X86-NEXT:    StringTableSectionIndex: 5
 # X86-NEXT: }
 
@@ -80,14 +80,14 @@
 # PPC64-NEXT:   Version: 1
 # PPC64-NEXT:   Entry: 0x100000B0
 # PPC64-NEXT:   ProgramHeaderOffset: 0x40
-# PPC64-NEXT:   SectionHeaderOffset: 0x110
+# PPC64-NEXT:   SectionHeaderOffset: 0x118
 # PPC64-NEXT:   Flags [ (0x0)
 # PPC64-NEXT:   ]
 # PPC64-NEXT:   HeaderSize: 64
 # PPC64-NEXT:   ProgramHeaderEntrySize: 56
 # PPC64-NEXT:   ProgramHeaderCount: 2
 # PPC64-NEXT:   SectionHeaderEntrySize: 64
-# PPC64-NEXT:   SectionHeaderCount: 6
+# PPC64-NEXT:   SectionHeaderCount: 7
 # PPC64-NEXT:    StringTableSectionIndex: 5
 # PPC64-NEXT: }
 
@@ -111,12 +111,14 @@
 # MIPS-NEXT:   Version: 1
 # MIPS-NEXT:   Entry: 0x100B0
 # MIPS-NEXT:   ProgramHeaderOffset: 0x34
-# MIPS-NEXT:   SectionHeaderOffset: 0x114
+# MIPS-NEXT:   SectionHeaderOffset: 0x11C
 # MIPS-NEXT:   Flags [ (0x0)
 # MIPS-NEXT:   ]
 
 # RUN: llvm-mc -filetype=obj -triple=mipsel-unknown-linux %s -o %tmipsel
 # RUN: lld -flavor gnu2 -m elf32ltsmip -e _start %tmipsel -o %t2mipsel
+# RUN: llvm-readobj -file-headers %t2mipsel | FileCheck --check-prefix=MIPSEL %s
+# RUN: lld -flavor gnu2 -melf32ltsmip -e _start %tmipsel -o %t2mipsel
 # RUN: llvm-readobj -file-headers %t2mipsel | FileCheck --check-prefix=MIPSEL %s
 # RUN: lld -flavor gnu2 %tmipsel -e _start -o %t3mipsel
 # RUN: llvm-readobj -file-headers %t3mipsel | FileCheck --check-prefix=MIPSEL %s
@@ -135,7 +137,7 @@
 # MIPSEL-NEXT:   Version: 1
 # MIPSEL-NEXT:   Entry: 0x100B0
 # MIPSEL-NEXT:   ProgramHeaderOffset: 0x34
-# MIPSEL-NEXT:   SectionHeaderOffset: 0x114
+# MIPSEL-NEXT:   SectionHeaderOffset: 0x11C
 # MIPSEL-NEXT:   Flags [ (0x0)
 # MIPSEL-NEXT:   ]
 

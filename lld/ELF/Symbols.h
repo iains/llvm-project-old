@@ -83,9 +83,7 @@ public:
   // Returns the symbol name.
   StringRef getName() const { return Name; }
 
-  uint8_t getMostConstrainingVisibility() const {
-    return MostConstrainingVisibility;
-  }
+  uint8_t getVisibility() const { return Visibility; }
 
   unsigned getDynamicSymbolTableIndex() const {
     return DynamicSymbolTableIndex;
@@ -93,8 +91,10 @@ public:
   void setDynamicSymbolTableIndex(unsigned V) { DynamicSymbolTableIndex = V; }
 
   uint32_t GotIndex = -1;
+  uint32_t GotPltIndex = -1;
   uint32_t PltIndex = -1;
   bool isInGot() const { return GotIndex != -1U; }
+  bool isInGotPlt() const { return GotPltIndex != -1U; }
   bool isInPlt() const { return PltIndex != -1U; }
 
   // A SymbolBody has a backreference to a Symbol. Originally they are
@@ -114,15 +114,15 @@ public:
 protected:
   SymbolBody(Kind K, StringRef Name, bool IsWeak, uint8_t Visibility,
              bool IsTLS)
-      : SymbolKind(K), IsWeak(IsWeak), MostConstrainingVisibility(Visibility),
-        IsTLS(IsTLS), Name(Name) {
+      : SymbolKind(K), IsWeak(IsWeak), Visibility(Visibility), IsTLS(IsTLS),
+        Name(Name) {
     IsUsedInRegularObj = K != SharedKind && K != LazyKind;
     IsUsedInDynamicReloc = 0;
   }
 
   const unsigned SymbolKind : 8;
   unsigned IsWeak : 1;
-  unsigned MostConstrainingVisibility : 2;
+  unsigned Visibility : 2;
   unsigned IsUsedInRegularObj : 1;
   unsigned IsUsedInDynamicReloc : 1;
   unsigned IsTLS : 1;
@@ -217,14 +217,15 @@ template <class ELFT> class DefinedRegular : public Defined<ELFT> {
   typedef typename Base::Elf_Sym Elf_Sym;
 
 public:
-  DefinedRegular(StringRef N, const Elf_Sym &Sym, InputSection<ELFT> &Section)
+  DefinedRegular(StringRef N, const Elf_Sym &Sym,
+                 InputSectionBase<ELFT> &Section)
       : Defined<ELFT>(Base::DefinedRegularKind, N, Sym), Section(Section) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == Base::DefinedRegularKind;
   }
 
-  const InputSection<ELFT> &Section;
+  InputSectionBase<ELFT> &Section;
 };
 
 template <class ELFT> class DefinedSynthetic : public Defined<ELFT> {
@@ -270,6 +271,7 @@ typename Undefined<ELFT>::Elf_Sym Undefined<ELFT>::Optional;
 template <class ELFT> class SharedSymbol : public Defined<ELFT> {
   typedef Defined<ELFT> Base;
   typedef typename Base::Elf_Sym Elf_Sym;
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
 
 public:
   static bool classof(const SymbolBody *S) {
@@ -280,6 +282,10 @@ public:
       : Defined<ELFT>(Base::SharedKind, Name, Sym), File(F) {}
 
   SharedFile<ELFT> *File;
+
+  // Can have offset if requires copy relocation.
+  uintX_t OffsetInBSS = 0;
+  bool NeedsCopy = false;
 };
 
 // This class represents a symbol defined in an archive file. It is

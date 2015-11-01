@@ -75,6 +75,16 @@ typename ObjectFile<ELFT>::Elf_Sym_Range ObjectFile<ELFT>::getLocalSymbols() {
 }
 
 template <class ELFT>
+const typename ObjectFile<ELFT>::Elf_Sym *
+ObjectFile<ELFT>::getLocalSymbol(uintX_t SymIndex) {
+  uint32_t FirstNonLocal = this->Symtab->sh_info;
+  if (SymIndex >= FirstNonLocal)
+    return nullptr;
+  Elf_Sym_Range Syms = this->ELFObj.symbols(this->Symtab);
+  return Syms.begin() + SymIndex;
+}
+
+template <class ELFT>
 void elf2::ObjectFile<ELFT>::parse(DenseSet<StringRef> &Comdats) {
   // Read section and symbol tables.
   initializeSections(Comdats);
@@ -108,6 +118,33 @@ ObjectFile<ELFT>::getShtGroupEntries(const Elf_Shdr &Sec) {
   if (Entries.empty() || Entries[0] != GRP_COMDAT)
     error("Unsupported SHT_GROUP format");
   return Entries.slice(1);
+}
+
+template <class ELFT>
+static bool shouldMerge(const typename ELFFile<ELFT>::Elf_Shdr &Sec) {
+  typedef typename ELFFile<ELFT>::uintX_t uintX_t;
+  uintX_t Flags = Sec.sh_flags;
+  if (!(Flags & SHF_MERGE))
+    return false;
+  if (Flags & SHF_WRITE)
+    error("Writable SHF_MERGE sections are not supported");
+  uintX_t EntSize = Sec.sh_entsize;
+  if (Sec.sh_size % EntSize)
+    error("SHF_MERGE section size must be a multiple of sh_entsize");
+
+  // Don't try to merge if the aligment is larger than the sh_entsize.
+  //
+  // If this is not a SHF_STRINGS, we would need to pad after every entity. It
+  // would be equivalent for the producer of the .o to just set a larger
+  // sh_entsize.
+  //
+  // If this is a SHF_STRINGS, the larger alignment makes sense. Unfortunately
+  // it would complicate tail merging. This doesn't seem that common to
+  // justify the effort.
+  if (Sec.sh_addralign > EntSize)
+    return false;
+
+  return true;
 }
 
 template <class ELFT>
@@ -150,14 +187,21 @@ void elf2::ObjectFile<ELFT>::initializeSections(DenseSet<StringRef> &Comdats) {
       uint32_t RelocatedSectionIndex = Sec.sh_info;
       if (RelocatedSectionIndex >= Size)
         error("Invalid relocated section index");
-      InputSection<ELFT> *RelocatedSection = Sections[RelocatedSectionIndex];
+      InputSectionBase<ELFT> *RelocatedSection =
+          Sections[RelocatedSectionIndex];
       if (!RelocatedSection)
         error("Unsupported relocation reference");
-      RelocatedSection->RelocSections.push_back(&Sec);
+      if (auto *S = dyn_cast<InputSection<ELFT>>(RelocatedSection))
+        S->RelocSections.push_back(&Sec);
+      else
+        error("Relocations pointing to SHF_MERGE are not supported");
       break;
     }
     default:
-      Sections[I] = new (this->Alloc) InputSection<ELFT>(this, &Sec);
+      if (shouldMerge<ELFT>(Sec))
+        Sections[I] = new (this->Alloc) MergeInputSection<ELFT>(this, &Sec);
+      else
+        Sections[I] = new (this->Alloc) InputSection<ELFT>(this, &Sec);
       break;
     }
   }
@@ -173,7 +217,7 @@ template <class ELFT> void elf2::ObjectFile<ELFT>::initializeSymbols() {
 }
 
 template <class ELFT>
-InputSection<ELFT> *
+InputSectionBase<ELFT> *
 elf2::ObjectFile<ELFT>::getSection(const Elf_Sym &Sym) const {
   uint32_t Index = Sym.st_shndx;
   if (Index == ELF::SHN_XINDEX)
@@ -209,7 +253,7 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   case STB_GLOBAL:
   case STB_WEAK:
   case STB_GNU_UNIQUE: {
-    InputSection<ELFT> *Sec = getSection(*Sym);
+    InputSectionBase<ELFT> *Sec = getSection(*Sym);
     if (Sec == &InputSection<ELFT>::Discarded)
       return new (this->Alloc) Undefined<ELFT>(Name, *Sym);
     return new (this->Alloc) DefinedRegular<ELFT>(Name, *Sym, *Sec);

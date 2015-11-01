@@ -513,6 +513,26 @@ ValueObject::ResolveValue (Scalar &scalar)
 }
 
 bool
+ValueObject::IsLogicalTrue (Error& error)
+{
+    Scalar scalar_value;
+    
+    if (!ResolveValue (scalar_value))
+    {
+        error.SetErrorString("failed to get a scalar result");
+        return false;
+    }
+    
+    bool ret;
+    if (scalar_value.ULongLong(1) == 0)
+        ret = false;
+    else
+        ret = true;
+    error.Clear();
+    return ret;
+}
+
+bool
 ValueObject::GetValueIsValid () const
 {
     return m_value_is_valid;
@@ -770,9 +790,21 @@ ValueObject::GetChildMemberWithName (const ConstString &name, bool can_create)
 
 
 size_t
-ValueObject::GetNumChildren ()
+ValueObject::GetNumChildren (uint32_t max)
 {
     UpdateValueIfNeeded();
+
+    if (max < UINT32_MAX)
+    {
+        if (m_children_count_valid)
+        {
+            size_t children_count = m_children.GetChildrenCount();
+            return children_count <= max ? children_count : max;
+        }
+        else
+            return CalculateNumChildren(max);
+    }
+
     if (!m_children_count_valid)
     {
         SetNumChildren (CalculateNumChildren());

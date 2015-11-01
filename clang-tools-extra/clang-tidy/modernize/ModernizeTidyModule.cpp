@@ -13,9 +13,11 @@
 #include "LoopConvertCheck.h"
 #include "MakeUniqueCheck.h"
 #include "PassByValueCheck.h"
+#include "RedundantVoidArgCheck.h"
 #include "ReplaceAutoPtrCheck.h"
 #include "ShrinkToFitCheck.h"
 #include "UseAutoCheck.h"
+#include "UseDefaultCheck.h"
 #include "UseNullptrCheck.h"
 #include "UseOverrideCheck.h"
 
@@ -29,13 +31,15 @@ class ModernizeModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<LoopConvertCheck>("modernize-loop-convert");
-    CheckFactories.registerCheck<MakeUniqueCheck>(
-        "modernize-make-unique");
+    CheckFactories.registerCheck<MakeUniqueCheck>("modernize-make-unique");
     CheckFactories.registerCheck<PassByValueCheck>("modernize-pass-by-value");
+    CheckFactories.registerCheck<RedundantVoidArgCheck>(
+        "modernize-redundant-void-arg");
     CheckFactories.registerCheck<ReplaceAutoPtrCheck>(
         "modernize-replace-auto-ptr");
     CheckFactories.registerCheck<ShrinkToFitCheck>("modernize-shrink-to-fit");
     CheckFactories.registerCheck<UseAutoCheck>("modernize-use-auto");
+    CheckFactories.registerCheck<UseDefaultCheck>("modernize-use-default");
     CheckFactories.registerCheck<UseNullptrCheck>("modernize-use-nullptr");
     CheckFactories.registerCheck<UseOverrideCheck>("modernize-use-override");
   }
@@ -43,9 +47,13 @@ public:
   ClangTidyOptions getModuleOptions() override {
     ClangTidyOptions Options;
     auto &Opts = Options.CheckOptions;
+    // For types whose size in bytes is above this threshold, we prefer taking a
+    // const-reference than making a copy.
+    Opts["modernize-loop-convert.MaxCopySize"] = "16";
+
     Opts["modernize-loop-convert.MinConfidence"] = "reasonable";
     Opts["modernize-loop-convert.NamingStyle"] = "CamelCase";
-    Opts["modernize-pass-by-value.IncludeStyle"] = "llvm"; // Also: "google".
+    Opts["modernize-pass-by-value.IncludeStyle"] = "llvm";    // Also: "google".
     Opts["modernize-replace-auto-ptr.IncludeStyle"] = "llvm"; // Also: "google".
 
     // Comma-separated list of macros that behave like NULL.

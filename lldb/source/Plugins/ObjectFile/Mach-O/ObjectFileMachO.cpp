@@ -7,8 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+// C Includes
+// C++ Includes
+// Other libraries and framework includes
 #include "llvm/ADT/StringRef.h" 
 
+// Project includes
 #include "lldb/Core/ArchSpec.h"
 #include "lldb/Core/DataBuffer.h"
 #include "lldb/Core/Debugger.h"
@@ -67,8 +71,8 @@ public:
         SetRegisterDataFrom_LC_THREAD (data);
     }
 
-    virtual void
-    InvalidateAllRegisters ()
+    void
+    InvalidateAllRegisters() override
     {
         // Do nothing... registers are always valid...
     }
@@ -127,7 +131,6 @@ public:
             }
         }
     }
-    
 
     static size_t
     WriteRegister (RegisterContext *reg_ctx, const char *name, const char *alt_name, size_t reg_byte_size, Stream &data)
@@ -250,43 +253,42 @@ public:
     }
 
 protected:
-    virtual int
-    DoReadGPR (lldb::tid_t tid, int flavor, GPR &gpr)
+    int
+    DoReadGPR(lldb::tid_t tid, int flavor, GPR &gpr) override
     {
         return 0;
     }
 
-    virtual int
-    DoReadFPU (lldb::tid_t tid, int flavor, FPU &fpu)
+    int
+    DoReadFPU(lldb::tid_t tid, int flavor, FPU &fpu) override
     {
         return 0;
     }
 
-    virtual int
-    DoReadEXC (lldb::tid_t tid, int flavor, EXC &exc)
+    int
+    DoReadEXC(lldb::tid_t tid, int flavor, EXC &exc) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteGPR (lldb::tid_t tid, int flavor, const GPR &gpr)
+    int
+    DoWriteGPR(lldb::tid_t tid, int flavor, const GPR &gpr) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteFPU (lldb::tid_t tid, int flavor, const FPU &fpu)
+    int
+    DoWriteFPU(lldb::tid_t tid, int flavor, const FPU &fpu) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteEXC (lldb::tid_t tid, int flavor, const EXC &exc)
+    int
+    DoWriteEXC(lldb::tid_t tid, int flavor, const EXC &exc) override
     {
         return 0;
     }
 };
-
 
 class RegisterContextDarwin_i386_Mach : public RegisterContextDarwin_i386
 {
@@ -297,8 +299,8 @@ public:
         SetRegisterDataFrom_LC_THREAD (data);
     }
 
-    virtual void
-    InvalidateAllRegisters ()
+    void
+    InvalidateAllRegisters() override
     {
         // Do nothing... registers are always valid...
     }
@@ -425,38 +427,38 @@ public:
     }
 
 protected:
-    virtual int
-    DoReadGPR (lldb::tid_t tid, int flavor, GPR &gpr)
+    int
+    DoReadGPR(lldb::tid_t tid, int flavor, GPR &gpr) override
     {
         return 0;
     }
 
-    virtual int
-    DoReadFPU (lldb::tid_t tid, int flavor, FPU &fpu)
+    int
+    DoReadFPU(lldb::tid_t tid, int flavor, FPU &fpu) override
     {
         return 0;
     }
 
-    virtual int
-    DoReadEXC (lldb::tid_t tid, int flavor, EXC &exc)
+    int
+    DoReadEXC(lldb::tid_t tid, int flavor, EXC &exc) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteGPR (lldb::tid_t tid, int flavor, const GPR &gpr)
+    int
+    DoWriteGPR(lldb::tid_t tid, int flavor, const GPR &gpr) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteFPU (lldb::tid_t tid, int flavor, const FPU &fpu)
+    int
+    DoWriteFPU(lldb::tid_t tid, int flavor, const FPU &fpu) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteEXC (lldb::tid_t tid, int flavor, const EXC &exc)
+    int
+    DoWriteEXC(lldb::tid_t tid, int flavor, const EXC &exc) override
     {
         return 0;
     }
@@ -471,8 +473,8 @@ public:
         SetRegisterDataFrom_LC_THREAD (data);
     }
 
-    virtual void
-    InvalidateAllRegisters ()
+    void
+    InvalidateAllRegisters() override
     {
         // Do nothing... registers are always valid...
     }
@@ -611,50 +613,50 @@ public:
     }
 
 protected:
-    virtual int
-    DoReadGPR (lldb::tid_t tid, int flavor, GPR &gpr)
+    int
+    DoReadGPR(lldb::tid_t tid, int flavor, GPR &gpr) override
     {
         return -1;
     }
 
-    virtual int
-    DoReadFPU (lldb::tid_t tid, int flavor, FPU &fpu)
+    int
+    DoReadFPU(lldb::tid_t tid, int flavor, FPU &fpu) override
     {
         return -1;
     }
 
-    virtual int
-    DoReadEXC (lldb::tid_t tid, int flavor, EXC &exc)
+    int
+    DoReadEXC(lldb::tid_t tid, int flavor, EXC &exc) override
     {
         return -1;
     }
 
-    virtual int
-    DoReadDBG (lldb::tid_t tid, int flavor, DBG &dbg)
+    int
+    DoReadDBG(lldb::tid_t tid, int flavor, DBG &dbg) override
     {
         return -1;
     }
 
-    virtual int
-    DoWriteGPR (lldb::tid_t tid, int flavor, const GPR &gpr)
+    int
+    DoWriteGPR(lldb::tid_t tid, int flavor, const GPR &gpr) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteFPU (lldb::tid_t tid, int flavor, const FPU &fpu)
+    int
+    DoWriteFPU(lldb::tid_t tid, int flavor, const FPU &fpu) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteEXC (lldb::tid_t tid, int flavor, const EXC &exc)
+    int
+    DoWriteEXC(lldb::tid_t tid, int flavor, const EXC &exc) override
     {
         return 0;
     }
 
-    virtual int
-    DoWriteDBG (lldb::tid_t tid, int flavor, const DBG &dbg)
+    int
+    DoWriteDBG(lldb::tid_t tid, int flavor, const DBG &dbg) override
     {
         return -1;
     }
@@ -669,8 +671,8 @@ public:
         SetRegisterDataFrom_LC_THREAD (data);
     }
     
-    virtual void
-    InvalidateAllRegisters ()
+    void
+    InvalidateAllRegisters() override
     {
         // Do nothing... registers are always valid...
     }
@@ -819,50 +821,50 @@ public:
     }
 
 protected:
-    virtual int
-    DoReadGPR (lldb::tid_t tid, int flavor, GPR &gpr)
+    int
+    DoReadGPR(lldb::tid_t tid, int flavor, GPR &gpr) override
     {
         return -1;
     }
     
-    virtual int
-    DoReadFPU (lldb::tid_t tid, int flavor, FPU &fpu)
+    int
+    DoReadFPU(lldb::tid_t tid, int flavor, FPU &fpu) override
     {
         return -1;
     }
     
-    virtual int
-    DoReadEXC (lldb::tid_t tid, int flavor, EXC &exc)
+    int
+    DoReadEXC(lldb::tid_t tid, int flavor, EXC &exc) override
     {
         return -1;
     }
 
-    virtual int
-    DoReadDBG (lldb::tid_t tid, int flavor, DBG &dbg)
+    int
+    DoReadDBG(lldb::tid_t tid, int flavor, DBG &dbg) override
     {
         return -1;
     }
     
-    virtual int
-    DoWriteGPR (lldb::tid_t tid, int flavor, const GPR &gpr)
+    int
+    DoWriteGPR(lldb::tid_t tid, int flavor, const GPR &gpr) override
     {
         return 0;
     }
     
-    virtual int
-    DoWriteFPU (lldb::tid_t tid, int flavor, const FPU &fpu)
+    int
+    DoWriteFPU(lldb::tid_t tid, int flavor, const FPU &fpu) override
     {
         return 0;
     }
     
-    virtual int
-    DoWriteEXC (lldb::tid_t tid, int flavor, const EXC &exc)
+    int
+    DoWriteEXC(lldb::tid_t tid, int flavor, const EXC &exc) override
     {
         return 0;
     }
     
-    virtual int
-    DoWriteDBG (lldb::tid_t tid, int flavor, const DBG &dbg)
+    int
+    DoWriteDBG(lldb::tid_t tid, int flavor, const DBG &dbg) override
     {
         return -1;
     }
@@ -906,7 +908,6 @@ ObjectFileMachO::Terminate()
 {
     PluginManager::UnregisterPlugin (CreateInstance);
 }
-
 
 lldb_private::ConstString
 ObjectFileMachO::GetPluginNameStatic()
@@ -1010,8 +1011,6 @@ ObjectFileMachO::GetModuleSpecifications (const lldb_private::FileSpec& file,
     return specs.GetSize() - initial_count;
 }
 
-
-
 const ConstString &
 ObjectFileMachO::GetSegmentNameTEXT()
 {
@@ -1073,7 +1072,6 @@ ObjectFileMachO::MagicBytesMatch (DataBufferSP& data_sp,
     return MachHeaderSizeFromMagic(magic) != 0;
 }
 
-
 ObjectFileMachO::ObjectFileMachO(const lldb::ModuleSP &module_sp,
                                  DataBufferSP& data_sp,
                                  lldb::offset_t data_offset,
@@ -1104,10 +1102,6 @@ ObjectFileMachO::ObjectFileMachO (const lldb::ModuleSP &module_sp,
 {
     ::memset (&m_header, 0, sizeof(m_header));
     ::memset (&m_dysymtab, 0, sizeof(m_dysymtab));
-}
-
-ObjectFileMachO::~ObjectFileMachO()
-{
 }
 
 bool
@@ -1254,7 +1248,6 @@ ObjectFileMachO::ParseHeader ()
     }
     return false;
 }
-
 
 ByteOrder
 ObjectFileMachO::GetByteOrder () const
@@ -1945,7 +1938,6 @@ ObjectFileMachO::CreateSections (SectionList &unified_section_list)
 class MachSymtabSectionInfo
 {
 public:
-
     MachSymtabSectionInfo (SectionList *section_list) :
         m_section_list (section_list),
         m_section_infos()
@@ -1955,7 +1947,6 @@ public:
         // may be added for debug map or
         m_section_infos.resize(section_list->GetNumSections(1));
     }
-
 
     SectionSP
     GetSection (uint8_t n_sect, addr_t file_addr)
@@ -2077,7 +2068,7 @@ struct TrieEntryWithOffset
     }
 };
 
-static void
+static bool
 ParseTrieEntries (DataExtractor &data,
                   lldb::offset_t offset,
                   const bool is_arm,
@@ -2086,7 +2077,7 @@ ParseTrieEntries (DataExtractor &data,
                   std::vector<TrieEntryWithOffset>& output)
 {
 	if (!data.ValidOffset(offset))
-        return;
+        return true;
 
 	const uint64_t terminalSize = data.GetULEB128(&offset);
 	lldb::offset_t children_offset = offset + terminalSize;
@@ -2137,19 +2128,27 @@ ParseTrieEntries (DataExtractor &data,
     
 	const uint8_t childrenCount = data.GetU8(&children_offset);
 	for (uint8_t i=0; i < childrenCount; ++i) {
-        nameSlices.push_back(data.GetCStr(&children_offset));
+        const char *cstr = data.GetCStr(&children_offset);
+        if (cstr)
+            nameSlices.push_back(llvm::StringRef(cstr));
+        else
+            return false; // Corrupt data
         lldb::offset_t childNodeOffset = data.GetULEB128(&children_offset);
 		if (childNodeOffset)
         {
-            ParseTrieEntries(data,
-                             childNodeOffset,
-                             is_arm,
-                             nameSlices,
-                             resolver_addresses,
-                             output);
+            if (!ParseTrieEntries(data,
+                                 childNodeOffset,
+                                 is_arm,
+                                 nameSlices,
+                                 resolver_addresses,
+                                 output))
+            {
+                return false;
+            }
         }
         nameSlices.pop_back();
 	}
+    return true;
 }
 
 size_t
@@ -2440,7 +2439,6 @@ ObjectFileMachO::ParseSymtab ()
             return 0;
         }
 
-
         const bool have_strtab_data = strtab_data.GetByteSize() > 0;
         if (!have_strtab_data)
         {
@@ -2636,6 +2634,7 @@ ObjectFileMachO::ParseSymtab ()
                 uint64_t    localSymbolsOffset;   // file offset of where local symbols are stored
                 uint64_t    localSymbolsSize;     // size of local symbols information
             };
+
             struct lldb_copy_dyld_cache_header_v1
             {
                 char        magic[16];            // e.g. "dyld_v0    i386", "dyld_v1   armv7", etc.
@@ -2671,6 +2670,7 @@ ObjectFileMachO::ParseSymtab ()
                 uint32_t        entriesOffset;
                 uint32_t        entriesCount;
             };
+
             struct lldb_copy_dyld_cache_local_symbols_entry
             {
                 uint32_t        dylibOffset;
@@ -2965,7 +2965,6 @@ ObjectFileMachO::ParseSymtab ()
                                                         // Skip these if we want minimal symbol tables
                                                         add_nlist = false;
                                                         break;
-
 
                                                     case N_OPT:
                                                         // emitted with gcc2_compiled and in gcc source
@@ -3922,7 +3921,6 @@ ObjectFileMachO::ParseSymtab ()
                                 N_SO_index = sym_idx;
                             }
                         }
-
                         break;
 
                     case N_OSO:
@@ -4460,7 +4458,6 @@ ObjectFileMachO::ParseSymtab ()
                         sym[pos.first].SetReExportedSymbolSharedLibrary(dylib_files.GetFileSpecAtIndex(dylib_ordinal-1));
                 }
             }
-
         }
 
         uint32_t synthetic_sym_id = symtab_load_command.nsyms;
@@ -4646,7 +4643,6 @@ ObjectFileMachO::ParseSymtab ()
             }
         }
 
-        
         if (!trie_entries.empty())
         {
             for (const auto &e : trie_entries)
@@ -4674,9 +4670,7 @@ ObjectFileMachO::ParseSymtab ()
                 }
             }
         }
-
-
-        
+       
 //        StreamFile s(stdout, false);
 //        s.Printf ("Symbol table before CalculateSymbolSizes():\n");
 //        symtab->Dump(&s, NULL, eSortOrderNone);
@@ -4690,7 +4684,6 @@ ObjectFileMachO::ParseSymtab ()
     }
     return 0;
 }
-
 
 void
 ObjectFileMachO::Dump (Stream *s)
@@ -4764,7 +4757,6 @@ ObjectFileMachO::GetUUID (const llvm::MachO::mach_header &header,
     return false;
 }
 
-
 bool
 ObjectFileMachO::GetArchitecture (const llvm::MachO::mach_header &header,
                                   const lldb_private::DataExtractor &data,
@@ -4776,16 +4768,22 @@ ObjectFileMachO::GetArchitecture (const llvm::MachO::mach_header &header,
     if (arch.IsValid())
     {
         llvm::Triple &triple = arch.GetTriple();
+
+        // Set OS to an unspecified unknown or a "*" so it can match any OS
+        triple.setOS(llvm::Triple::UnknownOS);
+        triple.setOSName(llvm::StringRef());
+
         if (header.filetype == MH_PRELOAD)
         {
-            // Set OS to "unknown" - this is a standalone binary with no dyld et al
-            triple.setOS(llvm::Triple::UnknownOS);
+            // Set vendor to an unspecified unknown or a "*" so it can match any vendor
+            triple.setVendor(llvm::Triple::UnknownVendor);
+            triple.setVendorName(llvm::StringRef());
             return true;
         }
         else
         {
             struct load_command load_cmd;
-            
+
             lldb::offset_t offset = lc_offset;
             for (uint32_t i=0; i<header.ncmds; ++i)
             {
@@ -4810,14 +4808,13 @@ ObjectFileMachO::GetArchitecture (const llvm::MachO::mach_header &header,
                 offset = cmd_offset + load_cmd.cmdsize;
             }
             
-            // Only set the OS to iOS for ARM, we don't want to set it for x86 and x86_64.
-            // We do this because we now have MacOSX or iOS as the OS value for x86 and
-            // x86_64 for normal desktop (MacOSX) and simulator (iOS) binaries. And if
-            // we compare a "x86_64-apple-ios" to a "x86_64-apple-" triple, it will say
-            // it is compatible (because the OS is unspecified in the second one and will
-            // match anything in the first
-            if (header.cputype == CPU_TYPE_ARM || header.cputype == CPU_TYPE_ARM64)
-                triple.setOS (llvm::Triple::IOS);
+            if (header.filetype != MH_KEXT_BUNDLE)
+            {
+                // We didn't find a LC_VERSION_MIN load command and this isn't a KEXT
+                // so lets not say our Vendor is Apple, leave it as an unspecified unknown
+                triple.setVendor(llvm::Triple::UnknownVendor);
+                triple.setVendorName(llvm::StringRef());
+            }
         }
     }
     return arch.IsValid();
@@ -4835,7 +4832,6 @@ ObjectFileMachO::GetUUID (lldb_private::UUID* uuid)
     }
     return false;
 }
-
 
 uint32_t
 ObjectFileMachO::GetDependentModules (FileSpecList& files)
@@ -5096,7 +5092,6 @@ ObjectFileMachO::GetEntryPointAddress ()
     }
 
     return m_entry_point_address;
-
 }
 
 lldb_private::Address
@@ -5190,7 +5185,6 @@ ObjectFileMachO::GetThreadContextAtIndex (uint32_t idx, lldb_private::Thread &th
     }
     return reg_ctx_sp;
 }
-
 
 ObjectFile::Type
 ObjectFileMachO::CalculateType()
@@ -5287,7 +5281,6 @@ ObjectFileMachO::CalculateStrata()
     return eStrataUnknown;
 }
 
-
 uint32_t
 ObjectFileMachO::GetVersion (uint32_t *versions, uint32_t num_versions)
 {
@@ -5354,7 +5347,6 @@ ObjectFileMachO::GetArchitecture (ArchSpec &arch)
     }
     return false;
 }
-
 
 UUID
 ObjectFileMachO::GetProcessSharedCacheUUID (Process *process)
@@ -5550,7 +5542,6 @@ ObjectFileMachO::GetSDKVersion(uint32_t *versions, uint32_t num_versions)
     return ObjectFile::GetSDKVersion (versions, num_versions);
 }
 
-
 bool
 ObjectFileMachO::GetIsDynamicLinkEditor()
 {
@@ -5571,7 +5562,6 @@ ObjectFileMachO::GetPluginVersion()
 {
     return 1;
 }
-
 
 Section *
 ObjectFileMachO::GetMachHeaderSection()
@@ -6036,4 +6026,3 @@ ObjectFileMachO::SaveCore (const lldb::ProcessSP &process_sp,
     }
     return false;
 }
-

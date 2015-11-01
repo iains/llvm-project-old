@@ -40,13 +40,11 @@ template <class ELFT> int SymbolBody::compare(SymbolBody *Other) {
   if (L > R)
     return -Other->compare<ELFT>(this);
 
-  uint8_t LV = getMostConstrainingVisibility();
-  uint8_t RV = Other->getMostConstrainingVisibility();
-  MostConstrainingVisibility = getMinVisibility(LV, RV);
-  Other->MostConstrainingVisibility = MostConstrainingVisibility;
+  Visibility = Other->Visibility =
+      getMinVisibility(Visibility, Other->Visibility);
 
-  IsUsedInRegularObj |= Other->IsUsedInRegularObj;
-  Other->IsUsedInRegularObj |= IsUsedInRegularObj;
+  if (IsUsedInRegularObj || Other->IsUsedInRegularObj)
+    IsUsedInRegularObj = Other->IsUsedInRegularObj = true;
 
   if (L != R)
     return -1;

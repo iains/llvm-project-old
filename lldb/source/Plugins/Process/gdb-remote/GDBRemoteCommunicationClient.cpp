@@ -1049,7 +1049,6 @@ GDBRemoteCommunicationClient::SendContinuePacketAndWaitForResponse
     Mutex::Locker locker(m_sequence_mutex);
     StateType state = eStateRunning;
 
-    BroadcastEvent(eBroadcastBitRunPacketSent, NULL);
     m_public_is_running.SetValue (true, eBroadcastNever);
     // Set the starting continue packet into "continue_packet". This packet
     // may change if we are interrupted and we continue after an async packet...
@@ -1059,6 +1058,7 @@ GDBRemoteCommunicationClient::SendContinuePacketAndWaitForResponse
     const auto sigint_signo = process->GetUnixSignals()->GetSignalNumberFromName("SIGINT");
 
     bool got_async_packet = false;
+    bool broadcast_sent = false;
     
     while (state == eStateRunning)
     {
@@ -1071,6 +1071,12 @@ GDBRemoteCommunicationClient::SendContinuePacketAndWaitForResponse
             else
                 m_interrupt_sent = false;
         
+            if (! broadcast_sent)
+            {
+                BroadcastEvent(eBroadcastBitRunPacketSent, NULL);
+                broadcast_sent = true;
+            }
+
             m_private_is_running.SetValue (true, eBroadcastAlways);
         }
         
@@ -3315,10 +3321,16 @@ GDBRemoteCommunicationClient::SendSpeedTestPacket (uint32_t send_size, uint32_t 
     return SendPacketAndWaitForResponse (packet.GetData(), packet.GetSize(), response, false)  == PacketResult::Success;
 }
 
-uint16_t
-GDBRemoteCommunicationClient::LaunchGDBserverAndGetPort (lldb::pid_t &pid, const char *remote_accept_hostname)
+bool
+GDBRemoteCommunicationClient::LaunchGDBServer (const char *remote_accept_hostname,
+                                               lldb::pid_t &pid,
+                                               uint16_t &port,
+                                               std::string &socket_name)
 {
     pid = LLDB_INVALID_PROCESS_ID;
+    port = 0;
+    socket_name.clear();
+
     StringExtractorGDBRemote response;
     StreamString stream;
     stream.PutCString("qLaunchGDBServer;");
@@ -3343,22 +3355,30 @@ GDBRemoteCommunicationClient::LaunchGDBserverAndGetPort (lldb::pid_t &pid, const
 
     // give the process a few seconds to startup
     GDBRemoteCommunication::ScopedTimeout timeout (*this, 10);
-    
+
     if (SendPacketAndWaitForResponse(packet, packet_len, response, false) == PacketResult::Success)
     {
         std::string name;
         std::string value;
-        uint16_t port = 0;
+        StringExtractor extractor;
         while (response.GetNameColonValue(name, value))
         {
             if (name.compare("port") == 0)
                 port = StringConvert::ToUInt32(value.c_str(), 0, 0);
             else if (name.compare("pid") == 0)
                 pid = StringConvert::ToUInt64(value.c_str(), LLDB_INVALID_PROCESS_ID, 0);
+            else if (name.compare("socket_name") == 0)
+            {
+                extractor.GetStringRef().swap(value);
+                extractor.SetFilePos(0);
+                extractor.GetHexByteString(value);
+
+                socket_name = value;
+            }
         }
-        return port;
+        return true;
     }
-    return 0;
+    return false;
 }
 
 bool

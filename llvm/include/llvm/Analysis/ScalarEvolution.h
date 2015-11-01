@@ -128,11 +128,9 @@ namespace llvm {
     /// stream.  This should really only be used for debugging purposes.
     void print(raw_ostream &OS) const;
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
     /// This method is used for debugging.
     ///
     void dump() const;
-#endif
   };
 
   // Specialize FoldingSetTrait for SCEV to avoid needing to compute
@@ -484,6 +482,17 @@ namespace llvm {
                                                   const Loop *L,
                                                   ICmpInst::Predicate p);
 
+    /// Compute the exit limit of a loop that is controlled by a
+    /// "(IV >> 1) != 0" type comparison.  We cannot compute the exact trip
+    /// count in these cases (since SCEV has no way of expressing them), but we
+    /// can still sometimes compute an upper bound.
+    ///
+    /// Return an ExitLimit for a loop whose backedge is guarded by `LHS Pred
+    /// RHS`.
+    ExitLimit computeShiftCompareExitLimit(Value *LHS, Value *RHS,
+                                           const Loop *L,
+                                           ICmpInst::Predicate Pred);
+
     /// If the loop is known to execute a constant number of times (the
     /// condition evolves only from constants), try to evaluate a few iterations
     /// of the loop until we get the exit condition gets a value of ExitWhen
@@ -575,6 +584,14 @@ namespace llvm {
     ///
     bool isKnownPredicateWithRanges(ICmpInst::Predicate Pred,
                                     const SCEV *LHS, const SCEV *RHS);
+
+    /// Try to prove the condition described by "LHS Pred RHS" by ruling out
+    /// integer overflow.
+    ///
+    /// For instance, this will return true for "A s< (A + C)<nsw>" if C is
+    /// positive.
+    bool isKnownPredicateViaNoOverflow(ICmpInst::Predicate Pred,
+                                       const SCEV *LHS, const SCEV *RHS);
 
     /// Try to split Pred LHS RHS into logical conjunctions (and's) and try to
     /// prove them individually.
@@ -1084,6 +1101,12 @@ namespace llvm {
                      SmallVectorImpl<const SCEV *> &Subscripts,
                      SmallVectorImpl<const SCEV *> &Sizes,
                      const SCEV *ElementSize);
+
+    /// Return the DataLayout associated with the module this SCEV instance is
+    /// operating on.
+    const DataLayout &getDataLayout() const {
+      return F.getParent()->getDataLayout();
+    }
 
   private:
     /// Compute the backedge taken count knowing the interval difference, the

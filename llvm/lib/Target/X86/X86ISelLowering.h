@@ -903,8 +903,7 @@ namespace llvm {
     /// Return true if the target stores SafeStack pointer at a fixed offset in
     /// some non-standard address space, and populates the address space and
     /// offset as appropriate.
-    bool getSafeStackPointerLocation(unsigned &AddressSpace,
-                                     unsigned &Offset) const override;
+    Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const override;
 
     SDValue BuildFILD(SDValue Op, EVT SrcVT, SDValue Chain, SDValue StackSlot,
                       SelectionDAG &DAG) const;
@@ -916,6 +915,9 @@ namespace llvm {
     LegalizeTypeAction getPreferredVectorAction(EVT VT) const override;
 
     bool isIntDivCheap(EVT VT, AttributeSet Attr) const override;
+
+    void markInRegArguments(SelectionDAG &DAG, TargetLowering::ArgListTy& Args)
+      const override;
 
   protected:
     std::pair<const TargetRegisterClass *, uint8_t>

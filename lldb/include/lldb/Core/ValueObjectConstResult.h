@@ -76,7 +76,7 @@ public:
     GetValueType() const override;
 
     size_t
-    CalculateNumChildren() override;
+    CalculateNumChildren(uint32_t max) override;
 
     ConstString
     GetTypeName() override;
@@ -104,7 +104,7 @@ public:
     
     lldb::addr_t
     GetAddressOf(bool scalar_is_load_address = true,
-                 AddressType *address_type = NULL) override;
+                 AddressType *address_type = nullptr) override;
     
     size_t
     GetPointeeData(DataExtractor& data,

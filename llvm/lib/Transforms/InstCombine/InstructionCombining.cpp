@@ -1453,8 +1453,13 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
       }
     }
 
-    GetElementPtrInst *NewGEP = cast<GetElementPtrInst>(Op1->clone());
+    // If not all GEPs are identical we'll have to create a new PHI node.
+    // Check that the old PHI node has only one use so that it will get
+    // removed.
+    if (DI != -1 && !PN->hasOneUse())
+      return nullptr;
 
+    GetElementPtrInst *NewGEP = cast<GetElementPtrInst>(Op1->clone());
     if (DI == -1) {
       // All the GEPs feeding the PHI are identical. Clone one down into our
       // BB so that it can be merged with the current GEP.
@@ -2734,6 +2739,27 @@ bool InstCombiner::run() {
       }
     }
 
+    // In general, it is possible for computeKnownBits to determine all bits in a
+    // value even when the operands are not all constants.
+    if (!I->use_empty() && I->getType()->isIntegerTy()) {
+      unsigned BitWidth = I->getType()->getScalarSizeInBits();
+      APInt KnownZero(BitWidth, 0);
+      APInt KnownOne(BitWidth, 0);
+      computeKnownBits(I, KnownZero, KnownOne, /*Depth*/0, I);
+      if ((KnownZero | KnownOne).isAllOnesValue()) {
+        Constant *C = ConstantInt::get(I->getContext(), KnownOne);
+        DEBUG(dbgs() << "IC: ConstFold (all bits known) to: " << *C <<
+                        " from: " << *I << '\n');
+
+        // Add operands to the worklist.
+        ReplaceInstUsesWith(*I, C);
+        ++NumConstProp;
+        EraseInstFromFunction(*I);
+        MadeIRChange = true;
+        continue;
+      }
+    }
+
     // See if we can trivially sink this instruction to a successor basic block.
     if (I->hasOneUse()) {
       BasicBlock *BB = I->getParent();
@@ -2945,8 +2971,7 @@ static bool AddReachableCodeToWorklist(BasicBlock *BB, const DataLayout &DL,
   // of the function down.  This jives well with the way that it adds all uses
   // of instructions to the worklist after doing a transformation, thus avoiding
   // some N^2 behavior in pathological cases.
-  ICWorklist.AddInitialGroup(&InstrsForInstCombineWorklist[0],
-                             InstrsForInstCombineWorklist.size());
+  ICWorklist.AddInitialGroup(InstrsForInstCombineWorklist);
 
   return MadeIRChange;
 }

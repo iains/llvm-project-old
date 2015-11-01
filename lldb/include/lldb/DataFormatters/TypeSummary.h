@@ -1,4 +1,4 @@
-//===-- TypeSummary.h --------------------------------------------*- C++ -*-===//
+//===-- TypeSummary.h -------------------------------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -15,11 +15,10 @@
 
 // C++ Includes
 #include <functional>
+#include <memory>
 #include <string>
-#include <vector>
 
 // Other libraries and framework includes
-
 // Project includes
 #include "lldb/lldb-public.h"
 #include "lldb/lldb-enumerations.h"
@@ -27,8 +26,6 @@
 #include "lldb/Core/Error.h"
 #include "lldb/Core/FormatEntity.h"
 #include "lldb/Core/StructuredData.h"
-#include "lldb/Core/ValueObject.h"
-#include "lldb/Symbol/Type.h"
 
 namespace lldb_private {
     class TypeSummaryOptions
@@ -37,6 +34,8 @@ namespace lldb_private {
         TypeSummaryOptions ();
         TypeSummaryOptions (const TypeSummaryOptions& rhs);
         
+        ~TypeSummaryOptions() = default;
+
         TypeSummaryOptions&
         operator = (const TypeSummaryOptions& rhs);
         
@@ -51,8 +50,7 @@ namespace lldb_private {
         
         TypeSummaryOptions&
         SetCapping (lldb::TypeSummaryCapping);
-        
-        ~TypeSummaryOptions() = default;
+
     private:
         lldb::LanguageType m_lang;
         lldb::TypeSummaryCapping m_capping;
@@ -65,9 +63,13 @@ namespace lldb_private {
         {
             eSummaryString,
             eScript,
-            eCallback
+            eCallback,
+            eInternal
         };
-        
+
+        virtual
+        ~TypeSummaryImpl() = default;
+
         Kind
         GetKind () const
         {
@@ -77,7 +79,6 @@ namespace lldb_private {
         class Flags
         {
         public:
-            
             Flags () :
             m_flags (lldb::eTypeOptionCascade)
             {}
@@ -278,16 +279,19 @@ namespace lldb_private {
         {
             return m_flags.GetCascades();
         }
+
         bool
         SkipsPointers () const
         {
             return m_flags.GetSkipPointers();
         }
+
         bool
         SkipsReferences () const
         {
             return m_flags.GetSkipReferences();
         }
+
         bool
         NonCacheable () const
         {
@@ -384,11 +388,6 @@ namespace lldb_private {
             m_flags.SetValue(value);
         }
         
-        virtual
-        ~TypeSummaryImpl ()
-        {
-        }
-        
         // we are using a ValueObject* instead of a ValueObjectSP because we do not need to hold on to this for
         // extended periods of time and we trust the ValueObject to stay around for as long as it is required
         // for us to generate its summary
@@ -431,10 +430,8 @@ namespace lldb_private {
         
         StringSummaryFormat(const TypeSummaryImpl::Flags& flags,
                             const char* f);
-        
-        ~StringSummaryFormat() override
-        {
-        }
+
+        ~StringSummaryFormat() override = default;
 
         const char*
         GetSummaryString () const
@@ -477,7 +474,9 @@ namespace lldb_private {
         CXXFunctionSummaryFormat (const TypeSummaryImpl::Flags& flags,
                                   Callback impl,
                                   const char* description);
-        
+
+        ~CXXFunctionSummaryFormat() override = default;
+
         Callback
         GetBackendFunction () const
         {
@@ -504,11 +503,7 @@ namespace lldb_private {
             else
                 m_description.clear();
         }
-        
-        ~CXXFunctionSummaryFormat() override
-        {
-        }
-        
+
         bool
         FormatObject(ValueObject *valobj,
 		     std::string& dest,
@@ -537,8 +532,10 @@ namespace lldb_private {
 
         ScriptSummaryFormat(const TypeSummaryImpl::Flags& flags,
                             const char *function_name,
-                            const char* python_script = NULL);
-        
+                            const char* python_script = nullptr);
+
+        ~ScriptSummaryFormat() override = default;
+
         const char*
         GetFunctionName () const
         {
@@ -568,10 +565,6 @@ namespace lldb_private {
                 m_python_script.assign(script);
             else
                 m_python_script.clear();
-        }
-        
-        ~ScriptSummaryFormat() override
-        {
         }
         
         bool

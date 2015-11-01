@@ -25,10 +25,9 @@ namespace platform_android {
 class PlatformAndroidRemoteGDBServer : public platform_gdb_server::PlatformRemoteGDBServer
 {
 public:
-    PlatformAndroidRemoteGDBServer ();
+    PlatformAndroidRemoteGDBServer();
 
-    virtual
-    ~PlatformAndroidRemoteGDBServer ();
+    ~PlatformAndroidRemoteGDBServer() override;
 
     Error
     ConnectRemote (Args& args) override;
@@ -40,8 +39,8 @@ protected:
     std::string m_device_id;
     std::map<lldb::pid_t, uint16_t> m_port_forwards;
 
-    uint16_t
-    LaunchGDBserverAndGetPort (lldb::pid_t &pid) override;
+    bool
+    LaunchGDBServer (lldb::pid_t &pid, std::string &connect_url) override;
 
     bool
     KillSpawnedProcess (lldb::pid_t pid) override;
@@ -49,21 +48,17 @@ protected:
     void
     DeleteForwardPort (lldb::pid_t pid);
 
-    std::string
-    MakeUrl(const char* scheme,
-            const char* hostname,
-            uint16_t port,
-            const char* path) override;
-
     Error
-    SetPortForwarding(const lldb::pid_t pid, const uint16_t remote_port, uint16_t &local_port);
+    MakeConnectURL(const lldb::pid_t pid,
+                   const uint16_t remote_port,
+                   const char* remote_socket_name,
+                   std::string& connect_url);
 
 private:
     DISALLOW_COPY_AND_ASSIGN (PlatformAndroidRemoteGDBServer);
-
 };
 
 } // namespace platform_android
 } // namespace lldb_private
 
-#endif  // liblldb_PlatformAndroidRemoteGDBServer_h_
+#endif // liblldb_PlatformAndroidRemoteGDBServer_h_

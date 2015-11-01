@@ -1499,9 +1499,13 @@ uint32_t SelectionDAGBuilder::getEdgeWeight(const MachineBasicBlock *Src,
 void SelectionDAGBuilder::
 addSuccessorWithWeight(MachineBasicBlock *Src, MachineBasicBlock *Dst,
                        uint32_t Weight /* = 0 */) {
-  if (!Weight)
-    Weight = getEdgeWeight(Src, Dst);
-  Src->addSuccessor(Dst, Weight);
+  if (!FuncInfo.BPI)
+    Src->addSuccessorWithoutWeight(Dst);
+  else {
+    if (!Weight)
+      Weight = getEdgeWeight(Src, Dst);
+    Src->addSuccessor(Dst, Weight);
+  }
 }
 
 
@@ -1989,7 +1993,7 @@ SelectionDAGBuilder::visitSPDescriptorFailure(StackProtectorDescriptor &SPD) {
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue Chain =
       TLI.makeLibCall(DAG, RTLIB::STACKPROTECTOR_CHECK_FAIL, MVT::isVoid,
-                      nullptr, 0, false, getCurSDLoc(), false, false).second;
+                      None, false, getCurSDLoc(), false, false).second;
   DAG.setRoot(Chain);
 }
 

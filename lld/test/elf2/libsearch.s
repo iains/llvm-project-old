@@ -10,6 +10,11 @@
 // RUN: llvm-ar rcs %t.dir/libls.a %tst.o
 // REQUIRES: x86
 
+// Should fail if no library specified
+// RUN: not ld.lld2 -l 2>&1 \
+// RUN:   | FileCheck --check-prefix=NOLIBRARY %s
+// NOLIBRARY: missing arg value for "-l", expected 1 argument.
+
 // Should not link because of undefined symbol _bar
 // RUN: not ld.lld2 -o %t3 %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=UNDEFINED %s
@@ -21,7 +26,8 @@
 // NOLIB: Unable to find library -lls
 
 // Should use explicitly specified static library
-// RUN: ld.lld2 -o %t3 %t.o -L%t.dir -l:libls.a
+// Also ensure that we accept -L <arg>
+// RUN: ld.lld2 -o %t3 %t.o -L %t.dir -l:libls.a
 // RUN: llvm-readobj --symbols %t3 | FileCheck --check-prefix=STATIC %s
 // STATIC: Symbols [
 // STATIC: Name: _static

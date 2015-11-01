@@ -12,6 +12,7 @@
 
 #include "lld/Core/LLVM.h"
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Object/ELF.h"
 
@@ -27,22 +28,36 @@ template <class ELFT> class SymbolTable;
 template <class ELFT> class SymbolTableSection;
 template <class ELFT> class StringTableSection;
 template <class ELFT> class InputSection;
+template <class ELFT> class MergeInputSection;
 template <class ELFT> class OutputSection;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class DefinedRegular;
 template <class ELFT> class ELFSymbolBody;
 
 template <class ELFT>
-typename llvm::object::ELFFile<ELFT>::uintX_t getSymVA(const SymbolBody &S);
+static inline typename llvm::object::ELFFile<ELFT>::uintX_t
+getAddend(const typename llvm::object::ELFFile<ELFT>::Elf_Rel &Rel) {
+  return 0;
+}
 
 template <class ELFT>
+static inline typename llvm::object::ELFFile<ELFT>::uintX_t
+getAddend(const typename llvm::object::ELFFile<ELFT>::Elf_Rela &Rel) {
+  return Rel.r_addend;
+}
+
+template <class ELFT>
+typename llvm::object::ELFFile<ELFT>::uintX_t getSymVA(const SymbolBody &S);
+
+template <class ELFT, bool IsRela>
 typename llvm::object::ELFFile<ELFT>::uintX_t
 getLocalRelTarget(const ObjectFile<ELFT> &File,
-                  const typename llvm::object::ELFFile<ELFT>::Elf_Rel &Sym);
+                  const llvm::object::Elf_Rel_Impl<ELFT, IsRela> &Rel);
 bool canBePreempted(const SymbolBody *Body, bool NeedsGot);
 template <class ELFT> bool includeInSymtab(const SymbolBody &B);
 
 bool includeInDynamicSymtab(const SymbolBody &B);
+bool includeInGnuHashTable(SymbolBody *B);
 
 template <class ELFT>
 bool shouldKeepInSymtab(
@@ -65,7 +80,6 @@ public:
   void setFileOffset(uintX_t Off) { Header.sh_offset = Off; }
   void writeHeaderTo(Elf_Shdr *SHdr);
   StringRef getName() { return Name; }
-  void setNameOffset(uintX_t Offset) { Header.sh_name = Offset; }
 
   unsigned SectionIndex;
 
@@ -108,6 +122,22 @@ private:
   std::vector<const SymbolBody *> Entries;
 };
 
+template <class ELFT>
+class GotPltSection final : public OutputSectionBase<ELFT> {
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+
+public:
+  GotPltSection();
+  void finalize() override;
+  void writeTo(uint8_t *Buf) override;
+  void addEntry(SymbolBody *Sym);
+  bool empty() const;
+  uintX_t getEntryAddr(const SymbolBody &B) const;
+
+private:
+  std::vector<const SymbolBody *> Entries;
+};
+
 template <class ELFT> class PltSection final : public OutputSectionBase<ELFT> {
   typedef OutputSectionBase<ELFT> Base;
   typedef typename Base::uintX_t uintX_t;
@@ -142,16 +172,22 @@ public:
 
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
-  void addSymbol(StringRef Name, bool isLocal = false);
+  void addLocalSymbol(StringRef Name);
+  void addSymbol(SymbolBody *Body);
   StringTableSection<ELFT> &getStrTabSec() const { return StrTabSec; }
   unsigned getNumSymbols() const { return NumVisible + 1; }
 
+  ArrayRef<SymbolBody *> getSymbols() const { return Symbols; }
+
 private:
   void writeLocalSymbols(uint8_t *&Buf);
-  void writeGlobalSymbols(uint8_t *&Buf);
+  void writeGlobalSymbols(uint8_t *Buf);
+
+  static uint8_t getSymbolBinding(SymbolBody *Body);
 
   SymbolTable<ELFT> &Table;
   StringTableSection<ELFT> &StrTabSec;
+  std::vector<SymbolBody *> Symbols;
   unsigned NumVisible = 0;
   unsigned NumLocals = 0;
 };
@@ -163,7 +199,7 @@ class RelocationSection final : public OutputSectionBase<ELFT> {
   typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
 
 public:
-  RelocationSection(bool IsRela);
+  RelocationSection(StringRef Name, bool IsRela);
   void addReloc(const DynamicReloc<ELFT> &Reloc) { Relocs.push_back(Reloc); }
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
@@ -192,6 +228,23 @@ private:
 };
 
 template <class ELFT>
+class MergeOutputSection final : public OutputSectionBase<ELFT> {
+  typedef typename OutputSectionBase<ELFT>::uintX_t uintX_t;
+
+  bool shouldTailMerge() const;
+
+public:
+  MergeOutputSection(StringRef Name, uint32_t sh_type, uintX_t sh_flags);
+  void addSection(MergeInputSection<ELFT> *S);
+  void writeTo(uint8_t *Buf) override;
+  unsigned getOffset(StringRef Val);
+  void finalize() override;
+
+private:
+  llvm::StringTableBuilder Builder{llvm::StringTableBuilder::RAW};
+};
+
+template <class ELFT>
 class InterpSection final : public OutputSectionBase<ELFT> {
 public:
   InterpSection();
@@ -202,14 +255,14 @@ template <class ELFT>
 class StringTableSection final : public OutputSectionBase<ELFT> {
 public:
   typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
-  StringTableSection(bool Dynamic);
+  StringTableSection(StringRef Name, bool Dynamic);
   void add(StringRef S) { StrTabBuilder.add(S); }
-  size_t getFileOff(StringRef S) const { return StrTabBuilder.getOffset(S); }
+  size_t getOffset(StringRef S) const { return StrTabBuilder.getOffset(S); }
   StringRef data() const { return StrTabBuilder.data(); }
   void writeTo(uint8_t *Buf) override;
 
   void finalize() override {
-    StrTabBuilder.finalize(llvm::StringTableBuilder::ELF);
+    StrTabBuilder.finalize();
     this->Header.sh_size = StrTabBuilder.data().size();
   }
 
@@ -217,7 +270,7 @@ public:
 
 private:
   const bool Dynamic;
-  llvm::StringTableBuilder StrTabBuilder;
+  llvm::StringTableBuilder StrTabBuilder{llvm::StringTableBuilder::ELF};
 };
 
 template <class ELFT>
@@ -226,12 +279,45 @@ class HashTableSection final : public OutputSectionBase<ELFT> {
 
 public:
   HashTableSection();
-  void addSymbol(SymbolBody *S);
+  void finalize() override;
+  void writeTo(uint8_t *Buf) override;
+};
+
+// Outputs GNU Hash section. For detailed explanation see:
+// https://blogs.oracle.com/ali/entry/gnu_hash_elf_sections
+template <class ELFT>
+class GnuHashTableSection final : public OutputSectionBase<ELFT> {
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Off Elf_Off;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Word Elf_Word;
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+
+public:
+  GnuHashTableSection();
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
 
+  // Adds symbols to the hash table.
+  // Sorts the input to satisfy GNU hash section requirements.
+  void addSymbols(std::vector<SymbolBody *> &Symbols);
+
 private:
-  std::vector<uint32_t> Hashes;
+  static unsigned calcNBuckets(unsigned NumHashed);
+  static unsigned calcMaskWords(unsigned NumHashed);
+
+  void writeHeader(uint8_t *&Buf);
+  void writeBloomFilter(uint8_t *&Buf);
+  void writeHashTable(uint8_t *Buf);
+
+  struct HashedSymbolData {
+    SymbolBody *Body;
+    uint32_t Hash;
+  };
+
+  std::vector<HashedSymbolData> HashedSymbols;
+
+  unsigned MaskWords;
+  unsigned NBuckets;
+  unsigned Shift2;
 };
 
 template <class ELFT>
@@ -256,6 +342,8 @@ private:
   SymbolTable<ELFT> &SymTab;
   const ELFSymbolBody<ELFT> *InitSym = nullptr;
   const ELFSymbolBody<ELFT> *FiniSym = nullptr;
+  uint32_t DtFlags = 0;
+  uint32_t DtFlags1 = 0;
 };
 
 // All output sections that are hadnled by the linker specially are
@@ -263,6 +351,8 @@ private:
 // until Writer is initialized.
 template <class ELFT> struct Out {
   static DynamicSection<ELFT> *Dynamic;
+  static GnuHashTableSection<ELFT> *GnuHashTab;
+  static GotPltSection<ELFT> *GotPlt;
   static GotSection<ELFT> *Got;
   static HashTableSection<ELFT> *HashTab;
   static InterpSection<ELFT> *Interp;
@@ -271,13 +361,17 @@ template <class ELFT> struct Out {
   static uint8_t *OpdBuf;
   static PltSection<ELFT> *Plt;
   static RelocationSection<ELFT> *RelaDyn;
+  static RelocationSection<ELFT> *RelaPlt;
   static StringTableSection<ELFT> *DynStrTab;
+  static StringTableSection<ELFT> *ShStrTab;
   static StringTableSection<ELFT> *StrTab;
   static SymbolTableSection<ELFT> *DynSymTab;
   static SymbolTableSection<ELFT> *SymTab;
 };
 
 template <class ELFT> DynamicSection<ELFT> *Out<ELFT>::Dynamic;
+template <class ELFT> GnuHashTableSection<ELFT> *Out<ELFT>::GnuHashTab;
+template <class ELFT> GotPltSection<ELFT> *Out<ELFT>::GotPlt;
 template <class ELFT> GotSection<ELFT> *Out<ELFT>::Got;
 template <class ELFT> HashTableSection<ELFT> *Out<ELFT>::HashTab;
 template <class ELFT> InterpSection<ELFT> *Out<ELFT>::Interp;
@@ -286,7 +380,9 @@ template <class ELFT> OutputSectionBase<ELFT> *Out<ELFT>::Opd;
 template <class ELFT> uint8_t *Out<ELFT>::OpdBuf;
 template <class ELFT> PltSection<ELFT> *Out<ELFT>::Plt;
 template <class ELFT> RelocationSection<ELFT> *Out<ELFT>::RelaDyn;
+template <class ELFT> RelocationSection<ELFT> *Out<ELFT>::RelaPlt;
 template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::DynStrTab;
+template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::ShStrTab;
 template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::StrTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::DynSymTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::SymTab;

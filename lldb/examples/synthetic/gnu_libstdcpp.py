@@ -13,7 +13,7 @@ class StdListSynthProvider:
 		logger = lldb.formatters.Logger.Logger()
 		self.valobj = valobj
 		self.count = None
-		logger >> "Providing synthetic children for a map named " + str(valobj.GetName())
+		logger >> "Providing synthetic children for a list named " + str(valobj.GetName())
 
 	def next_node(self,node):
 		logger = lldb.formatters.Logger.Logger()
@@ -21,11 +21,18 @@ class StdListSynthProvider:
 
 	def is_valid(self,node):
 		logger = lldb.formatters.Logger.Logger()
-		return self.value(self.next_node(node)) != self.node_address
+		valid = self.value(self.next_node(node)) != self.node_address
+		if valid:
+			logger >> "%s is valid" % str(self.valobj.GetName())
+		else:
+			logger >> "synthetic value is not valid"
+		return valid
 
 	def value(self,node):
 		logger = lldb.formatters.Logger.Logger()
-		return node.GetValueAsUnsigned()
+		value = node.GetValueAsUnsigned()
+		logger >> "synthetic value for {}: {}".format(str(self.valobj.GetName()), value)
+		return value
 
 	# Floyd's cycle-finding algorithm
 	# try to detect if this list has a loop
@@ -49,8 +56,13 @@ class StdListSynthProvider:
 
 	def num_children(self):
 		logger = lldb.formatters.Logger.Logger()
-		if self.count == None:
-			self.count = self.num_children_impl()
+		if self.count is None:
+			# libstdc++ 6.0.21 added dedicated count field.
+			count_child = self.node.GetChildMemberWithName('_M_data')
+			if count_child and count_child.IsValid():
+				self.count = count_child.GetValueAsUnsigned(0)
+			if self.count is None:
+				self.count = self.num_children_impl()
 		return self.count
 
 	def num_children_impl(self):
@@ -117,10 +129,10 @@ class StdListSynthProvider:
 		self.count = None
 		try:
 			impl = self.valobj.GetChildMemberWithName('_M_impl')
-			node = impl.GetChildMemberWithName('_M_node')
+			self.node = impl.GetChildMemberWithName('_M_node')
 			self.node_address = self.valobj.AddressOf().GetValueAsUnsigned(0)
-			self.next = node.GetChildMemberWithName('_M_next')
-			self.prev = node.GetChildMemberWithName('_M_prev')
+			self.next = self.node.GetChildMemberWithName('_M_next')
+			self.prev = self.node.GetChildMemberWithName('_M_prev')
 			self.data_type = self.extract_type()
 			self.data_size = self.data_type.GetByteSize()
 		except:
@@ -137,11 +149,11 @@ class StdVectorSynthProvider:
 			self.count = None
 
 		def num_children(self):
-                        if self.count == None:
-                                self.count = self.num_children_impl()
-                        return self.count
+			if self.count == None:
+				self.count = self.num_children_impl()
+			return self.count
 
-                def num_children_impl(self):
+		def num_children_impl(self):
 			try:
 				start_val = self.start.GetValueAsUnsigned(0)
 				finish_val = self.finish.GetValueAsUnsigned(0)

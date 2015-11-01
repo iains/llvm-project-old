@@ -76,7 +76,7 @@
 
 #if defined(_MSC_VER)
 #include "lldb/Host/windows/windows.h"
-#include "Plugins/Process/Windows/Live/ProcessWindows.h"
+#include "Plugins/Process/Windows/Live/ProcessWindowsLive.h"
 #include "Plugins/Process/Windows/MiniDump/ProcessWinMiniDump.h"
 #endif
 
@@ -149,7 +149,7 @@ LLDBSWIGPythonCallThreadPlan (void *implementor,
                               bool &got_error);
 
 extern "C" size_t
-LLDBSwigPython_CalculateNumChildren (void *implementor);
+LLDBSwigPython_CalculateNumChildren (void *implementor, uint32_t max);
 
 extern "C" void *
 LLDBSwigPython_GetChildAtIndex (void *implementor, uint32_t idx);
@@ -307,7 +307,7 @@ SystemInitializerFull::Initialize()
     ObjCPlusPlusLanguage::Initialize();
 
 #if defined(_MSC_VER)
-    ProcessWindows::Initialize();
+    ProcessWindowsLive::Initialize();
 #endif
 #if defined(__FreeBSD__)
     ProcessFreeBSD::Initialize();

@@ -98,11 +98,11 @@ USEDLIBS = lldbAPI.a \
 	LLVMMCDisassembler.a \
 	LLVMProfileData.a \
 	LLVMObjCARCOpts.a \
-	LLVMSupport.a \
 	lldbPluginPlatformMacOSX.a \
 	lldbPluginPlatformLinux.a \
 	lldbPluginPlatformWindows.a \
 	lldbPluginPlatformFreeBSD.a \
+	lldbPluginPlatformNetBSD.a \
 	lldbPluginPlatformPOSIX.a \
 	lldbPluginPlatformKalimba.a \
 	lldbPluginPlatformAndroid.a \
@@ -140,6 +140,10 @@ endif
 ifneq (,$(filter $(HOST_OS), FreeBSD GNU/kFreeBSD))
   USEDLIBS += lldbPluginProcessPOSIX.a \
               lldbPluginProcessFreeBSD.a
+endif
+
+ifeq ($(HOST_OS),NetBSD)
+  USEDLIBS += lldbPluginProcessPOSIX.a
 endif
 
 include $(LEVEL)/Makefile.common

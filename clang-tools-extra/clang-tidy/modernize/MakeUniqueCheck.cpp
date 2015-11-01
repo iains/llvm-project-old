@@ -18,9 +18,9 @@ namespace clang {
 namespace tidy {
 namespace modernize {
 
-const char PointerType[] = "pointerType";
-const char ConstructorCall[] = "constructorCall";
-const char NewExpression[] = "newExpression";
+static const char PointerType[] = "pointerType";
+static const char ConstructorCall[] = "constructorCall";
+static const char NewExpression[] = "newExpression";
 
 void MakeUniqueCheck::registerMatchers(MatchFinder *Finder) {
   if (getLangOpts().CPlusPlus11) {
@@ -79,8 +79,8 @@ void MakeUniqueCheck::check(const MatchFinder::MatchResult &Result) {
     // If the template argument is missing (because it is part of the alias)
     // we have to add it back.
     ConstructCallEnd = ConstructCallStart.getLocWithOffset(ExprStr.size());
-    Diag << FixItHint::CreateInsertion(ConstructCallEnd,
-                                       "<" + Type->getAsString() + ">");
+    Diag << FixItHint::CreateInsertion(
+        ConstructCallEnd, "<" + Type->getAsString(getLangOpts()) + ">");
   } else {
     ConstructCallEnd = ConstructCallStart.getLocWithOffset(LAngle);
   }

@@ -4,11 +4,13 @@ List of clang-tidy Checks
 .. toctree::
    cert-setlongjmp
    cert-variadic-function-def
+   cppcoreguidelines-pro-bounds-array-to-pointer-decay
    cppcoreguidelines-pro-bounds-pointer-arithmetic
    cppcoreguidelines-pro-type-const-cast
    cppcoreguidelines-pro-type-reinterpret-cast
    cppcoreguidelines-pro-type-static-cast-downcast
    cppcoreguidelines-pro-type-union-access
+   cppcoreguidelines-pro-type-vararg
    google-build-explicit-make-pair
    google-build-namespaces
    google-build-using-namespace
@@ -55,6 +57,7 @@ List of clang-tidy Checks
    modernize-replace-auto-ptr
    modernize-shrink-to-fit
    modernize-use-auto
+   modernize-use-default
    modernize-use-nullptr
    modernize-use-override
    readability-braces-around-statements
@@ -62,8 +65,10 @@ List of clang-tidy Checks
    readability-else-after-return
    readability-function-size
    readability-identifier-naming
+   readability-implicit-bool-cast
    readability-inconsistent-declaration-parameter-name
    readability-named-parameter
    readability-redundant-smartptr-get
    readability-redundant-string-cstr
    readability-simplify-boolean-expr
+   readability-uniqueptr-delete-release

@@ -71,7 +71,7 @@ def grp_general : OptionGroup<"opts">,
 def output : Separate<["-"], "o">, MetaVarName<"<path>">,
      HelpText<"Path to file to write output">,
      Group<grp_general>;
-def m : Separate<["-"], "m">, MetaVarName<"<emulation>">,
+def m : JoinedOrSeparate<["-"], "m">, MetaVarName<"<emulation>">,
      HelpText<"Select target emulation">,
      Group<grp_general>;
 def build_id : Flag<["--"], "build-id">,
@@ -366,6 +366,9 @@ def Qy : Flag<["-"], "Qy">,
      Group<grp_ignored>;
 def qmagic : Flag<["-"], "qmagic">,
      HelpText<"Ignored for Linux Compatibility">,
+     Group<grp_ignored>;
+def G : Separate<["-"], "G">,
+     HelpText<"Ignored for MIPS GNU Linker Compatibility">,
      Group<grp_ignored>;
 
 //===----------------------------------------------------------------------===//

@@ -1,4 +1,4 @@
-// RUN: %python %S/check_clang_tidy.py %s misc-move-constructor-init %t -- -std=c++11 -isystem %S/Inputs/Headers
+// RUN: %check_clang_tidy %s misc-move-constructor-init %t -- -- -std=c++11 -isystem %S/Inputs/Headers
 
 #include <s.h>
 
@@ -118,11 +118,6 @@ struct NegativeParamTriviallyCopyable {
 
   TriviallyCopyable T_;
   int I_;
-};
-
-template <typename T> struct NegativeDependentType {
-  NegativeDependentType(T Value) : T_(Value) {}
-  T T_;
 };
 
 struct NegativeNotPassedByValue {

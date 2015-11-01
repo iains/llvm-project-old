@@ -2,11 +2,13 @@ set(LLVM_LINK_COMPONENTS support)
 
 add_clang_library(clangTidyCppCoreGuidelinesModule
   CppCoreGuidelinesTidyModule.cpp
+  ProBoundsArrayToPointerDecayCheck.cpp
   ProBoundsPointerArithmeticCheck.cpp
   ProTypeConstCastCheck.cpp
   ProTypeReinterpretCastCheck.cpp
   ProTypeStaticCastDowncastCheck.cpp
   ProTypeUnionAccessCheck.cpp
+  ProTypeVarargCheck.cpp
 
   LINK_LIBS
   clangAST
@@ -14,7 +16,6 @@ add_clang_library(clangTidyCppCoreGuidelinesModule
   clangBasic
   clangLex
   clangTidy
-  clangTidyCERTModule
   clangTidyMiscModule
   clangTidyUtils
   clangTooling

@@ -9,7 +9,6 @@
 
 #include "lldb/DataFormatters/StringPrinter.h"
 
-#include "lldb/Core/DataExtractor.h"
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/Error.h"
 #include "lldb/Core/ValueObject.h"
@@ -258,6 +257,7 @@ StringPrinter::GetDefaultEscapingHelper (GetPrintableElementType elem_type)
                 return GetPrintable(StringPrinter::StringElementType::ASCII, buffer, buffer_end, next);
             };
     }
+    llvm_unreachable("bad element type");
 }
 
 // use this call if you already have an LLDB-side buffer for the data
@@ -324,8 +324,8 @@ DumpUTFBufferToStream (ConversionResult (*ConvertFunction) (const SourceDataType
         {
             // just copy the pointers - the cast is necessary to make the compiler happy
             // but this should only happen if we are reading UTF8 data
-            utf8_data_ptr = (UTF8*)data_ptr;
-            utf8_data_end_ptr = (UTF8*)data_end_ptr;
+            utf8_data_ptr = const_cast<UTF8 *>(reinterpret_cast<const UTF8*>(data_ptr));
+            utf8_data_end_ptr = const_cast<UTF8 *>(reinterpret_cast<const UTF8*>(data_end_ptr));
         }
         
         const bool escape_non_printables = dump_options.GetEscapeNonPrintables();
