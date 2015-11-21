@@ -500,6 +500,21 @@ FormatManager::LoopThroughCategories (CategoryCallback callback, void* param)
     }
 }
 
+void
+FormatManager::ForEachCategory(TypeCategoryMap::ForEachCallback callback)
+{
+    m_categories_map.ForEach(callback);
+    Mutex::Locker locker(m_language_categories_mutex);
+    for (const auto& entry : m_language_categories_map)
+    {
+        if (auto category_sp = entry.second->GetCategory())
+        {
+            if (!callback(category_sp))
+                break;
+        }
+    }
+}
+
 lldb::TypeCategoryImplSP
 FormatManager::GetCategory (const ConstString& category_name,
                             bool can_create)
@@ -568,7 +583,7 @@ FormatManager::ShouldPrintAsOneLiner (ValueObject& valobj)
     CompilerType compiler_type(valobj.GetCompilerType());
     if (compiler_type.IsValid())
     {
-        switch (compiler_type.ShouldPrintAsOneLiner())
+        switch (compiler_type.ShouldPrintAsOneLiner(&valobj))
         {
             case eLazyBoolNo:
                 return false;
@@ -590,6 +605,23 @@ FormatManager::ShouldPrintAsOneLiner (ValueObject& valobj)
         // something is wrong here - bail out
         if (!child_sp)
             return false;
+        
+        // also ask the child's type if it has any opinion
+        CompilerType child_compiler_type(child_sp->GetCompilerType());
+        if (child_compiler_type.IsValid())
+        {
+            switch (child_compiler_type.ShouldPrintAsOneLiner(child_sp.get()))
+            {
+                case eLazyBoolYes:
+                    // an opinion of yes is only binding for the child, so keep going
+                case eLazyBoolCalculate:
+                    break;
+                case eLazyBoolNo:
+                    // but if the child says no, then it's a veto on the whole thing
+                    return false;
+            }
+        }
+        
         // if we decided to define synthetic children for a type, we probably care enough
         // to show them, but avoid nesting children in children
         if (child_sp->GetSyntheticChildren().get() != nullptr)

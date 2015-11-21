@@ -27,7 +27,9 @@ class SymbolBody;
 template <class ELFT> class SymbolTable;
 template <class ELFT> class SymbolTableSection;
 template <class ELFT> class StringTableSection;
+template <class ELFT> class EHInputSection;
 template <class ELFT> class InputSection;
+template <class ELFT> class InputSectionBase;
 template <class ELFT> class MergeInputSection;
 template <class ELFT> class OutputSection;
 template <class ELFT> class ObjectFile;
@@ -116,8 +118,20 @@ public:
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
   void addEntry(SymbolBody *Sym);
+  void addDynTlsEntry(SymbolBody *Sym);
+  uint32_t addLocalModuleTlsIndex();
   bool empty() const { return Entries.empty(); }
   uintX_t getEntryAddr(const SymbolBody &B) const;
+
+  // Returns the symbol which corresponds to the first entry of the global part
+  // of GOT on MIPS platform. It is required to fill up MIPS-specific dynamic
+  // table properties.
+  // Returns nullptr if the global part is empty.
+  const SymbolBody *getMipsFirstGlobalEntry() const;
+
+  // Returns the number of entries in the local part of GOT including
+  // the number of reserved entries. This method is MIPS-specific.
+  unsigned getMipsLocalEntriesNum() const;
 
 private:
   std::vector<const SymbolBody *> Entries;
@@ -157,8 +171,8 @@ private:
 
 template <class ELFT> struct DynamicReloc {
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Rel Elf_Rel;
-  const InputSection<ELFT> &C;
-  const Elf_Rel &RI;
+  InputSectionBase<ELFT> *C;
+  const Elf_Rel *RI;
 };
 
 template <class ELFT>
@@ -243,6 +257,46 @@ public:
 
 private:
   llvm::StringTableBuilder Builder{llvm::StringTableBuilder::RAW};
+};
+
+// FDE or CIE
+template <class ELFT> struct EHRegion {
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+  EHRegion(EHInputSection<ELFT> *S, unsigned Index);
+  StringRef data() const;
+  EHInputSection<ELFT> *S;
+  unsigned Index;
+};
+
+template <class ELFT> struct Cie : public EHRegion<ELFT> {
+  Cie(EHInputSection<ELFT> *S, unsigned Index);
+  std::vector<EHRegion<ELFT>> Fdes;
+};
+
+template <class ELFT>
+class EHOutputSection final : public OutputSectionBase<ELFT> {
+public:
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Rel Elf_Rel;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Rela Elf_Rela;
+  EHOutputSection(StringRef Name, uint32_t sh_type, uintX_t sh_flags);
+  void writeTo(uint8_t *Buf) override;
+
+  template <bool IsRela>
+  void addSectionAux(
+      EHInputSection<ELFT> *S,
+      llvm::iterator_range<const llvm::object::Elf_Rel_Impl<ELFT, IsRela> *>
+          Rels);
+
+  void addSection(EHInputSection<ELFT> *S);
+
+private:
+  std::vector<EHInputSection<ELFT> *> Sections;
+  std::vector<Cie<ELFT>> Cies;
+
+  // Maps CIE content + personality to a index in Cies.
+  llvm::DenseMap<std::pair<StringRef, StringRef>, unsigned> CieMap;
 };
 
 template <class ELFT>
@@ -360,6 +414,7 @@ template <class ELFT> struct Out {
   static HashTableSection<ELFT> *HashTab;
   static InterpSection<ELFT> *Interp;
   static OutputSection<ELFT> *Bss;
+  static OutputSection<ELFT> *MipsRldMap;
   static OutputSectionBase<ELFT> *Opd;
   static uint8_t *OpdBuf;
   static PltSection<ELFT> *Plt;
@@ -371,6 +426,7 @@ template <class ELFT> struct Out {
   static SymbolTableSection<ELFT> *DynSymTab;
   static SymbolTableSection<ELFT> *SymTab;
   static Elf_Phdr *TlsPhdr;
+  static uint32_t LocalModuleTlsIndexOffset;
 };
 
 template <class ELFT> DynamicSection<ELFT> *Out<ELFT>::Dynamic;
@@ -380,6 +436,7 @@ template <class ELFT> GotSection<ELFT> *Out<ELFT>::Got;
 template <class ELFT> HashTableSection<ELFT> *Out<ELFT>::HashTab;
 template <class ELFT> InterpSection<ELFT> *Out<ELFT>::Interp;
 template <class ELFT> OutputSection<ELFT> *Out<ELFT>::Bss;
+template <class ELFT> OutputSection<ELFT> *Out<ELFT>::MipsRldMap;
 template <class ELFT> OutputSectionBase<ELFT> *Out<ELFT>::Opd;
 template <class ELFT> uint8_t *Out<ELFT>::OpdBuf;
 template <class ELFT> PltSection<ELFT> *Out<ELFT>::Plt;
@@ -391,6 +448,7 @@ template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::StrTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::DynSymTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::SymTab;
 template <class ELFT> typename Out<ELFT>::Elf_Phdr *Out<ELFT>::TlsPhdr;
+template <class ELFT> uint32_t Out<ELFT>::LocalModuleTlsIndexOffset = -1;
 
 } // namespace elf2
 } // namespace lld

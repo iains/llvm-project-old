@@ -424,8 +424,11 @@ public:
     virtual bool
     IsPossibleDynamicType ();
 
-    virtual bool
-    IsObjCNil ();
+    bool
+    IsNilReference ();
+    
+    bool
+    IsUninitializedReference ();
     
     virtual bool
     IsBaseClass ()
@@ -1004,8 +1007,20 @@ public:
     virtual bool
     MightHaveChildren();
     
+    virtual lldb::VariableSP
+    GetVariable ()
+    {
+        return nullptr;
+    }
+
     virtual bool
     IsRuntimeSupportValue ();
+    
+    virtual uint64_t
+    GetLanguageFlags ();
+    
+    virtual void
+    SetLanguageFlags (uint64_t flags);
 
 protected:
     typedef ClusterManager<ValueObject> ValueObjectManager;
@@ -1123,6 +1138,8 @@ protected:
     llvm::SmallVector<uint8_t, 16> m_value_checksum;
     
     lldb::LanguageType m_preferred_display_language;
+    
+    uint64_t m_language_flags;
     
     bool                m_value_is_valid:1,
                         m_value_did_change:1,

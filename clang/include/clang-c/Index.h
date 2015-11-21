@@ -2860,7 +2860,8 @@ enum CXTypeKind {
   CXType_IncompleteArray = 114,
   CXType_VariableArray = 115,
   CXType_DependentSizedArray = 116,
-  CXType_MemberPointer = 117
+  CXType_MemberPointer = 117,
+  CXType_Auto = 118
 };
 
 /**
@@ -3861,6 +3862,12 @@ CINDEX_LINKAGE CXString clang_Cursor_getBriefCommentText(CXCursor C);
  * \brief Retrieve the CXString representing the mangled name of the cursor.
  */
 CINDEX_LINKAGE CXString clang_Cursor_getMangling(CXCursor);
+
+/**
+ * \brief Retrieve the CXStrings representing the mangled symbols of the C++
+ * constructor or destructor at the cursor.
+ */
+CINDEX_LINKAGE CXStringSet *clang_Cursor_getCXXManglings(CXCursor);
 
 /**
  * @}

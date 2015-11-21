@@ -227,6 +227,14 @@ CompilerType::IsReferenceType (CompilerType *pointee_type, bool* is_rvalue) cons
 }
 
 bool
+CompilerType::ShouldTreatScalarValueAsAddress () const
+{
+    if (IsValid())
+        return m_type_system->ShouldTreatScalarValueAsAddress(m_type);
+    return false;
+}
+
+bool
 CompilerType::IsFloatingPointType (uint32_t &count, bool &is_complex) const
 {
     if (IsValid())
@@ -772,7 +780,8 @@ CompilerType::GetChildCompilerTypeAtIndex (ExecutionContext *exe_ctx,
                                            uint32_t &child_bitfield_bit_offset,
                                            bool &child_is_base_class,
                                            bool &child_is_deref_of_parent,
-                                           ValueObject *valobj) const
+                                           ValueObject *valobj,
+                                           uint64_t &language_flags) const
 {
     if (!IsValid())
         return CompilerType();
@@ -789,7 +798,8 @@ CompilerType::GetChildCompilerTypeAtIndex (ExecutionContext *exe_ctx,
                                                       child_bitfield_bit_offset,
                                                       child_is_base_class,
                                                       child_is_deref_of_parent,
-                                                      valobj);
+                                                      valobj,
+                                                      language_flags);
 }
 
 // Look for a child member (doesn't include base classes, but it does include
@@ -868,10 +878,10 @@ CompilerType::GetTypeForFormatters () const
 }
 
 LazyBool
-CompilerType::ShouldPrintAsOneLiner () const
+CompilerType::ShouldPrintAsOneLiner (ValueObject* valobj) const
 {
     if (IsValid())
-        return m_type_system->ShouldPrintAsOneLiner(m_type);
+        return m_type_system->ShouldPrintAsOneLiner(m_type, valobj);
     return eLazyBoolCalculate;
 }
 

@@ -71,18 +71,19 @@ template <class ELFT> static bool isReserved(InputSectionBase<ELFT> *Sec) {
   default:
     StringRef S = Sec->getSectionName();
     return S.startswith(".init") || S.startswith(".fini") ||
-           S.startswith(".jcr") || S == ".eh_frame";
+           S.startswith(".jcr");
   }
 }
 
 template <class ELFT> void lld::elf2::markLive(SymbolTable<ELFT> *Symtab) {
-  SmallVector<InputSectionBase<ELFT> *, 256> Q;
+  SmallVector<InputSection<ELFT> *, 256> Q;
 
   auto Enqueue = [&](InputSectionBase<ELFT> *Sec) {
     if (!Sec || Sec->Live)
       return;
     Sec->Live = true;
-    Q.push_back(Sec);
+    if (InputSection<ELFT> *S = dyn_cast<InputSection<ELFT>>(Sec))
+      Q.push_back(S);
   };
 
   auto MarkSymbol = [&](SymbolBody *Sym) {
@@ -109,16 +110,22 @@ template <class ELFT> void lld::elf2::markLive(SymbolTable<ELFT> *Symtab) {
   }
 
   // Preserve special sections.
-  for (const std::unique_ptr<ObjectFile<ELFT>> &F : Symtab->getObjectFiles())
-    for (InputSectionBase<ELFT> *Sec : F->getSections())
-      if (Sec && Sec != &InputSection<ELFT>::Discarded)
-        if (isReserved(Sec))
-          Enqueue(Sec);
+  for (const std::unique_ptr<ObjectFile<ELFT>> &F : Symtab->getObjectFiles()) {
+    for (InputSectionBase<ELFT> *Sec : F->getSections()) {
+      if (!Sec || Sec == &InputSection<ELFT>::Discarded)
+        continue;
+      if (isReserved(Sec))
+        Enqueue(Sec);
+      else if (Sec->getSectionName() == ".eh_frame")
+        // .eh_frame is special. It should be marked live so that we don't
+        // drop it, but it should not keep any section alive.
+        Sec->Live = true;
+    }
+  }
 
   // Mark all reachable sections.
   while (!Q.empty())
-    if (auto *Sec = dyn_cast<InputSection<ELFT>>(Q.pop_back_val()))
-      forEachSuccessor<ELFT>(Sec, Enqueue);
+    forEachSuccessor<ELFT>(Q.pop_back_val(), Enqueue);
 }
 
 template void lld::elf2::markLive<ELF32LE>(SymbolTable<ELF32LE> *);

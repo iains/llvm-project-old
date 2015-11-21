@@ -67,6 +67,9 @@ def warn_wrong_absolute_value_type : Warning<
   "when argument is of %select{integer|floating point|complex}2 type">,
   InGroup<AbsoluteValue>;
 def note_replace_abs_function : Note<"use function '%0' instead">;
+def warn_pointer_abs : Warning<
+  "taking the absolute value of %select{pointer|function|array}0 type %1 is suspicious">,
+  InGroup<AbsoluteValue>;
 
 def warn_infinite_recursive_function : Warning<
   "all paths through this function will call itself">,
@@ -188,6 +191,60 @@ def ext_flexible_array_init : Extension<
   "flexible array initialization is a GNU extension">, InGroup<GNUFlexibleArrayInitializer>;
 
 // Declarations.
+def ext_duplicate_declspec : ExtWarn<"duplicate '%0' declaration specifier">,
+  InGroup<DuplicateDeclSpecifier>;
+def warn_duplicate_declspec : Warning<"duplicate '%0' declaration specifier">,
+  InGroup<DuplicateDeclSpecifier>;
+def ext_plain_complex : ExtWarn<
+  "plain '_Complex' requires a type specifier; assuming '_Complex double'">;
+def ext_integer_complex : Extension<
+  "complex integer types are a GNU extension">, InGroup<GNUComplexInteger>;
+
+def err_invalid_sign_spec : Error<"'%0' cannot be signed or unsigned">;
+def err_invalid_width_spec : Error<
+  "'%select{|short|long|long long}0 %1' is invalid">;
+def err_invalid_complex_spec : Error<"'_Complex %0' is invalid">;
+def err_friend_decl_spec : Error<"'%0' is invalid in friend declarations">;
+
+def ext_auto_type_specifier : ExtWarn<
+  "'auto' type specifier is a C++11 extension">, InGroup<CXX11>;
+def warn_auto_storage_class : Warning<
+  "'auto' storage class specifier is redundant and incompatible with C++11">,
+  InGroup<CXX11Compat>, DefaultIgnore;
+
+def warn_deprecated_register : Warning<
+  "'register' storage class specifier is deprecated">,
+  InGroup<DeprecatedRegister>;
+
+def err_invalid_decl_spec_combination : Error<
+  "cannot combine with previous '%0' declaration specifier">;
+def err_invalid_vector_decl_spec_combination : Error<
+  "cannot combine with previous '%0' declaration specifier. "
+  "'__vector' must be first">;
+def err_invalid_pixel_decl_spec_combination : Error<
+  "'__pixel' must be preceded by '__vector'.  "
+  "'%0' declaration specifier not allowed here">;
+def err_invalid_vector_bool_decl_spec : Error<
+  "cannot use '%0' with '__vector bool'">;
+def err_invalid_vector_long_decl_spec : Error<
+  "cannot use 'long' with '__vector'">;
+def err_invalid_vector_float_decl_spec : Error<
+  "cannot use 'float' with '__vector'">;
+def err_invalid_vector_double_decl_spec : Error <
+  "use of 'double' with '__vector' requires VSX support to be enabled "
+  "(available on POWER7 or later)">;
+def err_invalid_vector_long_long_decl_spec : Error <
+  "use of 'long long' with '__vector bool' requires VSX support (available on "
+  "POWER7 or later) or extended Altivec support (available on POWER8 or later) " 
+  "to be enabled">;
+def err_invalid_vector_long_double_decl_spec : Error<
+  "cannot use 'long double' with '__vector'">;
+def warn_vector_long_decl_spec_combination : Warning<
+  "Use of 'long' with '__vector' is deprecated">, InGroup<Deprecated>;
+
+def err_use_of_tag_name_without_tag : Error<
+  "must use '%1' tag to refer to type %0%select{| in this scope}2">;
+
 def err_redeclaration_different_type : Error<
   "redeclaration of %0 with a different type%diff{: $ vs $|}1,2">;
 def err_bad_variable_name : Error<
@@ -431,6 +488,10 @@ def err_builtin_definition : Error<"definition of builtin function %0">;
 def err_arm_invalid_specialreg : Error<"invalid special register for builtin">;
 def err_invalid_cpu_supports : Error<"invalid cpu feature string for builtin">;
 def err_builtin_needs_feature : Error<"%0 needs target feature %1">;
+def err_function_needs_feature
+    : Error<"always_inline function %1 requires target feature '%2', but would "
+            "be inlined into function %0 that is compiled without support for "
+            "'%2'">;
 def warn_builtin_unknown : Warning<"use of unknown builtin %0">,
   InGroup<ImplicitFunctionDeclare>, DefaultError;
 def warn_dyn_class_memaccess : Warning<
@@ -1664,18 +1725,22 @@ def warn_cxx98_compat_auto_type_specifier : Warning<
   "'auto' type specifier is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_auto_variable_cannot_appear_in_own_initializer : Error<
-  "variable %0 declared with 'auto' type cannot appear in its own initializer">;
+  "variable %0 declared with %select{'auto'|'decltype(auto)'|'__auto_type'}1 "
+  "type cannot appear in its own initializer">;
 def err_illegal_decl_array_of_auto : Error<
   "'%0' declared as array of %1">;
 def err_new_array_of_auto : Error<
   "cannot allocate array of 'auto'">;
 def err_auto_not_allowed : Error<
-  "%select{'auto'|'decltype(auto)'}0 not allowed %select{in function prototype"
-  "|in non-static struct member"
-  "|in non-static union member|in non-static class member|in interface member"
+  "%select{'auto'|'decltype(auto)'|'__auto_type'}0 not allowed "
+  "%select{in function prototype"
+  "|in non-static struct member|in struct member"
+  "|in non-static union member|in union member"
+  "|in non-static class member|in interface member"
   "|in exception declaration|in template parameter|in block literal"
   "|in template argument|in typedef|in type alias|in function return type"
-  "|in conversion function type|here|in lambda parameter}1">;
+  "|in conversion function type|here|in lambda parameter"
+  "|in type allocated by 'new'|in K&R-style function parameter}1">;
 def err_auto_not_allowed_var_inst : Error<
   "'auto' variable template instantiation is not allowed">;
 def err_auto_var_requires_init : Error<
@@ -1689,12 +1754,8 @@ def err_auto_var_init_no_expression : Error<
 def err_auto_var_init_multiple_expressions : Error<
   "initializer for variable %0 with type %1 contains multiple expressions">;
 def err_auto_var_init_paren_braces : Error<
-  "cannot deduce type for variable %0 with type %1 from "
-  "parenthesized initializer list">;
-def warn_auto_var_direct_list_init : Warning<
-  "direct list initialization of a variable with a deduced type will change "
-  "meaning in a future version of Clang; insert an '=' to avoid a change in "
-  "behavior">, InGroup<FutureCompat>;
+  "cannot deduce type for variable %1 with type %2 from "
+  "%select{parenthesized|nested}0 initializer list">;
 def err_auto_new_ctor_multiple_expressions : Error<
   "new expression for type %0 contains multiple constructor arguments">;
 def err_auto_missing_trailing_return : Error<
@@ -1713,8 +1774,8 @@ def err_auto_var_deduction_failure_from_init_list : Error<
 def err_auto_new_deduction_failure : Error<
   "new expression for type %0 has incompatible constructor argument of type %1">;
 def err_auto_different_deductions : Error<
-  "'%select{auto|decltype(auto)}0' deduced as %1 in declaration of %2 and "
-  "deduced as %3 in declaration of %4">;
+  "'%select{auto|decltype(auto)|__auto_type}0' deduced as %1 in declaration "
+  "of %2 and deduced as %3 in declaration of %4">;
 def err_implied_std_initializer_list_not_found : Error<
   "cannot deduce type of initializer list because std::initializer_list was "
   "not found; include <initializer_list>">;
@@ -1724,6 +1785,10 @@ def warn_dangling_std_initializer_list : Warning<
   "array backing the initializer list will be destroyed at the end of "
   "%select{the full-expression|the constructor}0">,
   InGroup<DiagGroup<"dangling-initializer-list">>;
+def err_auto_init_list_from_c : Error<
+  "cannot use __auto_type with initializer list in C">;
+def err_auto_bitfield : Error<
+  "cannot pass bit-field as __auto_type initializer in C">;
 
 // C++1y decltype(auto) type
 def err_decltype_auto_cannot_be_combined : Error<
@@ -1990,6 +2055,8 @@ def err_function_concept_exception_spec : Error<
 def err_concept_decl_invalid_specifiers : Error<
   "%select{variable|function}0 concept cannot be declared "
   "'%select{thread_local|inline|friend|constexpr}1'">;
+def err_function_concept_with_params : Error<
+  "function concept cannot have any parameters">;
 
 // C++11 char16_t/char32_t
 def warn_cxx98_compat_unicode_type : Warning<
@@ -4085,6 +4152,12 @@ def warn_undefined_inline : Warning<"inline function %q0 is not defined">,
   InGroup<DiagGroup<"undefined-inline">>;
 def note_used_here : Note<"used here">;
 
+def err_internal_linkage_redeclaration : Error<
+  "'internal_linkage' attribute does not appear on the first declaration of %0">;
+def warn_internal_linkage_local_storage : Warning<
+  "'internal_linkage' attribute on a non-static local variable is ignored">,
+  InGroup<IgnoredAttributes>;
+
 def ext_internal_in_extern_inline : ExtWarn<
   "static %select{function|variable}0 %1 is used in an inline function with "
   "external linkage">, InGroup<StaticInInline>;
@@ -4546,9 +4619,6 @@ def err_synthesizing_arc_weak_property_disabled : Error<
 def err_synthesizing_arc_weak_property_no_runtime : Error<
   "cannot synthesize weak property because the current deployment target "
   "does not support weak references">;
-def warn_objc_weak_compat : Warning<
-  "the meaning of __weak has changed in manual reference-counting">,
-  InGroup<DiagGroup<"objc-weak-compat">>, DefaultIgnore;
 def err_arc_unsupported_weak_class : Error<
   "class is incompatible with __weak references">;
 def err_arc_weak_unavailable_assign : Error<
@@ -4810,8 +4880,8 @@ def err_sizeof_alignof_function_type : Error<
   "function type">;
 def err_openmp_default_simd_align_expr : Error<
   "invalid application of '__builtin_omp_required_simd_align' to an expression, only type is allowed">;
-def err_sizeof_alignof_bitfield : Error<
-  "invalid application of '%select{sizeof|alignof}0' to bit-field">;
+def err_sizeof_alignof_typeof_bitfield : Error<
+  "invalid application of '%select{sizeof|alignof|typeof}0' to bit-field">;
 def err_alignof_member_of_incomplete_type : Error<
   "invalid application of 'alignof' to a field of a class still being defined">;
 def err_vecstep_non_scalar_vector_type : Error<
@@ -5813,8 +5883,8 @@ let CategoryName = "Lambda Issue" in {
   def err_init_capture_multiple_expressions : Error<
     "initializer for lambda capture %0 contains multiple expressions">;
   def err_init_capture_paren_braces : Error<
-    "cannot deduce type for lambda capture %0 from "
-    "parenthesized initializer list">;
+    "cannot deduce type for lambda capture %1 from "
+    "%select{parenthesized|nested}0 initializer list">;
   def err_init_capture_deduction_failure : Error<
     "cannot deduce type for lambda capture %0 from initializer of type %2">;
   def err_init_capture_deduction_failure_from_init_list : Error<
@@ -7552,6 +7622,11 @@ def err_atomic_init_constant : Error<
   " in the declaration statement in the program scope">;
 def err_opencl_implicit_vector_conversion : Error<
   "implicit conversions between vector types (%0 and %1) are not permitted">;
+
+// OpenCL Section 6.8.g
+def err_opencl_unknown_type_specifier : Error<
+  "OpenCL does not support the '%0' %select{type qualifier|storage class specifier}1">;
+
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {

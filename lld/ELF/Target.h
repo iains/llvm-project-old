@@ -22,13 +22,23 @@ class SymbolBody;
 class TargetInfo {
 public:
   unsigned getPageSize() const { return PageSize; }
-  uint64_t getVAStart() const { return VAStart; }
+  uint64_t getVAStart() const;
   unsigned getCopyReloc() const { return CopyReloc; }
   unsigned getPCRelReloc() const { return PCRelReloc; }
   unsigned getGotReloc() const { return GotReloc; }
   unsigned getPltReloc() const { return PltReloc; }
   unsigned getGotRefReloc() const { return GotRefReloc; }
   unsigned getRelativeReloc() const { return RelativeReloc; }
+  unsigned getTlsGotReloc() const { return TlsGotReloc; }
+  unsigned getTlsPcRelGotReloc() const { return TlsPcRelGotReloc; }
+  bool isTlsLocalDynamicReloc(unsigned Type) const {
+    return Type == TlsLocalDynamicReloc;
+  }
+  bool isTlsGlobalDynamicReloc(unsigned Type) const {
+    return Type == TlsGlobalDynamicReloc;
+  }
+  unsigned getTlsModuleIndexReloc() const { return TlsModuleIndexReloc; }
+  unsigned getTlsOffsetReloc() const { return TlsOffsetReloc; }
   unsigned getPltZeroEntrySize() const { return PltZeroEntrySize; }
   unsigned getPltEntrySize() const { return PltEntrySize; }
   bool supportsLazyRelocations() const { return LazyRelocations; }
@@ -67,6 +77,12 @@ protected:
   unsigned GotReloc;
   unsigned PltReloc;
   unsigned RelativeReloc;
+  unsigned TlsGotReloc = 0;
+  unsigned TlsLocalDynamicReloc = 0;
+  unsigned TlsGlobalDynamicReloc = 0;
+  unsigned TlsModuleIndexReloc;
+  unsigned TlsOffsetReloc;
+  unsigned TlsPcRelGotReloc = 0;
   unsigned PltEntrySize = 8;
   unsigned PltZeroEntrySize = 0;
   unsigned GotHeaderEntriesNum = 0;

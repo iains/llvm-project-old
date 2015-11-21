@@ -35,21 +35,12 @@ namespace elf2 {
 
 std::unique_ptr<TargetInfo> Target;
 
-template <bool IsLE> static uint32_t read32(const uint8_t *L);
-template <> uint32_t read32<true>(const uint8_t *L) { return read32le(L); }
-template <> uint32_t read32<false>(const uint8_t *L) { return read32be(L); }
+template <endianness E> static void add32(void *P, int32_t V) {
+  write32<E>(P, read32<E>(P) + V);
+}
 
-template <bool IsLE> static void write32(uint8_t *L, uint32_t V);
-template <> void write32<true>(uint8_t *L, uint32_t V) { write32le(L, V); }
-template <> void write32<false>(uint8_t *L, uint32_t V) { write32be(L, V); }
-
-static void add32le(uint8_t *L, int32_t V) { write32le(L, read32le(L) + V); }
-static void add32be(uint8_t *L, int32_t V) { write32be(L, read32be(L) + V); }
-static void or32le(uint8_t *L, int32_t V) { write32le(L, read32le(L) | V); }
-
-template <bool IsLE> static void add32(uint8_t *L, int32_t V);
-template <> void add32<true>(uint8_t *L, int32_t V) { add32le(L, V); }
-template <> void add32<false>(uint8_t *L, int32_t V) { add32be(L, V); }
+static void add32le(uint8_t *P, int32_t V) { add32<support::little>(P, V); }
+static void or32le(uint8_t *P, int32_t V) { write32le(P, read32le(P) | V); }
 
 namespace {
 class X86TargetInfo final : public TargetInfo {
@@ -154,6 +145,8 @@ TargetInfo *createTarget() {
 
 TargetInfo::~TargetInfo() {}
 
+uint64_t TargetInfo::getVAStart() const { return Config->Shared ? 0 : VAStart; }
+
 bool TargetInfo::relocNeedsCopy(uint32_t Type, const SymbolBody &S) const {
   return false;
 }
@@ -222,6 +215,12 @@ X86_64TargetInfo::X86_64TargetInfo() {
   GotRefReloc = R_X86_64_PC32;
   PltReloc = R_X86_64_JUMP_SLOT;
   RelativeReloc = R_X86_64_RELATIVE;
+  TlsGotReloc = R_X86_64_TPOFF64;
+  TlsLocalDynamicReloc = R_X86_64_TLSLD;
+  TlsGlobalDynamicReloc = R_X86_64_TLSGD;
+  TlsModuleIndexReloc = R_X86_64_DTPMOD64;
+  TlsOffsetReloc = R_X86_64_DTPOFF64;
+  TlsPcRelGotReloc = R_X86_64_GOTTPOFF;
   LazyRelocations = true;
   PltEntrySize = 16;
   PltZeroEntrySize = 16;
@@ -269,7 +268,8 @@ bool X86_64TargetInfo::relocNeedsCopy(uint32_t Type,
 }
 
 bool X86_64TargetInfo::relocNeedsGot(uint32_t Type, const SymbolBody &S) const {
-  return Type == R_X86_64_GOTPCREL || relocNeedsPlt(Type, S);
+  return Type == R_X86_64_GOTTPOFF || Type == R_X86_64_GOTPCREL ||
+         relocNeedsPlt(Type, S);
 }
 
 unsigned X86_64TargetInfo::getPLTRefReloc(unsigned Type) const {
@@ -327,6 +327,8 @@ bool X86_64TargetInfo::isRelRelative(uint32_t Type) const {
   case R_X86_64_PC16:
   case R_X86_64_PC8:
   case R_X86_64_PLT32:
+  case R_X86_64_DTPOFF32:
+  case R_X86_64_DTPOFF64:
     return true;
   }
 }
@@ -337,9 +339,13 @@ void X86_64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type,
   case R_X86_64_PC32:
   case R_X86_64_GOTPCREL:
   case R_X86_64_PLT32:
+  case R_X86_64_TLSLD:
+  case R_X86_64_TLSGD:
+  case R_X86_64_TPOFF64:
     write32le(Loc, SA - P);
     break;
   case R_X86_64_64:
+  case R_X86_64_DTPOFF64:
     write64le(Loc, SA);
     break;
   case R_X86_64_32:
@@ -348,6 +354,9 @@ void X86_64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd, uint32_t Type,
       error("R_X86_64_32 out of range");
     else if (!isInt<32>(SA))
       error("R_X86_64_32S out of range");
+    write32le(Loc, SA);
+    break;
+  case R_X86_64_DTPOFF32:
     write32le(Loc, SA);
     break;
   case R_X86_64_TPOFF32: {
@@ -660,6 +669,17 @@ void AArch64TargetInfo::relocateOne(uint8_t *Loc, uint8_t *BufEnd,
     updateAArch64Adr(Loc, (X >> 12) & 0x1FFFFF); // X[32:12]
     break;
   }
+  case R_AARCH64_JUMP26:
+  case R_AARCH64_CALL26: {
+    uint64_t X = SA - P;
+    if (!isInt<28>(X)) {
+      if (Type == R_AARCH64_JUMP26)
+        error("Relocation R_AARCH64_JUMP26 out of range");
+      error("Relocation R_AARCH64_CALL26 out of range");
+    }
+    or32le(Loc, (X & 0x0FFFFFFC) >> 2);
+    break;
+  }
   case R_AARCH64_LDST64_ABS_LO12_NC:
     // No overflow check needed.
     or32le(Loc, (SA & 0xFF8) << 7);
@@ -722,16 +742,16 @@ template <class ELFT>
 void MipsTargetInfo<ELFT>::relocateOne(uint8_t *Loc, uint8_t *BufEnd,
                                        uint32_t Type, uint64_t P,
                                        uint64_t SA) const {
-  const bool IsLE = ELFT::TargetEndianness == support::little;
+  const endianness E = ELFT::TargetEndianness;
   switch (Type) {
   case R_MIPS_32:
-    add32<IsLE>(Loc, SA);
+    add32<E>(Loc, SA);
     break;
   case R_MIPS_GOT16: {
     int64_t V = SA - getMipsGpAddr<ELFT>();
     if (!isInt<16>(V))
       error("Relocation R_MIPS_GOT16 out of range");
-    write32<IsLE>(Loc, (read32<IsLE>(Loc) & 0xffff0000) | (V & 0xffff));
+    write32<E>(Loc, (read32<E>(Loc) & 0xffff0000) | (V & 0xffff));
     break;
   }
   default:

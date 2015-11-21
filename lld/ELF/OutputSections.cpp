@@ -82,10 +82,34 @@ template <class ELFT> void GotSection<ELFT>::addEntry(SymbolBody *Sym) {
   Entries.push_back(Sym);
 }
 
+template <class ELFT> void GotSection<ELFT>::addDynTlsEntry(SymbolBody *Sym) {
+  Sym->GotIndex = Target->getGotHeaderEntriesNum() + Entries.size();
+  // Global Dynamic TLS entries take two GOT slots.
+  Entries.push_back(Sym);
+  Entries.push_back(nullptr);
+}
+
+template <class ELFT> uint32_t GotSection<ELFT>::addLocalModuleTlsIndex() {
+  Entries.push_back(nullptr);
+  Entries.push_back(nullptr);
+  return (Entries.size() - 2) * sizeof(uintX_t);
+}
+
 template <class ELFT>
 typename GotSection<ELFT>::uintX_t
 GotSection<ELFT>::getEntryAddr(const SymbolBody &B) const {
   return this->getVA() + B.GotIndex * sizeof(uintX_t);
+}
+
+template <class ELFT>
+const SymbolBody *GotSection<ELFT>::getMipsFirstGlobalEntry() const {
+  return Entries.empty() ? nullptr : Entries.front();
+}
+
+template <class ELFT>
+unsigned GotSection<ELFT>::getMipsLocalEntriesNum() const {
+  // TODO: Update when the suppoort of GOT entries for local symbols is added.
+  return Target->getGotHeaderEntriesNum();
 }
 
 template <class ELFT> void GotSection<ELFT>::finalize() {
@@ -99,6 +123,8 @@ template <class ELFT> void GotSection<ELFT>::writeTo(uint8_t *Buf) {
   for (const SymbolBody *B : Entries) {
     uint8_t *Entry = Buf;
     Buf += sizeof(uintX_t);
+    if (!B)
+      continue;
     // MIPS has special rules to fill up GOT entries.
     // See "Global Offset Table" in Chapter 5 in the following document
     // for detailed description:
@@ -168,8 +194,13 @@ template <class ELFT> void RelocationSection<ELFT>::writeTo(uint8_t *Buf) {
     auto *P = reinterpret_cast<Elf_Rel *>(Buf);
     Buf += EntrySize;
 
-    const InputSection<ELFT> &C = Rel.C;
-    const Elf_Rel &RI = Rel.RI;
+    // Skip placeholder for global dynamic TLS relocation pair. It was already
+    // handled by the previous relocation.
+    if (!Rel.C || !Rel.RI)
+      continue;
+
+    InputSectionBase<ELFT> &C = *Rel.C;
+    const Elf_Rel &RI = *Rel.RI;
     uint32_t SymIndex = RI.getSymbol(Config->Mips64EL);
     const ObjectFile<ELFT> &File = *C.getFile();
     SymbolBody *Body = File.getSymbolBody(SymIndex);
@@ -177,6 +208,26 @@ template <class ELFT> void RelocationSection<ELFT>::writeTo(uint8_t *Buf) {
       Body = Body->repl();
 
     uint32_t Type = RI.getType(Config->Mips64EL);
+
+    if (Target->isTlsLocalDynamicReloc(Type)) {
+      P->setSymbolAndType(0, Target->getTlsModuleIndexReloc(),
+                          Config->Mips64EL);
+      P->r_offset =
+          Out<ELFT>::Got->getVA() + Out<ELFT>::LocalModuleTlsIndexOffset;
+      continue;
+    }
+
+    if (Body && Target->isTlsGlobalDynamicReloc(Type)) {
+      P->setSymbolAndType(Body->getDynamicSymbolTableIndex(),
+                          Target->getTlsModuleIndexReloc(), Config->Mips64EL);
+      P->r_offset = Out<ELFT>::Got->getEntryAddr(*Body);
+      auto *PNext = reinterpret_cast<Elf_Rel *>(Buf);
+      PNext->setSymbolAndType(Body->getDynamicSymbolTableIndex(),
+                              Target->getTlsOffsetReloc(), Config->Mips64EL);
+      PNext->r_offset = Out<ELFT>::Got->getEntryAddr(*Body) + sizeof(uintX_t);
+      continue;
+    }
+
     bool NeedsCopy = Body && Target->relocNeedsCopy(Type, *Body);
     bool NeedsGot = Body && Target->relocNeedsGot(Type, *Body);
     bool CanBePreempted = canBePreempted(Body, NeedsGot);
@@ -184,10 +235,11 @@ template <class ELFT> void RelocationSection<ELFT>::writeTo(uint8_t *Buf) {
                      Target->relocNeedsPlt(Type, *Body);
 
     if (CanBePreempted) {
+      unsigned GotReloc =
+          Body->isTLS() ? Target->getTlsGotReloc() : Target->getGotReloc();
       if (NeedsGot)
         P->setSymbolAndType(Body->getDynamicSymbolTableIndex(),
-                            LazyReloc ? Target->getPltReloc()
-                                      : Target->getGotReloc(),
+                            LazyReloc ? Target->getPltReloc() : GotReloc,
                             Config->Mips64EL);
       else
         P->setSymbolAndType(Body->getDynamicSymbolTableIndex(),
@@ -206,7 +258,7 @@ template <class ELFT> void RelocationSection<ELFT>::writeTo(uint8_t *Buf) {
       P->r_offset = Out<ELFT>::Bss->getVA() +
                     dyn_cast<SharedSymbol<ELFT>>(Body)->OffsetInBSS;
     } else {
-      P->r_offset = RI.r_offset + C.OutSec->getVA() + C.OutSecOff;
+      P->r_offset = C.getOffset(RI.r_offset) + C.OutSec->getVA();
     }
 
     uintX_t OrigAddend = 0;
@@ -460,6 +512,12 @@ DynamicSection<ELFT>::DynamicSection(SymbolTable<ELFT> &SymTab)
   Elf_Shdr &Header = this->Header;
   Header.sh_addralign = ELFT::Is64Bits ? 8 : 4;
   Header.sh_entsize = ELFT::Is64Bits ? 16 : 8;
+
+  // .dynamic section is not writable on MIPS.
+  // See "Special Section" in Chapter 4 in the following document:
+  // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+  if (Config->EMachine == EM_MIPS)
+    Header.sh_flags = llvm::ELF::SHF_ALLOC;
 }
 
 template <class ELFT> void DynamicSection<ELFT>::finalize() {
@@ -478,7 +536,7 @@ template <class ELFT> void DynamicSection<ELFT>::finalize() {
   if (Out<ELFT>::RelaPlt && Out<ELFT>::RelaPlt->hasRelocs()) {
     ++NumEntries; // DT_JMPREL
     ++NumEntries; // DT_PLTRELSZ
-    ++NumEntries; // DT_PLTGOT
+    ++NumEntries; // DT_PLTGOT / DT_MIPS_PLTGOT
     ++NumEntries; // DT_PLTREL
   }
 
@@ -541,6 +599,19 @@ template <class ELFT> void DynamicSection<ELFT>::finalize() {
     ++NumEntries; // DT_FLAGS
   if (DtFlags1)
     ++NumEntries; // DT_FLAGS_1
+
+  if (Config->EMachine == EM_MIPS) {
+    ++NumEntries; // DT_MIPS_RLD_VERSION
+    ++NumEntries; // DT_MIPS_FLAGS
+    ++NumEntries; // DT_MIPS_BASE_ADDRESS
+    ++NumEntries; // DT_MIPS_SYMTABNO
+    ++NumEntries; // DT_MIPS_LOCAL_GOTNO
+    ++NumEntries; // DT_MIPS_GOTSYM;
+    ++NumEntries; // DT_PLTGOT
+    if (Out<ELFT>::MipsRldMap)
+      ++NumEntries; // DT_MIPS_RLD_MAP
+  }
+
   ++NumEntries; // DT_NULL
 
   Header.sh_size = NumEntries * Header.sh_entsize;
@@ -571,7 +642,12 @@ template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
   if (Out<ELFT>::RelaPlt && Out<ELFT>::RelaPlt->hasRelocs()) {
     WritePtr(DT_JMPREL, Out<ELFT>::RelaPlt->getVA());
     WriteVal(DT_PLTRELSZ, Out<ELFT>::RelaPlt->getSize());
-    WritePtr(DT_PLTGOT, Out<ELFT>::GotPlt->getVA());
+    // On MIPS, the address of the .got.plt section is stored in
+    // the DT_MIPS_PLTGOT entry because the DT_PLTGOT entry points to
+    // the .got section. See "Dynamic Section" in the following document:
+    // https://sourceware.org/ml/binutils/2008-07/txt00000.txt
+    WritePtr((Config->EMachine == EM_MIPS) ? DT_MIPS_PLTGOT : DT_PLTGOT,
+             Out<ELFT>::GotPlt->getVA());
     WriteVal(DT_PLTREL, Out<ELFT>::RelaPlt->isRela() ? DT_RELA : DT_REL);
   }
 
@@ -623,6 +699,25 @@ template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
     WriteVal(DT_FLAGS, DtFlags);
   if (DtFlags1)
     WriteVal(DT_FLAGS_1, DtFlags1);
+
+  // See "Dynamic Section" in Chapter 5 in the following document
+  // for detailed description:
+  // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+  if (Config->EMachine == EM_MIPS) {
+    WriteVal(DT_MIPS_RLD_VERSION, 1);
+    WriteVal(DT_MIPS_FLAGS, RHF_NOTPOT);
+    WritePtr(DT_MIPS_BASE_ADDRESS, Target->getVAStart());
+    WriteVal(DT_MIPS_SYMTABNO, Out<ELFT>::DynSymTab->getNumSymbols());
+    WriteVal(DT_MIPS_LOCAL_GOTNO, Out<ELFT>::Got->getMipsLocalEntriesNum());
+    if (const SymbolBody *B = Out<ELFT>::Got->getMipsFirstGlobalEntry())
+      WriteVal(DT_MIPS_GOTSYM, B->getDynamicSymbolTableIndex());
+    else
+      WriteVal(DT_MIPS_GOTSYM, Out<ELFT>::DynSymTab->getNumSymbols());
+    WritePtr(DT_PLTGOT, Out<ELFT>::Got->getVA());
+    if (Out<ELFT>::MipsRldMap)
+      WritePtr(DT_MIPS_RLD_MAP, Out<ELFT>::MipsRldMap->getVA());
+  }
+
   WriteVal(DT_NULL, 0);
 }
 
@@ -702,12 +797,17 @@ lld::elf2::getLocalRelTarget(const ObjectFile<ELFT> &File,
   if (!Sym)
     error("Unsupported relocation without symbol");
 
+  InputSectionBase<ELFT> *Section = File.getSection(*Sym);
+
+  if (Sym->getType() == STT_TLS)
+    return (Section->OutSec->getVA() + Section->getOffset(*Sym) + Addend) -
+           Out<ELF64LE>::TlsPhdr->p_vaddr;
+
   // According to the ELF spec reference to a local symbol from outside
   // the group are not allowed. Unfortunately .eh_frame breaks that rule
   // and must be treated specially. For now we just replace the symbol with
   // 0.
-  InputSectionBase<ELFT> *Section = File.getSection(*Sym);
-  if (Section == &InputSection<ELFT>::Discarded)
+  if (Section == &InputSection<ELFT>::Discarded || !Section->isLive())
     return Addend;
 
   uintX_t VA = Section->OutSec->getVA();
@@ -767,6 +867,150 @@ template <class ELFT> void OutputSection<ELFT>::writeTo(uint8_t *Buf) {
 }
 
 template <class ELFT>
+EHOutputSection<ELFT>::EHOutputSection(StringRef Name, uint32_t sh_type,
+                                       uintX_t sh_flags)
+    : OutputSectionBase<ELFT>(Name, sh_type, sh_flags) {}
+
+template <class ELFT>
+EHRegion<ELFT>::EHRegion(EHInputSection<ELFT> *S, unsigned Index)
+    : S(S), Index(Index) {}
+
+template <class ELFT> StringRef EHRegion<ELFT>::data() const {
+  ArrayRef<uint8_t> SecData = S->getSectionData();
+  ArrayRef<std::pair<uintX_t, uintX_t>> Offsets = S->Offsets;
+  size_t Start = Offsets[Index].first;
+  size_t End =
+      Index == Offsets.size() - 1 ? SecData.size() : Offsets[Index + 1].first;
+  return StringRef((const char *)SecData.data() + Start, End - Start);
+}
+
+template <class ELFT>
+Cie<ELFT>::Cie(EHInputSection<ELFT> *S, unsigned Index)
+    : EHRegion<ELFT>(S, Index) {}
+
+template <class ELFT>
+template <bool IsRela>
+void EHOutputSection<ELFT>::addSectionAux(
+    EHInputSection<ELFT> *S,
+    iterator_range<const Elf_Rel_Impl<ELFT, IsRela> *> Rels) {
+  const endianness E = ELFT::TargetEndianness;
+
+  S->OutSec = this;
+  uint32_t Align = S->getAlign();
+  if (Align > this->Header.sh_addralign)
+    this->Header.sh_addralign = Align;
+
+  Sections.push_back(S);
+
+  ArrayRef<uint8_t> SecData = S->getSectionData();
+  ArrayRef<uint8_t> D = SecData;
+  uintX_t Offset = 0;
+  auto RelI = Rels.begin();
+  auto RelE = Rels.end();
+
+  DenseMap<unsigned, unsigned> OffsetToIndex;
+  while (!D.empty()) {
+    if (D.size() < 4)
+      error("Truncated CIE/FDE length");
+    uint32_t Length = read32<E>(D.data());
+    Length += 4;
+
+    unsigned Index = S->Offsets.size();
+    S->Offsets.push_back(std::make_pair(Offset, -1));
+
+    if (Length > D.size())
+      error("CIE/FIE ends past the end of the section");
+    StringRef Entry((const char *)D.data(), Length);
+
+    while (RelI != RelE && RelI->r_offset < Offset)
+      ++RelI;
+    uintX_t NextOffset = Offset + Length;
+    bool HasReloc = RelI != RelE && RelI->r_offset < NextOffset;
+
+    uint32_t ID = read32<E>(D.data() + 4);
+    if (ID == 0) {
+      // CIE
+      Cie<ELFT> C(S, Index);
+
+      StringRef Personality;
+      if (HasReloc) {
+        uint32_t SymIndex = RelI->getSymbol(Config->Mips64EL);
+        SymbolBody &Body = *S->getFile()->getSymbolBody(SymIndex)->repl();
+        Personality = Body.getName();
+      }
+
+      std::pair<StringRef, StringRef> CieInfo(Entry, Personality);
+      auto P = CieMap.insert(std::make_pair(CieInfo, Cies.size()));
+      if (P.second) {
+        Cies.push_back(C);
+        this->Header.sh_size += Length;
+      }
+      OffsetToIndex[Offset] = P.first->second;
+    } else {
+      if (!HasReloc)
+        error("FDE doesn't reference another section");
+      InputSectionBase<ELFT> *Target = S->getRelocTarget(*RelI);
+      if (Target != &InputSection<ELFT>::Discarded && Target->isLive()) {
+        uint32_t CieOffset = Offset + 4 - ID;
+        auto I = OffsetToIndex.find(CieOffset);
+        if (I == OffsetToIndex.end())
+          error("Invalid CIE reference");
+        Cies[I->second].Fdes.push_back(EHRegion<ELFT>(S, Index));
+        this->Header.sh_size += Length;
+      }
+    }
+
+    Offset = NextOffset;
+    D = D.slice(Length);
+  }
+}
+
+template <class ELFT>
+void EHOutputSection<ELFT>::addSection(EHInputSection<ELFT> *S) {
+  const Elf_Shdr *RelSec = S->RelocSection;
+  if (!RelSec)
+    return addSectionAux(
+        S, make_range((const Elf_Rela *)nullptr, (const Elf_Rela *)nullptr));
+  ELFFile<ELFT> &Obj = S->getFile()->getObj();
+  if (RelSec->sh_type == SHT_RELA)
+    return addSectionAux(S, Obj.relas(RelSec));
+  return addSectionAux(S, Obj.rels(RelSec));
+}
+
+template <class ELFT> void EHOutputSection<ELFT>::writeTo(uint8_t *Buf) {
+  const endianness E = ELFT::TargetEndianness;
+  size_t Offset = 0;
+  for (const Cie<ELFT> &C : Cies) {
+    size_t CieOffset = Offset;
+
+    StringRef CieData = C.data();
+    memcpy(Buf + Offset, CieData.data(), CieData.size());
+    C.S->Offsets[C.Index].second = Offset;
+    Offset += CieData.size();
+
+    for (const EHRegion<ELFT> &F : C.Fdes) {
+      StringRef FdeData = F.data();
+      memcpy(Buf + Offset, FdeData.data(), 4);              // Legnth
+      write32<E>(Buf + Offset + 4, Offset + 4 - CieOffset); // Pointer
+      memcpy(Buf + Offset + 8, FdeData.data() + 8, FdeData.size() - 8);
+      F.S->Offsets[F.Index].second = Offset;
+      Offset += FdeData.size();
+    }
+  }
+
+  for (EHInputSection<ELFT> *S : Sections) {
+    const Elf_Shdr *RelSec = S->RelocSection;
+    if (!RelSec)
+      continue;
+    ELFFile<ELFT> &EObj = S->getFile()->getObj();
+    if (RelSec->sh_type == SHT_RELA)
+      S->relocate(Buf, nullptr, EObj.relas(RelSec));
+    else
+      S->relocate(Buf, nullptr, EObj.relas(RelSec));
+  }
+}
+
+template <class ELFT>
 MergeOutputSection<ELFT>::MergeOutputSection(StringRef Name, uint32_t sh_type,
                                              uintX_t sh_flags)
     : OutputSectionBase<ELFT>(Name, sh_type, sh_flags) {}
@@ -814,7 +1058,7 @@ void MergeOutputSection<ELFT>::addSection(MergeInputSection<ELFT> *S) {
       if (End == StringRef::npos)
         error("String is not null terminated");
       StringRef Entry = Data.substr(0, End + EntSize);
-      size_t OutputOffset = Builder.add(Entry);
+      uintX_t OutputOffset = Builder.add(Entry);
       if (shouldTailMerge())
         OutputOffset = -1;
       S->Offsets.push_back(std::make_pair(Offset, OutputOffset));
@@ -915,6 +1159,17 @@ SymbolTableSection<ELFT>::SymbolTableSection(
   Header.sh_addralign = ELFT::Is64Bits ? 8 : 4;
 }
 
+// Orders symbols according to their positions in the GOT,
+// in compliance with MIPS ABI rules.
+// See "Global Offset Table" in Chapter 5 in the following document
+// for detailed description:
+// ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+static bool sortMipsSymbols(SymbolBody *L, SymbolBody *R) {
+  if (!L->isInGot() || !R->isInGot())
+    return R->isInGot();
+  return L->GotIndex < R->GotIndex;
+}
+
 template <class ELFT> void SymbolTableSection<ELFT>::finalize() {
   if (this->Header.sh_size)
     return; // Already finalized.
@@ -934,6 +1189,8 @@ template <class ELFT> void SymbolTableSection<ELFT>::finalize() {
   if (Out<ELFT>::GnuHashTab)
     // NB: It also sorts Symbols to meet the GNU hash table requirements.
     Out<ELFT>::GnuHashTab->addSymbols(Symbols);
+  else if (Config->EMachine == EM_MIPS)
+    std::stable_sort(Symbols.begin(), Symbols.end(), sortMipsSymbols);
   size_t I = 0;
   for (SymbolBody *B : Symbols)
     B->setDynamicSymbolTableIndex(++I);
@@ -1118,6 +1375,11 @@ template class OutputSection<ELF32LE>;
 template class OutputSection<ELF32BE>;
 template class OutputSection<ELF64LE>;
 template class OutputSection<ELF64BE>;
+
+template class EHOutputSection<ELF32LE>;
+template class EHOutputSection<ELF32BE>;
+template class EHOutputSection<ELF64LE>;
+template class EHOutputSection<ELF64BE>;
 
 template class MergeOutputSection<ELF32LE>;
 template class MergeOutputSection<ELF32BE>;

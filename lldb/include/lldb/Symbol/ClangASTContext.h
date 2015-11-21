@@ -117,6 +117,9 @@ public:
     clang::DiagnosticConsumer *
     getDiagnosticConsumer();
 
+    clang::MangleContext *
+    getMangleContext();
+
     std::shared_ptr<clang::TargetOptions> &getTargetOptions();
 
     clang::TargetInfo *
@@ -533,6 +536,21 @@ public:
     ConstString
     DeclGetName (void *opaque_decl) override;
 
+    ConstString
+    DeclGetMangledName (void *opaque_decl) override;
+
+    CompilerDeclContext
+    DeclGetDeclContext (void *opaque_decl) override;
+
+    CompilerType
+    DeclGetFunctionReturnType(void *opaque_decl) override;
+
+    size_t
+    DeclGetFunctionNumArguments(void *opaque_decl) override;
+
+    CompilerType
+    DeclGetFunctionArgumentType (void *opaque_decl, size_t arg_idx) override;
+
     //----------------------------------------------------------------------
     // CompilerDeclContext override functions
     //----------------------------------------------------------------------
@@ -885,7 +903,8 @@ public:
                                  uint32_t &child_bitfield_bit_offset,
                                  bool &child_is_base_class,
                                  bool &child_is_deref_of_parent,
-                                 ValueObject *valobj) override;
+                                 ValueObject *valobj,
+                                 uint64_t &language_flags) override;
     
     // Lookup a child given a name. This function will match base class names
     // and member member names in "clang_type" only, not descendants.
@@ -1160,6 +1179,7 @@ protected:
     std::unique_ptr<clang::Builtin::Context>        m_builtins_ap;
     std::unique_ptr<DWARFASTParser>                 m_dwarf_ast_parser_ap;
     std::unique_ptr<ClangASTSource>                 m_scratch_ast_source_ap;
+    std::unique_ptr<clang::MangleContext>           m_mangle_ctx_ap;
     CompleteTagDeclCallback                         m_callback_tag_decl;
     CompleteObjCInterfaceDeclCallback               m_callback_objc_decl;
     void *                                          m_callback_baton;

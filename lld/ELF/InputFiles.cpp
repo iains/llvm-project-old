@@ -143,7 +143,7 @@ static bool shouldMerge(const typename ELFFile<ELFT>::Elf_Shdr &Sec) {
   if (Flags & SHF_WRITE)
     error("Writable SHF_MERGE sections are not supported");
   uintX_t EntSize = Sec.sh_entsize;
-  if (Sec.sh_size % EntSize)
+  if (!EntSize || Sec.sh_size % EntSize)
     error("SHF_MERGE section size must be a multiple of sh_entsize");
 
   // Don't try to merge if the aligment is larger than the sh_entsize.
@@ -205,18 +205,30 @@ void elf2::ObjectFile<ELFT>::initializeSections(DenseSet<StringRef> &Comdats) {
           Sections[RelocatedSectionIndex];
       if (!RelocatedSection)
         error("Unsupported relocation reference");
-      if (auto *S = dyn_cast<InputSection<ELFT>>(RelocatedSection))
+      if (auto *S = dyn_cast<InputSection<ELFT>>(RelocatedSection)) {
         S->RelocSections.push_back(&Sec);
-      else
+      } else if (auto *S = dyn_cast<EHInputSection<ELFT>>(RelocatedSection)) {
+        if (S->RelocSection)
+          error("Multiple relocation sections to .eh_frame are not supported");
+        S->RelocSection = &Sec;
+      } else {
         error("Relocations pointing to SHF_MERGE are not supported");
+      }
       break;
     }
-    default:
-      if (shouldMerge<ELFT>(Sec))
+    default: {
+      ErrorOr<StringRef> NameOrErr = this->ELFObj.getSectionName(&Sec);
+      error(NameOrErr);
+      if (*NameOrErr == ".note.GNU-stack")
+        Sections[I] = &InputSection<ELFT>::Discarded;
+      else if (*NameOrErr == ".eh_frame")
+        Sections[I] = new (this->Alloc) EHInputSection<ELFT>(this, &Sec);
+      else if (shouldMerge<ELFT>(Sec))
         Sections[I] = new (this->Alloc) MergeInputSection<ELFT>(this, &Sec);
       else
         Sections[I] = new (this->Alloc) InputSection<ELFT>(this, &Sec);
       break;
+    }
     }
   }
 }

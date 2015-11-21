@@ -1048,6 +1048,9 @@ def getDefaultTimeout(platform_name):
 
     if platform_name.startswith("remote-"):
         return "10m"
+    elif platform_name == 'darwin':
+        # We are consistently needing more time on a few tests.
+        return "6m"
     else:
         return "4m"
 
@@ -1226,6 +1229,10 @@ def adjust_inferior_options(dotest_argv):
     if dotest_options.results_formatter_options is not None:
         _remove_option(dotest_argv, "--results-formatter-option", "-O",
                        True)
+
+    # Remove the --curses shortcut if specified.
+    if dotest_options.curses:
+        _remove_option(dotest_argv, "--curses", None, False)
 
     # Remove test runner name if present.
     if dotest_options.test_runner_name is not None:
