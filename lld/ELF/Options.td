@@ -67,7 +67,7 @@ def no_allow_shlib_undefined : Flag<["--"], "no-allow-shlib-undefined">;
 
 def no_as_needed : Flag<["--"], "no-as-needed">;
 
-def no_whole_archive : Flag<["--"], "no-whole-archive">,
+def no_whole_archive : Flag<["--", "-"], "no-whole-archive">,
   HelpText<"Restores the default behavior of loading archive members">;
 
 def noinhibit_exec : Flag<["--"], "noinhibit-exec">,
@@ -103,7 +103,7 @@ def undefined : Joined<["--"], "undefined=">,
 
 def verbose : Flag<["--"], "verbose">;
 
-def whole_archive : Flag<["--"], "whole-archive">,
+def whole_archive : Flag<["--", "-"], "whole-archive">,
   HelpText<"Force load of all members in a static library">;
 
 def z : JoinedOrSeparate<["-"], "z">, MetaVarName<"<option>">,
@@ -119,6 +119,7 @@ def alias_L__library_path : Joined<["--"], "library-path=">, Alias<L>;
 def alias_discard_all_x: Flag<["-"], "x">, Alias<discard_all>;
 def alias_discard_locals_X: Flag<["-"], "X">, Alias<discard_locals>;
 def alias_entry_e : Separate<["-"], "e">, Alias<entry>;
+def alias_export_dynamic_E: Flag<["-"], "E">, Alias<export_dynamic>;
 def alias_fini_fini : Joined<["-"], "fini=">, Alias<fini>;
 def alias_hash_style_hash_style : Joined<["--", "-"], "hash-style=">, Alias<hash_style>;
 def alias_init_init : Joined<["-"], "init=">, Alias<init>;

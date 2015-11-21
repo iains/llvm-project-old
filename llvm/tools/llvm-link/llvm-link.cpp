@@ -89,6 +89,10 @@ static cl::opt<bool>
 SuppressWarnings("suppress-warnings", cl::desc("Suppress all linking warnings"),
                  cl::init(false));
 
+static cl::opt<bool>
+    PreserveModules("preserve-modules",
+                    cl::desc("Preserve linked modules for testing"));
+
 static cl::opt<bool> PreserveBitcodeUseListOrder(
     "preserve-bc-uselistorder",
     cl::desc("Preserve use-list order when writing LLVM bitcode."),
@@ -148,7 +152,7 @@ loadIndex(LLVMContext &Context, const Module *ExportingModule = nullptr) {
     return EC;
   MemoryBufferRef BufferRef = (FileOrErr.get())->getMemBufferRef();
   ErrorOr<std::unique_ptr<object::FunctionIndexObjectFile>> ObjOrErr =
-      object::FunctionIndexObjectFile::create(BufferRef, Context,
+      object::FunctionIndexObjectFile::create(BufferRef, diagnosticHandler,
                                               ExportingModule);
   EC = ObjOrErr.getError();
   if (EC)
@@ -259,6 +263,15 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
       return false;
     // All linker flags apply to linking of subsequent files.
     ApplicableFlags = Flags;
+
+    // If requested for testing, preserve modules by releasing them from
+    // the unique_ptr before the are freed. This can help catch any
+    // cross-module references from e.g. unneeded metadata references
+    // that aren't properly set to null but instead mapped to the source
+    // module version. The bitcode writer will assert if it finds any such
+    // cross-module references.
+    if (PreserveModules)
+      M.release();
   }
 
   return true;

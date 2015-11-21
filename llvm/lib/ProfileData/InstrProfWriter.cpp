@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/OnDiskHashTable.h"
+#include <tuple>
 
 using namespace llvm;
 
@@ -53,7 +54,7 @@ public:
       M += ProfRecord.Counts.size() * sizeof(uint64_t);
 
       // Value data
-      M += IndexedInstrProf::ValueProfData::getSize(ProfileData.second);
+      M += ValueProfData::getSize(ProfileData.second);
     }
     LE.write<offset_type>(M);
 
@@ -77,40 +78,14 @@ public:
         LE.write<uint64_t>(I);
 
       // Write value data
-      std::unique_ptr<IndexedInstrProf::ValueProfData> VDataPtr =
-          IndexedInstrProf::ValueProfData::serializeFrom(ProfileData.second);
+      std::unique_ptr<ValueProfData> VDataPtr =
+          ValueProfData::serializeFrom(ProfileData.second);
       uint32_t S = VDataPtr->getSize();
       VDataPtr->swapBytesFromHost(ValueProfDataEndianness);
       Out.write((const char *)VDataPtr.get(), S);
     }
   }
 };
-}
-
-static std::error_code combineInstrProfRecords(InstrProfRecord &Dest,
-                                               InstrProfRecord &Source,
-                                               uint64_t &MaxFunctionCount) {
-  // If the number of counters doesn't match we either have bad data
-  // or a hash collision.
-  if (Dest.Counts.size() != Source.Counts.size())
-    return instrprof_error::count_mismatch;
-
-  for (size_t I = 0, E = Source.Counts.size(); I < E; ++I) {
-    if (Dest.Counts[I] + Source.Counts[I] < Dest.Counts[I])
-      return instrprof_error::counter_overflow;
-    Dest.Counts[I] += Source.Counts[I];
-  }
-
-  for (uint32_t Kind = IPVK_First; Kind <= IPVK_Last; ++Kind) {
-    if (std::error_code EC = Dest.mergeValueProfData(Kind, Source))
-      return EC;
-  }
-
-  // We keep track of the max function count as we go for simplicity.
-  if (Dest.Counts[0] > MaxFunctionCount)
-    MaxFunctionCount = Dest.Counts[0];
-
-  return instrprof_error::success;
 }
 
 // Internal interface for testing purpose only.
@@ -127,19 +102,27 @@ std::error_code InstrProfWriter::addRecord(InstrProfRecord &&I) {
   updateStringTableReferences(I);
   auto &ProfileDataMap = FunctionData[I.Name];
 
-  auto Where = ProfileDataMap.find(I.Hash);
-  if (Where == ProfileDataMap.end()) {
+  bool NewFunc;
+  ProfilingData::iterator Where;
+  std::tie(Where, NewFunc) =
+      ProfileDataMap.insert(std::make_pair(I.Hash, InstrProfRecord()));
+  InstrProfRecord &Dest = Where->second;
+  if (NewFunc) {
     // We've never seen a function with this name and hash, add it.
-    ProfileDataMap[I.Hash] = I;
-
-    // We keep track of the max function count as we go for simplicity.
-    if (I.Counts[0] > MaxFunctionCount)
-      MaxFunctionCount = I.Counts[0];
-    return instrprof_error::success;
+    Dest = std::move(I);
+  } else {
+    // We're updating a function we've seen before.
+    instrprof_error MergeResult = Dest.merge(I);
+    if (MergeResult != instrprof_error::success) {
+      return MergeResult;
+    }
   }
 
-  // We're updating a function we've seen before.
-  return combineInstrProfRecords(Where->second, I, MaxFunctionCount);
+  // We keep track of the max function count as we go for simplicity.
+  if (Dest.Counts[0] > MaxFunctionCount)
+    MaxFunctionCount = Dest.Counts[0];
+
+  return instrprof_error::success;
 }
 
 std::pair<uint64_t, uint64_t> InstrProfWriter::writeImpl(raw_ostream &OS) {

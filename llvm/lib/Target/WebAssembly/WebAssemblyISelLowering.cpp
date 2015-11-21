@@ -228,6 +228,16 @@ WebAssemblyTargetLowering::getRegForInlineAsmConstraint(
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
 }
 
+bool WebAssemblyTargetLowering::isCheapToSpeculateCttz() const {
+  // Assume ctz is a relatively cheap operation.
+  return true;
+}
+
+bool WebAssemblyTargetLowering::isCheapToSpeculateCtlz() const {
+  // Assume clz is a relatively cheap operation.
+  return true;
+}
+
 //===----------------------------------------------------------------------===//
 // WebAssembly Lowering private implementation.
 //===----------------------------------------------------------------------===//
@@ -326,8 +336,6 @@ SDValue WebAssemblyTargetLowering::LowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<SDValue> &OutVals, SDLoc DL,
     SelectionDAG &DAG) const {
-  MachineFunction &MF = DAG.getMachineFunction();
-
   assert(Outs.size() <= 1 && "WebAssembly can only return up to one value");
   if (CallConv != CallingConv::C)
     fail(DL, DAG, "WebAssembly doesn't support non-C calling conventions");
@@ -352,7 +360,6 @@ SDValue WebAssemblyTargetLowering::LowerReturn(
       fail(DL, DAG, "WebAssembly hasn't implemented cons regs last results");
     if (!Out.IsFixed)
       fail(DL, DAG, "WebAssembly doesn't support non-fixed results yet");
-    MF.getInfo<WebAssemblyFunctionInfo>()->addResult(Out.VT);
   }
 
   return Chain;
@@ -430,8 +437,8 @@ SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
 SDValue WebAssemblyTargetLowering::LowerJumpTable(SDValue Op,
                                                   SelectionDAG &DAG) const {
   // There's no need for a Wrapper node because we always incorporate a jump
-  // table operand into a SWITCH instruction, rather than ever materializing
-  // it in a register.
+  // table operand into a TABLESWITCH instruction, rather than ever
+  // materializing it in a register.
   const JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   return DAG.getTargetJumpTable(JT->getIndex(), Op.getValueType(),
                                 JT->getTargetFlags());
@@ -461,7 +468,7 @@ SDValue WebAssemblyTargetLowering::LowerBR_JT(SDValue Op,
   for (auto MBB : MBBs)
     Ops.push_back(DAG.getBasicBlock(MBB));
 
-  return DAG.getNode(WebAssemblyISD::SWITCH, DL, MVT::Other, Ops);
+  return DAG.getNode(WebAssemblyISD::TABLESWITCH, DL, MVT::Other, Ops);
 }
 
 //===----------------------------------------------------------------------===//

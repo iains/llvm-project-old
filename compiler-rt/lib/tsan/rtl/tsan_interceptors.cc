@@ -233,7 +233,9 @@ static ThreadSignalContext *SigCtx(ThreadState *thr) {
   return ctx;
 }
 
+#if !SANITIZER_MAC
 static unsigned g_thread_finalize_key;
+#endif
 
 ScopedInterceptor::ScopedInterceptor(ThreadState *thr, const char *fname,
                                      uptr pc)
@@ -264,17 +266,6 @@ ScopedInterceptor::~ScopedInterceptor() {
   }
 }
 
-#define SCOPED_TSAN_INTERCEPTOR(func, ...) \
-    SCOPED_INTERCEPTOR_RAW(func, __VA_ARGS__); \
-    if (REAL(func) == 0) { \
-      Report("FATAL: ThreadSanitizer: failed to intercept %s\n", #func); \
-      Die(); \
-    }                                                    \
-    if (thr->ignore_interceptors || thr->in_ignored_lib) \
-      return REAL(func)(__VA_ARGS__); \
-/**/
-
-#define TSAN_INTERCEPTOR(ret, func, ...) INTERCEPTOR(ret, func, __VA_ARGS__)
 #define TSAN_INTERCEPT(func) INTERCEPT_FUNCTION(func)
 #if SANITIZER_FREEBSD
 # define TSAN_INTERCEPT_VER(func, ver) INTERCEPT_FUNCTION(func)
@@ -451,8 +442,12 @@ static void SetJmp(ThreadState *thr, uptr sp, uptr mangled_sp) {
 static void LongJmp(ThreadState *thr, uptr *env) {
 #if SANITIZER_FREEBSD
   uptr mangled_sp = env[2];
-#else
+#elif defined(SANITIZER_LINUX)
+# ifdef __aarch64__
+  uptr mangled_sp = env[13];
+# else
   uptr mangled_sp = env[6];
+# endif
 #endif  // SANITIZER_FREEBSD
   // Find the saved buf by mangled_sp.
   for (uptr i = 0; i < thr->jmp_bufs.Size(); i++) {
@@ -832,6 +827,7 @@ void DestroyThreadState() {
 }
 }  // namespace __tsan
 
+#if !SANITIZER_MAC
 static void thread_finalize(void *v) {
   uptr iter = (uptr)v;
   if (iter > 1) {
@@ -843,6 +839,7 @@ static void thread_finalize(void *v) {
   }
   DestroyThreadState();
 }
+#endif
 
 
 struct ThreadParam {
@@ -860,6 +857,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
     ThreadState *thr = cur_thread();
     // Thread-local state is not initialized yet.
     ScopedIgnoreInterceptors ignore;
+#if !SANITIZER_MAC
     ThreadIgnoreBegin(thr, 0);
     if (pthread_setspecific(g_thread_finalize_key,
                             (void *)GetPthreadDestructorIterations())) {
@@ -867,6 +865,7 @@ extern "C" void *__tsan_thread_start_func(void *arg) {
       Die();
     }
     ThreadIgnoreEnd(thr, 0);
+#endif
     while ((tid = atomic_load(&p->tid, memory_order_acquire)) == 0)
       internal_sched_yield();
     ThreadStart(thr, tid, GetTid());
@@ -2647,10 +2646,12 @@ void InitializeInterceptors() {
     Die();
   }
 
+#if !SANITIZER_MAC
   if (pthread_key_create(&g_thread_finalize_key, &thread_finalize)) {
     Printf("ThreadSanitizer: failed to create thread key\n");
     Die();
   }
+#endif
 
   FdInit();
 }

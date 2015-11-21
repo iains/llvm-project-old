@@ -37,8 +37,10 @@ from __future__ import absolute_import
 # System modules
 import abc
 import collections
+from distutils.version import LooseVersion
 import gc
 import glob
+import inspect
 import os, sys, traceback
 import os.path
 import re
@@ -386,7 +388,7 @@ def system(commands, **kwargs):
             raise ValueError('stdout argument not allowed, it will be overridden.')
         if 'shell' in kwargs and kwargs['shell']==False:
             raise ValueError('shell=False not allowed')
-        process = Popen(shellCommand, stdout=PIPE, stderr=PIPE, shell=True, **kwargs)
+        process = Popen(shellCommand, stdout=PIPE, stderr=PIPE, shell=True, universal_newlines=True, **kwargs)
         pid = process.pid
         this_output, this_error = process.communicate()
         retcode = process.poll()
@@ -459,8 +461,11 @@ def android_device_api():
         assert lldb.platform_url is not None
         device_id = None
         parsed_url = urlparse.urlparse(lldb.platform_url)
-        if parsed_url.scheme == "adb":
-            device_id = parsed_url.netloc.split(":")[0]
+        host_name = parsed_url.netloc.split(":")[0]
+        if host_name != 'localhost':
+            device_id = host_name
+            if device_id.startswith('[') and device_id.endswith(']'):
+                device_id = device_id[1:-1]
         retcode, stdout, stderr = run_adb_command(
             ["shell", "getprop", "ro.build.version.sdk"], device_id)
         if retcode == 0:
@@ -471,6 +476,29 @@ def android_device_api():
                 ">>> stdout:\n%s\n"
                 ">>> stderr:\n%s\n" % (stdout, stderr))
     return android_device_api.result
+
+def check_expected_version(comparison, expected, actual):
+    def fn_leq(x,y): return x <= y
+    def fn_less(x,y): return x < y
+    def fn_geq(x,y): return x >= y
+    def fn_greater(x,y): return x > y
+    def fn_eq(x,y): return x == y
+    def fn_neq(x,y): return x != y
+
+    op_lookup = {
+        "==": fn_eq,
+        "=": fn_eq,
+        "!=": fn_neq,
+        "<>": fn_neq,
+        ">": fn_greater,
+        "<": fn_less,
+        ">=": fn_geq,
+        "<=": fn_leq
+        }
+    expected_str = '.'.join([str(x) for x in expected])
+    actual_str = '.'.join([str(x) for x in actual])
+
+    return op_lookup[comparison](LooseVersion(actual_str), LooseVersion(expected_str))
 
 #
 # Decorators for categorizing test cases.
@@ -614,16 +642,9 @@ def expectedFailure(expected_fn, bugnumber=None):
     else:
         return expectedFailure_impl
 
-# provide a function to xfail on defined oslist, compiler version, and archs
-# if none is specified for any argument, that argument won't be checked and thus means for all
-# for example,
-# @expectedFailureAll, xfail for all platform/compiler/arch,
-# @expectedFailureAll(compiler='gcc'), xfail for gcc on all platform/architecture
-# @expectedFailureAll(bugnumber, ["linux"], "gcc", ['>=', '4.9'], ['i386']), xfail for gcc>=4.9 on linux with i386
-
 # You can also pass not_in(list) to reverse the sense of the test for the arguments that
-# are simple lists, namely oslist, compiler and debug_info.
- 
+# are simple lists, namely oslist, compiler, and debug_info.
+
 def not_in (iterable):
     return lambda x : x not in iterable
 
@@ -631,19 +652,31 @@ def check_list_or_lambda (list_or_lambda, value):
     if six.callable(list_or_lambda):
         return list_or_lambda(value)
     else:
-        return list_or_lambda is None or value in list_or_lambda
+        return list_or_lambda is None or value is None or value in list_or_lambda
 
-def expectedFailureAll(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None, triple=None, debug_info=None):
+# provide a function to xfail on defined oslist, compiler version, and archs
+# if none is specified for any argument, that argument won't be checked and thus means for all
+# for example,
+# @expectedFailureAll, xfail for all platform/compiler/arch,
+# @expectedFailureAll(compiler='gcc'), xfail for gcc on all platform/architecture
+# @expectedFailureAll(bugnumber, ["linux"], "gcc", ['>=', '4.9'], ['i386']), xfail for gcc>=4.9 on linux with i386
+def expectedFailureAll(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None, triple=None, debug_info=None, swig_version=None, py_version=None):
     def fn(self):
-        os_list_passes = check_list_or_lambda(oslist, self.getPlatform())
-        compiler_passes = check_list_or_lambda(compiler, self.getCompiler()) and self.expectedCompilerVersion(compiler_version)
+        oslist_passes = check_list_or_lambda(oslist, self.getPlatform())
+        compiler_passes = check_list_or_lambda(self.getCompiler(), compiler) and self.expectedCompilerVersion(compiler_version)
+        arch_passes = self.expectedArch(archs)
+        triple_passes = triple is None or re.match(triple, lldb.DBG.GetSelectedPlatform().GetTriple())
         debug_info_passes = check_list_or_lambda(debug_info, self.debug_info)
+        swig_version_passes = (swig_version is None) or (not hasattr(lldb, 'swig_version')) or (check_expected_version(swig_version[0], swig_version[1], lldb.swig_version))
+        py_version_passes = (py_version is None) or check_expected_version(py_version[0], py_version[1], sys.version_info)
 
-        return (os_list_passes  and
+        return (oslist_passes and
                 compiler_passes and
-                self.expectedArch(archs) and
-                (triple is None or re.match(triple, lldb.DBG.GetSelectedPlatform().GetTriple())) and
-                debug_info_passes)
+                arch_passes and
+                triple_passes and
+                debug_info_passes and
+                swig_version_passes and
+                py_version_passes)
     return expectedFailure(fn, bugnumber)
 
 def expectedFailureDwarf(bugnumber=None):
@@ -1065,13 +1098,28 @@ def skipIfLinuxClang(func):
 # @skipIf(bugnumber, ["linux"], "gcc", ['>=', '4.9'], ['i386']), skip for gcc>=4.9 on linux with i386
 
 # TODO: refactor current code, to make skipIfxxx functions to call this function
-def skipIf(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None, debug_info=None):
+def skipIf(bugnumber=None, oslist=None, compiler=None, compiler_version=None, archs=None, debug_info=None, swig_version=None, py_version=None):
     def fn(self):
-        return ((oslist is None or self.getPlatform() in oslist) and
-                (compiler is None or (compiler in self.getCompiler() and self.expectedCompilerVersion(compiler_version))) and
-                self.expectedArch(archs) and
-                (debug_info is None or self.debug_info in debug_info))
-    return skipTestIfFn(fn, bugnumber, skipReason="skipping because os:%s compiler: %s %s arch: %s debug info: %s"%(oslist, compiler, compiler_version, archs, debug_info))
+        oslist_passes = oslist is None or self.getPlatform() in oslist
+        compiler_passes = compiler is None or (compiler in self.getCompiler() and self.expectedCompilerVersion(compiler_version))
+        arch_passes = self.expectedArch(archs)
+        debug_info_passes = debug_info is None or self.debug_info in debug_info
+        swig_version_passes = (swig_version is None) or (not hasattr(lldb, 'swig_version')) or (check_expected_version(swig_version[0], swig_version[1], lldb.swig_version))
+        py_version_passes = (py_version is None) or check_expected_version(py_version[0], py_version[1], sys.version_info)
+
+        return (oslist_passes and
+                compiler_passes and
+                arch_passes and
+                debug_info_passes and
+                swig_version_passes and
+                py_version_passes)
+
+    local_vars = locals()
+    args = [x for x in inspect.getargspec(skipIf).args]
+    arg_vals = [eval(x, globals(), local_vars) for x in args]
+    args = [x for x in zip(args, arg_vals) if x[1] is not None]
+    reasons = ['%s=%s' % (x, str(y)) for (x,y) in args]
+    return skipTestIfFn(fn, bugnumber, skipReason='skipping because ' + ' && '.join(reasons))
 
 def skipIfDebugInfo(bugnumber=None, debug_info=None):
     return skipIf(bugnumber=bugnumber, debug_info=debug_info)
@@ -1177,7 +1225,8 @@ def skipUnlessCompilerRt(func):
     def wrapper(*args, **kwargs):
         from unittest2 import case
         import os.path
-        compilerRtPath = os.path.join(os.path.dirname(__file__), "..", "..", "..", "projects", "compiler-rt")
+        compilerRtPath = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "llvm","projects","compiler-rt")
+        print(compilerRtPath)
         if not os.path.exists(compilerRtPath):
             self = args[0]
             self.skipTest("skip if compiler-rt not found")
@@ -1475,6 +1524,9 @@ class Base(unittest2.TestCase):
         self.res = lldb.SBCommandReturnObject()
 
         self.enableLogChannelsForCurrentTest()
+
+        #Initialize debug_info
+        self.debug_info = None
 
     def runHooks(self, child=None, child_prompt=None, use_cmd_api=False):
         """Perform the run hooks to bring lldb debugger to the desired state.
@@ -2144,7 +2196,7 @@ class Base(unittest2.TestCase):
           "llvm-build/Release/x86_64/Release/bin/clang",
           "llvm-build/Debug/x86_64/Debug/bin/clang",
         ]
-        lldb_root_path = os.path.join(os.path.dirname(__file__), "..")
+        lldb_root_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
         for p in paths_to_try:
             path = os.path.join(lldb_root_path, p)
             if os.path.exists(path):

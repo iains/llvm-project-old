@@ -593,6 +593,8 @@
 		26BF51F61B3C754400016294 /* ABISysV_i386.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26BF51EF1B3C754400016294 /* ABISysV_i386.cpp */; };
 		26C72C94124322890068DC16 /* SBStream.h in Headers */ = {isa = PBXBuildFile; fileRef = 26C72C93124322890068DC16 /* SBStream.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		26C72C961243229A0068DC16 /* SBStream.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26C72C951243229A0068DC16 /* SBStream.cpp */; };
+		26C7C4831BFFEA7E009BD01F /* WindowsMiniDump.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26C7C4811BFFEA7E009BD01F /* WindowsMiniDump.cpp */; settings = {ASSET_TAGS = (); }; };
+		26C7C4841BFFEA7E009BD01F /* WindowsMiniDump.h in Headers */ = {isa = PBXBuildFile; fileRef = 26C7C4821BFFEA7E009BD01F /* WindowsMiniDump.h */; settings = {ASSET_TAGS = (); }; };
 		26CA97A1172B1FD5005DC71B /* RegisterContextThreadMemory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26CA979F172B1FD5005DC71B /* RegisterContextThreadMemory.cpp */; };
 		26CEB5EF18761CB2008F575A /* libedit.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 26F5C32A10F3DFDD009D5894 /* libedit.dylib */; };
 		26CEB5F218762056008F575A /* CommandObjectGUI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26CEB5F018762056008F575A /* CommandObjectGUI.cpp */; };
@@ -632,6 +634,8 @@
 		26E152261419CAD4007967D0 /* ObjectFilePECOFF.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26E152231419CACA007967D0 /* ObjectFilePECOFF.cpp */; };
 		26ECA04313665FED008D1F18 /* ARM_DWARF_Registers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26ECA04213665FED008D1F18 /* ARM_DWARF_Registers.cpp */; };
 		26ED3D6D13C563810017D45E /* OptionGroupVariable.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26ED3D6C13C563810017D45E /* OptionGroupVariable.cpp */; };
+		26EFB61B1BFE8D3E00544801 /* PlatformNetBSD.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26EFB6181BFE8D3E00544801 /* PlatformNetBSD.cpp */; settings = {ASSET_TAGS = (); }; };
+		26EFB61C1BFE8D3E00544801 /* PlatformNetBSD.h in Headers */ = {isa = PBXBuildFile; fileRef = 26EFB6191BFE8D3E00544801 /* PlatformNetBSD.h */; settings = {ASSET_TAGS = (); }; };
 		26EFC4CD18CFAF0D00865D87 /* ObjectFileJIT.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26EFC4CA18CFAF0D00865D87 /* ObjectFileJIT.cpp */; };
 		26F006561B4DD86700B872E5 /* DynamicLoaderWindowsDYLD.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26F006541B4DD86700B872E5 /* DynamicLoaderWindowsDYLD.cpp */; };
 		26F4A21C13FBA31A0064B613 /* ThreadMemory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26F4A21A13FBA31A0064B613 /* ThreadMemory.cpp */; };
@@ -2098,6 +2102,8 @@
 		26C6886E137880C400407EDF /* RegisterValue.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = RegisterValue.cpp; path = source/Core/RegisterValue.cpp; sourceTree = "<group>"; };
 		26C72C93124322890068DC16 /* SBStream.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = SBStream.h; path = include/lldb/API/SBStream.h; sourceTree = "<group>"; };
 		26C72C951243229A0068DC16 /* SBStream.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = SBStream.cpp; path = source/API/SBStream.cpp; sourceTree = "<group>"; };
+		26C7C4811BFFEA7E009BD01F /* WindowsMiniDump.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WindowsMiniDump.cpp; sourceTree = "<group>"; };
+		26C7C4821BFFEA7E009BD01F /* WindowsMiniDump.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WindowsMiniDump.h; sourceTree = "<group>"; };
 		26C81CA411335651004BDC5A /* UUID.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = UUID.h; path = include/lldb/Core/UUID.h; sourceTree = "<group>"; };
 		26C81CA511335651004BDC5A /* UUID.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = UUID.cpp; path = source/Core/UUID.cpp; sourceTree = "<group>"; };
 		26CA979F172B1FD5005DC71B /* RegisterContextThreadMemory.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = RegisterContextThreadMemory.cpp; path = Utility/RegisterContextThreadMemory.cpp; sourceTree = "<group>"; };
@@ -2177,6 +2183,8 @@
 		26ECA04213665FED008D1F18 /* ARM_DWARF_Registers.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ARM_DWARF_Registers.cpp; path = source/Utility/ARM_DWARF_Registers.cpp; sourceTree = "<group>"; };
 		26ED3D6C13C563810017D45E /* OptionGroupVariable.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = OptionGroupVariable.cpp; path = source/Interpreter/OptionGroupVariable.cpp; sourceTree = "<group>"; };
 		26ED3D6F13C5638A0017D45E /* OptionGroupVariable.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = OptionGroupVariable.h; path = include/lldb/Interpreter/OptionGroupVariable.h; sourceTree = "<group>"; };
+		26EFB6181BFE8D3E00544801 /* PlatformNetBSD.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformNetBSD.cpp; sourceTree = "<group>"; };
+		26EFB6191BFE8D3E00544801 /* PlatformNetBSD.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformNetBSD.h; sourceTree = "<group>"; };
 		26EFC4CA18CFAF0D00865D87 /* ObjectFileJIT.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ObjectFileJIT.cpp; sourceTree = "<group>"; };
 		26EFC4CB18CFAF0D00865D87 /* ObjectFileJIT.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ObjectFileJIT.h; sourceTree = "<group>"; };
 		26F006541B4DD86700B872E5 /* DynamicLoaderWindowsDYLD.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DynamicLoaderWindowsDYLD.cpp; sourceTree = "<group>"; };
@@ -4958,6 +4966,7 @@
 				23042D0F1976C9D800621B2C /* Kalimba */,
 				2694E99F14FC0BBD0076DE67 /* Linux */,
 				26C5577F132575C8008FD8FE /* MacOSX */,
+				26EFB6151BFE8D3E00544801 /* NetBSD */,
 				9457596415349416005A9070 /* POSIX */,
 				490A36BA180F0E6F00BA31F8 /* Windows */,
 			);
@@ -5075,8 +5084,19 @@
 			children = (
 				26E152231419CACA007967D0 /* ObjectFilePECOFF.cpp */,
 				26E152241419CACA007967D0 /* ObjectFilePECOFF.h */,
+				26C7C4811BFFEA7E009BD01F /* WindowsMiniDump.cpp */,
+				26C7C4821BFFEA7E009BD01F /* WindowsMiniDump.h */,
 			);
 			path = PECOFF;
+			sourceTree = "<group>";
+		};
+		26EFB6151BFE8D3E00544801 /* NetBSD */ = {
+			isa = PBXGroup;
+			children = (
+				26EFB6181BFE8D3E00544801 /* PlatformNetBSD.cpp */,
+				26EFB6191BFE8D3E00544801 /* PlatformNetBSD.h */,
+			);
+			path = NetBSD;
 			sourceTree = "<group>";
 		};
 		26EFC4C718CFAF0D00865D87 /* JIT */ = {
@@ -5902,7 +5922,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				AF8AD6381BEC28C400150209 /* PlatformRemoteAppleTV.h in Headers */,
+				26EFB61C1BFE8D3E00544801 /* PlatformNetBSD.h in Headers */,
 				4984BA181B979C08008658D4 /* ExpressionVariable.h in Headers */,
+				26C7C4841BFFEA7E009BD01F /* WindowsMiniDump.h in Headers */,
 				AF8AD62F1BEC28A400150209 /* PlatformAppleTVSimulator.h in Headers */,
 				AF8AD63A1BEC28C400150209 /* PlatformRemoteAppleWatch.h in Headers */,
 				257906651BD5AFD000178368 /* Acceptor.h in Headers */,
@@ -5984,7 +6006,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2668020B115FD0EE008E1FE4 /* Build configuration list for PBXNativeTarget "LLDB" */;
 			buildPhases = (
-				26DC6A5813380D4300FF7998 /* Build swig wrapper classes */,
+				26DC6A5813380D4300FF7998 /* Prepare Swig Bindings */,
 				26680202115FD0ED008E1FE4 /* Headers */,
 				26680203115FD0ED008E1FE4 /* Resources */,
 				26680204115FD0ED008E1FE4 /* Sources */,
@@ -6214,19 +6236,19 @@
 			shellPath = /bin/sh;
 			shellScript = "perl $SRCROOT/scripts/build-llvm.pl";
 		};
-		26DC6A5813380D4300FF7998 /* Build swig wrapper classes */ = {
+		26DC6A5813380D4300FF7998 /* Prepare Swig Bindings */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
 			);
-			name = "Build swig wrapper classes";
+			name = "Prepare Swig Bindings";
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "$SRCROOT/scripts/build-swig-wrapper-classes.sh $SRCROOT $TARGET_BUILD_DIR $CONFIGURATION_BUILD_DIR \"\"\n";
+			shellPath = /bin/bash;
+			shellScript = "/usr/bin/python $SRCROOT/scripts/prepare_bindings.py --find-swig --framework --src-root $SRCROOT --target-dir $TARGET_BUILD_DIR --config-build-dir $CONFIGURATION_BUILD_DIR";
 		};
 		4959511A1A1ACE9500F6F8FC /* Install Clang compiler headers */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -6717,6 +6739,7 @@
 				268900D613353E6F00698AC0 /* Declaration.cpp in Sources */,
 				2579065C1BD0488100178368 /* TCPSocket.cpp in Sources */,
 				268900D713353E6F00698AC0 /* DWARFCallFrameInfo.cpp in Sources */,
+				26C7C4831BFFEA7E009BD01F /* WindowsMiniDump.cpp in Sources */,
 				268900D813353E6F00698AC0 /* Function.cpp in Sources */,
 				268900D913353E6F00698AC0 /* FuncUnwinders.cpp in Sources */,
 				268900DA13353E6F00698AC0 /* LineEntry.cpp in Sources */,
@@ -6941,6 +6964,7 @@
 				945759671534941F005A9070 /* PlatformPOSIX.cpp in Sources */,
 				26B1EFAE154638AF00E2DAC7 /* DWARFDeclContext.cpp in Sources */,
 				945215DF17F639EE00521C0B /* ValueObjectPrinter.cpp in Sources */,
+				26EFB61B1BFE8D3E00544801 /* PlatformNetBSD.cpp in Sources */,
 				260CC64815D0440D002BF2E0 /* OptionValueArgs.cpp in Sources */,
 				260CC64915D0440D002BF2E0 /* OptionValueArray.cpp in Sources */,
 				260CC64A15D0440D002BF2E0 /* OptionValueBoolean.cpp in Sources */,
