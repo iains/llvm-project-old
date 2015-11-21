@@ -153,6 +153,9 @@ public:
     
     virtual bool
     IsAggregateType (lldb::opaque_compiler_type_t type) = 0;
+
+    virtual bool
+    IsAnonymousType (lldb::opaque_compiler_type_t type);
     
     virtual bool
     IsCharType (lldb::opaque_compiler_type_t type) = 0;
@@ -496,7 +499,8 @@ public:
     GetUserExpression (const char *expr,
                        const char *expr_prefix,
                        lldb::LanguageType language,
-                       Expression::ResultType desired_type)
+                       Expression::ResultType desired_type,
+                       const EvaluateExpressionOptions &options)
     {
         return nullptr;
     }

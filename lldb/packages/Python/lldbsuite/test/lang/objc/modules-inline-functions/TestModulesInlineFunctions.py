@@ -2,17 +2,17 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import unittest2
 import os, time
 import lldb
 import platform
-import lldbutil
+import lldbsuite.test.lldbutil as lldbutil
 
 from distutils.version import StrictVersion
 
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class ModulesInlineFunctionsTestCase(TestBase):
 

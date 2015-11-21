@@ -4,11 +4,11 @@ Test the command history mechanism
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestFormats(TestBase):
 

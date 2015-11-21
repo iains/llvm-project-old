@@ -183,9 +183,6 @@ Watchpoint::ShouldStop (StoppointCallbackContext *context)
     if (!IsEnabled())
         return false;
 
-    if (GetHitCount() <= GetIgnoreCount())
-        return false;
-
     return true;
 }
 
@@ -387,6 +384,7 @@ Watchpoint::SetCondition (const char *condition)
                                                                    nullptr,
                                                                    lldb::eLanguageTypeUnknown,
                                                                    UserExpression::eResultTypeAny,
+                                                                   EvaluateExpressionOptions(),
                                                                    error));
         if (error.Fail())
         {

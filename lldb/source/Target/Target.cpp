@@ -582,6 +582,7 @@ BreakpointSP
 Target::CreateFuncRegexBreakpoint (const FileSpecList *containingModules, 
                                    const FileSpecList *containingSourceFiles,
                                    RegularExpression &func_regex, 
+                                   lldb::LanguageType requested_language,
                                    LazyBool skip_prologue,
                                    bool internal,
                                    bool hardware)
@@ -591,7 +592,8 @@ Target::CreateFuncRegexBreakpoint (const FileSpecList *containingModules,
       (skip_prologue == eLazyBoolCalculate) ? GetSkipPrologue()
                                             : static_cast<bool>(skip_prologue);
     BreakpointResolverSP resolver_sp(new BreakpointResolverName (NULL, 
-                                                                 func_regex, 
+                                                                 func_regex,
+                                                                 requested_language,
                                                                  skip));
 
     return CreateBreakpoint (filter_sp, resolver_sp, internal, hardware, true);
@@ -1993,6 +1995,7 @@ Target::GetUserExpressionForLanguage(const char *expr,
                                      const char *expr_prefix,
                                      lldb::LanguageType language,
                                      Expression::ResultType desired_type,
+                                     const EvaluateExpressionOptions &options,
                                      Error &error)
 {
     Error type_system_error;
@@ -2006,7 +2009,7 @@ Target::GetUserExpressionForLanguage(const char *expr,
         return nullptr;
     }
     
-    user_expr = type_system->GetUserExpression(expr, expr_prefix, language, desired_type);
+    user_expr = type_system->GetUserExpression(expr, expr_prefix, language, desired_type, options);
     if (!user_expr)
         error.SetErrorStringWithFormat("Could not create an expression for language %s", Language::GetNameForLanguageType(language));
     

@@ -1,9 +1,9 @@
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import gdbremote_testcase
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestGdbRemoteExpeditedRegisters(gdbremote_testcase.GdbRemoteTestCaseBase):
 

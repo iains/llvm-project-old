@@ -1,12 +1,12 @@
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import sys
 
 import unittest2
 import gdbremote_testcase
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestGdbRemote_qThreadStopInfo(gdbremote_testcase.GdbRemoteTestCaseBase):
 

@@ -33,8 +33,7 @@ echo core.%p | sudo tee /proc/sys/kernel/core_pattern
 """
 
 from __future__ import print_function
-
-import use_lldb_suite
+from __future__ import absolute_import
 
 # system packages and modules
 import asyncore
@@ -51,12 +50,15 @@ import threading
 
 from six.moves import queue
 
-# Add our local test_runner/lib dir to the python path.
-sys.path.append(os.path.join(os.path.dirname(__file__), "test_runner", "lib"))
-
 # Our packages and modules
-import dotest_channels
-import dotest_args
+import lldbsuite.support.seven as seven
+
+from . import dotest_channels
+from . import dotest_args
+
+# Todo: Convert this folder layout to be relative-import friendly and don't hack up
+# sys.path like this
+sys.path.append(os.path.join(os.path.dirname(__file__), "test_runner", "lib"))
 import lldb_utils
 import process_control
 
@@ -279,11 +281,12 @@ def call_with_timeout(command, timeout, name, inferior_pid_events):
     return process_driver.results
 
 
-def process_dir(root, files, test_root, dotest_argv, inferior_pid_events):
+def process_dir(root, files, dotest_argv, inferior_pid_events):
     """Examine a directory for tests, and invoke any found within it."""
     results = []
     for name in files:
-        script_file = os.path.join(test_root, "dotest.py")
+        import __main__ as main
+        script_file = main.__file__
         command = ([sys.executable, script_file] +
                    dotest_argv +
                    ["--inferior", "-p", name, root])
@@ -336,7 +339,7 @@ def process_dir_worker_multiprocessing(
     while not job_queue.empty():
         try:
             job = job_queue.get(block=False)
-            result = process_dir(job[0], job[1], job[2], job[3],
+            result = process_dir(job[0], job[1], job[2],
                                  inferior_pid_events)
             result_queue.put(result)
         except queue.Empty:
@@ -359,7 +362,7 @@ def process_dir_worker_threading(job_queue, result_queue, inferior_pid_events):
     while not job_queue.empty():
         try:
             job = job_queue.get(block=False)
-            result = process_dir(job[0], job[1], job[2], job[3],
+            result = process_dir(job[0], job[1], job[2],
                                  inferior_pid_events)
             result_queue.put(result)
         except queue.Empty:
@@ -966,7 +969,7 @@ def walk_and_invoke(test_directory, test_subdir, dotest_argv,
     test_work_items = []
     find_test_files_in_dir_tree(
         test_subdir, lambda testdir, test_files: test_work_items.append([
-            test_subdir, test_files, test_directory, dotest_argv, None]))
+            test_subdir, test_files, dotest_argv, None]))
 
     # Convert test work items into test results using whatever
     # was provided as the test run function.
@@ -1243,7 +1246,7 @@ def is_darwin_version_lower_than(target_version):
         return False
 
     system_version = distutils.version.StrictVersion(platform.mac_ver()[0])
-    return cmp(system_version, target_version) < 0
+    return seven.cmp_(system_version, target_version) < 0
 
 
 def default_test_runner_name(num_threads):
@@ -1261,11 +1264,10 @@ def default_test_runner_name(num_threads):
     elif os.name == "nt":
         # On Windows, Python uses CRT with a low limit on the number of open
         # files.  If you have a lot of cores, the threading-pool runner will
-        # often fail because it exceeds that limit.
-        if num_threads > 32:
-            test_runner_name = "multiprocessing-pool"
-        else:
-            test_runner_name = "threading-pool"
+        # often fail because it exceeds that limit.  It's not clear what the
+        # right balance is, so until we can investigate it more deeply,
+        # just use the one that works
+        test_runner_name = "multiprocessing-pool"
     elif is_darwin_version_lower_than(
             distutils.version.StrictVersion("10.10.0")):
         # OS X versions before 10.10 appear to have an issue using

@@ -4,13 +4,13 @@ Test some expressions involving STL data types.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import unittest2
 import os, time
 import lldb
-import lldbutil
-from lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
+from lldbsuite.test.lldbtest import *
 
 class STLTestCase(TestBase):
 

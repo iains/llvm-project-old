@@ -606,6 +606,9 @@ public:
     IsAggregateType (lldb::opaque_compiler_type_t type) override;
     
     bool
+    IsAnonymousType (lldb::opaque_compiler_type_t type) override;
+    
+    bool
     IsBeingDefined (lldb::opaque_compiler_type_t type) override;
     
     bool
@@ -1184,7 +1187,8 @@ public:
     GetUserExpression (const char *expr,
                        const char *expr_prefix,
                        lldb::LanguageType language,
-                       Expression::ResultType desired_type) override;
+                       Expression::ResultType desired_type,
+                       const EvaluateExpressionOptions &options) override;
     
     FunctionCaller *
     GetFunctionCaller (const CompilerType &return_type,

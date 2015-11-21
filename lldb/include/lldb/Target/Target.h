@@ -791,6 +791,7 @@ public:
     CreateFuncRegexBreakpoint (const FileSpecList *containingModules,
                                const FileSpecList *containingSourceFiles,
                                RegularExpression &func_regexp,
+                               lldb::LanguageType requested_language,
                                LazyBool skip_prologue,
                                bool internal,
                                bool request_hardware);
@@ -1256,6 +1257,7 @@ public:
                                  const char *expr_prefix,
                                  lldb::LanguageType language,
                                  Expression::ResultType desired_type,
+                                 const EvaluateExpressionOptions &options,
                                  Error &error);
     
     // Creates a FunctionCaller for the given language, the rest of the parameters have the

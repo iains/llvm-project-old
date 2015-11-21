@@ -4,12 +4,12 @@ Test that clang produces the __apple accelerator tables, for example, __apple_ty
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-from lldbutil import symbol_type_to_str
+from lldbsuite.test.lldbtest import *
+from lldbsuite.test.lldbutil import symbol_type_to_str
 
 class AppleTypesTestCase(TestBase):
 

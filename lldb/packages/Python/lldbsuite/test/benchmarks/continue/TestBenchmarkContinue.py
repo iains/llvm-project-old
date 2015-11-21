@@ -4,12 +4,12 @@ Test lldb data formatter subsystem.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbbench import *
-import lldbutil
+from lldbsuite.test.lldbbench import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class TestBenchmarkContinue(BenchBase):
 

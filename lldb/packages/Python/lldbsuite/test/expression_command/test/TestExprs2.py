@@ -4,12 +4,12 @@ Test some more expression commands.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-import lldbutil
-from lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
+from lldbsuite.test.lldbtest import *
 
 class ExprCommands2TestCase(TestBase):
 

@@ -4,12 +4,12 @@ Test that variables of integer basic types are displayed correctly.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import AbstractBase
 import lldb
 import sys
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class IntegerTypesTestCase(AbstractBase.GenericTester):
 

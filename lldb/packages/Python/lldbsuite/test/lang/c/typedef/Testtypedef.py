@@ -2,12 +2,12 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class TypedefTestCase(TestBase):
 
@@ -32,7 +32,7 @@ class TypedefTestCase(TestBase):
         """Test 'image lookup -t a' at different scopes and check for correct display."""
         exe = os.path.join(os.getcwd(), "a.out")
         self.runCmd("file " + exe, CURRENT_EXECUTABLE_SET)
-        typearray = ("float", "float", "char", "float", "int", "double", "float", "float")
+        typearray = ("float", "float", "char", "double *", "float", "int", "double", "float", "float")
         arraylen = len(typearray)+1
         for i in range(1,arraylen):
             loc_line = line_number('main.c', '// Set break point ' + str(i) + '.')

@@ -4,12 +4,12 @@ Test the iteration protocol for frame registers.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import re
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class RegistersIteratorTestCase(TestBase):
 
@@ -40,7 +40,7 @@ class RegistersIteratorTestCase(TestBase):
         if not process:
             self.fail("SBTarget.LaunchProcess() failed")
 
-        import lldbutil
+        import lldbsuite.test.lldbutil as lldbutil
         for thread in process:
             if thread.GetStopReason() == lldb.eStopReasonBreakpoint:
                 for frame in thread:

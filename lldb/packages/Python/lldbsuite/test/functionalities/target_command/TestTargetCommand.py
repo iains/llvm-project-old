@@ -4,12 +4,12 @@ Test some target commands: create, list, select, variable.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
 import sys
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class targetCommandTestCase(TestBase):
 

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """
 A simple testing framework for lldb using python's unit testing framework.
 
@@ -20,21 +18,14 @@ Type:
 for available options.
 """
 
+from __future__ import absolute_import
 from __future__ import print_function
-# this module needs to have global visibility, otherwise test cases
-# will import it anew in their local namespace, essentially losing access
-# to all the configuration data
-globals()['lldbtest_config'] = __import__('lldbtest_config')
 
-import use_lldb_suite
-
-import lldbsuite
-
+# System modules
+import sys
 import atexit
-import commands
 import importlib
 import os
-import dotest_args
 import errno
 import platform
 import progress
@@ -42,13 +33,20 @@ import signal
 import socket
 import subprocess
 import sys
-import test_results
-from test_results import EventBuilder
 import inspect
-import unittest2
-import test_categories
 
+# Third-party modules
 import six
+import unittest2
+
+# LLDB Modules
+import lldbsuite
+from . import dotest_args
+from . import lldbtest_config
+from . import test_categories
+from . import test_results
+from .test_results import EventBuilder
+from ..support import seven
 
 def is_exe(fpath):
     """Returns true if fpath is an executable."""
@@ -366,7 +364,7 @@ o GDB_REMOTE_LOG: if defined, specifies the log file pathname for the
 
 
 def setCrashInfoHook_Mac(text):
-    import crashinfo
+    from . import crashinfo
     crashinfo.setCrashReporterDescription(text)
 
 # implement this in some suitable way for your platform, and then bind it
@@ -389,7 +387,7 @@ def setupCrashInfoHook():
     global setCrashInfoHook
     setCrashInfoHook = setCrashInfoHook_NonMac # safe default
     if platform.system() == "Darwin":
-        import lock
+        from . import lock
         test_dir = os.environ['LLDB_TEST']
         if not test_dir or not os.path.exists(test_dir):
             return
@@ -518,7 +516,7 @@ def parseOptionsAndInitTestdirs():
     else:
         # Use a compiler appropriate appropriate for the Apple SDK if one was specified
         if platform_system == 'Darwin' and args.apple_sdk:
-            compilers = [commands.getoutput('xcrun -sdk "%s" -find clang 2> /dev/null' % (args.apple_sdk))]
+            compilers = [seven.get_command_output('xcrun -sdk "%s" -find clang 2> /dev/null' % (args.apple_sdk))]
         else:
             # 'clang' on ubuntu 14.04 is 3.4 so we try clang-3.5 first
             candidateCompilers = ['clang-3.5', 'clang', 'gcc']
@@ -535,15 +533,15 @@ def parseOptionsAndInitTestdirs():
 
     # Set SDKROOT if we are using an Apple SDK
     if platform_system == 'Darwin' and args.apple_sdk:
-        os.environ['SDKROOT'] = commands.getoutput('xcrun --sdk "%s" --show-sdk-path 2> /dev/null' % (args.apple_sdk))
+        os.environ['SDKROOT'] = seven.get_command_output('xcrun --sdk "%s" --show-sdk-path 2> /dev/null' % (args.apple_sdk))
 
     if args.archs:
         archs = args.archs
         for arch in archs:
             if arch.startswith('arm') and platform_system == 'Darwin' and not args.apple_sdk:
-                os.environ['SDKROOT'] = commands.getoutput('xcrun --sdk iphoneos.internal --show-sdk-path 2> /dev/null')
+                os.environ['SDKROOT'] = seven.get_command_output('xcrun --sdk iphoneos.internal --show-sdk-path 2> /dev/null')
                 if not os.path.exists(os.environ['SDKROOT']):
-                    os.environ['SDKROOT'] = commands.getoutput('xcrun --sdk iphoneos --show-sdk-path 2> /dev/null')
+                    os.environ['SDKROOT'] = seven.get_command_output('xcrun --sdk iphoneos --show-sdk-path 2> /dev/null')
     else:
         archs = [platform_machine]
 
@@ -928,12 +926,12 @@ def setupTestResults():
         else:
             results_file_object = open(results_filename, "w")
             cleanup_func = results_file_object.close
-        default_formatter_name = "test_results.XunitFormatter"
+        default_formatter_name = "lldbsuite.test.test_results.XunitFormatter"
     elif results_port:
         # Connect to the specified localhost port.
         results_file_object, cleanup_func = createSocketToLocalPort(
             results_port)
-        default_formatter_name = "test_results.RawPickledFormatter"
+        default_formatter_name = "lldbsuite.test.test_results.RawPickledFormatter"
 
     if results_file_object:
         # We care about the formatter.  Choose user-specified or, if
@@ -1060,7 +1058,6 @@ def setupSysPath():
     toolsLLDBServerPath = os.path.join(scriptPath, 'tools', 'lldb-server')
 
     # Insert script dir, plugin dir, lldb-mi dir and lldb-server dir to the sys.path.
-    sys.path.insert(0, scriptPath)
     sys.path.insert(0, pluginPath)
     sys.path.insert(0, toolsLLDBMIPath)      # Adding test/tools/lldb-mi to the path makes it easy
                                              # to "import lldbmi_testcase" from the MI tests
@@ -1154,7 +1151,7 @@ def setupSysPath():
         # If our lldb supports the -P option, use it to find the python path:
         init_in_python_dir = os.path.join('lldb', '__init__.py')
 
-        lldb_dash_p_result = subprocess.check_output([lldbtest_config.lldbExec, "-P"], stderr=subprocess.STDOUT)
+        lldb_dash_p_result = subprocess.check_output([lldbtest_config.lldbExec, "-P"], stderr=subprocess.STDOUT, universal_newlines=True)
 
         if lldb_dash_p_result and not lldb_dash_p_result.startswith(("<", "lldb: invalid option:")) \
 							  and not lldb_dash_p_result.startswith("Traceback"):
@@ -1237,9 +1234,6 @@ def visit(prefix, dir, names):
         return
 
     for name in names:
-        if os.path.isdir(os.path.join(dir, name)):
-            continue
-
         if '.py' == os.path.splitext(name)[1] and name.startswith(prefix):
 
             if name in all_tests:
@@ -1388,6 +1382,28 @@ def isMultiprocessTestRunner():
     # test runner
     return not (is_inferior_test_runner or no_multiprocess_test_runner)
 
+def getVersionForSDK(sdk):
+    sdk = str.lower(sdk)
+    full_path = seven.get_command_output('xcrun -sdk %s --show-sdk-path' % sdk)
+    basename = os.path.basename(full_path)
+    basename = os.path.splitext(basename)[0]
+    basename = str.lower(basename)
+    ver = basename.replace(sdk, '')
+    return ver
+
+def getPathForSDK(sdk):
+    sdk = str.lower(sdk)
+    full_path = seven.get_command_output('xcrun -sdk %s --show-sdk-path' % sdk)
+    if os.path.exists(full_path): return full_path
+    return None
+
+def setDefaultTripleForPlatform():
+    if lldb_platform_name == 'ios-simulator':
+        triple_str = 'x86_64-apple-ios%s' % (getVersionForSDK('iphonesimulator'))
+        os.environ['TRIPLE'] = triple_str
+        return {'TRIPLE':triple_str}
+    return {}
+
 def run_suite():
     global just_do_benchmarks_test
     global dont_do_dsym_test
@@ -1458,7 +1474,7 @@ def run_suite():
     # If we are running as the multiprocess test runner, kick off the
     # multiprocess test runner here.
     if isMultiprocessTestRunner():
-        import dosep
+        from . import dosep
         dosep.main(output_on_success, num_threads, multiprocess_test_subdir,
                    test_runner_name, results_formatter_object)
         raise Exception("should never get here")
@@ -1485,6 +1501,7 @@ def run_suite():
     if lldb_platform_name:
         print("Setting up remote platform '%s'" % (lldb_platform_name))
         lldb.remote_platform = lldb.SBPlatform(lldb_platform_name)
+        lldb.remote_platform_name = lldb_platform_name
         if not lldb.remote_platform.IsValid():
             print("error: unable to create the LLDB platform named '%s'." % (lldb_platform_name))
             exitTestSuite(1)
@@ -1502,10 +1519,17 @@ def run_suite():
         else:
             lldb.platform_url = None
 
-        if lldb_platform_working_dir:
-            print("Setting remote platform working directory to '%s'..." % (lldb_platform_working_dir))
-            lldb.remote_platform.SetWorkingDirectory(lldb_platform_working_dir)
-    
+    platform_changes = setDefaultTripleForPlatform()
+    first = True
+    for key in platform_changes:
+        if first:
+            print("Environment variables setup for platform support:")
+            first = False
+        print("%s = %s" % (key,platform_changes[key]))
+
+    if lldb_platform_working_dir:
+        print("Setting remote platform working directory to '%s'..." % (lldb_platform_working_dir))
+        lldb.remote_platform.SetWorkingDirectory(lldb_platform_working_dir)
         lldb.remote_platform_working_dir = lldb_platform_working_dir
         lldb.DBG.SetSelectedPlatform(lldb.remote_platform)
     else:
@@ -1532,7 +1556,8 @@ def run_suite():
     # Walk through the testdirs while collecting tests.
     #
     for testdir in testdirs:
-        os.path.walk(testdir, visit, 'Test')
+        for (dirpath, dirnames, filenames) in os.walk(testdir):
+            visit('Test', dirpath, filenames)
 
     #
     # Now that we have loaded all the test cases, run the whole test suite.
@@ -1701,8 +1726,11 @@ def run_suite():
 
             if iterArchs or iterCompilers:
                 # Translate ' ' to '-' for pathname component.
-                from string import maketrans
-                tbl = maketrans(' ', '-')
+                if six.PY2:
+                    import string
+                    tbl = string.maketrans(' ', '-')
+                else:
+                    tbl = str.maketrans(' ', '-')
                 configPostfix = configString.translate(tbl)
 
                 # Check whether we need to split stderr/stdout into configuration
@@ -2039,4 +2067,5 @@ def run_suite():
     exitTestSuite(failed)
 
 if __name__ == "__main__":
-    run_suite()
+    print(__file__ + " is for use as a module only.  It should not be run as a standalone script.")
+    sys.exit(-1)

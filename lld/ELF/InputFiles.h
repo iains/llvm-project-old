@@ -49,6 +49,8 @@ private:
 template <typename ELFT> class ELFFileBase : public InputFile {
 public:
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Word Elf_Word;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
 
   ELFFileBase(Kind K, MemoryBufferRef M);
@@ -78,9 +80,12 @@ public:
 
   StringRef getStringTable() const { return StringTable; }
 
+  uint32_t getSectionIndex(const Elf_Sym &Sym) const;
+
 protected:
   llvm::object::ELFFile<ELFT> ELFObj;
   const Elf_Shdr *Symtab = nullptr;
+  ArrayRef<Elf_Word> SymtabSHNDX;
   StringRef StringTable;
   void initStringTable();
   Elf_Sym_Range getNonLocalSymbols();
@@ -125,7 +130,6 @@ public:
   const Elf_Sym *getLocalSymbol(uintX_t SymIndex);
 
   const Elf_Shdr *getSymbolTable() const { return this->Symtab; };
-  ArrayRef<Elf_Word> getSymbolTableShndx() const { return SymtabSHNDX; };
 
 private:
   void initializeSections(llvm::DenseSet<StringRef> &Comdats);
@@ -135,8 +139,6 @@ private:
 
   // List of all sections defined by this file.
   std::vector<InputSectionBase<ELFT> *> Sections;
-
-  ArrayRef<Elf_Word> SymtabSHNDX;
 
   // List of all symbols referenced or defined by this file.
   std::vector<SymbolBody *> SymbolBodies;
@@ -169,6 +171,7 @@ template <class ELFT> class SharedFile : public ELFFileBase<ELFT> {
   typedef ELFFileBase<ELFT> Base;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Word Elf_Word;
   typedef typename llvm::object::ELFFile<ELFT>::Elf_Sym_Range Elf_Sym_Range;
 
   std::vector<SharedSymbol<ELFT>> SymbolBodies;
@@ -180,7 +183,7 @@ public:
   llvm::MutableArrayRef<SharedSymbol<ELFT>> getSharedSymbols() {
     return SymbolBodies;
   }
-
+  const Elf_Shdr *getSection(const Elf_Sym &Sym) const;
   llvm::ArrayRef<StringRef> getUndefinedSymbols() { return Undefs; }
 
   static bool classof(const InputFile *F) {

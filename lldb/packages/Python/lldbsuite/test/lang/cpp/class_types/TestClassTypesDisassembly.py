@@ -4,12 +4,12 @@ Test the lldb disassemble command on each call frame when stopped on C's ctor.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class IterateFrameAndDisassembleTestCase(TestBase):
 

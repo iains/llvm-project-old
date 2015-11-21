@@ -4,13 +4,13 @@ Test type lookup command.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 import datetime
-import lldbutil
+import lldbsuite.test.lldbutil as lldbutil
 
 class TypeLookupTestCase(TestBase):
 

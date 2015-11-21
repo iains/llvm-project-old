@@ -785,6 +785,8 @@ ClangASTContext::GetBuiltinTypeForEncodingAndBitSize (ASTContext *ast, Encoding 
             return CompilerType (ast, ast->DoubleTy);
         if (QualTypeMatchesBitSize (bit_size, ast, ast->LongDoubleTy))
             return CompilerType (ast, ast->LongDoubleTy);
+        if (QualTypeMatchesBitSize (bit_size, ast, ast->HalfTy))
+            return CompilerType (ast, ast->HalfTy);
         break;
         
     case eEncodingVector:
@@ -1071,6 +1073,8 @@ ClangASTContext::GetBuiltinTypeForDWARFEncodingAndBitSize (const char *type_name
                     return CompilerType (ast, ast->DoubleTy);
                 if (QualTypeMatchesBitSize (bit_size, ast, ast->LongDoubleTy))
                     return CompilerType (ast, ast->LongDoubleTy);
+                if (QualTypeMatchesBitSize (bit_size, ast, ast->HalfTy))
+                    return CompilerType (ast, ast->HalfTy);
                 break;
                 
             case DW_ATE_signed:
@@ -2573,6 +2577,38 @@ ClangASTContext::IsAggregateType (lldb::opaque_compiler_type_t type)
             return IsAggregateType(llvm::cast<clang::TypedefType>(qual_type)->getDecl()->getUnderlyingType().getAsOpaquePtr());
         case clang::Type::Paren:
             return IsAggregateType(llvm::cast<clang::ParenType>(qual_type)->desugar().getAsOpaquePtr());
+        default:
+            break;
+    }
+    // The clang type does have a value
+    return false;
+}
+
+bool
+ClangASTContext::IsAnonymousType (lldb::opaque_compiler_type_t type)
+{
+    clang::QualType qual_type (GetCanonicalQualType(type));
+    
+    const clang::Type::TypeClass type_class = qual_type->getTypeClass();
+    switch (type_class)
+    {
+        case clang::Type::Record:
+        {
+            if (const clang::RecordType *record_type = llvm::dyn_cast_or_null<clang::RecordType>(qual_type.getTypePtrOrNull()))
+            {
+                if (const clang::RecordDecl *record_decl = record_type->getDecl())
+                {
+                    return record_decl->isAnonymousStructOrUnion();
+                }
+            }
+            break;
+        }
+        case clang::Type::Elaborated:
+            return IsAnonymousType(llvm::cast<clang::ElaboratedType>(qual_type)->getNamedType().getAsOpaquePtr());
+        case clang::Type::Typedef:
+            return IsAnonymousType(llvm::cast<clang::TypedefType>(qual_type)->getDecl()->getUnderlyingType().getAsOpaquePtr());
+        case clang::Type::Paren:
+            return IsAnonymousType(llvm::cast<clang::ParenType>(qual_type)->desugar().getAsOpaquePtr());
         default:
             break;
     }
@@ -4525,6 +4561,7 @@ ClangASTContext::GetEncoding (lldb::opaque_compiler_type_t type, uint64_t &count
             case clang::BuiltinType::ULongLong:
             case clang::BuiltinType::UInt128:       return lldb::eEncodingUint;
                 
+            case clang::BuiltinType::Half:
             case clang::BuiltinType::Float:
             case clang::BuiltinType::Double:
             case clang::BuiltinType::LongDouble:    return lldb::eEncodingIEEE754;
@@ -4539,7 +4576,6 @@ ClangASTContext::GetEncoding (lldb::opaque_compiler_type_t type, uint64_t &count
             case clang::BuiltinType::Kind::BoundMember:
             case clang::BuiltinType::Kind::BuiltinFn:
             case clang::BuiltinType::Kind::Dependent:
-            case clang::BuiltinType::Kind::Half:
             case clang::BuiltinType::Kind::OCLClkEvent:
             case clang::BuiltinType::Kind::OCLEvent:
             case clang::BuiltinType::Kind::OCLImage1d:
@@ -4689,8 +4725,9 @@ ClangASTContext::GetFormat (lldb::opaque_compiler_type_t type)
             case clang::BuiltinType::LongLong:      return lldb::eFormatDecimal;
             case clang::BuiltinType::UInt128:       return lldb::eFormatUnsigned;
             case clang::BuiltinType::Int128:        return lldb::eFormatDecimal;
-            case clang::BuiltinType::Float:         return lldb::eFormatFloat;
-            case clang::BuiltinType::Double:        return lldb::eFormatFloat;
+            case clang::BuiltinType::Half:
+            case clang::BuiltinType::Float:
+            case clang::BuiltinType::Double:
             case clang::BuiltinType::LongDouble:    return lldb::eFormatFloat;
             default:
                 return lldb::eFormatHex;
@@ -9227,13 +9264,14 @@ UserExpression *
 ClangASTContextForExpressions::GetUserExpression (const char *expr,
                    const char *expr_prefix,
                    lldb::LanguageType language,
-                   Expression::ResultType desired_type)
+                   Expression::ResultType desired_type,
+                   const EvaluateExpressionOptions &options)
 {
     TargetSP target_sp = m_target_wp.lock();
     if (!target_sp)
         return nullptr;
     
-    return new ClangUserExpression(*target_sp.get(), expr, expr_prefix, language, desired_type);
+    return new ClangUserExpression(*target_sp.get(), expr, expr_prefix, language, desired_type, options);
 }
 
 FunctionCaller *

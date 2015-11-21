@@ -4,12 +4,12 @@ Check for an issue where capping does not work because the Target pointer appear
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class SyntheticCappingTestCase(TestBase):
 

@@ -4,12 +4,12 @@ Test the printing of anonymous and named namespace variables.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class NamespaceTestCase(TestBase):
 

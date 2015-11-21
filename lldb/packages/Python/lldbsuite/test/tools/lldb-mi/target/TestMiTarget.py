@@ -4,10 +4,10 @@ Test lldb-mi -target-xxx commands.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldbmi_testcase
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class MiTargetTestCase(lldbmi_testcase.MiTestCaseBase):
 

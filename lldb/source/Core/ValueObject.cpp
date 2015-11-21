@@ -47,6 +47,7 @@
 #include "lldb/Symbol/Type.h"
 
 #include "lldb/Target/ExecutionContext.h"
+#include "lldb/Target/Language.h"
 #include "lldb/Target/LanguageRuntime.h"
 #include "lldb/Target/ObjCLanguageRuntime.h"
 #include "lldb/Target/Process.h"
@@ -515,6 +516,19 @@ ValueObject::ResolveValue (Scalar &scalar)
 bool
 ValueObject::IsLogicalTrue (Error& error)
 {
+    if (Language *language = Language::FindPlugin(GetObjectRuntimeLanguage()))
+    {
+        LazyBool is_logical_true = language->IsLogicalTrue(*this, error);
+        switch (is_logical_true)
+        {
+            case eLazyBoolYes:
+            case eLazyBoolNo:
+                return (is_logical_true == true);
+            case eLazyBoolCalculate:
+                break;
+        }
+    }
+    
     Scalar scalar_value;
     
     if (!ResolveValue (scalar_value))
@@ -1090,7 +1104,7 @@ ValueObject::GetPointeeData (DataExtractor& data,
                     {
                         size_t bytes_read = std::min<uint64_t>(max_bytes - offset, bytes);
                         addr = m_value.GetScalar().ULongLong(LLDB_INVALID_ADDRESS);
-                        if (addr == LLDB_INVALID_ADDRESS)
+                        if (addr == 0 || addr == LLDB_INVALID_ADDRESS)
                             break;
                         heap_buf_ptr->CopyData((uint8_t*)(addr + offset), bytes_read);
                         data.SetData(data_sp);
@@ -1240,13 +1254,14 @@ CopyStringDataToBufferSP(const StreamString& source,
     return true;
 }
 
-size_t
+std::pair<size_t,bool>
 ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
                                 Error& error,
                                 uint32_t max_length,
                                 bool honor_array,
                                 Format item_format)
 {
+    bool was_capped = false;
     StreamString s;
     ExecutionContext exe_ctx (GetExecutionContextRef());
     Target* target = exe_ctx.GetTargetPtr();
@@ -1256,7 +1271,7 @@ ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
         s << "<no target to read from>";
         error.SetErrorString("no target to read from");
         CopyStringDataToBufferSP(s, buffer_sp);
-        return 0;
+        return {0,was_capped};
     }
     
     if (max_length == 0)
@@ -1302,7 +1317,7 @@ ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
             s << "<invalid address>";
             error.SetErrorString("invalid address");
             CopyStringDataToBufferSP(s, buffer_sp);
-            return 0;
+            return {0,was_capped};
         }
         
         Address cstr_so_addr (cstr_address);
@@ -1319,7 +1334,7 @@ ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
                 for (size_t offset = 0; offset < bytes_read; offset++)
                     s.Printf("%c", *data.PeekData(offset, 1));
                 if (capped_data)
-                    s << "...";
+                    was_capped = true;
             }
         }
         else
@@ -1371,7 +1386,7 @@ ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
             if (cstr_len_displayed >= 0)
             {
                 if (capped_cstr)
-                    s << "...";
+                    was_capped = true;
             }
         }
     }
@@ -1381,7 +1396,7 @@ ValueObject::ReadPointedString (lldb::DataBufferSP& buffer_sp,
         s << "<not a string object>";
     }
     CopyStringDataToBufferSP(s, buffer_sp);
-    return total_bytes_read;
+    return {total_bytes_read,was_capped};
 }
 
 std::pair<TypeValidatorResult, std::string>
@@ -1629,17 +1644,18 @@ ValueObject::DumpPrintableRepresentation(Stream& s,
             {
                 Error error;
                 lldb::DataBufferSP buffer_sp;
-                ReadPointedString(buffer_sp,
-                                  error,
-                                  0,
-                                  (custom_format == eFormatVectorOfChar) ||
-                                  (custom_format == eFormatCharArray));
+                std::pair<size_t, bool> read_string = ReadPointedString(buffer_sp,
+                                                                        error,
+                                                                        0,
+                                                                        (custom_format == eFormatVectorOfChar) ||
+                                                                        (custom_format == eFormatCharArray));
                 lldb_private::formatters::StringPrinter::ReadBufferAndDumpToStreamOptions options(*this);
                 options.SetData(DataExtractor(buffer_sp, lldb::eByteOrderInvalid, 8)); // none of this matters for a string - pass some defaults
                 options.SetStream(&s);
                 options.SetPrefixToken(0);
                 options.SetQuote('"');
                 options.SetSourceSize(buffer_sp->GetByteSize());
+                options.SetIsTruncated(read_string.second);
                 formatters::StringPrinter::ReadBufferAndDumpToStream<lldb_private::formatters::StringPrinter::StringElementType::ASCII>(options);
                 return !error.Fail();
             }

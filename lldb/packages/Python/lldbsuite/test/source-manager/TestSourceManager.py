@@ -11,11 +11,11 @@ o test_modify_source_file_while_debugging:
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class SourceManagerTestCase(TestBase):
 

@@ -72,11 +72,13 @@ template <class ELFT>
 GotSection<ELFT>::GotSection()
     : OutputSectionBase<ELFT>(".got", llvm::ELF::SHT_PROGBITS,
                               llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE) {
+  if (Config->EMachine == EM_MIPS)
+    this->Header.sh_flags |= llvm::ELF::SHF_MIPS_GPREL;
   this->Header.sh_addralign = sizeof(uintX_t);
 }
 
 template <class ELFT> void GotSection<ELFT>::addEntry(SymbolBody *Sym) {
-  Sym->GotIndex = Entries.size();
+  Sym->GotIndex = Target->getGotHeaderEntriesNum() + Entries.size();
   Entries.push_back(Sym);
 }
 
@@ -86,11 +88,23 @@ GotSection<ELFT>::getEntryAddr(const SymbolBody &B) const {
   return this->getVA() + B.GotIndex * sizeof(uintX_t);
 }
 
+template <class ELFT> void GotSection<ELFT>::finalize() {
+  this->Header.sh_size =
+      (Target->getGotHeaderEntriesNum() + Entries.size()) * sizeof(uintX_t);
+}
+
 template <class ELFT> void GotSection<ELFT>::writeTo(uint8_t *Buf) {
+  Target->writeGotHeaderEntries(Buf);
+  Buf += Target->getGotHeaderEntriesNum() * sizeof(uintX_t);
   for (const SymbolBody *B : Entries) {
     uint8_t *Entry = Buf;
     Buf += sizeof(uintX_t);
-    if (canBePreempted(B, false))
+    // MIPS has special rules to fill up GOT entries.
+    // See "Global Offset Table" in Chapter 5 in the following document
+    // for detailed description:
+    // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+    // As the first approach, we can just store addresses for all symbols.
+    if (Config->EMachine != EM_MIPS && canBePreempted(B, false))
       continue; // The dynamic linker will take care of it.
     uintX_t VA = getSymVA<ELFT>(*B);
     write<uintX_t, ELFT::TargetEndianness, sizeof(uintX_t)>(Entry, VA);
@@ -340,8 +354,7 @@ unsigned GnuHashTableSection<ELFT>::calcMaskWords(unsigned NumHashed) {
 }
 
 template <class ELFT> void GnuHashTableSection<ELFT>::finalize() {
-  ArrayRef<SymbolBody *> A = Out<ELFT>::DynSymTab->getSymbols();
-  unsigned NumHashed = std::count_if(A.begin(), A.end(), includeInGnuHashTable);
+  unsigned NumHashed = HashedSymbols.size();
   NBuckets = calcNBuckets(NumHashed);
   MaskWords = calcMaskWords(NumHashed);
   // Second hash shift estimation: just predefined values.
@@ -407,6 +420,11 @@ void GnuHashTableSection<ELFT>::writeHashTable(uint8_t *Buf) {
   }
   if (I > 0)
     Values[I - 1] |= 1;
+}
+
+static bool includeInGnuHashTable(SymbolBody *B) {
+  // Assume that includeInDynamicSymtab() is already checked.
+  return !B->isUndefined();
 }
 
 template <class ELFT>
@@ -640,13 +658,16 @@ typename ELFFile<ELFT>::uintX_t lld::elf2::getSymVA(const SymbolBody &S) {
   case SymbolBody::DefinedRegularKind: {
     const auto &DR = cast<DefinedRegular<ELFT>>(S);
     InputSectionBase<ELFT> &SC = DR.Section;
+    if (DR.Sym.getType() == STT_TLS)
+      return SC.OutSec->getVA() + SC.getOffset(DR.Sym) -
+             Out<ELFT>::TlsPhdr->p_vaddr;
     return SC.OutSec->getVA() + SC.getOffset(DR.Sym);
   }
   case SymbolBody::DefinedCommonKind:
     return Out<ELFT>::Bss->getVA() + cast<DefinedCommon<ELFT>>(S).OffsetInBSS;
   case SymbolBody::SharedKind: {
     auto &SS = cast<SharedSymbol<ELFT>>(S);
-    if (SS.NeedsCopy)
+    if (SS.needsCopy())
       return Out<ELFT>::Bss->getVA() + SS.OffsetInBSS;
     return 0;
   }
@@ -861,11 +882,6 @@ bool lld::elf2::includeInDynamicSymtab(const SymbolBody &B) {
   return B.isUsedInDynamicReloc();
 }
 
-bool lld::elf2::includeInGnuHashTable(SymbolBody *B) {
-  // Assume that includeInDynamicSymtab() is already checked.
-  return !B->isUndefined();
-}
-
 template <class ELFT>
 bool lld::elf2::shouldKeepInSymtab(const ObjectFile<ELFT> &File,
                                    StringRef SymName,
@@ -900,6 +916,9 @@ SymbolTableSection<ELFT>::SymbolTableSection(
 }
 
 template <class ELFT> void SymbolTableSection<ELFT>::finalize() {
+  if (this->Header.sh_size)
+    return; // Already finalized.
+
   this->Header.sh_size = getNumSymbols() * sizeof(Elf_Sym);
   this->Header.sh_link = StrTabSec.SectionIndex;
   this->Header.sh_info = NumLocals + 1;
@@ -1003,7 +1022,7 @@ void SymbolTableSection<ELFT>::writeGlobalSymbols(uint8_t *Buf) {
       OutSec = Out<ELFT>::Bss;
       break;
     case SymbolBody::SharedKind: {
-      if (cast<SharedSymbol<ELFT>>(Body)->NeedsCopy)
+      if (cast<SharedSymbol<ELFT>>(Body)->needsCopy())
         OutSec = Out<ELFT>::Bss;
       break;
     }

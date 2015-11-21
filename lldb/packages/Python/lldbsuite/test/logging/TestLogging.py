@@ -4,11 +4,11 @@ Test lldb logging.  This test just makes sure logging doesn't crash, and produce
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time, string
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class LogTestCase(TestBase):
 

@@ -45,6 +45,7 @@
 #include <pwd.h>
 #include <spawn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -815,7 +816,7 @@ GetMacOSXProcessArgs (const ProcessInstanceInfoMatch *match_info_ptr,
         arg_data_size = arg_data.GetByteSize();
         if (::sysctl (proc_args_mib, 3, arg_data.GetBytes(), &arg_data_size , NULL, 0) == 0)
         {
-            DataExtractor data (arg_data.GetBytes(), arg_data_size, lldb::endian::InlHostByteOrder(), sizeof(void *));
+            DataExtractor data (arg_data.GetBytes(), arg_data_size, endian::InlHostByteOrder(), sizeof(void *));
             lldb::offset_t offset = 0;
             uint32_t argc = data.GetU32 (&offset);
             llvm::Triple &triple = process_info.GetArchitecture().GetTriple();
@@ -1371,7 +1372,24 @@ Host::ShellExpandArguments (ProcessLaunchInfo &launch_info)
         
         int status;
         std::string output;
-        RunShellCommand(expand_command, launch_info.GetWorkingDirectory(), &status, nullptr, &output, 10);
+        FileSpec cwd(launch_info.GetWorkingDirectory());
+        if (!cwd.Exists())
+        {
+            char *wd = getcwd(nullptr, 0);
+            if (wd == nullptr)
+            {
+                error.SetErrorStringWithFormat("cwd does not exist; cannot launch with shell argument expansion");
+                return error;
+            }
+            else
+            {
+                FileSpec working_dir(wd, false);
+                free(wd);
+                launch_info.SetWorkingDirectory(working_dir);
+
+            }
+        }
+        RunShellCommand(expand_command, cwd, &status, nullptr, &output, 10);
         
         if (status != 0)
         {

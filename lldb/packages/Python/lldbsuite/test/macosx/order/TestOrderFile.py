@@ -4,12 +4,12 @@ Test that debug symbols have the correct order as specified by the order file.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import re
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class OrderFileTestCase(TestBase):
 

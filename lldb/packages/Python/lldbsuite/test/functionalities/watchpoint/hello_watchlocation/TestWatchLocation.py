@@ -4,13 +4,13 @@ Test lldb watchpoint that uses '-s size' to watch a pointed location with size.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import re
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class HelloWatchLocationTestCase(TestBase):
 

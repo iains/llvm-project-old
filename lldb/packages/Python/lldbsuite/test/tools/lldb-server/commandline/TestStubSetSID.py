@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import gdbremote_testcase
 import lldbgdbserverutils
@@ -8,7 +8,7 @@ import os
 import select
 import tempfile
 import time
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestStubSetSIDTestCase(gdbremote_testcase.GdbRemoteTestCaseBase):
 

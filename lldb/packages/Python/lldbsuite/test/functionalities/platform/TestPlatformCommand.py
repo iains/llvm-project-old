@@ -4,11 +4,11 @@ Test some lldb platform commands.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class PlatformCommandTestCase(TestBase):
 

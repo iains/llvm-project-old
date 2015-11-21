@@ -4,12 +4,12 @@ Make sure that ivars of Objective-C++ classes are visible in LLDB.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class ObjCXXTestCase(TestBase):
 

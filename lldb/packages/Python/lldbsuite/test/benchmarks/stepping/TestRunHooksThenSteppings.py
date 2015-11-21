@@ -2,11 +2,11 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, sys
 import lldb
-from lldbbench import *
+from lldbsuite.test.lldbbench import *
 
 class RunHooksThenSteppingsBench(BenchBase):
 

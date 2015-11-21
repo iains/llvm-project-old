@@ -5,12 +5,12 @@ Test that the C++11 support for char16_t and char32_t works correctly.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class Char1632TestCase(TestBase):
 

@@ -4,9 +4,9 @@ Test SBSection APIs.
 
 from __future__ import print_function
 
-import use_lldb_suite
 
-from lldbtest import *
+
+from lldbsuite.test.lldbtest import *
 
 class SectionAPITestCase(TestBase):
 

@@ -4,12 +4,12 @@ Test error cases for the 'watchpoint set' command to make sure it errors out whe
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class WatchpointSetErrorTestCase(TestBase):
 

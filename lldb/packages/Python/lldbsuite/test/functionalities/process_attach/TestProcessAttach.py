@@ -4,12 +4,12 @@ Test process attach.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 exe_name = "ProcessAttach"  # Must match Makefile
 
@@ -17,6 +17,7 @@ class ProcessAttachTestCase(TestBase):
 
     mydir = TestBase.compute_mydir(__file__)
 
+    @skipIfiOSSimulator
     def test_attach_to_process_by_id(self):
         """Test attach by process id"""
         self.build()

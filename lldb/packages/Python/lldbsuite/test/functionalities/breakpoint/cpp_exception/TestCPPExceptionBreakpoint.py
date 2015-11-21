@@ -4,13 +4,14 @@ Test that you can set breakpoint and hit the C++ language exception breakpoint
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import re
-import lldb, lldbutil
+import lldb
+import lldbsuite.test.lldbutil as lldbutil
 import sys
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestCPPExceptionBreakpoint (TestBase):
 

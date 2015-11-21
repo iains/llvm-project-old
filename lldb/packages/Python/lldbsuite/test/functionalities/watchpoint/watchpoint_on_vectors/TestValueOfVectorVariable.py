@@ -4,12 +4,12 @@ Test displayed value of a vector variable while doing watchpoint operations
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class TestValueOfVectorVariableTestCase(TestBase):
 

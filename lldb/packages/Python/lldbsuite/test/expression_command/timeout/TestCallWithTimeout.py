@@ -4,11 +4,11 @@ Test calling a function that waits a while, and make sure the timeout option to 
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
-import lldbutil
-from lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
+from lldbsuite.test.lldbtest import *
 
 class ExprCommandWithTimeoutsTestCase(TestBase):
 

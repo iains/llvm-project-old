@@ -271,6 +271,7 @@ class UnixProcessHelper(ProcessHelper):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            universal_newlines=True, # Elicits automatic byte -> string decoding in Py3
             close_fds=True,
             preexec_fn=preexec_func)
 
@@ -383,6 +384,7 @@ class WindowsProcessHelper(ProcessHelper):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            universal_newlines=True, # Elicits automatic byte -> string decoding in Py3
             creationflags=creation_flags)
 
     def was_hard_terminate(self, returncode):
@@ -619,10 +621,10 @@ def patched_init(self, *args, **kwargs):
     self.wait_condition = threading.Condition()
 
 
-def patched_wait(self):
+def patched_wait(self, *args, **kwargs):
     self.wait_condition.acquire()
     try:
-        result = self.original_wait()
+        result = self.original_wait(*args, **kwargs)
         # The process finished.  Signal the condition.
         self.wait_condition.notify_all()
         return result
@@ -630,10 +632,10 @@ def patched_wait(self):
         self.wait_condition.release()
 
 
-def patched_poll(self):
+def patched_poll(self, *args, **kwargs):
     self.wait_condition.acquire()
     try:
-        result = self.original_poll()
+        result = self.original_poll(*args, **kwargs)
         if self.returncode is not None:
             # We did complete, and we have the return value.
             # Signal the event to indicate we're done.

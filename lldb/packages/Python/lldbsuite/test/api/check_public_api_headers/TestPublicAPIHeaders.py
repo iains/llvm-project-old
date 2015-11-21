@@ -5,11 +5,11 @@ should compile and link with the LLDB framework."""
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, re
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class SBDirCheckerCase(TestBase):
 

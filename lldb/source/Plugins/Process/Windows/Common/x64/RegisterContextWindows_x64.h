@@ -45,4 +45,4 @@ class RegisterContextWindows_x64 : public RegisterContextWindows
 };
 }
 
-#endif // #ifndef liblldb_RegisterContextPOSIX_x64_H_
+#endif // #ifndef liblldb_RegisterContextWindows_x64_H_

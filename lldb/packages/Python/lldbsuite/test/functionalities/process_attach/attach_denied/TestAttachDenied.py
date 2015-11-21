@@ -4,12 +4,12 @@ Test denied process attach.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import time
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 exe_name = 'AttachDenied'  # Must match Makefile
 
@@ -24,6 +24,7 @@ class AttachDeniedTestCase(TestBase):
         return (err, shell_command.GetStatus(), shell_command.GetOutput())
 
     @skipIfWindows
+    @skipIfiOSSimulator
     def test_attach_to_process_by_id_denied(self):
         """Test attach by process id denied"""
         self.build()

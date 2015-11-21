@@ -4,12 +4,13 @@ Test conditionally break on a function and inspect its variables.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import re
-import lldb, lldbutil
-from lldbtest import *
+import lldb
+import lldbsuite.test.lldbutil as lldbutil
+from lldbsuite.test.lldbtest import *
 
 # rdar://problem/8532131
 # lldb not able to digest the clang-generated debug info correctly with respect to function name

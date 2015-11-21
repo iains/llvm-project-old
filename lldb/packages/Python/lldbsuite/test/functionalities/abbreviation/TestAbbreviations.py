@@ -4,12 +4,12 @@ Test some lldb command abbreviations and aliases for proper resolution.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class AbbreviationsTestCase(TestBase):
 

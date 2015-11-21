@@ -4,12 +4,12 @@ Test _regexp-break command which uses regular expression matching to dispatch to
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class RegexpBreakCommandTestCase(TestBase):
 

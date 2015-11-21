@@ -19,7 +19,7 @@ _start:
 // CHECK-NEXT: Flags [
 // CHECK-NEXT:  SHF_ALLOC
 // CHECK-NEXT: ]
-// CHECK-NEXT: Address: 0x100B0
+// CHECK-NEXT: Address: 0x100E8
 
 // CHECK:      Name: foobar
 // CHECK-NEXT: Type: SHT_PROGBITS
@@ -52,16 +52,15 @@ _start:
 // CHECK-NEXT:  ]
 // CHECK-NEXT:  Address: 0x0
 // CHECK-NEXT:  Offset:
-// CHECK-NEXT:  Size: 51
+// CHECK-NEXT:  Size:
 // CHECK-NEXT:  Link: 0
 // CHECK-NEXT:  Info: 0
 // CHECK-NEXT:  AddressAlignment: 1
 // CHECK-NEXT:  EntrySize: 0
 // CHECK-NEXT:  SectionData (
-// CHECK-NEXT:    0000: 002E7465 7874002E 62737300 666F6F62  |..text..bss.foob|
-// CHECK-NEXT:    0010: 6172002E 73687374 72746162 002E7374  |ar..shstrtab..st|
-// CHECK-NEXT:    0020: 72746162 002E7379 6D746162 002E6461  |rtab..symtab..da|
-// CHECK-NEXT:    0030: 746100                               |ta.|
+// CHECK-NEXT:    0000: 002E7465 78740066 6F6F6261 72002E73  |..text.foobar..s|
+// CHECK-NEXT:    0010: 68737472 74616200 2E737472 74616200  |hstrtab..strtab.|
+// CHECK-NEXT:    0020: 2E73796D 74616200                    |.symtab.|
 // CHECK-NEXT:  )
 // CHECK-NEXT:}
 // CHECK:        Name: .strtab

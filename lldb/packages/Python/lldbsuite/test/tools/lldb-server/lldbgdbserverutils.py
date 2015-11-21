@@ -3,7 +3,7 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import os.path
@@ -13,7 +13,7 @@ import six
 import socket_packet_pump
 import subprocess
 import time
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 from six.moves import queue
 

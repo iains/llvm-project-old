@@ -4,11 +4,11 @@ Test that 'stty -a' displays the same output before and after running the lldb c
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class TestSTTYBeforeAndAfter(TestBase):
 

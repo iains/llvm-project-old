@@ -10,7 +10,10 @@
 #include "PlatformDarwin.h"
 
 // C Includes
+#include <string.h>
+
 // C++ Includes
+#include <algorithm>
 #include <mutex>
 
 // Other libraries and framework includes
@@ -28,10 +31,13 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Symbols.h"
+#include "lldb/Host/StringConvert.h"
+#include "lldb/Host/XML.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Symbol/SymbolVendor.h"
+#include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -1222,7 +1228,16 @@ CheckPathForXcode(const FileSpec &fspec)
         if (pos != std::string::npos)
         {
             path_to_shlib.erase(pos + strlen(substr));
-            return FileSpec(path_to_shlib.c_str(), false);
+            FileSpec ret (path_to_shlib.c_str(), false);
+            
+            FileSpec xcode_binary_path = ret;
+            xcode_binary_path.AppendPathComponent("MacOS");
+            xcode_binary_path.AppendPathComponent("Xcode");
+            
+            if (xcode_binary_path.Exists())
+            {
+                return ret;
+            }
         }
     }
     return FileSpec();
@@ -1245,7 +1260,13 @@ GetXcodeContentsPath ()
 
         if (fspec)
         {
-            g_xcode_filespec = CheckPathForXcode(fspec);
+            // Ignore the current binary if it is python.
+            std::string basename_lower = fspec.GetFilename ().GetCString ();
+            std::transform(basename_lower.begin (), basename_lower.end (), basename_lower.begin (), tolower);
+            if (basename_lower != "python")
+            {
+                g_xcode_filespec = CheckPathForXcode(fspec);
+            }
         }
 
         // Next check DEVELOPER_DIR environment variable
@@ -1263,7 +1284,7 @@ GetXcodeContentsPath ()
                 int status = 0;
                 int signo = 0;
                 std::string output;
-                const char *command = "xcrun -sdk macosx --show-sdk-path";
+                const char *command = "/usr/bin/xcode-select -p";
                 lldb_private::Error error = Host::RunShellCommand (command,   // shell command to run
                                                                    NULL,      // current working directory
                                                                    &status,   // Put the exit status of the process in here
@@ -1277,6 +1298,7 @@ GetXcodeContentsPath ()
                     {
                         output.erase(first_non_newline+1);
                     }
+                    output.append("/..");
 
                     g_xcode_filespec = CheckPathForXcode(FileSpec(output.c_str(), false));
                 }
@@ -1567,6 +1589,64 @@ PlatformDarwin::GetFullNameForDylib (ConstString basename)
     return ConstString(stream.GetData());
 }
 
+bool
+PlatformDarwin::GetOSVersion (uint32_t &major,
+                              uint32_t &minor,
+                              uint32_t &update,
+                              Process *process)
+{
+    if (process && strstr(GetPluginName().GetCString(), "-simulator"))
+    {
+        lldb_private::ProcessInstanceInfo proc_info;
+        if (Host::GetProcessInfo(process->GetID(), proc_info))
+        {
+            Args &env = proc_info.GetEnvironmentEntries();
+            const size_t n = env.GetArgumentCount();
+            const llvm::StringRef k_runtime_version("SIMULATOR_RUNTIME_VERSION=");
+            const llvm::StringRef k_dyld_root_path("DYLD_ROOT_PATH=");
+            std::string dyld_root_path;
+
+            for (size_t i=0; i<n; ++i)
+            {
+                const char *env_cstr = env.GetArgumentAtIndex(i);
+                if (env_cstr)
+                {
+                    llvm::StringRef env_str(env_cstr);
+                    if (env_str.startswith(k_runtime_version))
+                    {
+                        llvm::StringRef version_str(env_str.substr(k_runtime_version.size()));
+                        Args::StringToVersion (version_str.data(), major, minor, update);
+                        if (major != UINT32_MAX)
+                            return true;
+                    }
+                    else if (env_str.startswith(k_dyld_root_path))
+                    {
+                        dyld_root_path = env_str.substr(k_dyld_root_path.size()).str();
+                    }
+                }
+            }
+
+            if (!dyld_root_path.empty())
+            {
+                dyld_root_path += "/System/Library/CoreServices/SystemVersion.plist";
+                ApplePropertyList system_version_plist(dyld_root_path.c_str());
+                std::string product_version;
+                if (system_version_plist.GetValueAsString("ProductVersion", product_version))
+                {
+                    Args::StringToVersion (product_version.c_str(), major, minor, update);
+                    return major != UINT32_MAX;
+                }
+            }
+
+        }
+        // For simulator platforms, do NOT call back through Platform::GetOSVersion()
+        // as it might call Process::GetHostOSVersion() which we don't want as it will be
+        // incorrect
+        return false;
+    }
+
+    return Platform::GetOSVersion(major, minor, update, process);
+}
 
 lldb_private::FileSpec
 PlatformDarwin::LocateExecutable (const char *basename)

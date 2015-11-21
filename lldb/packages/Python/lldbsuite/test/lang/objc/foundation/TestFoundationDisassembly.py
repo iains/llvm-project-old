@@ -4,13 +4,13 @@ Test the lldb disassemble command on foundation framework.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import unittest2
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 @skipUnlessDarwin
 class FoundationDisassembleTestCase(TestBase):

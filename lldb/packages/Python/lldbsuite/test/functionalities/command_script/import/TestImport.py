@@ -2,11 +2,11 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, sys, time
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class ImportTestCase(TestBase):
 

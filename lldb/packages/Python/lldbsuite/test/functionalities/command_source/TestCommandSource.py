@@ -6,11 +6,11 @@ See also http://llvm.org/viewvc/llvm-project?view=rev&revision=109673.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, sys
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class CommandSourceTestCase(TestBase):
 

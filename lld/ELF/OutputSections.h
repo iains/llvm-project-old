@@ -57,7 +57,6 @@ bool canBePreempted(const SymbolBody *Body, bool NeedsGot);
 template <class ELFT> bool includeInSymtab(const SymbolBody &B);
 
 bool includeInDynamicSymtab(const SymbolBody &B);
-bool includeInGnuHashTable(SymbolBody *B);
 
 template <class ELFT>
 bool shouldKeepInSymtab(
@@ -94,6 +93,10 @@ public:
     return std::max<uintX_t>(Header.sh_addralign, 1);
   }
   uint32_t getType() { return Header.sh_type; }
+  void updateAlign(uintX_t Align) {
+    if (Align > Header.sh_addralign)
+      Header.sh_addralign = Align;
+  }
 
   virtual void finalize() {}
   virtual void writeTo(uint8_t *Buf) = 0;
@@ -110,9 +113,7 @@ template <class ELFT> class GotSection final : public OutputSectionBase<ELFT> {
 
 public:
   GotSection();
-  void finalize() override {
-    this->Header.sh_size = Entries.size() * sizeof(uintX_t);
-  }
+  void finalize() override;
   void writeTo(uint8_t *Buf) override;
   void addEntry(SymbolBody *Sym);
   bool empty() const { return Entries.empty(); }
@@ -248,7 +249,7 @@ template <class ELFT>
 class InterpSection final : public OutputSectionBase<ELFT> {
 public:
   InterpSection();
-  void writeTo(uint8_t *Buf);
+  void writeTo(uint8_t *Buf) override;
 };
 
 template <class ELFT>
@@ -350,6 +351,8 @@ private:
 // globally accessible. Writer initializes them, so don't use them
 // until Writer is initialized.
 template <class ELFT> struct Out {
+  typedef typename llvm::object::ELFFile<ELFT>::uintX_t uintX_t;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Phdr Elf_Phdr;
   static DynamicSection<ELFT> *Dynamic;
   static GnuHashTableSection<ELFT> *GnuHashTab;
   static GotPltSection<ELFT> *GotPlt;
@@ -367,6 +370,7 @@ template <class ELFT> struct Out {
   static StringTableSection<ELFT> *StrTab;
   static SymbolTableSection<ELFT> *DynSymTab;
   static SymbolTableSection<ELFT> *SymTab;
+  static Elf_Phdr *TlsPhdr;
 };
 
 template <class ELFT> DynamicSection<ELFT> *Out<ELFT>::Dynamic;
@@ -386,6 +390,9 @@ template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::ShStrTab;
 template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::StrTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::DynSymTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::SymTab;
-}
-}
-#endif
+template <class ELFT> typename Out<ELFT>::Elf_Phdr *Out<ELFT>::TlsPhdr;
+
+} // namespace elf2
+} // namespace lld
+
+#endif // LLD_ELF_OUTPUT_SECTIONS_H

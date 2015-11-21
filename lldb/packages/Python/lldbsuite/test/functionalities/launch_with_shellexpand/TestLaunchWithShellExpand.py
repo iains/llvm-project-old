@@ -3,13 +3,13 @@ Test that argdumper is a viable launching strategy.
 """
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
 import os
 import time
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class LaunchWithShellExpandTestCase(TestBase):
 

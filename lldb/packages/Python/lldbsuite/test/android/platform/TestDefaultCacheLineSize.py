@@ -4,12 +4,12 @@ Verify the default cache line size for android targets
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class DefaultCacheLineSizeTestCase(TestBase):
 

@@ -352,11 +352,13 @@ static StringRef getStringFromRange(SourceManager &SourceMgr,
                               LangOpts);
 }
 
-/// \brief If the given expression is actually a DeclRefExpr, find and return
-/// the underlying VarDecl; otherwise, return NULL.
-static const VarDecl *getReferencedVariable(const Expr *E) {
+/// \brief If the given expression is actually a DeclRefExpr or a MemberExpr,
+/// find and return the underlying ValueDecl; otherwise, return NULL.
+static const ValueDecl *getReferencedVariable(const Expr *E) {
   if (const DeclRefExpr *DRE = getDeclRef(E))
     return dyn_cast<VarDecl>(DRE->getDecl());
+  if (const auto *Mem = dyn_cast<MemberExpr>(E->IgnoreParenImpCasts()))
+    return dyn_cast<FieldDecl>(Mem->getMemberDecl());
   return nullptr;
 }
 
@@ -368,11 +370,40 @@ static bool isDirectMemberExpr(const Expr *E) {
   return false;
 }
 
+/// \brief Given an expression that represents an usage of an element from the
+/// containter that we are iterating over, returns false when it can be
+/// guaranteed this element cannot be modified as a result of this usage.
+static bool canBeModified(ASTContext *Context, const Expr *E) {
+  if (E->getType().isConstQualified())
+    return false;
+  auto Parents = Context->getParents(*E);
+  if (Parents.size() != 1)
+    return true;
+  if (const auto *Cast = Parents[0].get<ImplicitCastExpr>()) {
+    if ((Cast->getCastKind() == CK_NoOp &&
+         Cast->getType() == E->getType().withConst()) ||
+        (Cast->getCastKind() == CK_LValueToRValue &&
+         !Cast->getType().isNull() && Cast->getType()->isFundamentalType()))
+      return false;
+  }
+  // FIXME: Make this function more generic.
+  return true;
+}
+
 /// \brief Returns true when it can be guaranteed that the elements of the
 /// container are not being modified.
-static bool usagesAreConst(const UsageResult &Usages) {
-  // FIXME: Make this function more generic.
-  return Usages.empty();
+static bool usagesAreConst(ASTContext *Context, const UsageResult &Usages) {
+  for (const Usage &U : Usages) {
+    // Lambda captures are just redeclarations (VarDecl) of the same variable,
+    // not expressions. If we want to know if a variable that is captured by
+    // reference can be modified in an usage inside the lambda's body, we need
+    // to find the expression corresponding to that particular usage, later in
+    // this loop.
+    if (U.Kind != Usage::UK_CaptureByCopy && U.Kind != Usage::UK_CaptureByRef &&
+        canBeModified(Context, U.Expression))
+      return false;
+  }
+  return true;
 }
 
 /// \brief Returns true if the elements of the container are never accessed
@@ -471,9 +502,10 @@ void LoopConvertCheck::getAliasRange(SourceManager &SM, SourceRange &Range) {
 /// \brief Computes the changes needed to convert a given for loop, and
 /// applies them.
 void LoopConvertCheck::doConversion(
-    ASTContext *Context, const VarDecl *IndexVar, const VarDecl *MaybeContainer,
-    const UsageResult &Usages, const DeclStmt *AliasDecl, bool AliasUseRequired,
-    bool AliasFromForInit, const ForStmt *Loop, RangeDescriptor Descriptor) {
+    ASTContext *Context, const VarDecl *IndexVar,
+    const ValueDecl *MaybeContainer, const UsageResult &Usages,
+    const DeclStmt *AliasDecl, bool AliasUseRequired, bool AliasFromForInit,
+    const ForStmt *Loop, RangeDescriptor Descriptor) {
   auto Diag = diag(Loop->getForLoc(), "use range-based for loop instead");
 
   std::string VarName;
@@ -568,9 +600,8 @@ void LoopConvertCheck::doConversion(
       Descriptor.ElemType.isTriviallyCopyableType(*Context) &&
       // TypeInfo::Width is in bits.
       Context->getTypeInfo(Descriptor.ElemType).Width <= 8 * MaxCopySize;
-  bool UseCopy =
-      CanCopy && ((VarNameFromAlias && !AliasVarIsRef) ||
-                  (Descriptor.DerefByConstRef && IsCheapToCopy));
+  bool UseCopy = CanCopy && ((VarNameFromAlias && !AliasVarIsRef) ||
+                             (Descriptor.DerefByConstRef && IsCheapToCopy));
 
   if (!UseCopy) {
     if (Descriptor.DerefByConstRef) {
@@ -618,7 +649,7 @@ void LoopConvertCheck::getArrayLoopQualifiers(ASTContext *Context,
                                               RangeDescriptor &Descriptor) {
   // On arrays and pseudoarrays, we must figure out the qualifiers from the
   // usages.
-  if (usagesAreConst(Usages) ||
+  if (usagesAreConst(Context, Usages) ||
       containerIsConst(ContainerExpr, Descriptor.ContainerNeedsDereference)) {
     Descriptor.DerefByConstRef = true;
   }

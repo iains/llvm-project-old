@@ -32,10 +32,11 @@ $
 """
 
 from __future__ import print_function
+from __future__ import absolute_import
 
-import use_lldb_suite
-
+# System modules
 import abc
+import collections
 import gc
 import glob
 import os, sys, traceback
@@ -45,17 +46,19 @@ import signal
 from subprocess import *
 import time
 import types
-import unittest2
-import lldb
-import lldbtest_config
-import lldbutil
-import test_categories
 
+# Third-party modules
+import unittest2
 from six import add_metaclass
 from six import StringIO as SixStringIO
 from six.moves.urllib import parse as urlparse
 import six
-import collections
+
+# LLDB modules
+import lldb
+from . import lldbtest_config
+from . import lldbutil
+from . import test_categories
 
 # dosep.py starts lots and lots of dotest instances
 # This option helps you find if two (or more) dotest instances are using the same
@@ -598,15 +601,11 @@ def expectedFailure(expected_fn, bugnumber=None):
         def wrapper(*args, **kwargs):
             from unittest2 import case
             self = args[0]
-            try:
-                func(*args, **kwargs)
-            except Exception:
-                if expected_fn(self):
-                    raise case._ExpectedFailure(sys.exc_info(), bugnumber)
-                else:
-                    raise
             if expected_fn(self):
-                raise case._UnexpectedSuccess(sys.exc_info(), bugnumber)
+                xfail_func = unittest2.expectedFailure(func)
+                xfail_func(*args, **kwargs)
+            else:
+                func(*args, **kwargs)
         return wrapper
     # if bugnumber is not-callable(incluing None), that means decorator function is called with optional arguments
     # return decorator in this case, so it will be used to decorating original method
@@ -867,6 +866,10 @@ def skipIfNoSBHeaders(func):
         else:
             func(*args, **kwargs)
     return wrapper
+
+def skipIfiOSSimulator(func):
+    """Decorate the item to skip tests that should be skipped on the iOS Simulator."""
+    return unittest2.skipIf(hasattr(lldb, 'remote_platform_name') and lldb.remote_platform_name == 'ios-simulator', 'skip on the iOS Simulator')(func)
 
 def skipIfFreeBSD(func):
     """Decorate the item to skip tests that should be skipped on FreeBSD."""
@@ -1410,8 +1413,8 @@ class Base(unittest2.TestCase):
         self.log_basename = self.getLogBasenameForCurrentTest()
 
         session_file = "{}.log".format(self.log_basename)
-        unbuffered = 0 # 0 is the constant for unbuffered
-        self.session = open(session_file, "w", unbuffered)
+        # Python 3 doesn't support unbuffered I/O in text mode.  Open buffered.
+        self.session = open(session_file, "w")
 
         # Optimistically set __errored__, __failed__, __expected__ to False
         # initially.  If the test errored/failed, the session info
@@ -1886,7 +1889,7 @@ class Base(unittest2.TestCase):
         """ Returns a string that represents the compiler version.
             Supports: llvm, clang.
         """
-        from lldbutil import which
+        from .lldbutil import which
         version = 'unknown'
 
         compiler = self.getCompilerBinary()
@@ -2542,7 +2545,7 @@ class TestBase(Base):
         Run the 'thread list' command, and select the thread with stop reason as
         'stop_reason'.  If no such thread exists, no select action is done.
         """
-        from lldbutil import stop_reason_to_str
+        from .lldbutil import stop_reason_to_str
         self.runCmd('thread list')
         output = self.res.GetOutput()
         thread_line_pattern = re.compile("^[ *] thread #([0-9]+):.*stop reason = %s" %
@@ -2797,7 +2800,7 @@ class TestBase(Base):
 
     def DebugSBValue(self, val):
         """Debug print a SBValue object, if traceAlways is True."""
-        from lldbutil import value_type_to_str
+        from .lldbutil import value_type_to_str
 
         if not traceAlways:
             return

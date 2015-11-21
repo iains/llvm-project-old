@@ -4,7 +4,7 @@ Base class for gdb-remote test cases.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import errno
 import os
@@ -13,14 +13,13 @@ import platform
 import random
 import re
 import select
-import sets
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 from lldbgdbserverutils import *
 import logging
 
@@ -785,7 +784,7 @@ class GdbRemoteTestCaseBase(TestBase):
 
     def select_modifiable_register(self, reg_infos):
         """Find a register that can be read/written freely."""
-        PREFERRED_REGISTER_NAMES = sets.Set(["rax",])
+        PREFERRED_REGISTER_NAMES = set(["rax",])
 
         # First check for the first register from the preferred register name set.
         alternative_register_index = None

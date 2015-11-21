@@ -5,12 +5,12 @@ Test lldb ability to unwind a stack with a function containing a call to the
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class BuiltinTrapTestCase(TestBase):
 

@@ -4,10 +4,10 @@ Test that the lldb-mi handles signals properly.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldbmi_testcase
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class MiSignalTestCase(lldbmi_testcase.MiTestCaseBase):
 

@@ -4,11 +4,11 @@ Test lldb target stop-hook mechanism to see whether it fires off correctly .
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class StopHookMechanismTestCase(TestBase):
 

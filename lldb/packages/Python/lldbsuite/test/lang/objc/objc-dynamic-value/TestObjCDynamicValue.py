@@ -4,12 +4,13 @@ Use lldb Python API to test dynamic values in ObjC
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import re
-import lldb, lldbutil
-from lldbtest import *
+import lldb
+import lldbsuite.test.lldbutil as lldbutil
+from lldbsuite.test.lldbtest import *
 
 class ObjCDynamicValueTestCase(TestBase):
 

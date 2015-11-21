@@ -4,11 +4,11 @@ Test the robustness of lldb expression parser.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class Radar8638051TestCase(TestBase):
 

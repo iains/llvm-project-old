@@ -13,7 +13,6 @@
 #include "SymbolTable.h"
 #include "Target.h"
 
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/StringSaver.h"
@@ -60,6 +59,10 @@ private:
   uintX_t getEntryAddr() const;
   int getPhdrsNum() const;
 
+  OutputSection<ELFT> *getBSS();
+  void addCommonSymbols(std::vector<DefinedCommon<ELFT> *> &Syms);
+  void addSharedCopySymbols(std::vector<SharedSymbol<ELFT> *> &Syms);
+
   std::unique_ptr<llvm::FileOutputBuffer> Buffer;
 
   SpecificBumpPtrAllocator<OutputSection<ELFT>> SecAlloc;
@@ -93,8 +96,6 @@ template <class ELFT> void lld::elf2::writeResult(SymbolTable<ELFT> *Symtab) {
     Out<ELFT>::StrTab = &StrTab;
   StringTableSection<ELFT> DynStrTab(".dynstr", true);
   Out<ELFT>::DynStrTab = &DynStrTab;
-  OutputSection<ELFT> Bss(".bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
-  Out<ELFT>::Bss = &Bss;
   GotSection<ELFT> Got;
   Out<ELFT>::Got = &Got;
   GotPltSection<ELFT> GotPlt;
@@ -201,9 +202,10 @@ void Writer<ELFT>::scanRelocs(
     bool NeedsPlt = false;
     if (Body) {
       if (auto *E = dyn_cast<SharedSymbol<ELFT>>(Body)) {
-        if (E->NeedsCopy)
+        if (E->needsCopy())
           continue;
-        E->NeedsCopy = Target->relocNeedsCopy(Type, *Body);
+        if (Target->relocNeedsCopy(Type, *Body))
+          E->OffsetInBSS = 0;
       }
       NeedsPlt = Target->relocNeedsPlt(Type, *Body);
       if (NeedsPlt) {
@@ -223,6 +225,15 @@ void Writer<ELFT>::scanRelocs(
       }
     }
 
+    if (Config->EMachine == EM_MIPS && NeedsGot) {
+      // MIPS ABI has special rules to process GOT entries
+      // and doesn't require relocation entries for them.
+      // See "Global Offset Table" in Chapter 5 in the following document
+      // for detailed description:
+      // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+      Body->setUsedInDynamicReloc();
+      continue;
+    }
     bool CBP = canBePreempted(Body, NeedsGot);
     if (!CBP && (!Config->Shared || Target->isRelRelative(Type)))
       continue;
@@ -374,12 +385,24 @@ static bool compareOutputSections(OutputSectionBase<ELFT> *A,
   return false;
 }
 
+template <class ELFT> OutputSection<ELFT> *Writer<ELFT>::getBSS() {
+  if (!Out<ELFT>::Bss) {
+    Out<ELFT>::Bss = new (SecAlloc.Allocate())
+        OutputSection<ELFT>(".bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+    OutputSections.push_back(Out<ELFT>::Bss);
+  }
+  return Out<ELFT>::Bss;
+}
+
 // Until this function is called, common symbols do not belong to any section.
 // This function adds them to end of BSS section.
 template <class ELFT>
-static void addCommonSymbols(std::vector<DefinedCommon<ELFT> *> &Syms) {
+void Writer<ELFT>::addCommonSymbols(std::vector<DefinedCommon<ELFT> *> &Syms) {
   typedef typename ELFFile<ELFT>::uintX_t uintX_t;
   typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
+
+  if (Syms.empty())
+    return;
 
   // Sort the common symbols by alignment as an heuristic to pack them better.
   std::stable_sort(
@@ -388,7 +411,7 @@ static void addCommonSymbols(std::vector<DefinedCommon<ELFT> *> &Syms) {
       return A->MaxAlignment > B->MaxAlignment;
     });
 
-  uintX_t Off = Out<ELFT>::Bss->getSize();
+  uintX_t Off = getBSS()->getSize();
   for (DefinedCommon<ELFT> *C : Syms) {
     const Elf_Sym &Sym = C->Sym;
     uintX_t Align = C->MaxAlignment;
@@ -401,17 +424,25 @@ static void addCommonSymbols(std::vector<DefinedCommon<ELFT> *> &Syms) {
 }
 
 template <class ELFT>
-static void addSharedCopySymbols(std::vector<SharedSymbol<ELFT> *> &Syms) {
+void Writer<ELFT>::addSharedCopySymbols(
+    std::vector<SharedSymbol<ELFT> *> &Syms) {
   typedef typename ELFFile<ELFT>::uintX_t uintX_t;
   typedef typename ELFFile<ELFT>::Elf_Sym Elf_Sym;
+  typedef typename ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
 
-  uintX_t Off = Out<ELFT>::Bss->getSize();
+  if (Syms.empty())
+    return;
+
+  uintX_t Off = getBSS()->getSize();
   for (SharedSymbol<ELFT> *C : Syms) {
     const Elf_Sym &Sym = C->Sym;
-    // We don't know the exact alignment requirement for the data copied by a
-    // copy relocation, so align that to 16 byte boundaries that should be large
-    // enough unconditionally.
-    Off = RoundUpToAlignment(Off, 16);
+    const Elf_Shdr *Sec = C->File->getSection(Sym);
+    uintX_t SecAlign = Sec->sh_addralign;
+    uintX_t Align = Sym.st_value % SecAlign;
+    if (Align == 0)
+      Align = SecAlign;
+    Out<ELFT>::Bss->updateAlign(Align);
+    Off = RoundUpToAlignment(Off, Align);
     C->OffsetInBSS = Off;
     Off += Sym.st_size;
   }
@@ -437,10 +468,6 @@ template <class ELFT> void Writer<ELFT>::createSections() {
     OutputSections.push_back(Out<ELFT>::Interp);
 
   SmallDenseMap<SectionKey<ELFT::Is64Bits>, OutputSectionBase<ELFT> *> Map;
-
-  OutputSections.push_back(Out<ELFT>::Bss);
-  Map[{Out<ELFT>::Bss->getName(), Out<ELFT>::Bss->getType(),
-       Out<ELFT>::Bss->getFlags(), 0}] = Out<ELFT>::Bss;
 
   std::vector<OutputSectionBase<ELFT> *> RegularSections;
 
@@ -475,6 +502,9 @@ template <class ELFT> void Writer<ELFT>::createSections() {
             ->addSection(cast<MergeInputSection<ELFT>>(C));
     }
   }
+
+  Out<ELFT>::Bss = static_cast<OutputSection<ELFT> *>(
+      Map[{".bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE, 0}]);
 
   Out<ELFT>::Dynamic->PreInitArraySec = Map.lookup(
       {".preinit_array", SHT_PREINIT_ARRAY, SHF_WRITE | SHF_ALLOC, 0});
@@ -531,7 +561,7 @@ template <class ELFT> void Writer<ELFT>::createSections() {
     if (auto *C = dyn_cast<DefinedCommon<ELFT>>(Body))
       CommonSymbols.push_back(C);
     if (auto *SC = dyn_cast<SharedSymbol<ELFT>>(Body))
-      if (SC->NeedsCopy)
+      if (SC->needsCopy())
         SharedCopySymbols.push_back(SC);
 
     if (!includeInSymtab<ELFT>(*Body))
@@ -581,9 +611,13 @@ template <class ELFT> void Writer<ELFT>::createSections() {
   for (OutputSectionBase<ELFT> *Sec : OutputSections)
     Out<ELFT>::ShStrTab->add(Sec->getName());
 
-  // Fill the DynStrTab early because Dynamic adds strings to
-  // DynStrTab but .dynstr may appear before .dynamic.
+  // Finalizers fix each section's size.
+  // .dynamic section's finalizer may add strings to .dynstr,
+  // so finalize that early.
+  // Likewise, .dynsym is finalized early since that may fill up .gnu.hash.
   Out<ELFT>::Dynamic->finalize();
+  if (isOutputDynamic())
+    Out<ELFT>::DynSymTab->finalize();
 
   // Fill other section headers.
   for (OutputSectionBase<ELFT> *Sec : OutputSections)
@@ -640,15 +674,6 @@ static uint32_t toPhdrFlags(uint64_t Flags) {
   return Ret;
 }
 
-template <class ELFT>
-static bool consumesVirtualAddressSpace(OutputSectionBase<ELFT> *Sec) {
-  return (Sec->getFlags() & SHF_ALLOC) &&
-         // Don't allocate VA space for TLS NOBITS sections. The PT_TLS PHDR is
-         // responsible for allocating space for them, not the PT_LOAD that
-         // contains the TLS initialization image.
-         !((Sec->getFlags() & SHF_TLS) && Sec->getType() == SHT_NOBITS);
-}
-
 // Visits all sections to create PHDRs and to assign incremental,
 // non-overlapping addresses to output sections.
 template <class ELFT> void Writer<ELFT>::assignAddresses() {
@@ -675,37 +700,59 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
   setPhdr(&Phdrs[++PhdrIdx], PT_LOAD, PF_R, 0, getVAStart(), FileOff,
           Target->getPageSize());
 
+  Elf_Phdr TlsPhdr{};
+  uintX_t ThreadBSSOffset = 0;
   // Create phdrs as we assign VAs and file offsets to all output sections.
-  SmallPtrSet<Elf_Phdr *, 8> Closed;
   for (OutputSectionBase<ELFT> *Sec : OutputSections) {
-    if (Sec->getSize()) {
+    if (needsPhdr<ELFT>(Sec)) {
       uintX_t Flags = toPhdrFlags(Sec->getFlags());
-      Elf_Phdr *Last = &Phdrs[PhdrIdx];
-      if (Last->p_flags != Flags || !needsPhdr<ELFT>(Sec)) {
-        // Flags changed. End current Phdr and potentially create a new one.
-        if (Closed.insert(Last).second) {
-          Last->p_filesz = FileOff - Last->p_offset;
-          Last->p_memsz = VA - Last->p_vaddr;
-        }
+      if (Phdrs[PhdrIdx].p_flags != Flags) {
+        // Flags changed. Create a new PT_LOAD.
+        VA = RoundUpToAlignment(VA, Target->getPageSize());
+        FileOff = RoundUpToAlignment(FileOff, Target->getPageSize());
+        Elf_Phdr *PH = &Phdrs[++PhdrIdx];
+        setPhdr(PH, PT_LOAD, Flags, FileOff, VA, 0, Target->getPageSize());
+      }
 
-        if (needsPhdr<ELFT>(Sec)) {
-          VA = RoundUpToAlignment(VA, Target->getPageSize());
-          FileOff = RoundUpToAlignment(FileOff, Target->getPageSize());
-          Elf_Phdr *PH = &Phdrs[++PhdrIdx];
-          setPhdr(PH, PT_LOAD, Flags, FileOff, VA, 0, Target->getPageSize());
+      if (Sec->getFlags() & SHF_TLS) {
+        if (!TlsPhdr.p_vaddr)
+          setPhdr(&TlsPhdr, PT_TLS, PF_R, FileOff, VA, 0, Sec->getAlign());
+        if (Sec->getType() != SHT_NOBITS)
+          VA = RoundUpToAlignment(VA, Sec->getAlign());
+        uintX_t TVA = RoundUpToAlignment(VA + ThreadBSSOffset, Sec->getAlign());
+        Sec->setVA(TVA);
+        TlsPhdr.p_memsz += Sec->getSize();
+        if (Sec->getType() == SHT_NOBITS) {
+          ThreadBSSOffset = TVA - VA + Sec->getSize();
+        } else {
+          TlsPhdr.p_filesz += Sec->getSize();
+          VA += Sec->getSize();
         }
+        TlsPhdr.p_align = std::max<uintX_t>(TlsPhdr.p_align, Sec->getAlign());
+      } else {
+        VA = RoundUpToAlignment(VA, Sec->getAlign());
+        Sec->setVA(VA);
+        VA += Sec->getSize();
       }
     }
 
-    if (consumesVirtualAddressSpace<ELFT>(Sec)) {
-      VA = RoundUpToAlignment(VA, Sec->getAlign());
-      Sec->setVA(VA);
-      VA += Sec->getSize();
-    }
     FileOff = RoundUpToAlignment(FileOff, Sec->getAlign());
     Sec->setFileOffset(FileOff);
     if (Sec->getType() != SHT_NOBITS)
       FileOff += Sec->getSize();
+    if (needsPhdr<ELFT>(Sec)) {
+      Elf_Phdr *Cur = &Phdrs[PhdrIdx];
+      Cur->p_filesz = FileOff - Cur->p_offset;
+      Cur->p_memsz = VA - Cur->p_vaddr;
+    }
+  }
+
+  if (TlsPhdr.p_vaddr) {
+    // The TLS pointer goes after PT_TLS. At least glibc will align it,
+    // so round up the size to make sure the offsets are correct.
+    TlsPhdr.p_memsz = RoundUpToAlignment(TlsPhdr.p_memsz, TlsPhdr.p_align);
+    Phdrs[++PhdrIdx] = TlsPhdr;
+    Out<ELFT>::TlsPhdr = &Phdrs[PhdrIdx];
   }
 
   // Add an entry for .dynamic.
@@ -724,10 +771,15 @@ template <class ELFT> void Writer<ELFT>::assignAddresses() {
   // Add space for section headers.
   SectionHeaderOff = RoundUpToAlignment(FileOff, ELFT::Is64Bits ? 8 : 4);
   FileSize = SectionHeaderOff + getNumSections() * sizeof(Elf_Shdr);
+
+  // Update MIPS _gp absolute symbol so that it points to the static data.
+  if (Config->EMachine == EM_MIPS)
+    DefinedAbsolute<ELFT>::MipsGp.st_value = getMipsGpAddr<ELFT>();
 }
 
 // Returns the number of PHDR entries.
 template <class ELFT> int Writer<ELFT>::getPhdrsNum() const {
+  bool Tls = false;
   int I = 2; // 2 for PT_PHDR and the first PT_LOAD
   if (needsInterpSection())
     ++I;
@@ -735,14 +787,18 @@ template <class ELFT> int Writer<ELFT>::getPhdrsNum() const {
     ++I;
   uintX_t Last = PF_R;
   for (OutputSectionBase<ELFT> *Sec : OutputSections) {
-    if (!Sec->getSize() || !needsPhdr<ELFT>(Sec))
+    if (!needsPhdr<ELFT>(Sec))
       continue;
+    if (Sec->getFlags() & SHF_TLS)
+      Tls = true;
     uintX_t Flags = toPhdrFlags(Sec->getFlags());
     if (Last != Flags) {
       Last = Flags;
       ++I;
     }
   }
+  if (Tls)
+    ++I;
   return I;
 }
 

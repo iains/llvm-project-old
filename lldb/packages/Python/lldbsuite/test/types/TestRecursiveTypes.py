@@ -4,12 +4,12 @@ Test that recursive types are handled correctly.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
-import lldbutil
+import lldbsuite.test.lldbutil as lldbutil
 import sys
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 class RecursiveTypesTestCase(TestBase):
 

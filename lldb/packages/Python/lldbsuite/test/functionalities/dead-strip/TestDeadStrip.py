@@ -4,12 +4,12 @@ Test that breakpoint works correctly in the presence of dead-code stripping.
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class DeadStripTestCase(TestBase):
 

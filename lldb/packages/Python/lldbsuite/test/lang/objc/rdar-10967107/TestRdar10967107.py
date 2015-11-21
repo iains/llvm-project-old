@@ -4,12 +4,12 @@ Test that CoreFoundation classes CFGregorianDate and CFRange are not improperly 
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 @skipUnlessDarwin
 class Rdar10967107TestCase(TestBase):

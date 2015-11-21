@@ -3,13 +3,13 @@ Test some lldb command abbreviations.
 """
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import lldb
 import os
 import time
-from lldbtest import *
-import lldbutil
+from lldbsuite.test.lldbtest import *
+import lldbsuite.test.lldbutil as lldbutil
 
 class TestPaths(TestBase):
 

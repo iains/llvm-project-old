@@ -2,12 +2,12 @@
 
 from __future__ import print_function
 
-import use_lldb_suite
+
 
 import os, time
 import lldb
 import sys
-from lldbtest import *
+from lldbsuite.test.lldbtest import *
 
 @skipUnlessDarwin
 class AddDsymMidExecutionCommandCase(TestBase):
