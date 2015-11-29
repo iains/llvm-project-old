@@ -21,10 +21,109 @@
 #include "tsan_platform.h"
 #include "tsan_rtl.h"
 
+#include <Block.h>
 #include <dispatch/dispatch.h>
 #include <pthread.h>
 
 namespace __tsan {
+
+typedef struct {
+  dispatch_queue_t queue;
+  void *orig_context;
+  dispatch_function_t orig_work;
+} tsan_block_context_t;
+
+// The offsets of different fields of the dispatch_queue_t structure, exported
+// by libdispatch.dylib.
+extern "C" struct dispatch_queue_offsets_s {
+  const uint16_t dqo_version;
+  const uint16_t dqo_label;
+  const uint16_t dqo_label_size;
+  const uint16_t dqo_flags;
+  const uint16_t dqo_flags_size;
+  const uint16_t dqo_serialnum;
+  const uint16_t dqo_serialnum_size;
+  const uint16_t dqo_width;
+  const uint16_t dqo_width_size;
+  const uint16_t dqo_running;
+  const uint16_t dqo_running_size;
+  const uint16_t dqo_suspend_cnt;
+  const uint16_t dqo_suspend_cnt_size;
+  const uint16_t dqo_target_queue;
+  const uint16_t dqo_target_queue_size;
+  const uint16_t dqo_priority;
+  const uint16_t dqo_priority_size;
+} dispatch_queue_offsets;
+
+static bool IsQueueSerial(dispatch_queue_t q) {
+  CHECK_EQ(dispatch_queue_offsets.dqo_width_size, 2);
+  uptr width = *(uint16_t *)(((uptr)q) + dispatch_queue_offsets.dqo_width);
+  CHECK_NE(width, 0);
+  return width == 1;
+}
+
+static tsan_block_context_t *AllocContext(ThreadState *thr, uptr pc,
+                                          dispatch_queue_t queue,
+                                          void *orig_context,
+                                          dispatch_function_t orig_work) {
+  tsan_block_context_t *new_context =
+      (tsan_block_context_t *)user_alloc(thr, pc, sizeof(tsan_block_context_t));
+  new_context->queue = queue;
+  new_context->orig_context = orig_context;
+  new_context->orig_work = orig_work;
+  return new_context;
+}
+
+static void dispatch_callback_wrap_acquire(void *param) {
+  SCOPED_INTERCEPTOR_RAW(dispatch_async_f_callback_wrap);
+  tsan_block_context_t *context = (tsan_block_context_t *)param;
+  Acquire(thr, pc, (uptr)context);
+  // In serial queues, work items can be executed on different threads, we need
+  // to explicitly synchronize on the queue itself.
+  if (IsQueueSerial(context->queue)) Acquire(thr, pc, (uptr)context->queue);
+  context->orig_work(context->orig_context);
+  if (IsQueueSerial(context->queue)) Release(thr, pc, (uptr)context->queue);
+  user_free(thr, pc, context);
+}
+
+static void invoke_and_release_block(void *param) {
+  dispatch_block_t block = (dispatch_block_t)param;
+  block();
+  Block_release(block);
+}
+
+#define DISPATCH_INTERCEPT_B(name)                                           \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, dispatch_block_t block) { \
+    SCOPED_TSAN_INTERCEPTOR(name, q, block);                                 \
+    dispatch_block_t heap_block = Block_copy(block);                         \
+    tsan_block_context_t *new_context =                                      \
+        AllocContext(thr, pc, q, heap_block, &invoke_and_release_block);     \
+    Release(thr, pc, (uptr)new_context);                                     \
+    REAL(name##_f)(q, new_context, dispatch_callback_wrap_acquire);          \
+  }
+
+#define DISPATCH_INTERCEPT_F(name)                                \
+  TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context, \
+                   dispatch_function_t work) {                    \
+    SCOPED_TSAN_INTERCEPTOR(name, q, context, work);              \
+    tsan_block_context_t *new_context =                           \
+        AllocContext(thr, pc, q, context, work);                  \
+    Release(thr, pc, (uptr)new_context);                          \
+    REAL(name)(q, new_context, dispatch_callback_wrap_acquire);   \
+  }
+
+// We wrap dispatch_async, dispatch_sync and friends where we allocate a new
+// context, which is used to synchronize (we release the context before
+// submitting, and the callback acquires it before executing the original
+// callback).
+DISPATCH_INTERCEPT_B(dispatch_async)
+DISPATCH_INTERCEPT_B(dispatch_barrier_async)
+DISPATCH_INTERCEPT_F(dispatch_async_f)
+DISPATCH_INTERCEPT_F(dispatch_barrier_async_f)
+DISPATCH_INTERCEPT_B(dispatch_sync)
+DISPATCH_INTERCEPT_B(dispatch_barrier_sync)
+DISPATCH_INTERCEPT_F(dispatch_sync_f)
+DISPATCH_INTERCEPT_F(dispatch_barrier_sync_f)
 
 // GCD's dispatch_once implementation has a fast path that contains a racy read
 // and it's inlined into user's code. Furthermore, this fast path doesn't

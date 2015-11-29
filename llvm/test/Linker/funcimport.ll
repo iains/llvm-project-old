@@ -1,3 +1,10 @@
+; First ensure that the ThinLTO handling in llvm-link and llvm-lto handles
+; bitcode without function summary sections gracefully.
+; RUN: llvm-as %s -o %t.bc
+; RUN: llvm-as %p/Inputs/funcimport.ll -o %t2.bc
+; RUN: llvm-link %t.bc -functionindex=%t.bc -S
+; RUN: llvm-lto -thinlto -o %t3 %t.bc %t2.bc
+
 ; Do setup work for all below tests: generate bitcode and combined index
 ; RUN: llvm-as -function-summary %s -o %t.bc
 ; RUN: llvm-as -function-summary %p/Inputs/funcimport.ll -o %t2.bc
@@ -29,7 +36,7 @@
 ; turned into a declaration, but that strong alias to an imported function
 ; is imported as alias.
 ; RUN: llvm-link %t2.bc -functionindex=%t3.thinlto.bc -import=globalfunc2:%t.bc -S | FileCheck %s --check-prefix=IMPORTGLOB2
-; IMPORTGLOB2-DAG: @analias = alias void (...), bitcast (void ()* @globalfunc2
+; IMPORTGLOB2-DAG: declare void @analias()
 ; IMPORTGLOB2-DAG: declare void @globalfunc1
 ; IMPORTGLOB2-DAG: define available_externally void @globalfunc2
 ; IMPORTGLOB2-DAG: declare extern_weak void @weakalias
@@ -37,7 +44,7 @@
 ; Ensure that strong alias imported in second pass of importing ends up
 ; as an alias.
 ; RUN: llvm-link %t2.bc -functionindex=%t3.thinlto.bc -import=globalfunc1:%t.bc -import=globalfunc2:%t.bc -S | FileCheck %s --check-prefix=IMPORTGLOB3
-; IMPORTGLOB3-DAG: @analias = alias void (...), bitcast (void ()* @globalfunc2
+; IMPORTGLOB3-DAG: declare void @analias()
 ; IMPORTGLOB3-DAG: define available_externally void @globalfunc1
 ; IMPORTGLOB3-DAG: define available_externally void @globalfunc2
 ; IMPORTGLOB3-DAG: declare extern_weak void @weakalias
@@ -46,10 +53,16 @@
 ; as an alias, and that seeing the alias definition during a second inlining
 ; pass is handled correctly.
 ; RUN: llvm-link %t2.bc -functionindex=%t3.thinlto.bc -import=globalfunc2:%t.bc -import=globalfunc1:%t.bc -S | FileCheck %s --check-prefix=IMPORTGLOB4
-; IMPORTGLOB4-DAG: @analias = alias void (...), bitcast (void ()* @globalfunc2
+; IMPORTGLOB4-DAG: declare void @analias()
 ; IMPORTGLOB4-DAG: define available_externally void @globalfunc2
 ; IMPORTGLOB4-DAG: define available_externally void @globalfunc1
 ; IMPORTGLOB4-DAG: declare extern_weak void @weakalias
+
+; An alias to an imported function is imported as alias if the function is not
+; available_externally.
+; RUN: llvm-link %t2.bc -functionindex=%t3.thinlto.bc -import=linkoncefunc:%t.bc -S | FileCheck %s --check-prefix=IMPORTGLOB5
+; IMPORTGLOB5-DAG: linkoncealias = alias void (...), bitcast (void ()* @linkoncefunc to void (...)*)
+; IMPORTGLOB5-DAG: define linkonce_odr void @linkoncefunc()
 
 ; Ensure that imported static variable and function references are correctly
 ; promoted and renamed (including static constant variable).

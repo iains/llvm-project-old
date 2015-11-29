@@ -124,7 +124,7 @@ const int SIGFPE = 8;
 const int SIGSEGV = 11;
 const int SIGPIPE = 13;
 const int SIGTERM = 15;
-#ifdef __mips__
+#if defined(__mips__) || SANITIZER_MAC
 const int SIGBUS = 10;
 const int SIGSYS = 12;
 #else
@@ -440,7 +440,7 @@ static void SetJmp(ThreadState *thr, uptr sp, uptr mangled_sp) {
 }
 
 static void LongJmp(ThreadState *thr, uptr *env) {
-#if SANITIZER_FREEBSD
+#if SANITIZER_FREEBSD || SANITIZER_MAC
   uptr mangled_sp = env[2];
 #elif defined(SANITIZER_LINUX)
 # ifdef __aarch64__
@@ -478,6 +478,11 @@ extern "C" void __tsan_setjmp(uptr sp, uptr mangled_sp) {
   SetJmp(cur_thread(), sp, mangled_sp);
 }
 
+#if SANITIZER_MAC
+TSAN_INTERCEPTOR(int, setjmp, void *env);
+TSAN_INTERCEPTOR(int, _setjmp, void *env);
+TSAN_INTERCEPTOR(int, sigsetjmp, void *env);
+#else  // SANITIZER_MAC
 // Not called.  Merely to satisfy TSAN_INTERCEPT().
 extern "C" SANITIZER_INTERFACE_ATTRIBUTE
 int __interceptor_setjmp(void *env);
@@ -516,6 +521,7 @@ DEFINE_REAL(int, setjmp, void *env)
 DEFINE_REAL(int, _setjmp, void *env)
 DEFINE_REAL(int, sigsetjmp, void *env)
 DEFINE_REAL(int, __sigsetjmp, void *env)
+#endif  // SANITIZER_MAC
 
 TSAN_INTERCEPTOR(void, longjmp, uptr *env, int val) {
   {
@@ -786,8 +792,25 @@ TSAN_INTERCEPTOR(int, posix_memalign, void **memptr, uptr align, uptr sz) {
 }
 #endif
 
+// __cxa_guard_acquire and friends need to be intercepted in a special way -
+// regular interceptors will break statically-linked libstdc++. Linux
+// interceptors are especially defined as weak functions (so that they don't
+// cause link errors when user defines them as well). So they silently
+// auto-disable themselves when such symbol is already present in the binary. If
+// we link libstdc++ statically, it will bring own __cxa_guard_acquire which
+// will silently replace our interceptor.  That's why on Linux we simply export
+// these interceptors with INTERFACE_ATTRIBUTE.
+// On OS X, we don't support statically linking, so we just use a regular
+// interceptor.
+#if SANITIZER_MAC
+#define STDCXX_INTERCEPTOR TSAN_INTERCEPTOR
+#else
+#define STDCXX_INTERCEPTOR(rettype, name, ...) \
+  extern "C" rettype INTERFACE_ATTRIBUTE name(__VA_ARGS__)
+#endif
+
 // Used in thread-safe function static initialization.
-extern "C" int INTERFACE_ATTRIBUTE __cxa_guard_acquire(atomic_uint32_t *g) {
+STDCXX_INTERCEPTOR(int, __cxa_guard_acquire, atomic_uint32_t *g) {
   SCOPED_INTERCEPTOR_RAW(__cxa_guard_acquire, g);
   for (;;) {
     u32 cmp = atomic_load(g, memory_order_acquire);
@@ -803,13 +826,13 @@ extern "C" int INTERFACE_ATTRIBUTE __cxa_guard_acquire(atomic_uint32_t *g) {
   }
 }
 
-extern "C" void INTERFACE_ATTRIBUTE __cxa_guard_release(atomic_uint32_t *g) {
+STDCXX_INTERCEPTOR(void, __cxa_guard_release, atomic_uint32_t *g) {
   SCOPED_INTERCEPTOR_RAW(__cxa_guard_release, g);
   Release(thr, pc, (uptr)g);
   atomic_store(g, 1, memory_order_release);
 }
 
-extern "C" void INTERFACE_ATTRIBUTE __cxa_guard_abort(atomic_uint32_t *g) {
+STDCXX_INTERCEPTOR(void, __cxa_guard_abort, atomic_uint32_t *g) {
   SCOPED_INTERCEPTOR_RAW(__cxa_guard_abort, g);
   atomic_store(g, 0, memory_order_relaxed);
 }

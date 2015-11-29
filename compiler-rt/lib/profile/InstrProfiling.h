@@ -13,8 +13,11 @@
 #ifdef _MSC_VER
 # define LLVM_ALIGNAS(x) __declspec(align(x))
 #elif __GNUC__
-# define LLVM_ALIGNAS(x) __attribute__((aligned(x)))
+#define LLVM_ALIGNAS(x) __attribute__((aligned(x)))
 #endif
+
+#define LLVM_LIBRARY_VISIBILITY __attribute__((visibility("hidden")))
+#define LLVM_SECTION(Sect) __attribute__((section(Sect)))
 
 #if defined(__FreeBSD__) && defined(__i386__)
 
@@ -42,40 +45,22 @@ typedef unsigned long int uintptr_t;
 
 #endif /* defined(__FreeBSD__) && defined(__i386__) */
 
+#include "InstrProfData.inc"
+
 enum ValueKind {
-  IPVK_IndirectCallTarget = 0,
-  IPVK_First = IPVK_IndirectCallTarget,
-  IPVK_Last = IPVK_IndirectCallTarget
+#define VALUE_PROF_KIND(Enumerator, Value) Enumerator = Value,
+#include "InstrProfData.inc"
 };
 
-typedef struct __llvm_profile_value_data {
-  uint64_t TargetValue;
-  uint64_t NumTaken;
-} __llvm_profile_value_data;
-
 typedef void *IntPtrT;
-typedef struct LLVM_ALIGNAS(8) __llvm_profile_data {
-  const uint32_t NameSize;
-  const uint32_t NumCounters;
-  const uint64_t FuncHash;
-  const IntPtrT NamePtr;
-  const IntPtrT CounterPtr;
-  const IntPtrT FunctionPointer;
-  IntPtrT Values;
-  const uint16_t NumValueSites[IPVK_Last + 1];
+typedef struct LLVM_ALIGNAS(INSTR_PROF_DATA_ALIGNMENT) __llvm_profile_data {
+#define INSTR_PROF_DATA(Type, LLVMType, Name, Initializer) Type Name;
+#include "InstrProfData.inc"
 } __llvm_profile_data;
 
 typedef struct __llvm_profile_header {
-  uint64_t Magic;
-  uint64_t Version;
-  uint64_t DataSize;
-  uint64_t CountersSize;
-  uint64_t NamesSize;
-  uint64_t CountersDelta;
-  uint64_t NamesDelta;
-  uint64_t ValueKindLast;
-  uint64_t ValueDataSize;
-  uint64_t ValueDataDelta;
+#define INSTR_PROF_RAW_HEADER(Type, Name, Initializer) Type Name;
+#include "InstrProfData.inc"
 } __llvm_profile_header;
 
 /*!
@@ -115,9 +100,13 @@ void __llvm_profile_reset_counters(void);
  *
  * Records the target value for the CounterIndex if not seen before. Otherwise,
  * increments the counter associated w/ the target value.
+ * void __llvm_profile_instrument_target(uint64_t TargetValue, void *Data,
+ *                                       uint32_t CounterIndex);
  */
-void __llvm_profile_instrument_target(uint64_t TargetValue, void *Data,
-                                      uint32_t CounterIndex);
+void INSTR_PROF_VALUE_PROF_FUNC(
+#define VALUE_PROF_FUNC_PARAM(ArgType, ArgName, ArgLLVMType) ArgType ArgName
+#include "InstrProfData.inc"
+);
 
 /*!
  * \brief Prepares the value profiling data for output.

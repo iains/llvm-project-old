@@ -10,9 +10,10 @@
 #include "InstrProfiling.h"
 #include "InstrProfilingInternal.h"
 
-__attribute__((visibility("hidden"))) int
-llvmWriteProfData(WriterCallback Writer, void *WriterCtx,
-                  const uint8_t *ValueDataBegin, const uint64_t ValueDataSize) {
+LLVM_LIBRARY_VISIBILITY int llvmWriteProfData(WriterCallback Writer,
+                                              void *WriterCtx,
+                                              const uint8_t *ValueDataBegin,
+                                              const uint64_t ValueDataSize) {
   /* Match logic in __llvm_profile_write_buffer(). */
   const __llvm_profile_data *DataBegin = __llvm_profile_begin_data();
   const __llvm_profile_data *DataEnd = __llvm_profile_end_data();
@@ -25,7 +26,7 @@ llvmWriteProfData(WriterCallback Writer, void *WriterCtx,
                                ValueDataSize, NamesBegin, NamesEnd);
 }
 
-__attribute__((visibility("hidden"))) int llvmWriteProfDataImpl(
+LLVM_LIBRARY_VISIBILITY int llvmWriteProfDataImpl(
     WriterCallback Writer, void *WriterCtx,
     const __llvm_profile_data *DataBegin, const __llvm_profile_data *DataEnd,
     const uint64_t *CountersBegin, const uint64_t *CountersEnd,
@@ -47,16 +48,9 @@ __attribute__((visibility("hidden"))) int llvmWriteProfDataImpl(
   if (!DataSize)
     return 0;
 
-  Header.Magic = __llvm_profile_get_magic();
-  Header.Version = __llvm_profile_get_version();
-  Header.DataSize = DataSize;
-  Header.CountersSize = CountersSize;
-  Header.NamesSize = NamesSize;
-  Header.CountersDelta = (uintptr_t)CountersBegin;
-  Header.NamesDelta = (uintptr_t)NamesBegin;
-  Header.ValueKindLast = IPVK_Last;
-  Header.ValueDataSize = ValueDataSize;
-  Header.ValueDataDelta = (uintptr_t)ValueDataBegin;
+  /* Initialize header struture.  */
+#define INSTR_PROF_RAW_HEADER(Type, Name, Init) Header.Name = Init;
+#include "InstrProfData.inc"
 
   /* Write the data. */
   ProfDataIOVec IOVec[] = {

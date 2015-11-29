@@ -2031,10 +2031,14 @@ static bool DecodeAArch64Features(const Driver &D, StringRef text,
                              .Case("simd", "+neon")
                              .Case("crc", "+crc")
                              .Case("crypto", "+crypto")
+                             .Case("fp16", "+fullfp16")
+                             .Case("profile", "+spe")
                              .Case("nofp", "-fp-armv8")
                              .Case("nosimd", "-neon")
                              .Case("nocrc", "-crc")
                              .Case("nocrypto", "-crypto")
+                             .Case("nofp16", "-fullfp16")
+                             .Case("noprofile", "-spe")
                              .Default(nullptr);
     if (result)
       Features.push_back(result);
@@ -2080,6 +2084,8 @@ getAArch64ArchFeaturesFromMarch(const Driver &D, StringRef March,
     // ok, no additional features.
   } else if (Split.first == "armv8.1-a" || Split.first == "armv8.1a") {
     Features.push_back("+v8.1a");
+  } else if (Split.first == "armv8.2-a" || Split.first == "armv8.2a" ) {
+    Features.push_back("+v8.2a");
   } else {
     return false;
   }
@@ -2794,6 +2800,8 @@ static bool shouldUseFramePointer(const ArgList &Args,
   if (Arg *A = Args.getLastArg(options::OPT_fno_omit_frame_pointer,
                                options::OPT_fomit_frame_pointer))
     return A->getOption().matches(options::OPT_fno_omit_frame_pointer);
+  if (Args.hasArg(options::OPT_pg))
+    return true;
 
   return shouldUseFramePointerForTarget(Args, Triple);
 }
@@ -2803,6 +2811,8 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
   if (Arg *A = Args.getLastArg(options::OPT_mno_omit_leaf_frame_pointer,
                                options::OPT_momit_leaf_frame_pointer))
     return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
+  if (Args.hasArg(options::OPT_pg))
+    return true;
 
   if (Triple.isPS4CPU())
     return false;
@@ -9478,7 +9488,7 @@ void MinGW::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   StringRef LinkerName = Args.getLastArgValue(options::OPT_fuse_ld_EQ, "ld");
   if (LinkerName.equals_lower("lld")) {
     CmdArgs.push_back("-flavor");
-    CmdArgs.push_back("old-gnu");
+    CmdArgs.push_back("gnu");
   } else if (!LinkerName.equals_lower("ld")) {
     D.Diag(diag::err_drv_unsupported_linker) << LinkerName;
   }
