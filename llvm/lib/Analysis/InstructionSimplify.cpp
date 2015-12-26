@@ -122,10 +122,10 @@ static bool ValueDominatesPHI(Value *V, PHINode *P, const DominatorTree *DT) {
     return DT->dominates(I, P);
   }
 
-  // Otherwise, if the instruction is in the entry block, and is not an invoke,
-  // and is not a catchpad, then it obviously dominates all phi nodes.
+  // Otherwise, if the instruction is in the entry block and is not an invoke,
+  // then it obviously dominates all phi nodes.
   if (I->getParent() == &I->getParent()->getParent()->getEntryBlock() &&
-      !isa<InvokeInst>(I) && !isa<CatchPadInst>(I))
+      !isa<InvokeInst>(I))
     return true;
 
   return false;
@@ -3097,7 +3097,7 @@ Value *llvm::SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
                               const DataLayout &DL,
                               const TargetLibraryInfo *TLI,
                               const DominatorTree *DT, AssumptionCache *AC,
-                              Instruction *CxtI) {
+                              const Instruction *CxtI) {
   return ::SimplifyICmpInst(Predicate, LHS, RHS, Query(DL, TLI, DT, AC, CxtI),
                             RecursionLimit);
 }

@@ -324,8 +324,7 @@ Value *llvm::getStrideFromPointer(Value *Ptr, ScalarEvolution *SE, Loop *Lp) {
       if (M->getOperand(0)->getSCEVType() != scConstant)
         return nullptr;
 
-      const APInt &APStepVal =
-          cast<SCEVConstant>(M->getOperand(0))->getValue()->getValue();
+      const APInt &APStepVal = cast<SCEVConstant>(M->getOperand(0))->getAPInt();
 
       // Huge step value - give up.
       if (APStepVal.getBitWidth() > 64)
@@ -417,9 +416,11 @@ Value *llvm::findScalarElement(Value *V, unsigned EltNo) {
 /// the input value is (1) a splat constants vector or (2) a sequence
 /// of instructions that broadcast a single value into a vector.
 ///
-llvm::Value *llvm::getSplatValue(Value *V) {
-  if (auto *CV = dyn_cast<ConstantDataVector>(V))
-    return CV->getSplatValue();
+const llvm::Value *llvm::getSplatValue(const Value *V) {
+
+  if (auto *C = dyn_cast<Constant>(V))
+    if (isa<VectorType>(V->getType()))
+      return C->getSplatValue();
 
   auto *ShuffleInst = dyn_cast<ShuffleVectorInst>(V);
   if (!ShuffleInst)

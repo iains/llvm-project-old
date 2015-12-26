@@ -1,11 +1,15 @@
-List of clang-tidy Checks
+.. title:: clang-tidy - Clang-Tidy Checks
+
+Clang-Tidy Checks
 =========================
 
-.. toctree::
+.. toctree::   
    cert-setlongjmp
+   cert-static-object-exception
    cert-thrown-exception-type
    cert-variadic-function-def
    cppcoreguidelines-pro-bounds-array-to-pointer-decay
+   cppcoreguidelines-pro-bounds-constant-array-index
    cppcoreguidelines-pro-bounds-pointer-arithmetic
    cppcoreguidelines-pro-type-const-cast
    cppcoreguidelines-pro-type-cstyle-cast
@@ -46,6 +50,7 @@ List of clang-tidy Checks
    misc-non-copyable-objects
    misc-sizeof-container
    misc-static-assert
+   misc-string-integer-assignment
    misc-swapped-arguments
    misc-throw-by-value-catch-by-reference
    misc-undelegated-constructor
@@ -56,6 +61,7 @@ List of clang-tidy Checks
    modernize-loop-convert
    modernize-make-unique
    modernize-pass-by-value
+   modernize-redundant-void-arg
    modernize-replace-auto-ptr
    modernize-shrink-to-fit
    modernize-use-auto

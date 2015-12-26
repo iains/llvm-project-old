@@ -1596,14 +1596,12 @@ public:
 
   /// \brief Retrieve the initialization expressions for this lambda's captures.
   llvm::iterator_range<capture_init_iterator> capture_inits() {
-    return llvm::iterator_range<capture_init_iterator>(capture_init_begin(),
-                                                       capture_init_end());
+    return llvm::make_range(capture_init_begin(), capture_init_end());
   }
 
   /// \brief Retrieve the initialization expressions for this lambda's captures.
   llvm::iterator_range<const_capture_init_iterator> capture_inits() const {
-    return llvm::iterator_range<const_capture_init_iterator>(
-        capture_init_begin(), capture_init_end());
+    return llvm::make_range(capture_init_begin(), capture_init_end());
   }
 
   /// \brief Retrieve the first initialization argument for this
@@ -2519,7 +2517,7 @@ public:
     return UnresolvedSetIterator(Results + NumResults);
   }
   llvm::iterator_range<decls_iterator> decls() const {
-    return llvm::iterator_range<decls_iterator>(decls_begin(), decls_end());
+    return llvm::make_range(decls_begin(), decls_end());
   }
 
   /// \brief Gets the number of declarations in the unresolved set.
@@ -2547,7 +2545,7 @@ public:
   /// this name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
@@ -2570,39 +2568,24 @@ public:
   /// \brief Determines whether this expression had explicit template arguments.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  // Note that, inconsistently with the explicit-template-argument AST
-  // nodes, users are *forbidden* from calling these methods on objects
-  // without explicit template arguments.
-
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *getTemplateKWAndArgsInfo();
-  }
-
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<OverloadExpr*>(this)->getExplicitTemplateArgs();
-  }
-
   TemplateArgumentLoc const *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+
+    return getTemplateKWAndArgsInfo()->getTemplateArgs();
   }
 
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   /// \brief Copies the template arguments into the given structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
+    if (hasExplicitTemplateArgs())
+      getTemplateKWAndArgsInfo()->copyInto(List);
   }
 
   static bool classof(const Stmt *T) {
@@ -2802,7 +2785,7 @@ public:
   /// this name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
@@ -2825,42 +2808,25 @@ public:
   /// Determines whether this lookup had explicit template arguments.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  // Note that, inconsistently with the explicit-template-argument AST
-  // nodes, users are *forbidden* from calling these methods on objects
-  // without explicit template arguments.
-
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<ASTTemplateArgumentListInfo*>(this + 1);
-  }
-
-  /// Gets a reference to the explicit template argument list.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<const ASTTemplateArgumentListInfo*>(this + 1);
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
-  }
-
   /// \brief Copies the template arguments (if present) into the given
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
+    if (hasExplicitTemplateArgs())
+      getTemplateKWAndArgsInfo()->copyInto(List);
   }
 
   TemplateArgumentLoc const *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+
+    return getTemplateKWAndArgsInfo()->getTemplateArgs();
   }
 
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   /// Note: getLocStart() is the start of the whole DependentScopeDeclRefExpr,
@@ -3227,7 +3193,7 @@ public:
   /// member name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
@@ -3251,50 +3217,29 @@ public:
   /// template argument list explicitly specified, e.g., x.f<int>.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name, if any.
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<ASTTemplateArgumentListInfo *>(this + 1);
-  }
-
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name, if any.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<CXXDependentScopeMemberExpr *>(this)
-             ->getExplicitTemplateArgs();
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
-  }
-
   /// \brief Copies the template arguments (if present) into the given
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
-  }
-
-  /// \brief Initializes the template arguments using the given structure.
-  void initializeTemplateArgumentsFrom(const TemplateArgumentListInfo &List) {
-    getExplicitTemplateArgs().initializeFrom(List);
+    if (hasExplicitTemplateArgs())
+      getTemplateKWAndArgsInfo()->copyInto(List);
   }
 
   /// \brief Retrieve the template arguments provided as part of this
   /// template-id.
   const TemplateArgumentLoc *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+
+    return getTemplateKWAndArgsInfo()->getTemplateArgs();
   }
 
   /// \brief Retrieve the number of template arguments provided as part of this
   /// template-id.
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   SourceLocation getLocStart() const LLVM_READONLY {

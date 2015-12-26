@@ -79,6 +79,8 @@ COMMON_FLAG(bool, handle_segv, SANITIZER_NEEDS_SEGV,
             "If set, registers the tool's custom SIGSEGV/SIGBUS handler.")
 COMMON_FLAG(bool, handle_abort, false,
             "If set, registers the tool's custom SIGABRT handler.")
+COMMON_FLAG(bool, handle_sigill, false,
+            "If set, registers the tool's custom SIGILL handler.")
 COMMON_FLAG(bool, handle_sigfpe, true,
             "If set, registers the tool's custom SIGFPE handler.")
 COMMON_FLAG(bool, allow_user_segv_handler, false,
@@ -192,3 +194,6 @@ COMMON_FLAG(
     bool, abort_on_error, SANITIZER_MAC,
     "If set, the tool calls abort() instead of _exit() after printing the "
     "error report.")
+COMMON_FLAG(bool, suppress_equal_pcs, true,
+            "Deduplicate multiple reports for single source location in "
+            "halt_on_error=false mode (asan only).")

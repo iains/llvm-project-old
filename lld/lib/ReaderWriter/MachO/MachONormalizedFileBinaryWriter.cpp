@@ -289,12 +289,12 @@ MachOFileLayout::MachOFileLayout(const NormalizedFile &file)
     unsigned relocCount = 0;
     uint64_t offset = _startOfSectionsContent;
     for (const Section &sect : file.sections) {
-      if (sect.type != llvm::MachO::S_ZEROFILL) {
+      if (isZeroFillSection(sect.type))
+        _sectInfo[&sect].fileOffset = 0;
+      else {
         offset = llvm::RoundUpToAlignment(offset, sect.alignment);
         _sectInfo[&sect].fileOffset = offset;
         offset += sect.content.size();
-      } else {
-        _sectInfo[&sect].fileOffset = 0;
       }
       relocCount += sect.relocations.size();
     }
@@ -530,7 +530,7 @@ void MachOFileLayout::buildFileOffsets() {
     for (const Section *s : _segInfo[&sg].sections) {
       uint32_t sectOffset = s->address - sg.address;
       uint32_t sectFileSize =
-          s->type == llvm::MachO::S_ZEROFILL ? 0 : s->content.size();
+        isZeroFillSection(s->type) ? 0 : s->content.size();
       segFileSize = std::max(segFileSize, sectOffset + sectFileSize);
 
       _sectInfo[s].fileOffset = _segInfo[&sg].fileOffset + sectOffset;
@@ -655,7 +655,7 @@ std::error_code MachOFileLayout::writeSegmentLoadCommands(uint8_t *&lc) {
       setString16(section->segmentName, sect->segname);
       sect->addr      = section->address;
       sect->size      = section->content.size();
-      if (section->type == llvm::MachO::S_ZEROFILL)
+      if (isZeroFillSection(section->type))
         sect->offset  = 0;
       else
         sect->offset  = section->address - seg.address + segInfo.fileOffset;
@@ -883,7 +883,7 @@ std::error_code MachOFileLayout::writeLoadCommands() {
 void MachOFileLayout::writeSectionContent() {
   for (const Section &s : _file.sections) {
     // Copy all section content to output buffer.
-    if (s.type == llvm::MachO::S_ZEROFILL)
+    if (isZeroFillSection(s.type))
       continue;
     if (s.content.empty())
       continue;
@@ -1269,7 +1269,7 @@ void MachOFileLayout::computeSymbolTableSizes() {
   _symbolTableSize = nlistSize * (_file.localSymbols.size()
                                 + _file.globalSymbols.size()
                                 + _file.undefinedSymbols.size());
-  _symbolStringPoolSize = 0;
+  _symbolStringPoolSize = 1; // Always reserve 1-byte for the empty string.
   for (const Symbol &sym : _file.localSymbols) {
     _symbolStringPoolSize += (sym.name.size()+1);
   }

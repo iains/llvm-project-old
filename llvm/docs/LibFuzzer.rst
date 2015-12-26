@@ -63,7 +63,6 @@ The most important flags are::
   timeout                            	1200	Timeout in seconds (if positive). If one unit runs more than this number of seconds the process will abort.
   max_total_time                        0       If positive, indicates the maximal total time in seconds to run the fuzzer.
   help                               	0	Print help.
-  save_minimized_corpus              	0	If 1, the minimized corpus is saved into the first input directory. Example: ./fuzzer -save_minimized_corpus=1 NEW_EMPTY_DIR OLD_CORPUS
   merge                                 0       If 1, the 2-nd, 3-rd, etc corpora will be merged into the 1-st corpus. Only interesting units will be taken.
   jobs                               	0	Number of jobs to run. If jobs >= 1 we spawn this number of jobs in separate worker processes with stdout/stderr redirected to fuzz-JOB.log.
   workers                            	0	Number of simultaneous worker processes to run the jobs. If zero, "min(jobs,NumberOfCpuCores()/2)" is used.
@@ -482,6 +481,8 @@ Trophies
 * `SQLite <http://www3.sqlite.org/cgi/src/info/088009efdd56160b>`_
 
 * `Python <http://bugs.python.org/issue25388>`_
+
+* OpenSSL/BoringSSL: `[1] <https://boringssl.googlesource.com/boringssl/+/cb852981cd61733a7a1ae4fd8755b7ff950e857d>`_
 
 * `Libxml2
   <https://bugzilla.gnome.org/buglist.cgi?bug_status=__all__&content=libFuzzer&list_id=68957&order=Importance&product=libxml2&query_format=specific>`_

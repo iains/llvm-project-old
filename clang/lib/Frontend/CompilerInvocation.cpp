@@ -1,4 +1,4 @@
-//===--- CompilerInvocation.cpp -------------------------------------------===//
+//===--- 
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -365,6 +365,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                              const TargetOptions &TargetOpts) {
   using namespace options;
   bool Success = true;
+  llvm::Triple Triple = llvm::Triple(TargetOpts.Triple);
 
   unsigned OptimizationLevel = getOptimizationLevel(Args, IK, Diags);
   // TODO: This could be done in Driver
@@ -404,11 +405,19 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
             .Case("limited", CodeGenOptions::LimitedDebugInfo)
             .Case("standalone", CodeGenOptions::FullDebugInfo));
   }
+  if (Arg *A = Args.getLastArg(OPT_debugger_tuning_EQ)) {
+    Opts.setDebuggerTuning(
+        llvm::StringSwitch<CodeGenOptions::DebuggerKind>(A->getValue())
+            .Case("gdb", CodeGenOptions::DebuggerKindGDB)
+            .Case("lldb", CodeGenOptions::DebuggerKindLLDB)
+            .Case("sce", CodeGenOptions::DebuggerKindSCE));
+  }
   Opts.DwarfVersion = getLastArgIntValue(Args, OPT_dwarf_version_EQ, 0, Diags);
   Opts.DebugColumnInfo = Args.hasArg(OPT_dwarf_column_info);
   Opts.EmitCodeView = Args.hasArg(OPT_gcodeview);
   Opts.SplitDwarfFile = Args.getLastArgValue(OPT_split_dwarf_file);
   Opts.DebugTypeExtRefs = Args.hasArg(OPT_dwarf_ext_refs);
+  Opts.DebugExplicitImport = Triple.isPS4CPU(); 
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fdebug_prefix_map_EQ))
     Opts.DebugPrefixMap.insert(StringRef(Arg).split('='));
@@ -490,6 +499,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.FatalWarnings = Args.hasArg(OPT_massembler_fatal_warnings);
   Opts.EnableSegmentedStacks = Args.hasArg(OPT_split_stacks);
   Opts.RelaxAll = Args.hasArg(OPT_mrelax_all);
+  Opts.IncrementalLinkerCompatible =
+      Args.hasArg(OPT_mincremental_linker_compatible);
   Opts.OmitLeafFramePointer = Args.hasArg(OPT_momit_leaf_frame_pointer);
   Opts.SaveTempLabels = Args.hasArg(OPT_msave_temp_labels);
   Opts.NoDwarfDirectoryAsm = Args.hasArg(OPT_fno_dwarf_directory_asm);
@@ -521,6 +532,12 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.PrepareForLTO = Args.hasArg(OPT_flto, OPT_flto_EQ);
   const Arg *A = Args.getLastArg(OPT_flto, OPT_flto_EQ);
   Opts.EmitFunctionSummary = A && A->containsValue("thin");
+  if (Arg *A = Args.getLastArg(OPT_fthinlto_index_EQ)) {
+    if (IK != IK_LLVM_IR)
+      Diags.Report(diag::err_drv_argument_only_allowed_with)
+          << A->getAsString(Args) << "-x ir";
+    Opts.ThinLTOIndexFile = Args.getLastArgValue(OPT_fthinlto_index_EQ);
+  }
 
   Opts.MSVolatile = Args.hasArg(OPT_fms_volatile);
 
@@ -577,6 +594,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       getLastArgIntValue(Args, OPT_fsanitize_memory_track_origins_EQ, 0, Diags);
   Opts.SanitizeMemoryUseAfterDtor =
       Args.hasArg(OPT_fsanitize_memory_use_after_dtor);
+  Opts.SanitizeCfiCrossDso = Args.hasArg(OPT_fsanitize_cfi_cross_dso);
   Opts.SSPBufferSize =
       getLastArgIntValue(Args, OPT_stack_protector_buffer_size, 8, Diags);
   Opts.StackRealignment = Args.hasArg(OPT_mstackrealign);

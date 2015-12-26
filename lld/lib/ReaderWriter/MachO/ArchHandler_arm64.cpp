@@ -50,6 +50,9 @@ public:
     case gotOffset12:
       canBypassGOT = true;
       return true;
+    case delta32ToGOT:
+      canBypassGOT = false;
+      return true;
     case imageOffsetGot:
       canBypassGOT = false;
       return true;
@@ -73,6 +76,9 @@ public:
     case gotOffset12:
       const_cast<Reference *>(ref)->setKindValue(targetNowGOT ?
                                                  offset12scale8 : addOffset12);
+      break;
+    case delta32ToGOT:
+      const_cast<Reference *>(ref)->setKindValue(delta32);
       break;
     case imageOffsetGot:
       const_cast<Reference *>(ref)->setKindValue(imageOffset);
@@ -476,6 +482,9 @@ std::error_code ArchHandler_arm64::getPairReferenceInfo(
     *kind = delta64;
     if (auto ec = atomFromSymbolIndex(reloc2.symbol, target))
       return ec;
+    // The offsets of the 2 relocations must match
+    if (reloc1.offset != reloc2.offset)
+      return make_dynamic_error_code("paired relocs must have the same offset");
     *addend = (int64_t)*(const little64_t *)fixupContent + offsetInAtom;
     return std::error_code();
   case ((ARM64_RELOC_SUBTRACTOR                  | rExtern | rLength4) << 16 |
@@ -665,7 +674,7 @@ void ArchHandler_arm64::applyFixupRelocatable(const Reference &ref,
     *loc32 = ref.addend() + inAtomAddress - fixupAddress;
     return;
   case negDelta32:
-    *loc32 = fixupAddress - inAtomAddress + ref.addend();
+    *loc32 = fixupAddress - targetAddress + ref.addend();
     return;
   case pointer64ToGOT:
     *loc64 = 0;

@@ -19,6 +19,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
@@ -1142,6 +1143,19 @@ void AArch64InstPrinter::printPrefetchOp(const MCInst *MI, unsigned OpNum,
     O << Name;
   else
     O << '#' << prfop;
+}
+
+void AArch64InstPrinter::printPSBHintOp(const MCInst *MI, unsigned OpNum,
+                                        const MCSubtargetInfo &STI,
+                                        raw_ostream &O) {
+  unsigned psbhintop = MI->getOperand(OpNum).getImm();
+  bool Valid;
+  StringRef Name =
+      AArch64PSBHint::PSBHintMapper().toString(psbhintop, STI.getFeatureBits(), Valid);
+  if (Valid)
+    O << Name;
+  else
+    O << '#' << psbhintop;
 }
 
 void AArch64InstPrinter::printFPImmOperand(const MCInst *MI, unsigned OpNum,

@@ -9,11 +9,28 @@
 
 #include "InstrProfiling.h"
 #include "InstrProfilingInternal.h"
+#include <string.h>
 
-LLVM_LIBRARY_VISIBILITY int llvmWriteProfData(WriterCallback Writer,
-                                              void *WriterCtx,
-                                              const uint8_t *ValueDataBegin,
-                                              const uint64_t ValueDataSize) {
+/* The buffer writer is reponsponsible in keeping writer state
+ * across the call.
+ */
+COMPILER_RT_VISIBILITY uint32_t llvmBufferWriter(ProfDataIOVec *IOVecs,
+                                                 uint32_t NumIOVecs,
+                                                 void **WriterCtx) {
+  uint32_t I;
+  char **Buffer = (char **)WriterCtx;
+  for (I = 0; I < NumIOVecs; I++) {
+    size_t Length = IOVecs[I].ElmSize * IOVecs[I].NumElm;
+    memcpy(*Buffer, IOVecs[I].Data, Length);
+    *Buffer += Length;
+  }
+  return 0;
+}
+
+COMPILER_RT_VISIBILITY int llvmWriteProfData(WriterCallback Writer,
+                                             void *WriterCtx,
+                                             const uint8_t *ValueDataBegin,
+                                             const uint64_t ValueDataSize) {
   /* Match logic in __llvm_profile_write_buffer(). */
   const __llvm_profile_data *DataBegin = __llvm_profile_begin_data();
   const __llvm_profile_data *DataEnd = __llvm_profile_end_data();
@@ -26,7 +43,7 @@ LLVM_LIBRARY_VISIBILITY int llvmWriteProfData(WriterCallback Writer,
                                ValueDataSize, NamesBegin, NamesEnd);
 }
 
-LLVM_LIBRARY_VISIBILITY int llvmWriteProfDataImpl(
+COMPILER_RT_VISIBILITY int llvmWriteProfDataImpl(
     WriterCallback Writer, void *WriterCtx,
     const __llvm_profile_data *DataBegin, const __llvm_profile_data *DataEnd,
     const uint64_t *CountersBegin, const uint64_t *CountersEnd,
@@ -59,11 +76,11 @@ LLVM_LIBRARY_VISIBILITY int llvmWriteProfDataImpl(
       {CountersBegin, sizeof(uint64_t), CountersSize},
       {NamesBegin, sizeof(char), NamesSize},
       {Zeroes, sizeof(char), Padding}};
-  if (Writer(IOVec, sizeof(IOVec) / sizeof(ProfDataIOVec), &WriterCtx))
+  if (Writer(IOVec, sizeof(IOVec) / sizeof(*IOVec), &WriterCtx))
     return -1;
   if (ValueDataBegin) {
-    ProfDataIOVec IOVec[1] = {{ValueDataBegin, sizeof(char), ValueDataSize}};
-    if (Writer(IOVec, 1, &WriterCtx))
+    ProfDataIOVec IOVec2[] = {{ValueDataBegin, sizeof(char), ValueDataSize}};
+    if (Writer(IOVec2, sizeof(IOVec2) / sizeof(*IOVec2), &WriterCtx))
       return -1;
   }
   return 0;

@@ -58,6 +58,18 @@ void InitializeShadowMemory() {
   } else {
     DCHECK(0);
   }
+#elif defined(__powerpc64__)
+  uptr kMadviseRangeBeg = 0;
+  uptr kMadviseRangeSize = 0;
+  if (vmaSize == 44) {
+    kMadviseRangeBeg  = 0x0f60000000ull;
+    kMadviseRangeSize = 0x0010000000ull;
+  } else if (vmaSize == 46) {
+    kMadviseRangeBeg  = 0x3f0000000000ull;
+    kMadviseRangeSize = 0x010000000000ull;
+  } else {
+    DCHECK(0);
+  }
 #endif
   NoHugePagesInRegion(MemToShadow(kMadviseRangeBeg),
                       kMadviseRangeSize * kShadowMultiplier);
@@ -120,7 +132,12 @@ void CheckAndProtect() {
 
   ProtectRange(LoAppMemEnd(), ShadowBeg());
   ProtectRange(ShadowEnd(), MetaShadowBeg());
+#ifdef TSAN_MID_APP_RANGE
+  ProtectRange(MetaShadowEnd(), MidAppMemBeg());
+  ProtectRange(MidAppMemEnd(), TraceMemBeg());
+#else
   ProtectRange(MetaShadowEnd(), TraceMemBeg());
+#endif
   // Memory for traces is mapped lazily in MapThreadTrace.
   // Protect the whole range for now, so that user does not map something here.
   ProtectRange(TraceMemBeg(), TraceMemEnd());

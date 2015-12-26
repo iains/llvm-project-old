@@ -1665,10 +1665,10 @@ void Sema::ActOnBaseSpecifiers(Decl *ClassDecl, CXXBaseSpecifier **Bases,
 
 /// \brief Determine whether the type \p Derived is a C++ class that is
 /// derived from the type \p Base.
-bool Sema::IsDerivedFrom(QualType Derived, QualType Base) {
+bool Sema::IsDerivedFrom(SourceLocation Loc, QualType Derived, QualType Base) {
   if (!getLangOpts().CPlusPlus)
     return false;
-  
+
   CXXRecordDecl *DerivedRD = Derived->getAsCXXRecordDecl();
   if (!DerivedRD)
     return false;
@@ -1682,13 +1682,18 @@ bool Sema::IsDerivedFrom(QualType Derived, QualType Base) {
   if (BaseRD->isInvalidDecl() || DerivedRD->isInvalidDecl())
     return false;
 
-  // FIXME: instantiate DerivedRD if necessary.  We need a PoI for this.
-  return DerivedRD->hasDefinition() && DerivedRD->isDerivedFrom(BaseRD);
+  // FIXME: In a modules build, do we need the entire path to be visible for us
+  // to be able to use the inheritance relationship?
+  if (!isCompleteType(Loc, Derived) && !DerivedRD->isBeingDefined())
+    return false;
+  
+  return DerivedRD->isDerivedFrom(BaseRD);
 }
 
 /// \brief Determine whether the type \p Derived is a C++ class that is
 /// derived from the type \p Base.
-bool Sema::IsDerivedFrom(QualType Derived, QualType Base, CXXBasePaths &Paths) {
+bool Sema::IsDerivedFrom(SourceLocation Loc, QualType Derived, QualType Base,
+                         CXXBasePaths &Paths) {
   if (!getLangOpts().CPlusPlus)
     return false;
   
@@ -1698,6 +1703,9 @@ bool Sema::IsDerivedFrom(QualType Derived, QualType Base, CXXBasePaths &Paths) {
   
   CXXRecordDecl *BaseRD = Base->getAsCXXRecordDecl();
   if (!BaseRD)
+    return false;
+  
+  if (!isCompleteType(Loc, Derived) && !DerivedRD->isBeingDefined())
     return false;
   
   return DerivedRD->isDerivedFrom(BaseRD, Paths);
@@ -1747,7 +1755,7 @@ Sema::CheckDerivedToBaseConversion(QualType Derived, QualType Base,
   // explore multiple paths to determine if there is an ambiguity.
   CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
                      /*DetectVirtual=*/false);
-  bool DerivationOkay = IsDerivedFrom(Derived, Base, Paths);
+  bool DerivationOkay = IsDerivedFrom(Loc, Derived, Base, Paths);
   assert(DerivationOkay &&
          "Can only be used with a derived-to-base conversion");
   (void)DerivationOkay;
@@ -1781,7 +1789,7 @@ Sema::CheckDerivedToBaseConversion(QualType Derived, QualType Base,
     // performance isn't as much of an issue.
     Paths.clear();
     Paths.setRecordingPaths(true);
-    bool StillOkay = IsDerivedFrom(Derived, Base, Paths);
+    bool StillOkay = IsDerivedFrom(Loc, Derived, Base, Paths);
     assert(StillOkay && "Can only be used with a derived-to-base conversion");
     (void)StillOkay;
 
@@ -2757,7 +2765,8 @@ static bool FindBaseInitializer(Sema &SemaRef,
     // virtual base class.
     CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
                        /*DetectVirtual=*/false);
-    if (SemaRef.IsDerivedFrom(SemaRef.Context.getTypeDeclType(ClassDecl), 
+    if (SemaRef.IsDerivedFrom(ClassDecl->getLocation(),
+                              SemaRef.Context.getTypeDeclType(ClassDecl),
                               BaseType, Paths)) {
       for (CXXBasePaths::paths_iterator Path = Paths.begin();
            Path != Paths.end(); ++Path) {
@@ -2980,10 +2989,15 @@ Sema::BuildMemInitializer(Decl *ConstructorD,
     if (BaseType.isNull()) {
       BaseType = Context.getTypeDeclType(TyD);
       MarkAnyDeclReferenced(TyD->getLocation(), TyD, /*OdrUse=*/false);
-      if (SS.isSet())
-        // FIXME: preserve source range information
+      if (SS.isSet()) {
         BaseType = Context.getElaboratedType(ETK_None, SS.getScopeRep(),
                                              BaseType);
+        TInfo = Context.CreateTypeSourceInfo(BaseType);
+        ElaboratedTypeLoc TL = TInfo->getTypeLoc().castAs<ElaboratedTypeLoc>();
+        TL.getNamedTypeLoc().castAs<TypeSpecTypeLoc>().setNameLoc(IdLoc);
+        TL.setElaboratedKeywordLoc(SourceLocation());
+        TL.setQualifierLoc(SS.getWithLocInContext(Context));
+      }
     }
   }
 
@@ -4406,64 +4420,35 @@ void Sema::ActOnDefaultCtorInitializers(Decl *CDtorDecl) {
   }
 }
 
-bool Sema::RequireNonAbstractType(SourceLocation Loc, QualType T,
-                                  unsigned DiagID, AbstractDiagSelID SelID) {
-  class NonAbstractTypeDiagnoser : public TypeDiagnoser {
-    unsigned DiagID;
-    AbstractDiagSelID SelID;
-    
-  public:
-    NonAbstractTypeDiagnoser(unsigned DiagID, AbstractDiagSelID SelID)
-      : TypeDiagnoser(DiagID == 0), DiagID(DiagID), SelID(SelID) { }
-
-    void diagnose(Sema &S, SourceLocation Loc, QualType T) override {
-      if (Suppressed) return;
-      if (SelID == -1)
-        S.Diag(Loc, DiagID) << T;
-      else
-        S.Diag(Loc, DiagID) << SelID << T;
-    }
-  } Diagnoser(DiagID, SelID);
-  
-  return RequireNonAbstractType(Loc, T, Diagnoser);
-}
-
-bool Sema::RequireNonAbstractType(SourceLocation Loc, QualType T,
-                                  TypeDiagnoser &Diagnoser) {
+bool Sema::isAbstractType(SourceLocation Loc, QualType T) {
   if (!getLangOpts().CPlusPlus)
     return false;
 
-  if (const ArrayType *AT = Context.getAsArrayType(T))
-    return RequireNonAbstractType(Loc, AT->getElementType(), Diagnoser);
-
-  if (const PointerType *PT = T->getAs<PointerType>()) {
-    // Find the innermost pointer type.
-    while (const PointerType *T = PT->getPointeeType()->getAs<PointerType>())
-      PT = T;
-
-    if (const ArrayType *AT = Context.getAsArrayType(PT->getPointeeType()))
-      return RequireNonAbstractType(Loc, AT->getElementType(), Diagnoser);
-  }
-
-  const RecordType *RT = T->getAs<RecordType>();
-  if (!RT)
+  const auto *RD = Context.getBaseElementType(T)->getAsCXXRecordDecl();
+  if (!RD)
     return false;
 
-  const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+  // FIXME: Per [temp.inst]p1, we are supposed to trigger instantiation of a
+  // class template specialization here, but doing so breaks a lot of code.
 
   // We can't answer whether something is abstract until it has a
-  // definition.  If it's currently being defined, we'll walk back
+  // definition. If it's currently being defined, we'll walk back
   // over all the declarations when we have a full definition.
   const CXXRecordDecl *Def = RD->getDefinition();
   if (!Def || Def->isBeingDefined())
     return false;
 
-  if (!RD->isAbstract())
+  return RD->isAbstract();
+}
+
+bool Sema::RequireNonAbstractType(SourceLocation Loc, QualType T,
+                                  TypeDiagnoser &Diagnoser) {
+  if (!isAbstractType(Loc, T))
     return false;
 
+  T = Context.getBaseElementType(T);
   Diagnoser.diagnose(*this, Loc, T);
-  DiagnoseAbstractType(RD);
-
+  DiagnoseAbstractType(T->getAsCXXRecordDecl());
   return true;
 }
 
@@ -7118,7 +7103,7 @@ Decl *Sema::ActOnConversionDeclarator(CXXConversionDecl *Conversion) {
     if (ConvType == ClassType)
       Diag(Conversion->getLocation(), diag::warn_conv_to_self_not_used)
         << ClassType;
-    else if (IsDerivedFrom(ClassType, ConvType))
+    else if (IsDerivedFrom(Conversion->getLocation(), ClassType, ConvType))
       Diag(Conversion->getLocation(), diag::warn_conv_to_base_not_used)
         <<  ClassType << ConvType;
   } else if (ConvType->isVoidType()) {
@@ -7185,7 +7170,8 @@ Decl *Sema::ActOnStartNamespaceDef(Scope *NamespcScope,
                                    SourceLocation IdentLoc,
                                    IdentifierInfo *II,
                                    SourceLocation LBrace,
-                                   AttributeList *AttrList) {
+                                   AttributeList *AttrList,
+                                   UsingDirectiveDecl *&UD) {
   SourceLocation StartLoc = InlineLoc.isValid() ? InlineLoc : NamespaceLoc;
   // For anonymous namespace, take the location of the left brace.
   SourceLocation Loc = II ? IdentLoc : LBrace;
@@ -7299,14 +7285,13 @@ Decl *Sema::ActOnStartNamespaceDef(Scope *NamespcScope,
     // namespace internal linkage.
 
     if (!PrevNS) {
-      UsingDirectiveDecl* UD
-        = UsingDirectiveDecl::Create(Context, Parent,
-                                     /* 'using' */ LBrace,
-                                     /* 'namespace' */ SourceLocation(),
-                                     /* qualifier */ NestedNameSpecifierLoc(),
-                                     /* identifier */ SourceLocation(),
-                                     Namespc,
-                                     /* Ancestor */ Parent);
+      UD = UsingDirectiveDecl::Create(Context, Parent,
+                                      /* 'using' */ LBrace,
+                                      /* 'namespace' */ SourceLocation(),
+                                      /* qualifier */ NestedNameSpecifierLoc(),
+                                      /* identifier */ SourceLocation(),
+                                      Namespc,
+                                      /* Ancestor */ Parent);
       UD->setImplicit();
       Parent->addDecl(UD);
     }
@@ -8682,29 +8667,39 @@ Decl *Sema::ActOnNamespaceAliasDef(Scope *S, SourceLocation NamespaceLoc,
     }
   }
   assert(!R.isAmbiguous() && !R.empty());
+  NamedDecl *ND = R.getFoundDecl();
 
   // Check if we have a previous declaration with the same name.
   LookupResult PrevR(*this, Alias, AliasLoc, LookupOrdinaryName,
                      ForRedeclaration);
-  LookupQualifiedName(PrevR, CurContext->getRedeclContext());
-  NamedDecl *PrevDecl = PrevR.getAsSingle<NamedDecl>();
-  if (PrevDecl && !isVisible(PrevDecl))
-    PrevDecl = nullptr;
+  LookupName(PrevR, S);
 
-  NamedDecl *ND = R.getFoundDecl();
+  // Check we're not shadowing a template parameter.
+  if (PrevR.isSingleResult() && PrevR.getFoundDecl()->isTemplateParameter()) {
+    DiagnoseTemplateParameterShadow(AliasLoc, PrevR.getFoundDecl());
+    PrevR.clear();
+  }
 
-  if (PrevDecl) {
+  // Filter out any other lookup result from an enclosing scope.
+  FilterLookupForScope(PrevR, CurContext, S, /*ConsiderLinkage*/false,
+                       /*AllowInlineNamespace*/false);
+
+  // Find the previous declaration and check that we can redeclare it.
+  NamespaceAliasDecl *Prev = nullptr; 
+  if (NamedDecl *PrevDecl = PrevR.getAsSingle<NamedDecl>()) {
     if (NamespaceAliasDecl *AD = dyn_cast<NamespaceAliasDecl>(PrevDecl)) {
       // We already have an alias with the same name that points to the same
       // namespace; check that it matches.
-      if (!AD->getNamespace()->Equals(getNamespaceDecl(ND))) {
+      if (AD->getNamespace()->Equals(getNamespaceDecl(ND))) {
+        Prev = AD;
+      } else if (isVisible(PrevDecl)) {
         Diag(AliasLoc, diag::err_redefinition_different_namespace_alias)
           << Alias;
         Diag(PrevDecl->getLocation(), diag::note_previous_namespace_alias)
           << AD->getNamespace();
         return nullptr;
       }
-    } else {
+    } else if (isVisible(PrevDecl)) {
       unsigned DiagID = isa<NamespaceDecl>(PrevDecl)
                             ? diag::err_redefinition
                             : diag::err_redefinition_different_kind;
@@ -8721,8 +8716,8 @@ Decl *Sema::ActOnNamespaceAliasDef(Scope *S, SourceLocation NamespaceLoc,
     NamespaceAliasDecl::Create(Context, CurContext, NamespaceLoc, AliasLoc,
                                Alias, SS.getWithLocInContext(Context),
                                IdentLoc, ND);
-  if (PrevDecl)
-    AliasDecl->setPreviousDecl(cast<NamespaceAliasDecl>(PrevDecl));
+  if (Prev)
+    AliasDecl->setPreviousDecl(Prev);
 
   PushOnScopeChains(AliasDecl, S);
   return AliasDecl;
@@ -13006,7 +13001,7 @@ bool Sema::CheckOverridingFunctionReturnType(const CXXMethodDecl *New,
 
   if (!Context.hasSameUnqualifiedType(NewClassTy, OldClassTy)) {
     // Check if the new class derives from the old class.
-    if (!IsDerivedFrom(NewClassTy, OldClassTy)) {
+    if (!IsDerivedFrom(New->getLocation(), NewClassTy, OldClassTy)) {
       Diag(New->getLocation(), diag::err_covariant_return_not_derived)
           << New->getDeclName() << NewTy << OldTy
           << New->getReturnTypeSourceRange();

@@ -523,8 +523,9 @@ public:
 #undef HANDLEBINOP
 
   // Comparisons.
-  Value *EmitCompare(const BinaryOperator *E, unsigned UICmpOpc,
-                     unsigned SICmpOpc, unsigned FCmpOpc);
+  Value *EmitCompare(const BinaryOperator *E, llvm::CmpInst::Predicate UICmpOpc,
+                     llvm::CmpInst::Predicate SICmpOpc,
+                     llvm::CmpInst::Predicate FCmpOpc);
 #define VISITCOMP(CODE, UI, SI, FP) \
     Value *VisitBin##CODE(const BinaryOperator *E) { \
       return EmitCompare(E, llvm::ICmpInst::UI, llvm::ICmpInst::SI, \
@@ -2564,19 +2565,17 @@ static Value* tryEmitFMulAdd(const BinOpInfo &op,
     return nullptr;
 
   // We have a potentially fusable op. Look for a mul on one of the operands.
-  if (llvm::BinaryOperator* LHSBinOp = dyn_cast<llvm::BinaryOperator>(op.LHS)) {
-    if (LHSBinOp->getOpcode() == llvm::Instruction::FMul) {
-      assert(LHSBinOp->getNumUses() == 0 &&
-             "Operations with multiple uses shouldn't be contracted.");
+  // Also, make sure that the mul result isn't used directly. In that case,
+  // there's no point creating a muladd operation.
+  if (auto *LHSBinOp = dyn_cast<llvm::BinaryOperator>(op.LHS)) {
+    if (LHSBinOp->getOpcode() == llvm::Instruction::FMul &&
+        LHSBinOp->use_empty())
       return buildFMulAdd(LHSBinOp, op.RHS, CGF, Builder, false, isSub);
-    }
-  } else if (llvm::BinaryOperator* RHSBinOp =
-               dyn_cast<llvm::BinaryOperator>(op.RHS)) {
-    if (RHSBinOp->getOpcode() == llvm::Instruction::FMul) {
-      assert(RHSBinOp->getNumUses() == 0 &&
-             "Operations with multiple uses shouldn't be contracted.");
+  }
+  if (auto *RHSBinOp = dyn_cast<llvm::BinaryOperator>(op.RHS)) {
+    if (RHSBinOp->getOpcode() == llvm::Instruction::FMul &&
+        RHSBinOp->use_empty())
       return buildFMulAdd(RHSBinOp, op.LHS, CGF, Builder, isSub, false);
-    }
   }
 
   return nullptr;
@@ -2834,8 +2833,10 @@ static llvm::Intrinsic::ID GetIntrinsic(IntrinsicType IT,
   }
 }
 
-Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,unsigned UICmpOpc,
-                                      unsigned SICmpOpc, unsigned FCmpOpc) {
+Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,
+                                      llvm::CmpInst::Predicate UICmpOpc,
+                                      llvm::CmpInst::Predicate SICmpOpc,
+                                      llvm::CmpInst::Predicate FCmpOpc) {
   TestAndClearIgnoreResultAssign();
   Value *Result;
   QualType LHSTy = E->getLHS()->getType();
@@ -2918,15 +2919,12 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,unsigned UICmpOpc,
     }
 
     if (LHS->getType()->isFPOrFPVectorTy()) {
-      Result = Builder.CreateFCmp((llvm::CmpInst::Predicate)FCmpOpc,
-                                  LHS, RHS, "cmp");
+      Result = Builder.CreateFCmp(FCmpOpc, LHS, RHS, "cmp");
     } else if (LHSTy->hasSignedIntegerRepresentation()) {
-      Result = Builder.CreateICmp((llvm::ICmpInst::Predicate)SICmpOpc,
-                                  LHS, RHS, "cmp");
+      Result = Builder.CreateICmp(SICmpOpc, LHS, RHS, "cmp");
     } else {
       // Unsigned integers and pointers.
-      Result = Builder.CreateICmp((llvm::ICmpInst::Predicate)UICmpOpc,
-                                  LHS, RHS, "cmp");
+      Result = Builder.CreateICmp(UICmpOpc, LHS, RHS, "cmp");
     }
 
     // If this is a vector comparison, sign extend the result to the appropriate
@@ -2961,17 +2959,13 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,unsigned UICmpOpc,
 
     Value *ResultR, *ResultI;
     if (CETy->isRealFloatingType()) {
-      ResultR = Builder.CreateFCmp((llvm::FCmpInst::Predicate)FCmpOpc,
-                                   LHS.first, RHS.first, "cmp.r");
-      ResultI = Builder.CreateFCmp((llvm::FCmpInst::Predicate)FCmpOpc,
-                                   LHS.second, RHS.second, "cmp.i");
+      ResultR = Builder.CreateFCmp(FCmpOpc, LHS.first, RHS.first, "cmp.r");
+      ResultI = Builder.CreateFCmp(FCmpOpc, LHS.second, RHS.second, "cmp.i");
     } else {
       // Complex comparisons can only be equality comparisons.  As such, signed
       // and unsigned opcodes are the same.
-      ResultR = Builder.CreateICmp((llvm::ICmpInst::Predicate)UICmpOpc,
-                                   LHS.first, RHS.first, "cmp.r");
-      ResultI = Builder.CreateICmp((llvm::ICmpInst::Predicate)UICmpOpc,
-                                   LHS.second, RHS.second, "cmp.i");
+      ResultR = Builder.CreateICmp(UICmpOpc, LHS.first, RHS.first, "cmp.r");
+      ResultI = Builder.CreateICmp(UICmpOpc, LHS.second, RHS.second, "cmp.i");
     }
 
     if (E->getOpcode() == BO_EQ) {

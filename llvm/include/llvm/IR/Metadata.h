@@ -83,7 +83,9 @@ public:
     DIImportedEntityKind,
     ConstantAsMetadataKind,
     LocalAsMetadataKind,
-    MDStringKind
+    MDStringKind,
+    DIMacroKind,
+    DIMacroFileKind
   };
 
 protected:
@@ -830,10 +832,11 @@ public:
   /// \brief Resolve cycles.
   ///
   /// Once all forward declarations have been resolved, force cycles to be
-  /// resolved.
+  /// resolved. If \p MDMaterialized is true, then any temporary metadata
+  /// is ignored, otherwise it asserts when encountering temporary metadata.
   ///
   /// \pre No operands (or operands' operands, etc.) have \a isTemporary().
-  void resolveCycles();
+  void resolveCycles(bool MDMaterialized = true);
 
   /// \brief Replace a temporary node with a permanent one.
   ///
@@ -1210,10 +1213,10 @@ public:
   const_op_iterator op_end()   const { return const_op_iterator(this, getNumOperands()); }
 
   inline iterator_range<op_iterator>  operands() {
-    return iterator_range<op_iterator>(op_begin(), op_end());
+    return make_range(op_begin(), op_end());
   }
   inline iterator_range<const_op_iterator> operands() const {
-    return iterator_range<const_op_iterator>(op_begin(), op_end());
+    return make_range(op_begin(), op_end());
   }
 };
 

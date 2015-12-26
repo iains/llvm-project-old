@@ -265,8 +265,8 @@ void InstrProfiling::lowerCoverageData(GlobalVariable *CoverageData) {
 
 /// Get the name of a profiling variable for a particular function.
 static std::string getVarName(InstrProfIncrementInst *Inc, StringRef Prefix) {
-  auto *Arr = cast<ConstantDataArray>(Inc->getName()->getInitializer());
-  StringRef Name = Arr->isCString() ? Arr->getAsCString() : Arr->getAsString();
+  StringRef NamePrefix = getInstrProfNameVarPrefix();
+  StringRef Name = Inc->getName()->getName().substr(NamePrefix.size());
   return (Prefix + Name).str();
 }
 
@@ -277,6 +277,18 @@ static inline bool shouldRecordFunctionAddr(Function *F) {
     return true;
   // Check uses of this function for other than direct calls or invokes to it.
   return F->hasAddressTaken();
+}
+
+static inline Comdat *getOrCreateProfileComdat(Module &M,
+                                               InstrProfIncrementInst *Inc) {
+  // COFF format requires a COMDAT section to have a key symbol with the same
+  // name. The linker targeting COFF also requires that the COMDAT section
+  // a section is associated to must precede the associating section. For this
+  // reason, we must choose the name var's name as the name of the comdat.
+  StringRef ComdatPrefix = (Triple(M.getTargetTriple()).isOSBinFormatCOFF()
+                                ? getInstrProfNameVarPrefix()
+                                : getInstrProfComdatPrefix());
+  return M.getOrInsertComdat(StringRef(getVarName(Inc, ComdatPrefix)));
 }
 
 GlobalVariable *
@@ -297,8 +309,7 @@ InstrProfiling::getOrCreateRegionCounters(InstrProfIncrementInst *Inc) {
   Function *Fn = Inc->getParent()->getParent();
   Comdat *ProfileVarsComdat = nullptr;
   if (Fn->hasComdat())
-    ProfileVarsComdat = M->getOrInsertComdat(
-        StringRef(getVarName(Inc, getInstrProfComdatPrefix())));
+    ProfileVarsComdat = getOrCreateProfileComdat(*M, Inc);
   NamePtr->setSection(getNameSection());
   NamePtr->setAlignment(1);
   NamePtr->setComdat(ProfileVarsComdat);

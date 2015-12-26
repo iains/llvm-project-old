@@ -4052,7 +4052,7 @@ void Sema::CodeCompleteCall(Scope *S, Expr *Fn, ArrayRef<Expr *> Args) {
       // If expression's type is CXXRecordDecl, it may overload the function
       // call operator, so we check if it does and add them as candidates.
       // A complete type is needed to lookup for member function call operators.
-      if (!RequireCompleteType(Loc, NakedFn->getType(), 0)) {
+      if (isCompleteType(Loc, NakedFn->getType())) {
         DeclarationName OpName = Context.DeclarationNames
                                  .getCXXOperatorName(OO_Call);
         LookupResult R(*this, OpName, Loc, LookupOrdinaryName);
@@ -4094,7 +4094,7 @@ void Sema::CodeCompleteConstructor(Scope *S, QualType Type, SourceLocation Loc,
     return;
 
   // A complete type is needed to lookup for constructors.
-  if (RequireCompleteType(Loc, Type, 0))
+  if (!isCompleteType(Loc, Type))
     return;
 
   CXXRecordDecl *RD = Type->getAsCXXRecordDecl();
@@ -5926,8 +5926,8 @@ static void AddProtocolResults(DeclContext *Ctx, DeclContext *CurContext,
   }
 }
 
-void Sema::CodeCompleteObjCProtocolReferences(IdentifierLocPair *Protocols,
-                                              unsigned NumProtocols) {
+void Sema::CodeCompleteObjCProtocolReferences(
+                                        ArrayRef<IdentifierLocPair> Protocols) {
   ResultBuilder Results(*this, CodeCompleter->getAllocator(),
                         CodeCompleter->getCodeCompletionTUInfo(),
                         CodeCompletionContext::CCC_ObjCProtocolName);
@@ -5938,9 +5938,9 @@ void Sema::CodeCompleteObjCProtocolReferences(IdentifierLocPair *Protocols,
     // Tell the result set to ignore all of the protocols we have
     // already seen.
     // FIXME: This doesn't work when caching code-completion results.
-    for (unsigned I = 0; I != NumProtocols; ++I)
-      if (ObjCProtocolDecl *Protocol = LookupProtocol(Protocols[I].first,
-                                                      Protocols[I].second))
+    for (const IdentifierLocPair &Pair : Protocols)
+      if (ObjCProtocolDecl *Protocol = LookupProtocol(Pair.first,
+                                                      Pair.second))
         Results.Ignore(Protocol);
 
     // Add all protocols.

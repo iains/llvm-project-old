@@ -61,16 +61,13 @@ ELFFileBase<ELFT>::getSymbolsHelper(bool Local) {
 
 template <class ELFT>
 uint32_t ELFFileBase<ELFT>::getSectionIndex(const Elf_Sym &Sym) const {
-  uint32_t Index = Sym.st_shndx;
-  if (Index == ELF::SHN_XINDEX)
-    Index = this->ELFObj.getExtendedSymbolTableIndex(&Sym, this->Symtab,
-                                                     SymtabSHNDX);
-  else if (Index == ELF::SHN_UNDEF || Index >= ELF::SHN_LORESERVE)
+  uint32_t I = Sym.st_shndx;
+  if (I == ELF::SHN_XINDEX)
+    return this->ELFObj.getExtendedSymbolTableIndex(&Sym, this->Symtab,
+                                                    SymtabSHNDX);
+  if (I >= ELF::SHN_LORESERVE || I == ELF::SHN_ABS)
     return 0;
-
-  if (!Index)
-    error("Invalid section index");
-  return Index;
+  return I;
 }
 
 template <class ELFT> void ELFFileBase<ELFT>::initStringTable() {
@@ -96,6 +93,10 @@ typename ObjectFile<ELFT>::Elf_Sym_Range ObjectFile<ELFT>::getLocalSymbols() {
   return this->getSymbolsHelper(true);
 }
 
+template <class ELFT> uint32_t ObjectFile<ELFT>::getMipsGp0() const {
+  return MipsReginfo ? MipsReginfo->getGp0() : 0;
+}
+
 template <class ELFT>
 const typename ObjectFile<ELFT>::Elf_Sym *
 ObjectFile<ELFT>::getLocalSymbol(uintX_t SymIndex) {
@@ -113,6 +114,9 @@ void elf2::ObjectFile<ELFT>::parse(DenseSet<StringRef> &Comdats) {
   initializeSymbols();
 }
 
+// Sections with SHT_GROUP and comdat bits define comdat section groups.
+// They are identified and deduplicated by group name. This function
+// returns a group name.
 template <class ELFT>
 StringRef ObjectFile<ELFT>::getShtGroupSignature(const Elf_Shdr &Sec) {
   const ELFFile<ELFT> &Obj = this->ELFObj;
@@ -225,20 +229,36 @@ void elf2::ObjectFile<ELFT>::initializeSections(DenseSet<StringRef> &Comdats) {
       break;
     }
     default:
-      ErrorOr<StringRef> NameOrErr = this->ELFObj.getSectionName(&Sec);
-      error(NameOrErr);
-      StringRef Name = *NameOrErr;
-      if (Name == ".note.GNU-stack")
-        Sections[I] = &InputSection<ELFT>::Discarded;
-      else if (Name == ".eh_frame")
-        Sections[I] = new (this->Alloc) EHInputSection<ELFT>(this, &Sec);
-      else if (shouldMerge<ELFT>(Sec))
-        Sections[I] = new (this->Alloc) MergeInputSection<ELFT>(this, &Sec);
-      else
-        Sections[I] = new (this->Alloc) InputSection<ELFT>(this, &Sec);
-      break;
+      Sections[I] = createInputSection(Sec);
     }
   }
+}
+
+template <class ELFT> InputSectionBase<ELFT> *
+elf2::ObjectFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
+  ErrorOr<StringRef> NameOrErr = this->ELFObj.getSectionName(&Sec);
+  error(NameOrErr);
+  StringRef Name = *NameOrErr;
+
+  // .note.GNU-stack is a marker section to control the presence of
+  // PT_GNU_STACK segment in outputs. Since the presence of the segment
+  // is controlled only by the command line option (-z execstack) in LLD,
+  // .note.GNU-stack is ignored.
+  if (Name == ".note.GNU-stack")
+    return &InputSection<ELFT>::Discarded;
+
+  // A MIPS object file has a special section that contains register
+  // usage info, which needs to be handled by the linker specially.
+  if (Config->EMachine == EM_MIPS && Name == ".reginfo") {
+    MipsReginfo = new (this->Alloc) MipsReginfoInputSection<ELFT>(this, &Sec);
+    return MipsReginfo;
+  }
+
+  if (Name == ".eh_frame")
+    return new (this->EHAlloc.Allocate()) EHInputSection<ELFT>(this, &Sec);
+  if (shouldMerge<ELFT>(Sec))
+    return new (this->MAlloc.Allocate()) MergeInputSection<ELFT>(this, &Sec);
+  return new (this->Alloc) InputSection<ELFT>(this, &Sec);
 }
 
 template <class ELFT> void elf2::ObjectFile<ELFT>::initializeSymbols() {
@@ -269,12 +289,12 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   StringRef Name = *NameOrErr;
 
   switch (Sym->st_shndx) {
-  case SHN_ABS:
-    return new (this->Alloc) DefinedAbsolute<ELFT>(Name, *Sym);
   case SHN_UNDEF:
-    return new (this->Alloc) Undefined<ELFT>(Name, *Sym);
+    return new (this->Alloc) UndefinedElf<ELFT>(Name, *Sym);
   case SHN_COMMON:
-    return new (this->Alloc) DefinedCommon<ELFT>(Name, *Sym);
+    return new (this->Alloc) DefinedCommon(
+        Name, Sym->st_size, Sym->st_value,
+        Sym->getBinding() == llvm::ELF::STB_WEAK, Sym->getVisibility());
   }
 
   switch (Sym->getBinding()) {
@@ -285,8 +305,8 @@ SymbolBody *elf2::ObjectFile<ELFT>::createSymbolBody(StringRef StringTable,
   case STB_GNU_UNIQUE: {
     InputSectionBase<ELFT> *Sec = getSection(*Sym);
     if (Sec == &InputSection<ELFT>::Discarded)
-      return new (this->Alloc) Undefined<ELFT>(Name, *Sym);
-    return new (this->Alloc) DefinedRegular<ELFT>(Name, *Sym, *Sec);
+      return new (this->Alloc) UndefinedElf<ELFT>(Name, *Sym);
+    return new (this->Alloc) DefinedRegular<ELFT>(Name, *Sym, Sec);
   }
   }
 }
@@ -318,10 +338,11 @@ MemoryBufferRef ArchiveFile::getMember(const Archive::Symbol *Sym) {
   if (!Seen.insert(C.getChildOffset()).second)
     return MemoryBufferRef();
 
-  ErrorOr<MemoryBufferRef> Ret = C.getMemoryBufferRef();
-  error(Ret, "Could not get the buffer for the member defining symbol " +
-                 Sym->getName());
-  return *Ret;
+  ErrorOr<MemoryBufferRef> RefOrErr = C.getMemoryBufferRef();
+  if (!RefOrErr)
+    error(RefOrErr, "Could not get the buffer for the member defining symbol " +
+          Sym->getName());
+  return *RefOrErr;
 }
 
 std::vector<MemoryBufferRef> ArchiveFile::getMembers() {
@@ -333,8 +354,9 @@ std::vector<MemoryBufferRef> ArchiveFile::getMembers() {
           "Could not get the child of the archive " + File->getFileName());
     const Archive::Child Child(*ChildOrErr);
     ErrorOr<MemoryBufferRef> MbOrErr = Child.getMemoryBufferRef();
-    error(MbOrErr, "Could not get the buffer for a child of the archive " +
-                       File->getFileName());
+    if (!MbOrErr)
+      error(MbOrErr, "Could not get the buffer for a child of the archive " +
+            File->getFileName());
     Result.push_back(MbOrErr.get());
   }
   return Result;

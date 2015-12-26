@@ -15,13 +15,9 @@
 #define LLVM_LIB_TARGET_AARCH64_INSTPRINTER_AARCH64INSTPRINTER_H
 
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCSubtargetInfo.h"
 
 namespace llvm {
-
-class MCOperand;
 
 class AArch64InstPrinter : public MCInstPrinter {
 public:
@@ -122,6 +118,9 @@ protected:
 
   void printPrefetchOp(const MCInst *MI, unsigned OpNum,
                        const MCSubtargetInfo &STI, raw_ostream &O);
+
+  void printPSBHintOp(const MCInst *MI, unsigned OpNum,
+                      const MCSubtargetInfo &STI, raw_ostream &O);
 
   void printFPImmOperand(const MCInst *MI, unsigned OpNum,
                          const MCSubtargetInfo &STI, raw_ostream &O);

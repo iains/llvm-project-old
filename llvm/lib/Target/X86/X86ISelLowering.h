@@ -126,6 +126,9 @@ namespace llvm {
       /// 1 is the number of bytes of stack to pop.
       RET_FLAG,
 
+      /// Return from interrupt. Operand 0 is the number of bytes to pop.
+      IRET,
+
       /// Repeat fill, corresponds to X86::REP_STOSx.
       REP_STOS,
 
@@ -603,15 +606,6 @@ namespace llvm {
     bool isCalleePop(CallingConv::ID CallingConv,
                      bool is64Bit, bool IsVarArg, bool TailCallOpt);
 
-    /// AVX512 static rounding constants.  These need to match the values in
-    /// avx512fintrin.h.
-    enum STATIC_ROUNDING {
-      TO_NEAREST_INT = 0,
-      TO_NEG_INF = 1,
-      TO_POS_INF = 2,
-      TO_ZERO = 3,
-      CUR_DIRECTION = 4
-    };
   }
 
   //===--------------------------------------------------------------------===//

@@ -35,7 +35,7 @@ protected:
   ObjectFile<ELFT> *File;
 
 public:
-  enum Kind { Regular, EHFrame, Merge };
+  enum Kind { Regular, EHFrame, Merge, MipsReginfo };
   Kind SectionKind;
 
   InputSectionBase(ObjectFile<ELFT> *File, const Elf_Shdr *Header,
@@ -76,9 +76,16 @@ public:
   InputSectionBase<ELFT> *getRelocTarget(const Elf_Rela &Rel);
 
   template <bool isRela>
-  void relocate(uint8_t *Buf, uint8_t *BufEnd,
-                llvm::iterator_range<
-                    const llvm::object::Elf_Rel_Impl<ELFT, isRela> *> Rels);
+  using RelIteratorRange =
+      llvm::iterator_range<const llvm::object::Elf_Rel_Impl<ELFT, isRela> *>;
+
+  template <bool isRela>
+  void relocate(uint8_t *Buf, uint8_t *BufEnd, RelIteratorRange<isRela> Rels);
+
+private:
+  template <bool isRela>
+  uint8_t *findMipsPairedReloc(uint8_t *Buf, uint32_t SymIndex, uint32_t Type,
+                               RelIteratorRange<isRela> Rels);
 };
 
 template <class ELFT>
@@ -150,6 +157,26 @@ public:
   // The offset from beginning of the output sections this section was assigned
   // to. The writer sets a value.
   uint64_t OutSecOff = 0;
+
+  static bool classof(const InputSectionBase<ELFT> *S);
+};
+
+// MIPS .reginfo section provides information on the registers used by the code
+// in the object file. Linker should collect this information and write a single
+// .reginfo section in the output file. The output section contains a union of
+// used registers masks taken from input .reginfo sections and final value
+// of the `_gp` symbol.  For details: Chapter 4 / "Register Information" at
+// ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
+template <class ELFT>
+class MipsReginfoInputSection : public InputSectionBase<ELFT> {
+  typedef llvm::object::Elf_Mips_RegInfo<ELFT> Elf_Mips_RegInfo;
+  typedef typename llvm::object::ELFFile<ELFT>::Elf_Shdr Elf_Shdr;
+
+public:
+  MipsReginfoInputSection(ObjectFile<ELFT> *F, const Elf_Shdr *Header);
+
+  uint32_t getGeneralMask() const;
+  uint32_t getGp0() const;
 
   static bool classof(const InputSectionBase<ELFT> *S);
 };

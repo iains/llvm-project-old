@@ -529,9 +529,14 @@ public:
 
   /// EvalStatus is a struct with detailed info about an evaluation in progress.
   struct EvalStatus {
-    /// HasSideEffects - Whether the evaluated expression has side effects.
+    /// \brief Whether the evaluated expression has side effects.
     /// For example, (f() && 0) can be folded, but it still has side effects.
     bool HasSideEffects;
+
+    /// \brief Whether the evaluation hit undefined behavior.
+    /// For example, 1.0 / 0.0 can be folded to Inf, but has undefined behavior.
+    /// Likewise, INT_MAX + 1 can be folded to INT_MIN, but has UB.
+    bool HasUndefinedBehavior;
 
     /// Diag - If this is non-null, it will be filled in with a stack of notes
     /// indicating why evaluation failed (or why it failed to produce a constant
@@ -542,7 +547,8 @@ public:
     /// expression *is* a constant expression, no notes will be produced.
     SmallVectorImpl<PartialDiagnosticAt> *Diag;
 
-    EvalStatus() : HasSideEffects(false), Diag(nullptr) {}
+    EvalStatus()
+        : HasSideEffects(false), HasUndefinedBehavior(false), Diag(nullptr) {}
 
     // hasSideEffects - Return true if the evaluated expression has
     // side effects.
@@ -575,7 +581,12 @@ public:
   /// side-effects.
   bool EvaluateAsBooleanCondition(bool &Result, const ASTContext &Ctx) const;
 
-  enum SideEffectsKind { SE_NoSideEffects, SE_AllowSideEffects };
+  enum SideEffectsKind {
+    SE_NoSideEffects,          ///< Strictly evaluate the expression.
+    SE_AllowUndefinedBehavior, ///< Allow UB that we can give a value, but not
+                               ///< arbitrary unmodeled side effects.
+    SE_AllowSideEffects        ///< Allow any unmodeled side effect.
+  };
 
   /// EvaluateAsInt - Return true if this is a constant which we can fold and
   /// convert to an integer, using any crazy technique that we want to.
@@ -584,7 +595,8 @@ public:
 
   /// isEvaluatable - Call EvaluateAsRValue to see if this expression can be
   /// constant folded without side-effects, but discard the result.
-  bool isEvaluatable(const ASTContext &Ctx) const;
+  bool isEvaluatable(const ASTContext &Ctx,
+                     SideEffectsKind AllowSideEffects = SE_NoSideEffects) const;
 
   /// HasSideEffects - This routine returns true for all those expressions
   /// which have any effect other than producing a value. Example is a function
@@ -627,6 +639,16 @@ public:
   bool EvaluateWithSubstitution(APValue &Value, ASTContext &Ctx,
                                 const FunctionDecl *Callee,
                                 ArrayRef<const Expr*> Args) const;
+
+  /// \brief If the current Expr is a pointer, this will try to statically
+  /// determine the number of bytes available where the pointer is pointing.
+  /// Returns true if all of the above holds and we were able to figure out the
+  /// size, false otherwise.
+  ///
+  /// \param Type - How to evaluate the size of the Expr, as defined by the
+  /// "type" parameter of __builtin_object_size
+  bool tryEvaluateObjectSize(uint64_t &Result, ASTContext &Ctx,
+                             unsigned Type) const;
 
   /// \brief Enumeration used to describe the kind of Null pointer constant
   /// returned from \c isNullPointerConstant().
@@ -1075,7 +1097,7 @@ public:
   /// this name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!hasTemplateKWAndArgsInfo()) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
@@ -1100,32 +1122,11 @@ public:
   /// explicit template argument list.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name.
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *getTemplateKWAndArgsInfo();
-  }
-
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<DeclRefExpr *>(this)->getExplicitTemplateArgs();
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
-  }
-
   /// \brief Copies the template arguments (if present) into the given
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
     if (hasExplicitTemplateArgs())
-      getExplicitTemplateArgs().copyInto(List);
+      getTemplateKWAndArgsInfo()->copyInto(List);
   }
 
   /// \brief Retrieve the template arguments provided as part of this
@@ -1134,7 +1135,7 @@ public:
     if (!hasExplicitTemplateArgs())
       return nullptr;
 
-    return getExplicitTemplateArgs().getTemplateArgs();
+    return getTemplateKWAndArgsInfo()->getTemplateArgs();
   }
 
   /// \brief Retrieve the number of template arguments provided as part of this
@@ -1143,7 +1144,7 @@ public:
     if (!hasExplicitTemplateArgs())
       return 0;
 
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    return getTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   /// \brief Returns true if this expression refers to a function that
@@ -1609,13 +1610,15 @@ public:
   /// and can have escape sequences in them in addition to the usual trigraph
   /// and escaped newline business.  This routine handles this complexity.
   ///
-  SourceLocation getLocationOfByte(unsigned ByteNo, const SourceManager &SM,
-                                   const LangOptions &Features,
-                                   const TargetInfo &Target) const;
+  SourceLocation
+  getLocationOfByte(unsigned ByteNo, const SourceManager &SM,
+                    const LangOptions &Features, const TargetInfo &Target,
+                    unsigned *StartToken = nullptr,
+                    unsigned *StartTokenByteOffset = nullptr) const;
 
   typedef const SourceLocation *tokloc_iterator;
   tokloc_iterator tokloc_begin() const { return TokLocs; }
-  tokloc_iterator tokloc_end() const { return TokLocs+NumConcatenated; }
+  tokloc_iterator tokloc_end() const { return TokLocs + NumConcatenated; }
 
   SourceLocation getLocStart() const LLVM_READONLY { return TokLocs[0]; }
   SourceLocation getLocEnd() const LLVM_READONLY {
@@ -2478,7 +2481,7 @@ public:
   /// the member name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
@@ -2506,30 +2509,7 @@ public:
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
     if (hasExplicitTemplateArgs())
-      getExplicitTemplateArgs().copyInto(List);
-  }
-
-  /// \brief Retrieve the explicit template argument list that
-  /// follow the member template name.  This must only be called on an
-  /// expression with explicit template arguments.
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *getTemplateKWAndArgsInfo();
-  }
-
-  /// \brief Retrieve the explicit template argument list that
-  /// followed the member template name.  This must only be called on
-  /// an expression with explicit template arguments.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<MemberExpr *>(this)->getExplicitTemplateArgs();
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
+      getTemplateKWAndArgsInfo()->copyInto(List);
   }
 
   /// \brief Retrieve the template arguments provided as part of this
@@ -2538,7 +2518,7 @@ public:
     if (!hasExplicitTemplateArgs())
       return nullptr;
 
-    return getExplicitTemplateArgs().getTemplateArgs();
+    return getTemplateKWAndArgsInfo()->getTemplateArgs();
   }
 
   /// \brief Retrieve the number of template arguments provided as part of this
@@ -2547,7 +2527,7 @@ public:
     if (!hasExplicitTemplateArgs())
       return 0;
 
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    return getTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   /// \brief Retrieve the member declaration name info.
@@ -3010,7 +2990,10 @@ public:
 
   /// predicates to categorize the respective opcodes.
   bool isPtrMemOp() const { return Opc == BO_PtrMemD || Opc == BO_PtrMemI; }
-  bool isMultiplicativeOp() const { return Opc >= BO_Mul && Opc <= BO_Rem; }
+  static bool isMultiplicativeOp(Opcode Opc) {
+    return Opc >= BO_Mul && Opc <= BO_Rem;
+  }
+  bool isMultiplicativeOp() const { return isMultiplicativeOp(getOpcode()); }
   static bool isAdditiveOp(Opcode Opc) { return Opc == BO_Add || Opc==BO_Sub; }
   bool isAdditiveOp() const { return isAdditiveOp(getOpcode()); }
   static bool isShiftOp(Opcode Opc) { return Opc == BO_Shl || Opc == BO_Shr; }

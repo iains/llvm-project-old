@@ -814,14 +814,14 @@ Sema::ActOnTemplateParameterList(unsigned Depth,
                                  SourceLocation ExportLoc,
                                  SourceLocation TemplateLoc,
                                  SourceLocation LAngleLoc,
-                                 Decl **Params, unsigned NumParams,
+                                 ArrayRef<Decl *> Params,
                                  SourceLocation RAngleLoc) {
   if (ExportLoc.isValid())
     Diag(ExportLoc, diag::warn_template_export_unsupported);
 
   return TemplateParameterList::Create(Context, TemplateLoc, LAngleLoc,
-                                       (NamedDecl**)Params, NumParams,
-                                       RAngleLoc);
+                                       (NamedDecl**)Params.data(),
+                                       Params.size(), RAngleLoc);
 }
 
 static void SetNestedNameSpecifier(TagDecl *T, const CXXScopeSpec &SS) {
@@ -2748,7 +2748,8 @@ Sema::CheckVarTemplateId(VarTemplateDecl *Template, SourceLocation TemplateLoc,
   typedef PartialSpecMatchResult MatchResult;
   SmallVector<MatchResult, 4> Matched;
   SourceLocation PointOfInstantiation = TemplateNameLoc;
-  TemplateSpecCandidateSet FailedCandidates(PointOfInstantiation);
+  TemplateSpecCandidateSet FailedCandidates(PointOfInstantiation,
+                                            /*ForTakingAddress=*/false);
 
   // 1. Attempt to find the closest partial specialization that this
   // specializes, if any.
@@ -4281,7 +4282,7 @@ isNullPointerValueTemplateArgument(Sema &S, NonTypeTemplateParmDecl *Param,
   if (Arg->isValueDependent() || Arg->isTypeDependent())
     return NPV_NotNullPointer;
 
-  if (S.RequireCompleteType(Arg->getExprLoc(), ParamType, 0))
+  if (!S.isCompleteType(Arg->getExprLoc(), ParamType))
     llvm_unreachable(
         "Incomplete parameter type in isNullPointerValueTemplateArgument!");
 
@@ -6822,7 +6823,8 @@ bool Sema::CheckFunctionTemplateSpecialization(
   // The set of function template specializations that could match this
   // explicit function template specialization.
   UnresolvedSet<8> Candidates;
-  TemplateSpecCandidateSet FailedCandidates(FD->getLocation());
+  TemplateSpecCandidateSet FailedCandidates(FD->getLocation(),
+                                            /*ForTakingAddress=*/false);
 
   llvm::SmallDenseMap<FunctionDecl *, TemplateArgumentListInfo, 8>
       ConvertedTemplateArgs;

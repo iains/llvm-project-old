@@ -3,7 +3,7 @@
 namespace std {
 template <typename T> struct vector {
   vector() {}
-  int size() const {}
+  unsigned long size() const {}
   bool empty() const {}
 };
 }
@@ -50,6 +50,10 @@ int main() {
     ;
   // CHECK-MESSAGES: :[[@LINE-2]]:12: warning: the 'empty' method should be used
   // CHECK-FIXES: {{^  }}if (!vect.empty()){{$}}
+  if (vect.size() > 1) // no warning
+    ;
+  if (1 < vect.size()) // no warning
+    ;
   if (!vect.size())
     ;
   // CHECK-MESSAGES: :[[@LINE-2]]:8: warning: the 'empty' method should be used

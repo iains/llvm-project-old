@@ -831,7 +831,7 @@ private:
 
   void modifyContext(const FormatToken &Current) {
     if (Current.getPrecedence() == prec::Assignment &&
-        !Line.First->isOneOf(tok::kw_template, tok::kw_using) &&
+        !Line.First->isOneOf(tok::kw_template, tok::kw_using, tok::kw_return) &&
         (!Current.Previous || Current.Previous->isNot(tok::kw_operator))) {
       Contexts.back().IsExpression = true;
       if (!Line.startsWith(TT_UnaryOperator)) {
@@ -1562,6 +1562,29 @@ static bool isFunctionDeclarationName(const FormatToken &Current) {
   return false;
 }
 
+bool TokenAnnotator::mustBreakForReturnType(const AnnotatedLine &Line) const {
+  assert(Line.MightBeFunctionDecl);
+
+  if ((Style.AlwaysBreakAfterReturnType == FormatStyle::RTBS_TopLevel ||
+       Style.AlwaysBreakAfterReturnType ==
+           FormatStyle::RTBS_TopLevelDefinitions) &&
+      Line.Level > 0)
+    return false;
+
+  switch (Style.AlwaysBreakAfterReturnType) {
+  case FormatStyle::RTBS_None:
+    return false;
+  case FormatStyle::RTBS_All:
+  case FormatStyle::RTBS_TopLevel:
+    return true;
+  case FormatStyle::RTBS_AllDefinitions:
+  case FormatStyle::RTBS_TopLevelDefinitions:
+    return Line.mightBeFunctionDefinition();
+  }
+
+  return false;
+}
+
 void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
   for (SmallVectorImpl<AnnotatedLine *>::iterator I = Line.Children.begin(),
                                                   E = Line.Children.end();
@@ -1613,15 +1636,9 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
     Current->MustBreakBefore =
         Current->MustBreakBefore || mustBreakBefore(Line, *Current);
 
-    if ((Style.AlwaysBreakAfterDefinitionReturnType == FormatStyle::DRTBS_All ||
-         (Style.AlwaysBreakAfterDefinitionReturnType ==
-              FormatStyle::DRTBS_TopLevel &&
-          Line.Level == 0)) &&
-        InFunctionDecl && Current->is(TT_FunctionDeclarationName) &&
-        !Line.Last->isOneOf(tok::semi, tok::comment)) // Only for definitions.
-      // FIXME: Line.Last points to other characters than tok::semi
-      // and tok::lbrace.
-      Current->MustBreakBefore = true;
+    if (!Current->MustBreakBefore && InFunctionDecl &&
+        Current->is(TT_FunctionDeclarationName))
+      Current->MustBreakBefore = mustBreakForReturnType(Line);
 
     Current->CanBreakBefore =
         Current->MustBreakBefore || canBreakBefore(Line, *Current);
@@ -1705,7 +1722,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
                               Right.Next->is(TT_DictLiteral)))
     return 1;
   if (Right.is(tok::l_square)) {
-    if (Style.Language == FormatStyle::LK_Proto)
+    if (Style.Language == FormatStyle::LK_Proto || Left.is(tok::r_square))
       return 1;
     // Slightly prefer formatting local lambda definitions like functions.
     if (Right.is(TT_LambdaLSquare) && Left.is(tok::equal))
@@ -1743,10 +1760,20 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
     return 2;
 
   if (Right.isMemberAccess()) {
-    if (Left.is(tok::r_paren) && Left.MatchingParen &&
-        Left.MatchingParen->ParameterCount > 0)
-      return 20; // Should be smaller than breaking at a nested comma.
-    return 150;
+    // Breaking before the "./->" of a chained call/member access is reasonably
+    // cheap, as formatting those with one call per line is generally
+    // desirable. In particular, it should be cheaper to break before the call
+    // than it is to break inside a call's parameters, which could lead to weird
+    // "hanging" indents. The exception is the very last "./->" to support this
+    // frequent pattern:
+    //
+    //   aaaaaaaa.aaaaaaaa.bbbbbbb().ccccccccccccccccccccc(
+    //       dddddddd);
+    //
+    // which might otherwise be blown up onto many lines. Here, clang-format
+    // won't produce "hanging" indents anyway as there is no other trailing
+    // call.
+    return Right.LastOperator ? 150 : 40;
   }
 
   if (Right.is(TT_TrailingAnnotation) &&
