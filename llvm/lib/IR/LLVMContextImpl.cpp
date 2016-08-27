@@ -40,6 +40,7 @@ LLVMContextImpl::LLVMContextImpl(LLVMContext &C)
   InlineAsmDiagContext = nullptr;
   DiagnosticHandler = nullptr;
   DiagnosticContext = nullptr;
+  RespectDiagnosticFilters = false;
   YieldCallback = nullptr;
   YieldOpaqueHandle = nullptr;
   NamedStructTypesUniqueID = 0;
@@ -75,7 +76,7 @@ LLVMContextImpl::~LLVMContextImpl() {
   // Free the constants.  This is important to do here to ensure that they are
   // freed before the LeakDetector is torn down.
   std::for_each(ExprConstants.map_begin(), ExprConstants.map_end(),
-                DropReferences());
+                DropFirst());
   std::for_each(ArrayConstants.map_begin(), ArrayConstants.map_end(),
                 DropFirst());
   std::for_each(StructConstants.map_begin(), StructConstants.map_end(),
@@ -119,22 +120,38 @@ LLVMContextImpl::~LLVMContextImpl() {
     delete &*Elem;
   }
 
-  // Destroy MDNodes.  ~MDNode can move and remove nodes between the MDNodeSet
-  // and the NonUniquedMDNodes sets, so copy the values out first.
-  SmallVector<MDNode*, 8> MDNodes;
-  MDNodes.reserve(MDNodeSet.size() + NonUniquedMDNodes.size());
-  for (FoldingSetIterator<MDNode> I = MDNodeSet.begin(), E = MDNodeSet.end();
-       I != E; ++I)
-    MDNodes.push_back(&*I);
-  MDNodes.append(NonUniquedMDNodes.begin(), NonUniquedMDNodes.end());
-  for (SmallVectorImpl<MDNode *>::iterator I = MDNodes.begin(),
-         E = MDNodes.end(); I != E; ++I)
-    (*I)->destroy();
-  assert(MDNodeSet.empty() && NonUniquedMDNodes.empty() &&
-         "Destroying all MDNodes didn't empty the Context's sets.");
+  // Destroy MetadataAsValues.
+  {
+    SmallVector<MetadataAsValue *, 8> MDVs;
+    MDVs.reserve(MetadataAsValues.size());
+    for (auto &Pair : MetadataAsValues)
+      MDVs.push_back(Pair.second);
+    MetadataAsValues.clear();
+    for (auto *V : MDVs)
+      delete V;
+  }
+
+  // Destroy ValuesAsMetadata.
+  for (auto &Pair : ValuesAsMetadata)
+    delete Pair.second;
+
+  // Destroy MDNodes.
+  for (auto *I : DistinctMDNodes)
+    I->dropAllReferences();
+  for (auto *I : MDTuples)
+    I->dropAllReferences();
+  for (auto *I : MDLocations)
+    I->dropAllReferences();
+
+  for (UniquableMDNode *I : DistinctMDNodes)
+    I->deleteAsSubclass();
+  for (MDTuple *I : MDTuples)
+    delete I;
+  for (MDLocation *I : MDLocations)
+    delete I;
 
   // Destroy MDStrings.
-  DeleteContainerSeconds(MDStringCache);
+  MDStringCache.clear();
 }
 
 // ConstantsContext anchors
