@@ -14,11 +14,11 @@
 #include "clang/StaticAnalyzer/Frontend/AnalysisConsumer.h"
 #include "ModelInjector.h"
 #include "clang/AST/ASTConsumer.h"
-#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/ParentMap.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Analysis/CallGraph.h"
@@ -47,10 +47,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <queue>
+#include <utility>
 
 using namespace clang;
 using namespace ento;
-using llvm::SmallPtrSet;
 
 #define DEBUG_TYPE "AnalysisConsumer"
 
@@ -185,13 +185,12 @@ public:
   /// translation unit.
   FunctionSummariesTy FunctionSummaries;
 
-  AnalysisConsumer(const Preprocessor& pp,
-                   const std::string& outdir,
-                   AnalyzerOptionsRef opts,
-                   ArrayRef<std::string> plugins,
+  AnalysisConsumer(const Preprocessor &pp, const std::string &outdir,
+                   AnalyzerOptionsRef opts, ArrayRef<std::string> plugins,
                    CodeInjector *injector)
-    : RecVisitorMode(0), RecVisitorBR(nullptr), Ctx(nullptr), PP(pp),
-      OutDir(outdir), Opts(opts), Plugins(plugins), Injector(injector) {
+      : RecVisitorMode(0), RecVisitorBR(nullptr), Ctx(nullptr), PP(pp),
+        OutDir(outdir), Opts(std::move(opts)), Plugins(plugins),
+        Injector(injector) {
     DigestAnalyzerOptions();
     if (Opts->PrintStats) {
       llvm::EnableStatistics();
@@ -274,7 +273,7 @@ public:
       llvm::errs() << ": " << Loc.getFilename();
       if (isa<FunctionDecl>(D) || isa<ObjCMethodDecl>(D)) {
         const NamedDecl *ND = cast<NamedDecl>(D);
-        llvm::errs() << ' ' << *ND << '\n';
+        llvm::errs() << ' ' << ND->getQualifiedNameAsString() << '\n';
       }
       else if (isa<BlockDecl>(D)) {
         llvm::errs() << ' ' << "block(line:" << Loc.getLine() << ",col:"
@@ -432,6 +431,13 @@ static bool shouldSkipFunction(const Decl *D,
   //   Count naming convention errors more aggressively.
   if (isa<ObjCMethodDecl>(D))
     return false;
+  // We also want to reanalyze all C++ copy and move assignment operators to
+  // separately check the two cases where 'this' aliases with the parameter and
+  // where it may not. (cplusplus.SelfAssignmentChecker)
+  if (const auto *MD = dyn_cast<CXXMethodDecl>(D)) {
+    if (MD->isCopyAssignmentOperator() || MD->isMoveAssignmentOperator())
+      return false;
+  }
 
   // Otherwise, if we visited the function before, do not reanalyze it.
   return Visited.count(D);
@@ -443,9 +449,7 @@ AnalysisConsumer::getInliningModeForFunction(const Decl *D,
   // We want to reanalyze all ObjC methods as top level to report Retain
   // Count naming convention errors more aggressively. But we should tune down
   // inlining when reanalyzing an already inlined function.
-  if (Visited.count(D)) {
-    assert(isa<ObjCMethodDecl>(D) &&
-           "We are only reanalyzing ObjCMethods.");
+  if (Visited.count(D) && isa<ObjCMethodDecl>(D)) {
     const ObjCMethodDecl *ObjCM = cast<ObjCMethodDecl>(D);
     if (ObjCM->getMethodFamily() != OMF_init)
       return ExprEngine::Inline_Minimal;
@@ -799,10 +803,7 @@ UbigraphViz::~UbigraphViz() {
   std::string Ubiviz;
   if (auto Path = llvm::sys::findProgramByName("ubiviz"))
     Ubiviz = *Path;
-  std::vector<const char*> args;
-  args.push_back(Ubiviz.c_str());
-  args.push_back(Filename.c_str());
-  args.push_back(nullptr);
+  const char *args[] = {Ubiviz.c_str(), Filename.c_str(), nullptr};
 
   if (llvm::sys::ExecuteAndWait(Ubiviz, &args[0], nullptr, nullptr, 0, 0,
                                 &ErrMsg)) {
