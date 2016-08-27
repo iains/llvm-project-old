@@ -108,10 +108,20 @@ def FeatureEnableUnsafeDSOffsetFolding : SubtargetFeature <"unsafe-ds-offset-fol
         "true",
         "Force using DS instruction immediate offsets on SI">;
 
+def FeatureFlatForGlobal : SubtargetFeature<"flat-for-global",
+        "FlatForGlobal",
+        "true",
+        "Force to generate flat instruction for global">;
+
 def FeatureFlatAddressSpace : SubtargetFeature<"flat-address-space",
         "FlatAddressSpace",
         "true",
         "Support flat address space">;
+
+def FeatureXNACK : SubtargetFeature<"xnack",
+        "EnableXNACK",
+        "true",
+        "Enable XNACK support">;
 
 def FeatureVGPRSpilling : SubtargetFeature<"vgpr-spilling",
         "EnableVGPRSpilling",
@@ -122,6 +132,11 @@ def FeatureSGPRInitBug : SubtargetFeature<"sgpr-init-bug",
         "SGPRInitBug",
         "true",
         "VI SGPR initilization bug requiring a fixed SGPR allocation size">;
+
+def FeatureEnableHugeScratchBuffer : SubtargetFeature<"huge-scratch-buffer",
+        "EnableHugeScratchBuffer",
+        "true",
+        "Enable scratch buffer sizes greater than 128 GB">;
 
 class SubtargetFeatureFetchLimit <string Value> :
                           SubtargetFeature <"fetch"#Value,
@@ -267,9 +282,14 @@ def isSICI : Predicate<
   "Subtarget->getGeneration() == AMDGPUSubtarget::SEA_ISLANDS"
 >, AssemblerPredicate<"FeatureGCN1Encoding">;
 
+def isVI : Predicate <
+  "Subtarget->getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS">,
+  AssemblerPredicate<"FeatureGCN3Encoding">;
+
 class PredicateControl {
   Predicate SubtargetPredicate;
   Predicate SIAssemblerPredicate = isSICI;
+  Predicate VIAssemblerPredicate = isVI;
   list<Predicate> AssemblerPredicates = [];
   Predicate AssemblerPredicate = TruePredicate;
   list<Predicate> OtherPredicates = [];
