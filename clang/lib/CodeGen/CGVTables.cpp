@@ -123,8 +123,8 @@ static RValue PerformReturnAdjustment(CodeGenFunction &CGF,
 //           no-op thunk for the regular definition) call va_start/va_end.
 //           There's a bit of per-call overhead for this solution, but it's
 //           better for codesize if the definition is long.
-void CodeGenFunction::GenerateVarArgsThunk(
-                                      llvm::Function *Fn,
+llvm::Function *
+CodeGenFunction::GenerateVarArgsThunk(llvm::Function *Fn,
                                       const CGFunctionInfo &FnInfo,
                                       GlobalDecl GD, const ThunkInfo &Thunk) {
   const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
@@ -184,6 +184,8 @@ void CodeGenFunction::GenerateVarArgsThunk(
       }
     }
   }
+
+  return Fn;
 }
 
 void CodeGenFunction::StartThunk(llvm::Function *Fn, GlobalDecl GD,
@@ -362,7 +364,7 @@ void CodeGenFunction::EmitMustTailThunk(const CXXMethodDecl *MD,
   FinishFunction();
 }
 
-void CodeGenFunction::GenerateThunk(llvm::Function *Fn,
+void CodeGenFunction::generateThunk(llvm::Function *Fn,
                                     const CGFunctionInfo &FnInfo,
                                     GlobalDecl GD, const ThunkInfo &Thunk) {
   StartThunk(Fn, GD, FnInfo);
@@ -374,13 +376,6 @@ void CodeGenFunction::GenerateThunk(llvm::Function *Fn,
 
   // Make the call and return the result.
   EmitCallAndReturnForThunk(Callee, &Thunk);
-
-  // Set the right linkage.
-  CGM.setFunctionLinkage(GD, Fn);
-  
-  // Set the right visibility.
-  const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
-  setThunkVisibility(CGM, MD, Thunk, Fn);
 }
 
 void CodeGenVTables::emitThunk(GlobalDecl GD, const ThunkInfo &Thunk,
@@ -447,17 +442,25 @@ void CodeGenVTables::emitThunk(GlobalDecl GD, const ThunkInfo &Thunk,
     // expensive/sucky at the moment, so don't generate the thunk unless
     // we have to.
     // FIXME: Do something better here; GenerateVarArgsThunk is extremely ugly.
-    if (!UseAvailableExternallyLinkage) {
-      CodeGenFunction(CGM).GenerateVarArgsThunk(ThunkFn, FnInfo, GD, Thunk);
-      CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable, GD,
-                                      !Thunk.Return.isEmpty());
-    }
+    if (UseAvailableExternallyLinkage)
+      return;
+    ThunkFn =
+        CodeGenFunction(CGM).GenerateVarArgsThunk(ThunkFn, FnInfo, GD, Thunk);
   } else {
     // Normal thunk body generation.
-    CodeGenFunction(CGM).GenerateThunk(ThunkFn, FnInfo, GD, Thunk);
-    CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable, GD,
-                                    !Thunk.Return.isEmpty());
+    CodeGenFunction(CGM).generateThunk(ThunkFn, FnInfo, GD, Thunk);
   }
+
+  CGM.setFunctionLinkage(GD, ThunkFn);
+  CGM.getCXXABI().setThunkLinkage(ThunkFn, ForVTable, GD,
+                                  !Thunk.Return.isEmpty());
+
+  // Set the right visibility.
+  const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
+  setThunkVisibility(CGM, MD, Thunk, ThunkFn);
+
+  if (CGM.supportsCOMDAT() && ThunkFn->isWeakForLinker())
+    ThunkFn->setComdat(CGM.getModule().getOrInsertComdat(ThunkFn->getName()));
 }
 
 void CodeGenVTables::maybeEmitThunkForVTable(GlobalDecl GD,
@@ -666,6 +669,8 @@ CodeGenVTables::GenerateConstructionVTable(const CXXRecordDecl *RD,
       VTLayout->getNumVTableThunks(), RTTI);
   VTable->setInitializer(Init);
   
+  CGM.EmitVTableBitSetEntries(VTable, *VTLayout.get());
+
   return VTable;
 }
 
@@ -697,7 +702,7 @@ CodeGenModule::getVTableLinkage(const CXXRecordDecl *RD) {
                    llvm::Function::InternalLinkage;
         
         return llvm::GlobalVariable::ExternalLinkage;
-        
+
       case TSK_ImplicitInstantiation:
         return !Context.getLangOpts().AppleKext ?
                  llvm::GlobalVariable::LinkOnceODRLinkage :
@@ -738,7 +743,7 @@ CodeGenModule::getVTableLinkage(const CXXRecordDecl *RD) {
     return DiscardableODRLinkage;
 
   case TSK_ExplicitInstantiationDeclaration:
-    llvm_unreachable("Should not have been asked to emit this");
+    return llvm::GlobalVariable::ExternalLinkage;
 
   case TSK_ExplicitInstantiationDefinition:
     return NonDiscardableODRLinkage;
@@ -747,19 +752,13 @@ CodeGenModule::getVTableLinkage(const CXXRecordDecl *RD) {
   llvm_unreachable("Invalid TemplateSpecializationKind!");
 }
 
-/// This is a callback from Sema to tell us that it believes that a
-/// particular v-table is required to be emitted in this translation
-/// unit.
+/// This is a callback from Sema to tell us that that a particular v-table is
+/// required to be emitted in this translation unit.
 ///
-/// The reason we don't simply trust this callback is because Sema
-/// will happily report that something is used even when it's used
-/// only in code that we don't actually have to emit.
-///
-/// \param isRequired - if true, the v-table is mandatory, e.g.
-///   because the translation unit defines the key function
-void CodeGenModule::EmitVTable(CXXRecordDecl *theClass, bool isRequired) {
-  if (!isRequired) return;
-
+/// This is only called for vtables that _must_ be emitted (mainly due to key
+/// functions).  For weak vtables, CodeGen tracks when they are needed and
+/// emits them as-needed.
+void CodeGenModule::EmitVTable(CXXRecordDecl *theClass) {
   VTables.GenerateClassData(theClass);
 }
 
@@ -839,4 +838,59 @@ void CodeGenModule::EmitDeferredVTables() {
   assert(savedSize == DeferredVTables.size() &&
          "deferred extra v-tables during v-table emission?");
   DeferredVTables.clear();
+}
+
+bool CodeGenModule::IsCFIBlacklistedRecord(const CXXRecordDecl *RD) {
+  // FIXME: Make this user configurable.
+  return RD->isInStdNamespace();
+}
+
+void CodeGenModule::EmitVTableBitSetEntries(llvm::GlobalVariable *VTable,
+                                            const VTableLayout &VTLayout) {
+  if (!LangOpts.Sanitize.has(SanitizerKind::CFIVCall) &&
+      !LangOpts.Sanitize.has(SanitizerKind::CFINVCall) &&
+      !LangOpts.Sanitize.has(SanitizerKind::CFIDerivedCast) &&
+      !LangOpts.Sanitize.has(SanitizerKind::CFIUnrelatedCast))
+    return;
+
+  CharUnits PointerWidth =
+      Context.toCharUnitsFromBits(Context.getTargetInfo().getPointerWidth(0));
+
+  std::vector<llvm::MDTuple *> BitsetEntries;
+  // Create a bit set entry for each address point.
+  for (auto &&AP : VTLayout.getAddressPoints()) {
+    if (IsCFIBlacklistedRecord(AP.first.getBase()))
+      continue;
+
+    BitsetEntries.push_back(CreateVTableBitSetEntry(
+        VTable, PointerWidth * AP.second, AP.first.getBase()));
+  }
+
+  // Sort the bit set entries for determinism.
+  std::sort(BitsetEntries.begin(), BitsetEntries.end(), [](llvm::MDTuple *T1,
+                                                           llvm::MDTuple *T2) {
+    if (T1 == T2)
+      return false;
+
+    StringRef S1 = cast<llvm::MDString>(T1->getOperand(0))->getString();
+    StringRef S2 = cast<llvm::MDString>(T2->getOperand(0))->getString();
+    if (S1 < S2)
+      return true;
+    if (S1 != S2)
+      return false;
+
+    uint64_t Offset1 = cast<llvm::ConstantInt>(
+                           cast<llvm::ConstantAsMetadata>(T1->getOperand(2))
+                               ->getValue())->getZExtValue();
+    uint64_t Offset2 = cast<llvm::ConstantInt>(
+                           cast<llvm::ConstantAsMetadata>(T2->getOperand(2))
+                               ->getValue())->getZExtValue();
+    assert(Offset1 != Offset2);
+    return Offset1 < Offset2;
+  });
+
+  llvm::NamedMDNode *BitsetsMD =
+      getModule().getOrInsertNamedMetadata("llvm.bitsets");
+  for (auto BitsetEntry : BitsetEntries)
+    BitsetsMD->addOperand(BitsetEntry);
 }

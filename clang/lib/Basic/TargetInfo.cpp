@@ -36,6 +36,7 @@ TargetInfo::TargetInfo(const llvm::Triple &T) : TargetOpts(), Triple(T) {
   LongWidth = LongAlign = 32;
   LongLongWidth = LongLongAlign = 64;
   SuitableAlign = 64;
+  DefaultAlignForAttributeAligned = 128;
   MinGlobalAlign = 0;
   HalfWidth = 16;
   HalfAlign = 16;
@@ -49,6 +50,8 @@ TargetInfo::TargetInfo(const llvm::Triple &T) : TargetOpts(), Triple(T) {
   LargeArrayAlign = 0;
   MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 0;
   MaxVectorAlign = 0;
+  MaxTLSAlign = 0;
+  SimdDefaultAlign = 0;
   SizeType = UnsignedLong;
   PtrDiffType = SignedLong;
   IntMaxType = SignedLongLong;
@@ -655,6 +658,7 @@ bool TargetCXXABI::tryParse(llvm::StringRef name) {
     .Case("ios", iOS)
     .Case("itanium", GenericItanium)
     .Case("microsoft", Microsoft)
+    .Case("mips", GenericMIPS)
     .Default(unknown);
   if (kind == unknown) return false;
 

@@ -167,13 +167,13 @@ Sema::ResolveExceptionSpec(SourceLocation Loc, const FunctionProtoType *FPT) {
 void
 Sema::UpdateExceptionSpec(FunctionDecl *FD,
                           const FunctionProtoType::ExceptionSpecInfo &ESI) {
-  for (auto *Redecl : FD->redecls())
-    Context.adjustExceptionSpec(cast<FunctionDecl>(Redecl), ESI);
-
   // If we've fully resolved the exception specification, notify listeners.
   if (!isUnresolvedExceptionSpec(ESI.Type))
     if (auto *Listener = getASTMutationListener())
       Listener->ResolvedExceptionSpec(FD);
+
+  for (auto *Redecl : FD->redecls())
+    Context.adjustExceptionSpec(cast<FunctionDecl>(Redecl), ESI);
 }
 
 /// Determine whether a function has an implicitly-generated exception
@@ -397,7 +397,7 @@ bool Sema::CheckEquivalentExceptionSpec(const PartialDiagnostic &DiagID,
   //   - both are dynamic-exception-specifications that have the same set of
   //     adjusted types.
   //
-  // C++0x [except.spec]p12: An exception-specifcation is non-throwing if it is
+  // C++0x [except.spec]p12: An exception-specification is non-throwing if it is
   //   of the form throw(), noexcept, or noexcept(constant-expression) where the
   //   constant-expression yields true.
   //
@@ -437,7 +437,7 @@ bool Sema::CheckEquivalentExceptionSpec(const PartialDiagnostic &DiagID,
       OldNR != FunctionProtoType::NR_NoNoexcept &&
       NewNR != FunctionProtoType::NR_NoNoexcept) {
     Diag(NewLoc, DiagID);
-    if (NoteID.getDiagID() != 0)
+    if (NoteID.getDiagID() != 0 && OldLoc.isValid())
       Diag(OldLoc, NoteID);
     return true;
   }
@@ -518,7 +518,7 @@ bool Sema::CheckEquivalentExceptionSpec(const PartialDiagnostic &DiagID,
     }
 
     Diag(NewLoc, DiagID);
-    if (NoteID.getDiagID() != 0)
+    if (NoteID.getDiagID() != 0 && OldLoc.isValid())
       Diag(OldLoc, NoteID);
     return true;
   }
@@ -547,7 +547,7 @@ bool Sema::CheckEquivalentExceptionSpec(const PartialDiagnostic &DiagID,
     return false;
   }
   Diag(NewLoc, DiagID);
-  if (NoteID.getDiagID() != 0)
+  if (NoteID.getDiagID() != 0 && OldLoc.isValid())
     Diag(OldLoc, NoteID);
   return true;
 }
@@ -837,11 +837,13 @@ bool Sema::CheckOverridingFunctionExceptionSpec(const CXXMethodDecl *New,
                                   New->getLocation());
 }
 
-static CanThrowResult canSubExprsThrow(Sema &S, const Expr *CE) {
-  Expr *E = const_cast<Expr*>(CE);
+static CanThrowResult canSubExprsThrow(Sema &S, const Expr *E) {
   CanThrowResult R = CT_Cannot;
-  for (Expr::child_range I = E->children(); I && R != CT_Can; ++I)
-    R = mergeCanThrow(R, S.canThrow(cast<Expr>(*I)));
+  for (const Stmt *SubStmt : E->children()) {
+    R = mergeCanThrow(R, S.canThrow(cast<Expr>(SubStmt)));
+    if (R == CT_Can)
+      break;
+  }
   return R;
 }
 
@@ -1041,6 +1043,7 @@ CanThrowResult Sema::canThrow(const Expr *E) {
   case Expr::CXXReinterpretCastExprClass:
   case Expr::CXXStdInitializerListExprClass:
   case Expr::DesignatedInitExprClass:
+  case Expr::DesignatedInitUpdateExprClass:
   case Expr::ExprWithCleanupsClass:
   case Expr::ExtVectorElementExprClass:
   case Expr::InitListExprClass:
@@ -1135,6 +1138,7 @@ CanThrowResult Sema::canThrow(const Expr *E) {
   case Expr::ImaginaryLiteralClass:
   case Expr::ImplicitValueInitExprClass:
   case Expr::IntegerLiteralClass:
+  case Expr::NoInitExprClass:
   case Expr::ObjCEncodeExprClass:
   case Expr::ObjCStringLiteralClass:
   case Expr::ObjCBoolLiteralExprClass:

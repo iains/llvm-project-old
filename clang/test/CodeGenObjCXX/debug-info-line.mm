@@ -15,7 +15,7 @@ void f1() {
   }();
 }
 
-// CHECK-LABEL: define internal i8* @"\01-[TNSObject init]"
+// CHECK-LABEL: define internal {{.*}}i8* @"\01-[TNSObject init]"
 @implementation TNSObject
 - (id)init
 {
@@ -26,5 +26,5 @@ void f1() {
 }
 @end
 
-// CHECK: [[DBG_F1]] = !{i32 100,
-// CHECK: [[DBG_TNSO]] = !{i32 200,
+// CHECK: [[DBG_F1]] = !DILocation(line: 100,
+// CHECK: [[DBG_TNSO]] = !DILocation(line: 200,
