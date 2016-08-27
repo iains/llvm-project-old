@@ -78,6 +78,9 @@ class CompilerInstance : public ModuleLoader {
   /// The target being compiled for.
   IntrusiveRefCntPtr<TargetInfo> Target;
 
+  /// Auxiliary Target info.
+  IntrusiveRefCntPtr<TargetInfo> AuxTarget;
+
   /// The virtual file system.
   IntrusiveRefCntPtr<vfs::FileSystem> VirtualFileSystem;
 
@@ -125,13 +128,6 @@ class CompilerInstance : public ModuleLoader {
   /// \brief The set of top-level modules that has already been loaded,
   /// along with the module map
   llvm::DenseMap<const IdentifierInfo *, Module *> KnownModules;
-
-  /// \brief Module names that have an override for the target file.
-  llvm::StringMap<std::string> ModuleFileOverrides;
-
-  /// \brief Module files that we've explicitly loaded via \ref loadModuleFile,
-  /// and their dependencies.
-  llvm::StringSet<> ExplicitlyLoadedModuleFiles;
 
   /// \brief The location of the module-import keyword for the last module
   /// import. 
@@ -183,7 +179,7 @@ class CompilerInstance : public ModuleLoader {
 public:
   explicit CompilerInstance(
       std::shared_ptr<PCHContainerOperations> PCHContainerOps =
-          std::make_shared<RawPCHContainerOperations>(),
+          std::make_shared<PCHContainerOperations>(),
       bool BuildingModule = false);
   ~CompilerInstance() override;
 
@@ -355,8 +351,17 @@ public:
     return *Target;
   }
 
-  /// Replace the current diagnostics engine.
+  /// Replace the current Target.
   void setTarget(TargetInfo *Value);
+
+  /// }
+  /// @name AuxTarget Info
+  /// {
+
+  TargetInfo *getAuxTarget() const { return AuxTarget.get(); }
+
+  /// Replace the current AuxTarget.
+  void setAuxTarget(TargetInfo *Value);
 
   /// }
   /// @name Virtual File System
@@ -508,6 +513,34 @@ public:
     return ThePCHContainerOperations;
   }
 
+  /// Return the appropriate PCHContainerWriter depending on the
+  /// current CodeGenOptions.
+  const PCHContainerWriter &getPCHContainerWriter() const {
+    assert(Invocation && "cannot determine module format without invocation");
+    StringRef Format = getHeaderSearchOpts().ModuleFormat;
+    auto *Writer = ThePCHContainerOperations->getWriterOrNull(Format);
+    if (!Writer) {
+      if (Diagnostics)
+        Diagnostics->Report(diag::err_module_format_unhandled) << Format;
+      llvm::report_fatal_error("unknown module format");
+    }
+    return *Writer;
+  }
+
+  /// Return the appropriate PCHContainerReader depending on the
+  /// current CodeGenOptions.
+  const PCHContainerReader &getPCHContainerReader() const {
+    assert(Invocation && "cannot determine module format without invocation");
+    StringRef Format = getHeaderSearchOpts().ModuleFormat;
+    auto *Reader = ThePCHContainerOperations->getReaderOrNull(Format);
+    if (!Reader) {
+      if (Diagnostics)
+        Diagnostics->Report(diag::err_module_format_unhandled) << Format;
+      llvm::report_fatal_error("unknown module format");
+    }
+    return *Reader;
+  }
+
   /// }
   /// @name Code Completion
   /// {
@@ -621,7 +654,8 @@ public:
   static IntrusiveRefCntPtr<ASTReader> createPCHExternalASTSource(
       StringRef Path, StringRef Sysroot, bool DisablePCHValidation,
       bool AllowPCHWithCompilerErrors, Preprocessor &PP, ASTContext &Context,
-      const PCHContainerOperations &PCHContainerOps,
+      const PCHContainerReader &PCHContainerRdr,
+      ArrayRef<IntrusiveRefCntPtr<ModuleFileExtension>> Extensions,
       void *DeserializationListener, bool OwnDeserializationListener,
       bool Preamble, bool UseGlobalModuleIndex);
 

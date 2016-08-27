@@ -143,7 +143,7 @@ __declspec(dllimport) void redecl3(); // expected-note{{previous declaration is 
 
                       void redecl4(); // expected-note{{previous declaration is here}}
 void useRedecl4() { redecl4(); }
-__declspec(dllimport) void redecl4(); // expected-error{{redeclaration of 'redecl4' cannot add 'dllimport' attribute}}
+__declspec(dllimport) void redecl4(); // expected-warning{{redeclaration of 'redecl4' should not add 'dllimport' attribute}}
 
 // Allow with a warning if the decl hasn't been used yet.
                       void redecl5(); // expected-note{{previous declaration is here}}
@@ -168,3 +168,8 @@ __declspec(dllimport) inline void redecl7() {}
 
 // External linkage is required.
 __declspec(dllimport) static int staticFunc(); // expected-error{{'staticFunc' must have external linkage when declared 'dllimport'}}
+
+// Static locals don't count as having external linkage.
+void staticLocalFunc() {
+  __declspec(dllimport) static int staticLocal; // expected-error{{'staticLocal' must have external linkage when declared 'dllimport'}}
+}
