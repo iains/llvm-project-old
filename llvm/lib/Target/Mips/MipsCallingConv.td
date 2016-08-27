@@ -26,9 +26,9 @@ def RetCC_MipsO32 : CallingConv<[
   // f32 are returned in registers F0, F2
   CCIfType<[f32], CCAssignToReg<[F0, F2]>>,
 
-  // f64 arguments are returned in D0_64 and D1_64 in FP64bit mode or
+  // f64 arguments are returned in D0_64 and D2_64 in FP64bit mode or
   // in D0 and D1 in FP32bit mode.
-  CCIfType<[f64], CCIfSubtarget<"isFP64bit()", CCAssignToReg<[D0_64, D1_64]>>>,
+  CCIfType<[f64], CCIfSubtarget<"isFP64bit()", CCAssignToReg<[D0_64, D2_64]>>>,
   CCIfType<[f64], CCIfSubtarget<"isNotFP64bit()", CCAssignToReg<[D0, D1]>>>
 ]>;
 
@@ -192,8 +192,15 @@ def CC_Mips_FastCC : CallingConv<[
 
   // Integer arguments are passed in integer registers. All scratch registers,
   // except for AT, V0 and T9, are available to be used as argument registers.
-  CCIfType<[i32], CCAssignToReg<[A0, A1, A2, A3, T0, T1, T2, T3, T4, T5, T6,
-                                 T7, T8, V1]>>,
+  CCIfType<[i32], CCIfSubtarget<"isNotTargetNaCl()",
+      CCAssignToReg<[A0, A1, A2, A3, T0, T1, T2, T3, T4, T5, T6, T7, T8, V1]>>>,
+
+  // In NaCl, T6, T7 and T8 are reserved and not available as argument
+  // registers for fastcc.  T6 contains the mask for sandboxing control flow
+  // (indirect jumps and calls).  T7 contains the mask for sandboxing memory
+  // accesses (loads and stores).  T8 contains the thread pointer.
+  CCIfType<[i32], CCIfSubtarget<"isTargetNaCl()",
+      CCAssignToReg<[A0, A1, A2, A3, T0, T1, T2, T3, T4, T5, V1]>>>,
 
   // f32 arguments are passed in single-precision floating pointer registers.
   CCIfType<[f32], CCAssignToReg<[F0, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10,
@@ -232,18 +239,26 @@ def RetCC_Mips : CallingConv<[
 def CSR_SingleFloatOnly : CalleeSavedRegs<(add (sequence "F%u", 31, 20), RA, FP,
                                                (sequence "S%u", 7, 0))>;
 
+def CSR_O32_FPXX : CalleeSavedRegs<(add (sequence "D%u", 15, 10), RA, FP,
+                                        (sequence "S%u", 7, 0))> {
+  let OtherPreserved = (add (decimate (sequence "F%u", 30, 20), 2));
+}
+
 def CSR_O32 : CalleeSavedRegs<(add (sequence "D%u", 15, 10), RA, FP,
                                    (sequence "S%u", 7, 0))>;
 
-def CSR_O32_FP64 : CalleeSavedRegs<(add (sequence "D%u_64", 31, 20), RA, FP,
-                                        (sequence "S%u", 7, 0))>;
+def CSR_O32_FP64 :
+  CalleeSavedRegs<(add (decimate (sequence "D%u_64", 30, 20), 2), RA, FP,
+                       (sequence "S%u", 7, 0))>;
 
-def CSR_N32 : CalleeSavedRegs<(add D31_64, D29_64, D27_64, D25_64, D24_64,
-                                   D23_64, D22_64, D21_64, RA_64, FP_64, GP_64,
+def CSR_N32 : CalleeSavedRegs<(add D20_64, D22_64, D24_64, D26_64, D28_64,
+                                   D30_64, RA_64, FP_64, GP_64,
                                    (sequence "S%u_64", 7, 0))>;
 
 def CSR_N64 : CalleeSavedRegs<(add (sequence "D%u_64", 31, 24), RA_64, FP_64,
                                    GP_64, (sequence "S%u_64", 7, 0))>;
 
 def CSR_Mips16RetHelper :
-  CalleeSavedRegs<(add V0, V1, (sequence "A%u", 3, 0), S0, S1)>;
+  CalleeSavedRegs<(add V0, V1, FP,
+                   (sequence "A%u", 3, 0), (sequence "S%u", 7, 0),
+                   (sequence "D%u", 15, 10))>;
