@@ -15,6 +15,7 @@
 #include "PPC.h"
 #include "PPCRegisterInfo.h"
 #include "PPCTargetMachine.h"
+#include "PPCMcpu.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/IR/Attributes.h"
@@ -57,7 +58,7 @@ PPCSubtarget::PPCSubtarget(const Triple &TT, const std::string &CPU,
 
 void PPCSubtarget::initializeEnvironment() {
   StackAlignment = 16;
-  DarwinDirective = PPC::DIR_NONE;
+  Mcpu = PPC::MCPU_NONE;
   HasMFOCRF = false;
   Has64BitSupport = false;
   Use64BitRegs = false;
@@ -164,17 +165,17 @@ bool PPCSubtarget::hasLazyResolverStub(const GlobalValue *GV) const {
 }
 
 // Embedded cores need aggressive scheduling (and some others also benefit).
-static bool needsAggressiveScheduling(unsigned Directive) {
-  switch (Directive) {
+static bool needsAggressiveScheduling(unsigned MCPU) {
+  switch (MCPU) {
   default: return false;
-  case PPC::DIR_440:
-  case PPC::DIR_A2:
-  case PPC::DIR_E500mc:
-  case PPC::DIR_E5500:
-  case PPC::DIR_PWR7:
-  case PPC::DIR_PWR8:
+  case PPC::MCPU_440:
+  case PPC::MCPU_A2:
+  case PPC::MCPU_E500mc:
+  case PPC::MCPU_E5500:
+  case PPC::MCPU_PWR7:
+  case PPC::MCPU_PWR8:
   // FIXME: Same as P8 until POWER9 scheduling info is available
-  case PPC::DIR_PWR9:
+  case PPC::MCPU_PWR9:
     return true;
   }
 }
@@ -183,7 +184,7 @@ bool PPCSubtarget::enableMachineScheduler() const {
   // Enable MI scheduling for the embedded cores.
   // FIXME: Enable this for all cores (some additional modeling
   // may be necessary).
-  return needsAggressiveScheduling(DarwinDirective);
+  return needsAggressiveScheduling(Mcpu);
 }
 
 // This overrides the PostRAScheduler bit in the SchedModel for each CPU.
@@ -201,7 +202,7 @@ void PPCSubtarget::getCriticalPathRCs(RegClassVector &CriticalPathRCs) const {
 
 void PPCSubtarget::overrideSchedPolicy(MachineSchedPolicy &Policy,
                                        unsigned NumRegionInstrs) const {
-  if (needsAggressiveScheduling(DarwinDirective)) {
+  if (needsAggressiveScheduling(Mcpu)) {
     Policy.OnlyTopDown = false;
     Policy.OnlyBottomUp = false;
   }
@@ -213,7 +214,7 @@ void PPCSubtarget::overrideSchedPolicy(MachineSchedPolicy &Policy,
 
 bool PPCSubtarget::useAA() const {
   // Use AA during code generation for the embedded cores.
-  return needsAggressiveScheduling(DarwinDirective);
+  return needsAggressiveScheduling(Mcpu);
 }
 
 bool PPCSubtarget::enableSubRegLiveness() const {
