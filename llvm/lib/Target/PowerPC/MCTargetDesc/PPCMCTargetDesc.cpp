@@ -14,11 +14,13 @@
 #include "PPCMCTargetDesc.h"
 #include "InstPrinter/PPCInstPrinter.h"
 #include "PPCMCAsmInfo.h"
+#include "PPCMcpu.h"
 #include "PPCTargetStreamer.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -28,6 +30,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/TargetRegistry.h"
+
+#include "llvm/Support/Format.h"
+#include "llvm/Support/Debug.h"
 
 using namespace llvm;
 
@@ -189,17 +194,17 @@ class PPCTargetMachOStreamer : public PPCTargetStreamer {
 public:
   PPCTargetMachOStreamer(MCStreamer &S) : PPCTargetStreamer(S) {}
   void emitTCEntry(const MCSymbol &S) override {
-    llvm_unreachable("Unknown pseudo-op: .tc");
+    report_fatal_error("Unknown pseudo-op: .tc");
   }
   void emitMachine(StringRef CPU) override {
     // FIXME: We should update the CPUType, CPUSubType in the Object file if
     // the new values are different from the defaults.
   }
   void emitAbiVersion(int AbiVersion) override {
-    llvm_unreachable("Unknown pseudo-op: .abiversion");
+    report_fatal_error("Unknown pseudo-op: .abiversion");
   }
   void emitLocalEntry(MCSymbolELF *S, const MCExpr *LocalOffset) override {
-    llvm_unreachable("Unknown pseudo-op: .localentry");
+    report_fatal_error("Unknown pseudo-op: .localentry");
   }
 };
 }

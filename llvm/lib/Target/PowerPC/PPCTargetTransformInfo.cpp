@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCTargetTransformInfo.h"
+#include "PPCMcpu.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/Support/CommandLine.h"
@@ -191,7 +192,7 @@ int PPCTTIImpl::getIntImmCost(unsigned Opcode, unsigned Idx, const APInt &Imm,
 
 void PPCTTIImpl::getUnrollingPreferences(Loop *L,
                                          TTI::UnrollingPreferences &UP) {
-  if (ST->getDarwinDirective() == PPC::DIR_A2) {
+  if (ST->getMcpu() == PPC::MCPU_A2) {
     // The A2 is in-order with a deep pipeline, and concatenation unrolling
     // helps expose latency-hiding opportunities to the instruction scheduler.
     UP.Partial = UP.Runtime = true;
@@ -209,7 +210,7 @@ bool PPCTTIImpl::enableAggressiveInterleaving(bool LoopHasReductions) {
   // on combining the loads generated for consecutive accesses, and failure to
   // do so is particularly expensive. This makes it much more likely (compared
   // to only using concatenation unrolling).
-  if (ST->getDarwinDirective() == PPC::DIR_A2)
+  if (ST->getMcpu() == PPC::MCPU_A2)
     return true;
 
   return LoopHasReductions;
@@ -251,26 +252,26 @@ unsigned PPCTTIImpl::getPrefetchDistance() {
 }
 
 unsigned PPCTTIImpl::getMaxInterleaveFactor(unsigned VF) {
-  unsigned Directive = ST->getDarwinDirective();
+  unsigned Mcpu = ST->getMcpu();
   // The 440 has no SIMD support, but floating-point instructions
   // have a 5-cycle latency, so unroll by 5x for latency hiding.
-  if (Directive == PPC::DIR_440)
+  if (Mcpu == PPC::MCPU_440)
     return 5;
 
   // The A2 has no SIMD support, but floating-point instructions
   // have a 6-cycle latency, so unroll by 6x for latency hiding.
-  if (Directive == PPC::DIR_A2)
+  if (Mcpu == PPC::MCPU_A2)
     return 6;
 
   // FIXME: For lack of any better information, do no harm...
-  if (Directive == PPC::DIR_E500mc || Directive == PPC::DIR_E5500)
+  if (Mcpu == PPC::MCPU_E500mc || Mcpu == PPC::MCPU_E5500)
     return 1;
 
   // For P7 and P8, floating-point instructions have a 6-cycle latency and
   // there are two execution units, so unroll by 12x for latency hiding.
   // FIXME: the same for P9 as previous gen until POWER9 scheduling is ready
-  if (Directive == PPC::DIR_PWR7 || Directive == PPC::DIR_PWR8 ||
-      Directive == PPC::DIR_PWR9)
+  if (Mcpu == PPC::MCPU_PWR7 || Mcpu == PPC::MCPU_PWR8 ||
+      Mcpu == PPC::MCPU_PWR9)
     return 12;
 
   // For most things, modern systems have two execution units (and
