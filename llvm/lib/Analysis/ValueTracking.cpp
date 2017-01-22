@@ -553,6 +553,13 @@ static void computeKnownBitsFromAssume(const Value *V, APInt &KnownZero,
       KnownOne.setAllBits();
       return;
     }
+    if (match(Arg, m_Not(m_Specific(V))) &&
+        isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
+      assert(BitWidth == 1 && "assume operand is not i1?");
+      KnownZero.setAllBits();
+      KnownOne.clearAllBits();
+      return;
+    }
 
     // The remaining tests are all recursive, so bail out if we hit the limit.
     if (Depth == MaxDepth)
@@ -1113,7 +1120,7 @@ static void computeKnownBitsFromOperator(const Operator *I, APInt &KnownZero,
              APInt::getHighBitsSet(BitWidth, ShiftAmt);
     };
 
-    auto KOF = [BitWidth](const APInt &KnownOne, unsigned ShiftAmt) {
+    auto KOF = [](const APInt &KnownOne, unsigned ShiftAmt) {
       return APIntOps::lshr(KnownOne, ShiftAmt);
     };
 
@@ -1124,11 +1131,11 @@ static void computeKnownBitsFromOperator(const Operator *I, APInt &KnownZero,
   }
   case Instruction::AShr: {
     // (ashr X, C1) & C2 == 0   iff  (-1 >> C1) & C2 == 0
-    auto KZF = [BitWidth](const APInt &KnownZero, unsigned ShiftAmt) {
+    auto KZF = [](const APInt &KnownZero, unsigned ShiftAmt) {
       return APIntOps::ashr(KnownZero, ShiftAmt);
     };
 
-    auto KOF = [BitWidth](const APInt &KnownOne, unsigned ShiftAmt) {
+    auto KOF = [](const APInt &KnownOne, unsigned ShiftAmt) {
       return APIntOps::ashr(KnownOne, ShiftAmt);
     };
 
@@ -1400,6 +1407,11 @@ static void computeKnownBitsFromOperator(const Operator *I, APInt &KnownZero,
     if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
       switch (II->getIntrinsicID()) {
       default: break;
+      case Intrinsic::bitreverse:
+        computeKnownBits(I->getOperand(0), KnownZero2, KnownOne2, Depth + 1, Q);
+        KnownZero = KnownZero2.reverseBits();
+        KnownOne = KnownOne2.reverseBits();
+        break;
       case Intrinsic::bswap:
         computeKnownBits(I->getOperand(0), KnownZero2, KnownOne2, Depth + 1, Q);
         KnownZero |= KnownZero2.byteSwap();
@@ -3906,6 +3918,37 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
                                        Value *CmpLHS, Value *CmpRHS,
                                        Value *TrueVal, Value *FalseVal,
                                        Value *&LHS, Value *&RHS) {
+  // Assume success. If there's no match, callers should not use these anyway.
+  LHS = TrueVal;
+  RHS = FalseVal;
+
+  // Recognize variations of:
+  // CLAMP(v,l,h) ==> ((v) < (l) ? (l) : ((v) > (h) ? (h) : (v)))
+  const APInt *C1;
+  if (CmpRHS == TrueVal && match(CmpRHS, m_APInt(C1))) {
+    const APInt *C2;
+
+    // (X <s C1) ? C1 : SMIN(X, C2) ==> SMAX(SMIN(X, C2), C1)
+    if (match(FalseVal, m_SMin(m_Specific(CmpLHS), m_APInt(C2))) &&
+        C1->slt(*C2) && Pred == CmpInst::ICMP_SLT)
+      return {SPF_SMAX, SPNB_NA, false};
+
+    // (X >s C1) ? C1 : SMAX(X, C2) ==> SMIN(SMAX(X, C2), C1)
+    if (match(FalseVal, m_SMax(m_Specific(CmpLHS), m_APInt(C2))) &&
+        C1->sgt(*C2) && Pred == CmpInst::ICMP_SGT)
+      return {SPF_SMIN, SPNB_NA, false};
+
+    // (X <u C1) ? C1 : UMIN(X, C2) ==> UMAX(UMIN(X, C2), C1)
+    if (match(FalseVal, m_UMin(m_Specific(CmpLHS), m_APInt(C2))) &&
+        C1->ult(*C2) && Pred == CmpInst::ICMP_ULT)
+      return {SPF_UMAX, SPNB_NA, false};
+
+    // (X >u C1) ? C1 : UMAX(X, C2) ==> UMIN(UMAX(X, C2), C1)
+    if (match(FalseVal, m_UMax(m_Specific(CmpLHS), m_APInt(C2))) &&
+        C1->ugt(*C2) && Pred == CmpInst::ICMP_UGT)
+      return {SPF_UMIN, SPNB_NA, false};
+  }
+
   if (Pred != CmpInst::ICMP_SGT && Pred != CmpInst::ICMP_SLT)
     return {SPF_UNKNOWN, SPNB_NA, false};
 
@@ -3913,23 +3956,16 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
   // (X >s Y) ? 0 : Z ==> (Z >s 0) ? 0 : Z ==> SMIN(Z, 0)
   // (X <s Y) ? 0 : Z ==> (Z <s 0) ? 0 : Z ==> SMAX(Z, 0)
   if (match(TrueVal, m_Zero()) &&
-      match(FalseVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS)))) {
-    LHS = TrueVal;
-    RHS = FalseVal;
+      match(FalseVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMIN : SPF_SMAX, SPNB_NA, false};
-  }
 
   // Z = X -nsw Y
   // (X >s Y) ? Z : 0 ==> (Z >s 0) ? Z : 0 ==> SMAX(Z, 0)
   // (X <s Y) ? Z : 0 ==> (Z <s 0) ? Z : 0 ==> SMIN(Z, 0)
   if (match(FalseVal, m_Zero()) &&
-      match(TrueVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS)))) {
-    LHS = TrueVal;
-    RHS = FalseVal;
+      match(TrueVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
-  }
 
-  const APInt *C1;
   if (!match(CmpRHS, m_APInt(C1)))
     return {SPF_UNKNOWN, SPNB_NA, false};
 
@@ -3940,41 +3976,29 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
     // Is the sign bit set?
     // (X <s 0) ? X : MAXVAL ==> (X >u MAXVAL) ? X : MAXVAL ==> UMAX
     // (X <s 0) ? MAXVAL : X ==> (X >u MAXVAL) ? MAXVAL : X ==> UMIN
-    if (Pred == CmpInst::ICMP_SLT && *C1 == 0 && C2->isMaxSignedValue()) {
-      LHS = TrueVal;
-      RHS = FalseVal;
+    if (Pred == CmpInst::ICMP_SLT && *C1 == 0 && C2->isMaxSignedValue())
       return {CmpLHS == TrueVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
-    }
 
     // Is the sign bit clear?
     // (X >s -1) ? MINVAL : X ==> (X <u MINVAL) ? MINVAL : X ==> UMAX
     // (X >s -1) ? X : MINVAL ==> (X <u MINVAL) ? X : MINVAL ==> UMIN
     if (Pred == CmpInst::ICMP_SGT && C1->isAllOnesValue() &&
-        C2->isMinSignedValue()) {
-      LHS = TrueVal;
-      RHS = FalseVal;
+        C2->isMinSignedValue())
       return {CmpLHS == FalseVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
-    }
   }
 
   // Look through 'not' ops to find disguised signed min/max.
   // (X >s C) ? ~X : ~C ==> (~X <s ~C) ? ~X : ~C ==> SMIN(~X, ~C)
   // (X <s C) ? ~X : ~C ==> (~X >s ~C) ? ~X : ~C ==> SMAX(~X, ~C)
   if (match(TrueVal, m_Not(m_Specific(CmpLHS))) &&
-      match(FalseVal, m_APInt(C2)) && ~(*C1) == *C2) {
-    LHS = TrueVal;
-    RHS = FalseVal;
+      match(FalseVal, m_APInt(C2)) && ~(*C1) == *C2)
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMIN : SPF_SMAX, SPNB_NA, false};
-  }
 
   // (X >s C) ? ~C : ~X ==> (~X <s ~C) ? ~C : ~X ==> SMAX(~C, ~X)
   // (X <s C) ? ~C : ~X ==> (~X >s ~C) ? ~C : ~X ==> SMIN(~C, ~X)
   if (match(FalseVal, m_Not(m_Specific(CmpLHS))) &&
-      match(TrueVal, m_APInt(C2)) && ~(*C1) == *C2) {
-    LHS = TrueVal;
-    RHS = FalseVal;
+      match(TrueVal, m_APInt(C2)) && ~(*C1) == *C2)
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
-  }
 
   return {SPF_UNKNOWN, SPNB_NA, false};
 }

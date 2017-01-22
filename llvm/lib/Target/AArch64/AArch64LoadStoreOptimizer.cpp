@@ -595,7 +595,7 @@ AArch64LoadStoreOpt::mergeNarrowZeroStores(MachineBasicBlock::iterator I,
   MachineInstrBuilder MIB;
   MIB = BuildMI(*MBB, InsertionPoint, DL, TII->get(getMatchingWideOpcode(Opc)))
             .addReg(isNarrowStore(Opc) ? AArch64::WZR : AArch64::XZR)
-            .addOperand(BaseRegOp)
+            .add(BaseRegOp)
             .addImm(OffsetImm)
             .setMemRefs(I->mergeMemRefsWith(*MergeMI));
   (void)MIB;
@@ -687,10 +687,31 @@ AArch64LoadStoreOpt::mergePairedInsns(MachineBasicBlock::iterator I,
   MachineInstrBuilder MIB;
   DebugLoc DL = I->getDebugLoc();
   MachineBasicBlock *MBB = I->getParent();
+  MachineOperand RegOp0 = getLdStRegOp(*RtMI);
+  MachineOperand RegOp1 = getLdStRegOp(*Rt2MI);
+  // Kill flags may become invalid when moving stores for pairing.
+  if (RegOp0.isUse()) {
+    if (!MergeForward) {
+      // Clear kill flags on store if moving upwards. Example:
+      //   STRWui %w0, ...
+      //   USE %w1
+      //   STRWui kill %w1  ; need to clear kill flag when moving STRWui upwards
+      RegOp0.setIsKill(false);
+      RegOp1.setIsKill(false);
+    } else {
+      // Clear kill flags of the first stores register. Example:
+      //   STRWui %w1, ...
+      //   USE kill %w1   ; need to clear kill flag when moving STRWui downwards
+      //   STRW %w0
+      unsigned Reg = getLdStRegOp(*I).getReg();
+      for (MachineInstr &MI : make_range(std::next(I), Paired))
+        MI.clearRegisterKills(Reg, TRI);
+    }
+  }
   MIB = BuildMI(*MBB, InsertionPoint, DL, TII->get(getMatchingPairOpcode(Opc)))
-            .addOperand(getLdStRegOp(*RtMI))
-            .addOperand(getLdStRegOp(*Rt2MI))
-            .addOperand(BaseRegOp)
+            .add(RegOp0)
+            .add(RegOp1)
+            .add(BaseRegOp)
             .addImm(OffsetImm)
             .setMemRefs(I->mergeMemRefsWith(*Paired));
 
@@ -1210,19 +1231,19 @@ AArch64LoadStoreOpt::mergeUpdateInsn(MachineBasicBlock::iterator I,
   if (!isPairedLdSt(*I)) {
     // Non-paired instruction.
     MIB = BuildMI(*I->getParent(), I, I->getDebugLoc(), TII->get(NewOpc))
-              .addOperand(getLdStRegOp(*Update))
-              .addOperand(getLdStRegOp(*I))
-              .addOperand(getLdStBaseOp(*I))
+              .add(getLdStRegOp(*Update))
+              .add(getLdStRegOp(*I))
+              .add(getLdStBaseOp(*I))
               .addImm(Value)
               .setMemRefs(I->memoperands_begin(), I->memoperands_end());
   } else {
     // Paired instruction.
     int Scale = getMemScale(*I);
     MIB = BuildMI(*I->getParent(), I, I->getDebugLoc(), TII->get(NewOpc))
-              .addOperand(getLdStRegOp(*Update))
-              .addOperand(getLdStRegOp(*I, 0))
-              .addOperand(getLdStRegOp(*I, 1))
-              .addOperand(getLdStBaseOp(*I))
+              .add(getLdStRegOp(*Update))
+              .add(getLdStRegOp(*I, 0))
+              .add(getLdStRegOp(*I, 1))
+              .add(getLdStBaseOp(*I))
               .addImm(Value / Scale)
               .setMemRefs(I->memoperands_begin(), I->memoperands_end());
   }

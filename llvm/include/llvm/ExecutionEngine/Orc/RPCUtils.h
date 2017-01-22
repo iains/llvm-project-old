@@ -887,6 +887,24 @@ public:
     SequenceNumberMgr.reset();
   }
 
+  /// Remove the handler for the given function.
+  /// A handler must currently be registered for this function.
+  template <typename Func>
+  void removeHandler() {
+    auto IdItr = LocalFunctionIds.find(Func::getPrototype());
+    assert(IdItr != LocalFunctionIds.end() &&
+           "Function does not have a registered handler");
+    auto HandlerItr = Handlers.find(IdItr->second);
+    assert(HandlerItr != Handlers.end() &&
+           "Function does not have a registered handler");
+    Handlers.erase(HandlerItr);
+  }
+
+  /// Clear all handlers.
+  void clearHandlers() {
+    Handlers.clear();
+  }
+
 protected:
   // The LaunchPolicy type allows a launch policy to be specified when adding
   // a function handler. See addHandlerImpl.
@@ -1116,7 +1134,7 @@ public:
         return Error::success();
       // If it's invalid and we can't re-attempt negotiation, throw an error.
       if (!Retry)
-        return orcError(OrcErrorCode::UnknownRPCFunction);
+        return make_error<RPCFunctionNotSupported>(Func::getPrototype());
     }
 
     // We don't have a function id for Func yet, call the remote to try to
@@ -1124,7 +1142,7 @@ public:
     if (auto RemoteIdOrErr = callB<OrcRPCNegotiate>(Func::getPrototype())) {
       this->RemoteFunctionIds[Func::getPrototype()] = *RemoteIdOrErr;
       if (*RemoteIdOrErr == this->getInvalidFunctionId())
-        return orcError(OrcErrorCode::UnknownRPCFunction);
+        return make_error<RPCFunctionNotSupported>(Func::getPrototype());
       return Error::success();
     } else
       return RemoteIdOrErr.takeError();
@@ -1254,7 +1272,7 @@ public:
         return Error::success();
       // If it's invalid and we can't re-attempt negotiation, throw an error.
       if (!Retry)
-        return orcError(OrcErrorCode::UnknownRPCFunction);
+        return make_error<RPCFunctionNotSupported>(Func::getPrototype());
     }
 
     // We don't have a function id for Func yet, call the remote to try to
@@ -1262,7 +1280,7 @@ public:
     if (auto RemoteIdOrErr = callB<OrcRPCNegotiate>(Func::getPrototype())) {
       this->RemoteFunctionIds[Func::getPrototype()] = *RemoteIdOrErr;
       if (*RemoteIdOrErr == this->getInvalidFunctionId())
-        return orcError(OrcErrorCode::UnknownRPCFunction);
+        return make_error<RPCFunctionNotSupported>(Func::getPrototype());
       return Error::success();
     } else
       return RemoteIdOrErr.takeError();

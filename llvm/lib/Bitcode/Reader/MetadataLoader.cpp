@@ -358,6 +358,9 @@ class PlaceholderQueue {
   std::deque<DistinctMDOperandPlaceholder> PHs;
 
 public:
+  ~PlaceholderQueue() {
+    assert(empty() && "PlaceholderQueue hasn't been flushed before being destroyed");
+  }
   bool empty() { return PHs.empty(); }
   DistinctMDOperandPlaceholder &getPlaceholderOp(unsigned ID);
   void flush(BitcodeReaderMetadataList &MetadataList);
@@ -456,7 +459,7 @@ class MetadataLoader::MetadataLoaderImpl {
                          PlaceholderQueue &Placeholders, StringRef Blob,
                          unsigned &NextMetadataNo);
   Error parseMetadataStrings(ArrayRef<uint64_t> Record, StringRef Blob,
-                             std::function<void(StringRef)> CallBack);
+                             function_ref<void(StringRef)> CallBack);
   Error parseGlobalObjectAttachment(GlobalObject &GO,
                                     ArrayRef<uint64_t> Record);
   Error parseMetadataKindRecord(SmallVectorImpl<uint64_t> &Record);
@@ -480,13 +483,26 @@ public:
                      bool IsImporting)
       : MetadataList(TheModule.getContext()), ValueList(ValueList),
         Stream(Stream), Context(TheModule.getContext()), TheModule(TheModule),
-        getTypeByID(getTypeByID), IsImporting(IsImporting) {}
+        getTypeByID(std::move(getTypeByID)), IsImporting(IsImporting) {}
 
   Error parseMetadata(bool ModuleLevel);
 
   bool hasFwdRefs() const { return MetadataList.hasFwdRefs(); }
-  Metadata *getMetadataFwdRef(unsigned Idx) {
-    return MetadataList.getMetadataFwdRef(Idx);
+
+  Metadata *getMetadataFwdRefOrLoad(unsigned ID) {
+    if (ID < MDStringRef.size())
+      return lazyLoadOneMDString(ID);
+    if (auto *MD = MetadataList.lookup(ID))
+      return MD;
+    // If lazy-loading is enabled, we try recursively to load the operand
+    // instead of creating a temporary.
+    if (ID < (MDStringRef.size() + GlobalMetadataBitPosIndex.size())) {
+      PlaceholderQueue Placeholders;
+      lazyLoadOneMetadata(ID, Placeholders);
+      resolveForwardRefsAndPlaceholders(Placeholders);
+      return MetadataList.lookup(ID);
+    }
+    return MetadataList.getMetadataFwdRef(ID);
   }
 
   MDNode *getMDNodeFwdRefOrNull(unsigned Idx) {
@@ -768,13 +784,12 @@ void MetadataLoader::MetadataLoaderImpl::lazyLoadOneMetadata(
     unsigned ID, PlaceholderQueue &Placeholders) {
   assert(ID < (MDStringRef.size()) + GlobalMetadataBitPosIndex.size());
   assert(ID >= MDStringRef.size() && "Unexpected lazy-loading of MDString");
-#ifndef NDEBUG
   // Lookup first if the metadata hasn't already been loaded.
   if (auto *MD = MetadataList.lookup(ID)) {
     auto *N = dyn_cast_or_null<MDNode>(MD);
-    assert(N && N->isTemporary() && "Lazy loading an already loaded metadata");
+    if (!N->isTemporary())
+      return;
   }
-#endif
   SmallVector<uint64_t, 64> Record;
   StringRef Blob;
   IndexCursor.JumpToBit(GlobalMetadataBitPosIndex[ID - MDStringRef.size()]);
@@ -827,8 +842,22 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
   auto getMD = [&](unsigned ID) -> Metadata * {
     if (ID < MDStringRef.size())
       return lazyLoadOneMDString(ID);
-    if (!IsDistinct)
+    if (!IsDistinct) {
+      if (auto *MD = MetadataList.lookup(ID))
+        return MD;
+      // If lazy-loading is enabled, we try recursively to load the operand
+      // instead of creating a temporary.
+      if (ID < (MDStringRef.size() + GlobalMetadataBitPosIndex.size())) {
+        // Create a temporary for the node that is referencing the operand we
+        // will lazy-load. It is needed before recursing in case there are
+        // uniquing cycles.
+        MetadataList.getMetadataFwdRef(NextMetadataNo);
+        lazyLoadOneMetadata(ID, Placeholders);
+        return MetadataList.lookup(ID);
+      }
+      // Return a temporary.
       return MetadataList.getMetadataFwdRef(ID);
+    }
     if (auto *MD = MetadataList.getMetadataIfResolved(ID))
       return MD;
     return &Placeholders.getPlaceholderOp(ID);
@@ -1506,7 +1535,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
 
 Error MetadataLoader::MetadataLoaderImpl::parseMetadataStrings(
     ArrayRef<uint64_t> Record, StringRef Blob,
-    std::function<void(StringRef)> CallBack) {
+    function_ref<void(StringRef)> CallBack) {
   // All the MDStrings in the block are emitted together in a single
   // record.  The strings are concatenated and stored in a blob along with
   // their sizes.
@@ -1703,8 +1732,8 @@ MetadataLoader::MetadataLoader(BitstreamCursor &Stream, Module &TheModule,
                                BitcodeReaderValueList &ValueList,
                                bool IsImporting,
                                std::function<Type *(unsigned)> getTypeByID)
-    : Pimpl(llvm::make_unique<MetadataLoaderImpl>(Stream, TheModule, ValueList,
-                                                  getTypeByID, IsImporting)) {}
+    : Pimpl(llvm::make_unique<MetadataLoaderImpl>(
+          Stream, TheModule, ValueList, std::move(getTypeByID), IsImporting)) {}
 
 Error MetadataLoader::parseMetadata(bool ModuleLevel) {
   return Pimpl->parseMetadata(ModuleLevel);
@@ -1714,8 +1743,8 @@ bool MetadataLoader::hasFwdRefs() const { return Pimpl->hasFwdRefs(); }
 
 /// Return the given metadata, creating a replaceable forward reference if
 /// necessary.
-Metadata *MetadataLoader::getMetadataFwdRef(unsigned Idx) {
-  return Pimpl->getMetadataFwdRef(Idx);
+Metadata *MetadataLoader::getMetadataFwdRefOrLoad(unsigned Idx) {
+  return Pimpl->getMetadataFwdRefOrLoad(Idx);
 }
 
 MDNode *MetadataLoader::getMDNodeFwdRefOrNull(unsigned Idx) {

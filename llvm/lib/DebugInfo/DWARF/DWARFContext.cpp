@@ -128,8 +128,7 @@ void DWARFContext::dump(raw_ostream &OS, DIDumpType DumpType, bool DumpEH,
       auto CUDIE = CU->getUnitDIE();
       if (!CUDIE)
         continue;
-      if (auto StmtOffset =
-              CUDIE.getAttributeValueAsSectionOffset(DW_AT_stmt_list)) {
+      if (auto StmtOffset = toSectionOffset(CUDIE.find(DW_AT_stmt_list))) {
         DataExtractor lineData(getLineSection().Data, isLittleEndian(),
                                savedAddressByteSize);
         DWARFDebugLine::LineTable LineTable;
@@ -387,7 +386,7 @@ DWARFContext::getLineTableForUnit(DWARFUnit *U) {
   if (!UnitDIE)
     return nullptr;
 
-  auto Offset = UnitDIE.getAttributeValueAsSectionOffset(DW_AT_stmt_list);
+  auto Offset = toSectionOffset(UnitDIE.find(DW_AT_stmt_list));
   if (!Offset)
     return nullptr; // No line table for this compile unit.
 
@@ -618,40 +617,7 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
     name = name.substr(
         name.find_first_not_of("._z")); // Skip ".", "z" and "_" prefixes.
 
-    StringRef *SectionData =
-        StringSwitch<StringRef *>(name)
-            .Case("debug_info", &InfoSection.Data)
-            .Case("debug_abbrev", &AbbrevSection)
-            .Case("debug_loc", &LocSection.Data)
-            .Case("debug_line", &LineSection.Data)
-            .Case("debug_aranges", &ARangeSection)
-            .Case("debug_frame", &DebugFrameSection)
-            .Case("eh_frame", &EHFrameSection)
-            .Case("debug_str", &StringSection)
-            .Case("debug_ranges", &RangeSection)
-            .Case("debug_macinfo", &MacinfoSection)
-            .Case("debug_pubnames", &PubNamesSection)
-            .Case("debug_pubtypes", &PubTypesSection)
-            .Case("debug_gnu_pubnames", &GnuPubNamesSection)
-            .Case("debug_gnu_pubtypes", &GnuPubTypesSection)
-            .Case("debug_info.dwo", &InfoDWOSection.Data)
-            .Case("debug_abbrev.dwo", &AbbrevDWOSection)
-            .Case("debug_loc.dwo", &LocDWOSection.Data)
-            .Case("debug_line.dwo", &LineDWOSection.Data)
-            .Case("debug_str.dwo", &StringDWOSection)
-            .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
-            .Case("debug_addr", &AddrSection)
-            .Case("apple_names", &AppleNamesSection.Data)
-            .Case("apple_types", &AppleTypesSection.Data)
-            .Case("apple_namespaces", &AppleNamespacesSection.Data)
-            .Case("apple_namespac", &AppleNamespacesSection.Data)
-            .Case("apple_objc", &AppleObjCSection.Data)
-            .Case("debug_cu_index", &CUIndexSection)
-            .Case("debug_tu_index", &TUIndexSection)
-            .Case("gdb_index", &GdbIndexSection)
-            // Any more debug info sections go here.
-            .Default(nullptr);
-    if (SectionData) {
+    if (StringRef *SectionData = MapSectionToMember(name)) {
       *SectionData = data;
       if (name == "debug_ranges") {
         // FIXME: Use the other dwo range section when we emit it.
@@ -810,6 +776,51 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
       }
     }
   }
+}
+
+DWARFContextInMemory::DWARFContextInMemory(
+    const StringMap<std::unique_ptr<MemoryBuffer>> &Sections, uint8_t AddrSize,
+    bool isLittleEndian)
+    : IsLittleEndian(isLittleEndian), AddressSize(AddrSize) {
+  for (const auto &SecIt : Sections) {
+    if (StringRef *SectionData = MapSectionToMember(SecIt.first()))
+      *SectionData = SecIt.second->getBuffer();
+  }
+}
+
+StringRef *DWARFContextInMemory::MapSectionToMember(StringRef Name) {
+  return StringSwitch<StringRef *>(Name)
+      .Case("debug_info", &InfoSection.Data)
+      .Case("debug_abbrev", &AbbrevSection)
+      .Case("debug_loc", &LocSection.Data)
+      .Case("debug_line", &LineSection.Data)
+      .Case("debug_aranges", &ARangeSection)
+      .Case("debug_frame", &DebugFrameSection)
+      .Case("eh_frame", &EHFrameSection)
+      .Case("debug_str", &StringSection)
+      .Case("debug_ranges", &RangeSection)
+      .Case("debug_macinfo", &MacinfoSection)
+      .Case("debug_pubnames", &PubNamesSection)
+      .Case("debug_pubtypes", &PubTypesSection)
+      .Case("debug_gnu_pubnames", &GnuPubNamesSection)
+      .Case("debug_gnu_pubtypes", &GnuPubTypesSection)
+      .Case("debug_info.dwo", &InfoDWOSection.Data)
+      .Case("debug_abbrev.dwo", &AbbrevDWOSection)
+      .Case("debug_loc.dwo", &LocDWOSection.Data)
+      .Case("debug_line.dwo", &LineDWOSection.Data)
+      .Case("debug_str.dwo", &StringDWOSection)
+      .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
+      .Case("debug_addr", &AddrSection)
+      .Case("apple_names", &AppleNamesSection.Data)
+      .Case("apple_types", &AppleTypesSection.Data)
+      .Case("apple_namespaces", &AppleNamespacesSection.Data)
+      .Case("apple_namespac", &AppleNamespacesSection.Data)
+      .Case("apple_objc", &AppleObjCSection.Data)
+      .Case("debug_cu_index", &CUIndexSection)
+      .Case("debug_tu_index", &TUIndexSection)
+      .Case("gdb_index", &GdbIndexSection)
+      // Any more debug info sections go here.
+      .Default(nullptr);
 }
 
 void DWARFContextInMemory::anchor() { }

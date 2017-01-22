@@ -2673,6 +2673,13 @@ void SelectionDAG::computeKnownBits(SDValue Op, APInt &KnownZero,
     }
     break;
   }
+  case ISD::BITREVERSE: {
+    computeKnownBits(Op.getOperand(0), KnownZero2, KnownOne2, DemandedElts,
+                     Depth + 1);
+    KnownZero = KnownZero2.reverseBits();
+    KnownOne = KnownOne2.reverseBits();
+    break;
+  }
   case ISD::BSWAP: {
     computeKnownBits(Op.getOperand(0), KnownZero2, KnownOne2, DemandedElts,
                      Depth + 1);
@@ -2680,10 +2687,40 @@ void SelectionDAG::computeKnownBits(SDValue Op, APInt &KnownZero,
     KnownOne = KnownOne2.byteSwap();
     break;
   }
-  case ISD::SMIN:
-  case ISD::SMAX:
-  case ISD::UMIN:
+  case ISD::UMIN: {
+    computeKnownBits(Op.getOperand(0), KnownZero, KnownOne, DemandedElts,
+                     Depth + 1);
+    computeKnownBits(Op.getOperand(1), KnownZero2, KnownOne2, DemandedElts,
+                     Depth + 1);
+
+    // UMIN - we know that the result will have the maximum of the
+    // known zero leading bits of the inputs.
+    unsigned LeadZero = KnownZero.countLeadingOnes();
+    LeadZero = std::max(LeadZero, KnownZero2.countLeadingOnes());
+
+    KnownZero &= KnownZero2;
+    KnownOne &= KnownOne2;
+    KnownZero |= APInt::getHighBitsSet(BitWidth, LeadZero);
+    break;
+  }
   case ISD::UMAX: {
+    computeKnownBits(Op.getOperand(0), KnownZero, KnownOne, DemandedElts,
+                     Depth + 1);
+    computeKnownBits(Op.getOperand(1), KnownZero2, KnownOne2, DemandedElts,
+                     Depth + 1);
+
+    // UMAX - we know that the result will have the maximum of the
+    // known one leading bits of the inputs.
+    unsigned LeadOne = KnownOne.countLeadingOnes();
+    LeadOne = std::max(LeadOne, KnownOne2.countLeadingOnes());
+
+    KnownZero &= KnownZero2;
+    KnownOne &= KnownOne2;
+    KnownOne |= APInt::getHighBitsSet(BitWidth, LeadOne);
+    break;
+  }
+  case ISD::SMIN:
+  case ISD::SMAX: {
     computeKnownBits(Op.getOperand(0), KnownZero, KnownOne, DemandedElts,
                      Depth + 1);
     // If we don't know any bits, early out.
@@ -2745,7 +2782,7 @@ bool SelectionDAG::isKnownToBeAPowerOfTwo(SDValue Val) const {
 
   // Are all operands of a build vector constant powers of two?
   if (Val.getOpcode() == ISD::BUILD_VECTOR)
-    if (llvm::all_of(Val->ops(), [this, BitWidth](SDValue E) {
+    if (llvm::all_of(Val->ops(), [BitWidth](SDValue E) {
           if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(E))
             return C->getAPIntValue().zextOrTrunc(BitWidth).isPowerOf2();
           return false;
@@ -3054,6 +3091,9 @@ bool SelectionDAG::isKnownNeverNaN(SDValue Op) const {
   if (getTarget().Options.NoNaNsFPMath)
     return true;
 
+  if (const BinaryWithFlagsSDNode *BF = dyn_cast<BinaryWithFlagsSDNode>(Op))
+    return BF->Flags.hasNoNaNs();
+
   // If the value is a constant, we can obviously see if it is a NaN or not.
   if (const ConstantFPSDNode *C = dyn_cast<ConstantFPSDNode>(Op))
     return !C->getValueAPF().isNaN();
@@ -3206,6 +3246,9 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
       if (VT == MVT::f128 && C->getValueType(0) == MVT::i128)
         return getConstantFP(APFloat(APFloat::IEEEquad(), Val), DL, VT);
       break;
+    case ISD::BITREVERSE:
+      return getConstant(Val.reverseBits(), DL, VT, C->isTargetOpcode(),
+                         C->isOpaque());
     case ISD::BSWAP:
       return getConstant(Val.byteSwap(), DL, VT, C->isTargetOpcode(),
                          C->isOpaque());
@@ -3303,6 +3346,7 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
       case ISD::TRUNCATE:
       case ISD::UINT_TO_FP:
       case ISD::SINT_TO_FP:
+      case ISD::BITREVERSE:
       case ISD::BSWAP:
       case ISD::CTLZ:
       case ISD::CTLZ_ZERO_UNDEF:

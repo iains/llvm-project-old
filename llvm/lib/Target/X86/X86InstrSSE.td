@@ -446,9 +446,9 @@ def : Pat<(v4f64  (bitconvert (v8f32  VR256:$src))), (v4f64  VR256:$src)>;
 let isReMaterializable = 1, isAsCheapAsAMove = 1, canFoldAsLoad = 1,
     isPseudo = 1, SchedRW = [WriteZero] in {
   def FsFLD0SS : I<0, Pseudo, (outs FR32:$dst), (ins), "",
-                   [(set FR32:$dst, fp32imm0)]>, Requires<[HasSSE1, NoVLX_Or_NoDQI]>;
+                   [(set FR32:$dst, fp32imm0)]>, Requires<[HasSSE1, NoAVX512]>;
   def FsFLD0SD : I<0, Pseudo, (outs FR64:$dst), (ins), "",
-                   [(set FR64:$dst, fpimm0)]>, Requires<[HasSSE2, NoVLX_Or_NoDQI]>;
+                   [(set FR64:$dst, fpimm0)]>, Requires<[HasSSE2, NoAVX512]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -461,12 +461,12 @@ let isReMaterializable = 1, isAsCheapAsAMove = 1, canFoldAsLoad = 1,
 // We set canFoldAsLoad because this can be converted to a constant-pool
 // load of an all-zeros value if folding it would be beneficial.
 let isReMaterializable = 1, isAsCheapAsAMove = 1, canFoldAsLoad = 1,
-    isPseudo = 1, Predicates = [NoVLX], SchedRW = [WriteZero] in {
+    isPseudo = 1, SchedRW = [WriteZero] in {
 def V_SET0 : I<0, Pseudo, (outs VR128:$dst), (ins), "",
                [(set VR128:$dst, (v4f32 immAllZerosV))]>;
 }
 
-let Predicates = [NoVLX] in
+let Predicates = [NoAVX512] in
 def : Pat<(v4i32 immAllZerosV), (V_SET0)>;
 
 
@@ -475,7 +475,7 @@ def : Pat<(v4i32 immAllZerosV), (V_SET0)>;
 // at the rename stage without using any execution unit, so SET0PSY
 // and SET0PDY can be used for vector int instructions without penalty
 let isReMaterializable = 1, isAsCheapAsAMove = 1, canFoldAsLoad = 1,
-    isPseudo = 1, Predicates = [HasAVX, NoVLX], SchedRW = [WriteZero] in {
+    isPseudo = 1, Predicates = [NoAVX512], SchedRW = [WriteZero] in {
 def AVX_SET0 : I<0, Pseudo, (outs VR256:$dst), (ins), "",
                  [(set VR256:$dst, (v8i32 immAllZerosV))]>;
 }
@@ -5108,16 +5108,6 @@ let Predicates = [HasAVX, NoVLX] in {
             (VMOVDDUPYrr VR256:$src)>;
 }
 
-let Predicates = [HasAVX] in {
-  def : Pat<(X86Movddup (bc_v2f64 (loadv4f32 addr:$src))),
-            (VMOVDDUPrm addr:$src)>, Requires<[HasAVX]>;
-  def : Pat<(X86Movddup (bc_v2f64 (loadv2i64 addr:$src))),
-            (VMOVDDUPrm addr:$src)>, Requires<[HasAVX]>;
-  def : Pat<(X86Movddup (bc_v2f64
-                             (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
-            (VMOVDDUPrm addr:$src)>, Requires<[HasAVX]>;
-}
-
 let Predicates = [HasAVX, NoVLX] in
 def : Pat<(v2f64 (X86VBroadcast (loadf64 addr:$src))),
           (VMOVDDUPrm addr:$src)>;
@@ -5127,13 +5117,6 @@ def : Pat<(v2i64 (X86VBroadcast (loadi64 addr:$src))),
 
 let Predicates = [UseSSE3] in {
   def : Pat<(X86Movddup (memopv2f64 addr:$src)),
-            (MOVDDUPrm addr:$src)>;
-  def : Pat<(X86Movddup (bc_v2f64 (memopv4f32 addr:$src))),
-            (MOVDDUPrm addr:$src)>;
-  def : Pat<(X86Movddup (bc_v2f64 (memopv2i64 addr:$src))),
-            (MOVDDUPrm addr:$src)>;
-  def : Pat<(X86Movddup (bc_v2f64
-                             (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
             (MOVDDUPrm addr:$src)>;
 }
 
@@ -8296,7 +8279,7 @@ let Predicates = [HasAVX2, NoVLX_Or_NoBWI] in {
             (VPBROADCASTWYrm addr:$src)>;
 }
 
-let Predicates = [HasAVX2] in {
+let Predicates = [HasAVX2, NoVLX] in {
   // Provide aliases for broadcast from the same register class that
   // automatically does the extract.
   def : Pat<(v8f32 (X86VBroadcast (v8f32 VR256:$src))),

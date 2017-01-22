@@ -68,7 +68,10 @@ class AssumptionCache {
   AffectedValuesMap AffectedValues;
 
   /// Get the vector of assumptions which affect a value from the cache.
-  SmallVector<WeakVH, 1> &getAffectedValues(Value *V);
+  SmallVector<WeakVH, 1> &getOrInsertAffectedValues(Value *V);
+
+  /// Copy affected values in the cache for OV to be affected values for NV.
+  void copyAffectedValuesInCache(Value *OV, Value *NV);
 
   /// \brief Flag tracking whether we have scanned the function yet.
   ///
@@ -83,6 +86,13 @@ public:
   /// \brief Construct an AssumptionCache from a function by scanning all of
   /// its instructions.
   AssumptionCache(Function &F) : F(F), Scanned(false) {}
+
+  /// This cache is designed to be self-updating and so it should never be
+  /// invalidated.
+  bool invalidate(Function &, const PreservedAnalyses &,
+                  FunctionAnalysisManager::Invalidator &) {
+    return false;
+  }
 
   /// \brief Add an @llvm.assume intrinsic to this function's cache.
   ///

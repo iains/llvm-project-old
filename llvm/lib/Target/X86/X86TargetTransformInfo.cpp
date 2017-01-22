@@ -114,7 +114,7 @@ unsigned X86TTIImpl::getMaxInterleaveFactor(unsigned VF) {
 }
 
 int X86TTIImpl::getArithmeticInstrCost(
-    unsigned Opcode, Type *Ty,  
+    unsigned Opcode, Type *Ty,
     TTI::OperandValueKind Op1Info, TTI::OperandValueKind Op2Info,
     TTI::OperandValueProperties Opd1PropInfo,
     TTI::OperandValueProperties Opd2PropInfo,
@@ -207,6 +207,10 @@ int X86TTIImpl::getArithmeticInstrCost(
   }
 
   static const CostTblEntry AVX512UniformConstCostTable[] = {
+    { ISD::SRA,  MVT::v2i64,   1 },
+    { ISD::SRA,  MVT::v4i64,   1 },
+    { ISD::SRA,  MVT::v8i64,   1 },
+
     { ISD::SDIV, MVT::v16i32, 15 }, // vpmuldq sequence
     { ISD::UDIV, MVT::v16i32, 15 }, // vpmuludq sequence
   };
@@ -319,6 +323,14 @@ int X86TTIImpl::getArithmeticInstrCost(
       return LT.first * Entry->Cost;
 
   static const CostTblEntry AVX512BWCostTable[] = {
+    { ISD::SHL,   MVT::v8i16,      1 }, // vpsllvw
+    { ISD::SRL,   MVT::v8i16,      1 }, // vpsrlvw
+    { ISD::SRA,   MVT::v8i16,      1 }, // vpsravw
+
+    { ISD::SHL,   MVT::v16i16,     1 }, // vpsllvw
+    { ISD::SRL,   MVT::v16i16,     1 }, // vpsrlvw
+    { ISD::SRA,   MVT::v16i16,     1 }, // vpsravw
+
     { ISD::SHL,   MVT::v32i16,     1 }, // vpsllvw
     { ISD::SRL,   MVT::v32i16,     1 }, // vpsrlvw
     { ISD::SRA,   MVT::v32i16,     1 }, // vpsravw
@@ -347,8 +359,12 @@ int X86TTIImpl::getArithmeticInstrCost(
     { ISD::SHL,     MVT::v16i32,     1 },
     { ISD::SRL,     MVT::v16i32,     1 },
     { ISD::SRA,     MVT::v16i32,     1 },
+
     { ISD::SHL,     MVT::v8i64,      1 },
     { ISD::SRL,     MVT::v8i64,      1 },
+
+    { ISD::SRA,     MVT::v2i64,      1 },
+    { ISD::SRA,     MVT::v4i64,      1 },
     { ISD::SRA,     MVT::v8i64,      1 },
 
     { ISD::MUL,     MVT::v32i8,     13 }, // extend/pmullw/trunc sequence.
@@ -595,7 +611,6 @@ int X86TTIImpl::getArithmeticInstrCost(
     { ISD::SHL,  MVT::v16i8,    26 }, // cmpgtb sequence.
     { ISD::SHL,  MVT::v8i16,    32 }, // cmpgtb sequence.
     { ISD::SHL,  MVT::v4i32,   2*5 }, // We optimized this using mul.
-    { ISD::SHL,  MVT::v8i32, 2*2*5 }, // We optimized this using mul.
     { ISD::SHL,  MVT::v2i64,     4 }, // splat+shuffle sequence.
     { ISD::SHL,  MVT::v4i64,   2*4 }, // splat+shuffle sequence.
 

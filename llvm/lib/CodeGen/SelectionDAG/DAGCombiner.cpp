@@ -384,9 +384,9 @@ namespace {
     SDValue reduceBuildVecExtToExtBuildVec(SDNode *N);
     SDValue reduceBuildVecConvertToConvertBuildVec(SDNode *N);
     SDValue reduceBuildVecToShuffle(SDNode *N);
-    SDValue createBuildVecShuffle(SDLoc DL, SDNode *N, ArrayRef<int> VectorMask,
-                                  SDValue VecIn1, SDValue VecIn2,
-                                  unsigned LeftIdx);
+    SDValue createBuildVecShuffle(const SDLoc &DL, SDNode *N,
+                                  ArrayRef<int> VectorMask, SDValue VecIn1,
+                                  SDValue VecIn2, unsigned LeftIdx);
 
     SDValue GetDemandedBits(SDValue V, const APInt &Mask);
 
@@ -5217,7 +5217,11 @@ SDValue DAGCombiner::visitBSWAP(SDNode *N) {
 
 SDValue DAGCombiner::visitBITREVERSE(SDNode *N) {
   SDValue N0 = N->getOperand(0);
+  EVT VT = N->getValueType(0);
 
+  // fold (bitreverse c1) -> c2
+  if (DAG.isConstantIntBuildVectorOrConstantInt(N0))
+    return DAG.getNode(ISD::BITREVERSE, SDLoc(N), VT, N0);
   // fold (bitreverse (bitreverse x)) -> x
   if (N0.getOpcode() == ISD::BITREVERSE)
     return N0.getOperand(0);
@@ -13010,7 +13014,7 @@ SDValue DAGCombiner::reduceBuildVecConvertToConvertBuildVec(SDNode *N) {
   return DAG.getNode(Opcode, DL, VT, BV);
 }
 
-SDValue DAGCombiner::createBuildVecShuffle(SDLoc DL, SDNode *N,
+SDValue DAGCombiner::createBuildVecShuffle(const SDLoc &DL, SDNode *N,
                                            ArrayRef<int> VectorMask,
                                            SDValue VecIn1, SDValue VecIn2,
                                            unsigned LeftIdx) {

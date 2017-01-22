@@ -79,6 +79,60 @@ FMAContractLevelOpt("nvptx-fma-level", cl::ZeroOrMore, cl::Hidden,
                              " 1: do it  2: do it aggressively"),
                     cl::init(2));
 
+static cl::opt<int> UsePrecDivF32(
+    "nvptx-prec-divf32", cl::ZeroOrMore, cl::Hidden,
+    cl::desc("NVPTX Specifies: 0 use div.approx, 1 use div.full, 2 use"
+             " IEEE Compliant F32 div.rnd if available."),
+    cl::init(2));
+
+static cl::opt<bool> UsePrecSqrtF32(
+    "nvptx-prec-sqrtf32", cl::Hidden,
+    cl::desc("NVPTX Specific: 0 use sqrt.approx, 1 use sqrt.rn."),
+    cl::init(true));
+
+static cl::opt<bool> FtzEnabled(
+    "nvptx-f32ftz", cl::ZeroOrMore, cl::Hidden,
+    cl::desc("NVPTX Specific: Flush f32 subnormals to sign-preserving zero."),
+    cl::init(false));
+
+int NVPTXTargetLowering::getDivF32Level() const {
+  if (UsePrecDivF32.getNumOccurrences() > 0) {
+    // If nvptx-prec-div32=N is used on the command-line, always honor it
+    return UsePrecDivF32;
+  } else {
+    // Otherwise, use div.approx if fast math is enabled
+    if (getTargetMachine().Options.UnsafeFPMath)
+      return 0;
+    else
+      return 2;
+  }
+}
+
+bool NVPTXTargetLowering::usePrecSqrtF32() const {
+  if (UsePrecSqrtF32.getNumOccurrences() > 0) {
+    // If nvptx-prec-sqrtf32 is used on the command-line, always honor it
+    return UsePrecSqrtF32;
+  } else {
+    // Otherwise, use sqrt.approx if fast math is enabled
+    return !getTargetMachine().Options.UnsafeFPMath;
+  }
+}
+
+bool NVPTXTargetLowering::useF32FTZ(const MachineFunction &MF) const {
+  // TODO: Get rid of this flag; there can be only one way to do this.
+  if (FtzEnabled.getNumOccurrences() > 0) {
+    // If nvptx-f32ftz is used on the command-line, always honor it
+    return FtzEnabled;
+  } else {
+    const Function *F = MF.getFunction();
+    // Otherwise, check for an nvptx-f32ftz attribute on the function
+    if (F->hasFnAttribute("nvptx-f32ftz"))
+      return F->getFnAttribute("nvptx-f32ftz").getValueAsString() == "true";
+    else
+      return false;
+  }
+}
+
 static bool IsPTXVectorType(MVT VT) {
   switch (VT.SimpleTy) {
   default:
@@ -164,8 +218,14 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   addRegisterClass(MVT::i64, &NVPTX::Int64RegsRegClass);
   addRegisterClass(MVT::f32, &NVPTX::Float32RegsRegClass);
   addRegisterClass(MVT::f64, &NVPTX::Float64RegsRegClass);
+  addRegisterClass(MVT::f16, &NVPTX::Float16RegsRegClass);
+
+  setOperationAction(ISD::SETCC, MVT::f16,
+                     STI.allowFP16Math() ? Legal : Promote);
 
   // Operations not directly supported by NVPTX.
+  setOperationAction(ISD::SELECT_CC, MVT::f16,
+                     STI.allowFP16Math() ? Expand : Promote);
   setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::i1, Expand);
@@ -173,6 +233,8 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   setOperationAction(ISD::SELECT_CC, MVT::i16, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::i64, Expand);
+  setOperationAction(ISD::BR_CC, MVT::f16,
+                     STI.allowFP16Math() ? Expand : Promote);
   setOperationAction(ISD::BR_CC, MVT::f32, Expand);
   setOperationAction(ISD::BR_CC, MVT::f64, Expand);
   setOperationAction(ISD::BR_CC, MVT::i1, Expand);
@@ -194,6 +256,9 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   setOperationAction(ISD::SHL_PARTS, MVT::i64  , Custom);
   setOperationAction(ISD::SRA_PARTS, MVT::i64  , Custom);
   setOperationAction(ISD::SRL_PARTS, MVT::i64  , Custom);
+
+  setOperationAction(ISD::BITREVERSE, MVT::i32, Legal);
+  setOperationAction(ISD::BITREVERSE, MVT::i64, Legal);
 
   if (STI.hasROT64()) {
     setOperationAction(ISD::ROTL, MVT::i64, Legal);
@@ -259,6 +324,7 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   // This is legal in NVPTX
   setOperationAction(ISD::ConstantFP, MVT::f64, Legal);
   setOperationAction(ISD::ConstantFP, MVT::f32, Legal);
+  setOperationAction(ISD::ConstantFP, MVT::f16, Legal);
 
   // TRAP can be lowered to PTX trap
   setOperationAction(ISD::TRAP, MVT::Other, Legal);
@@ -278,15 +344,19 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   // Custom handling for i8 intrinsics
   setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::i8, Custom);
 
-  setOperationAction(ISD::CTLZ, MVT::i16, Legal);
-  setOperationAction(ISD::CTLZ, MVT::i32, Legal);
-  setOperationAction(ISD::CTLZ, MVT::i64, Legal);
+  for (const auto& Ty : {MVT::i16, MVT::i32, MVT::i64}) {
+    setOperationAction(ISD::SMIN, Ty, Legal);
+    setOperationAction(ISD::SMAX, Ty, Legal);
+    setOperationAction(ISD::UMIN, Ty, Legal);
+    setOperationAction(ISD::UMAX, Ty, Legal);
+
+    setOperationAction(ISD::CTPOP, Ty, Legal);
+    setOperationAction(ISD::CTLZ, Ty, Legal);
+  }
+
   setOperationAction(ISD::CTTZ, MVT::i16, Expand);
   setOperationAction(ISD::CTTZ, MVT::i32, Expand);
   setOperationAction(ISD::CTTZ, MVT::i64, Expand);
-  setOperationAction(ISD::CTPOP, MVT::i16, Legal);
-  setOperationAction(ISD::CTPOP, MVT::i32, Legal);
-  setOperationAction(ISD::CTPOP, MVT::i64, Legal);
 
   // PTX does not directly support SELP of i1, so promote to i32 first
   setOperationAction(ISD::SELECT, MVT::i1, Custom);
@@ -301,28 +371,65 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
   setTargetDAGCombine(ISD::FADD);
   setTargetDAGCombine(ISD::MUL);
   setTargetDAGCombine(ISD::SHL);
-  setTargetDAGCombine(ISD::SELECT);
   setTargetDAGCombine(ISD::SREM);
   setTargetDAGCombine(ISD::UREM);
 
+  if (!STI.allowFP16Math()) {
+    // Promote fp16 arithmetic if fp16 hardware isn't available or the
+    // user passed --nvptx-no-fp16-math. The flag is useful because,
+    // although sm_53+ GPUs have some sort of FP16 support in
+    // hardware, only sm_53 and sm_60 have full implementation. Others
+    // only have token amount of hardware and are likely to run faster
+    // by using fp32 units instead.
+    setOperationAction(ISD::FADD, MVT::f16, Promote);
+    setOperationAction(ISD::FMUL, MVT::f16, Promote);
+    setOperationAction(ISD::FSUB, MVT::f16, Promote);
+    setOperationAction(ISD::FMA, MVT::f16, Promote);
+  }
+  // There's no neg.f16 instruction.
+  setOperationAction(ISD::FNEG, MVT::f16, Expand);
+
   // Library functions.  These default to Expand, but we have instructions
   // for them.
+  setOperationAction(ISD::FCEIL,  MVT::f16, Legal);
   setOperationAction(ISD::FCEIL,  MVT::f32, Legal);
   setOperationAction(ISD::FCEIL,  MVT::f64, Legal);
+  setOperationAction(ISD::FFLOOR, MVT::f16, Legal);
   setOperationAction(ISD::FFLOOR, MVT::f32, Legal);
   setOperationAction(ISD::FFLOOR, MVT::f64, Legal);
   setOperationAction(ISD::FNEARBYINT, MVT::f32, Legal);
   setOperationAction(ISD::FNEARBYINT, MVT::f64, Legal);
+  setOperationAction(ISD::FRINT, MVT::f16, Legal);
   setOperationAction(ISD::FRINT,  MVT::f32, Legal);
   setOperationAction(ISD::FRINT,  MVT::f64, Legal);
+  setOperationAction(ISD::FROUND, MVT::f16, Legal);
   setOperationAction(ISD::FROUND, MVT::f32, Legal);
   setOperationAction(ISD::FROUND, MVT::f64, Legal);
+  setOperationAction(ISD::FTRUNC, MVT::f16, Legal);
   setOperationAction(ISD::FTRUNC, MVT::f32, Legal);
   setOperationAction(ISD::FTRUNC, MVT::f64, Legal);
   setOperationAction(ISD::FMINNUM, MVT::f32, Legal);
   setOperationAction(ISD::FMINNUM, MVT::f64, Legal);
   setOperationAction(ISD::FMAXNUM, MVT::f32, Legal);
   setOperationAction(ISD::FMAXNUM, MVT::f64, Legal);
+
+  // 'Expand' implements FCOPYSIGN without calling an external library.
+  setOperationAction(ISD::FCOPYSIGN, MVT::f16, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+
+  // FP16 does not support these nodes in hardware, but we can perform
+  // these ops using single-precision hardware.
+  setOperationAction(ISD::FDIV, MVT::f16, Promote);
+  setOperationAction(ISD::FREM, MVT::f16, Promote);
+  setOperationAction(ISD::FSQRT, MVT::f16, Promote);
+  setOperationAction(ISD::FSIN, MVT::f16, Promote);
+  setOperationAction(ISD::FCOS, MVT::f16, Promote);
+  setOperationAction(ISD::FABS, MVT::f16, Promote);
+  setOperationAction(ISD::FMINNUM, MVT::f16, Promote);
+  setOperationAction(ISD::FMAXNUM, MVT::f16, Promote);
+  setOperationAction(ISD::FMINNAN, MVT::f16, Promote);
+  setOperationAction(ISD::FMAXNAN, MVT::f16, Promote);
 
   // No FEXP2, FLOG2.  The PTX ex2 and log2 functions are always approximate.
   // No FPOW or FREM in PTX.
@@ -967,19 +1074,21 @@ std::string NVPTXTargetLowering::getPrototype(
       unsigned size = 0;
       if (auto *ITy = dyn_cast<IntegerType>(retTy)) {
         size = ITy->getBitWidth();
-        if (size < 32)
-          size = 32;
       } else {
         assert(retTy->isFloatingPointTy() &&
                "Floating point type expected here");
         size = retTy->getPrimitiveSizeInBits();
       }
+      // PTX ABI requires all scalar return values to be at least 32
+      // bits in size.  fp16 normally uses .b16 as its storage type in
+      // PTX, so its size must be adjusted here, too.
+      if (size < 32)
+        size = 32;
 
       O << ".param .b" << size << " _";
     } else if (isa<PointerType>(retTy)) {
       O << ".param .b" << PtrVT.getSizeInBits() << " _";
-    } else if ((retTy->getTypeID() == Type::StructTyID) ||
-               isa<VectorType>(retTy)) {
+    } else if (retTy->isAggregateType() || retTy->isVectorTy()) {
       auto &DL = CS->getCalledFunction()->getParent()->getDataLayout();
       O << ".param .align " << retAlignment << " .b8 _["
         << DL.getTypeAllocSize(retTy) << "]";
@@ -1018,7 +1127,7 @@ std::string NVPTXTargetLowering::getPrototype(
           OIdx += len - 1;
         continue;
       }
-       // i8 types in IR will be i16 types in SDAG
+      // i8 types in IR will be i16 types in SDAG
       assert((getValueType(DL, Ty) == Outs[OIdx].VT ||
               (getValueType(DL, Ty) == MVT::i8 && Outs[OIdx].VT == MVT::i16)) &&
              "type mismatch between callee prototype and arguments");
@@ -1028,8 +1137,13 @@ std::string NVPTXTargetLowering::getPrototype(
         sz = cast<IntegerType>(Ty)->getBitWidth();
         if (sz < 32)
           sz = 32;
-      } else if (isa<PointerType>(Ty))
+      } else if (isa<PointerType>(Ty)) {
         sz = PtrVT.getSizeInBits();
+      } else if (Ty->isHalfTy())
+        // PTX ABI requires all scalar parameters to be at least 32
+        // bits in size.  fp16 normally uses .b16 as its storage type
+        // in PTX, so its size must be adjusted here, too.
+        sz = 32;
       else
         sz = Ty->getPrimitiveSizeInBits();
       O << ".param .b" << sz << " ";
@@ -1340,7 +1454,11 @@ SDValue NVPTXTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
           needExtend = true;
         if (sz < 32)
           sz = 32;
-      }
+      } else if (VT.isFloatingPoint() && sz < 32)
+        // PTX ABI requires all scalar parameters to be at least 32
+        // bits in size.  fp16 normally uses .b16 as its storage type
+        // in PTX, so its size must be adjusted here, too.
+        sz = 32;
       SDVTList DeclareParamVTs = DAG.getVTList(MVT::Other, MVT::Glue);
       SDValue DeclareParamOps[] = { Chain,
                                     DAG.getConstant(paramCount, dl, MVT::i32),
@@ -1952,12 +2070,15 @@ SDValue NVPTXTargetLowering::LowerLOADi1(SDValue Op, SelectionDAG &DAG) const {
 
 SDValue NVPTXTargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   EVT ValVT = Op.getOperand(1).getValueType();
-  if (ValVT == MVT::i1)
+  switch (ValVT.getSimpleVT().SimpleTy) {
+  case MVT::i1:
     return LowerSTOREi1(Op, DAG);
-  else if (ValVT.isVector())
-    return LowerSTOREVector(Op, DAG);
-  else
-    return SDValue();
+  default:
+    if (ValVT.isVector())
+      return LowerSTOREVector(Op, DAG);
+    else
+      return SDValue();
+  }
 }
 
 SDValue
@@ -2557,8 +2678,9 @@ NVPTXTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
           // specifically not for aggregates.
           TmpVal = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i32, TmpVal);
           TheStoreType = MVT::i32;
-        }
-        else if (TmpVal.getValueSizeInBits() < 16)
+        } else if (RetTy->isHalfTy()) {
+          TheStoreType = MVT::f16;
+        } else if (TmpVal.getValueSizeInBits() < 16)
           TmpVal = DAG.getNode(ISD::ANY_EXTEND, dl, MVT::i16, TmpVal);
 
         SDValue Ops[] = {
@@ -3863,27 +3985,35 @@ NVPTXTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
 
 bool NVPTXTargetLowering::allowFMA(MachineFunction &MF,
                                    CodeGenOpt::Level OptLevel) const {
-  const Function *F = MF.getFunction();
-  const TargetOptions &TO = MF.getTarget().Options;
-
   // Always honor command-line argument
-  if (FMAContractLevelOpt.getNumOccurrences() > 0) {
+  if (FMAContractLevelOpt.getNumOccurrences() > 0)
     return FMAContractLevelOpt > 0;
-  } else if (OptLevel == 0) {
-    // Do not contract if we're not optimizing the code
+
+  // Do not contract if we're not optimizing the code.
+  if (OptLevel == 0)
     return false;
-  } else if (TO.AllowFPOpFusion == FPOpFusion::Fast || TO.UnsafeFPMath) {
-    // Honor TargetOptions flags that explicitly say fusion is okay
+
+  // Honor TargetOptions flags that explicitly say fusion is okay.
+  if (MF.getTarget().Options.AllowFPOpFusion == FPOpFusion::Fast)
     return true;
-  } else if (F->hasFnAttribute("unsafe-fp-math")) {
-    // Check for unsafe-fp-math=true coming from Clang
+
+  return allowUnsafeFPMath(MF);
+}
+
+bool NVPTXTargetLowering::allowUnsafeFPMath(MachineFunction &MF) const {
+  // Honor TargetOptions flags that explicitly say unsafe math is okay.
+  if (MF.getTarget().Options.UnsafeFPMath)
+    return true;
+
+  // Allow unsafe math if unsafe-fp-math attribute explicitly says so.
+  const Function *F = MF.getFunction();
+  if (F->hasFnAttribute("unsafe-fp-math")) {
     Attribute Attr = F->getFnAttribute("unsafe-fp-math");
     StringRef Val = Attr.getValueAsString();
     if (Val == "true")
       return true;
   }
 
-  // We did not have a clear indication that fusion is allowed, so assume not
   return false;
 }
 
@@ -4086,67 +4216,6 @@ static SDValue PerformANDCombine(SDNode *N,
   }
 
   return SDValue();
-}
-
-static SDValue PerformSELECTCombine(SDNode *N,
-                                    TargetLowering::DAGCombinerInfo &DCI) {
-  // Currently this detects patterns for integer min and max and
-  // lowers them to PTX-specific intrinsics that enable hardware
-  // support.
-
-  const SDValue Cond = N->getOperand(0);
-  if (Cond.getOpcode() != ISD::SETCC) return SDValue();
-
-  const SDValue LHS = Cond.getOperand(0);
-  const SDValue RHS = Cond.getOperand(1);
-  const SDValue True = N->getOperand(1);
-  const SDValue False = N->getOperand(2);
-  if (!(LHS == True && RHS == False) && !(LHS == False && RHS == True))
-    return SDValue();
-
-  const EVT VT = N->getValueType(0);
-  if (VT != MVT::i32 && VT != MVT::i64) return SDValue();
-
-  const ISD::CondCode CC = cast<CondCodeSDNode>(Cond.getOperand(2))->get();
-  SDValue Larger;  // The larger of LHS and RHS when condition is true.
-  switch (CC) {
-    case ISD::SETULT:
-    case ISD::SETULE:
-    case ISD::SETLT:
-    case ISD::SETLE:
-      Larger = RHS;
-      break;
-
-    case ISD::SETGT:
-    case ISD::SETGE:
-    case ISD::SETUGT:
-    case ISD::SETUGE:
-      Larger = LHS;
-      break;
-
-    default:
-      return SDValue();
-  }
-  const bool IsMax = (Larger == True);
-  const bool IsSigned = ISD::isSignedIntSetCC(CC);
-
-  unsigned IntrinsicId;
-  if (VT == MVT::i32) {
-    if (IsSigned)
-      IntrinsicId = IsMax ? Intrinsic::nvvm_max_i : Intrinsic::nvvm_min_i;
-    else
-      IntrinsicId = IsMax ? Intrinsic::nvvm_max_ui : Intrinsic::nvvm_min_ui;
-  } else {
-    assert(VT == MVT::i64);
-    if (IsSigned)
-      IntrinsicId = IsMax ? Intrinsic::nvvm_max_ll : Intrinsic::nvvm_min_ll;
-    else
-      IntrinsicId = IsMax ? Intrinsic::nvvm_max_ull : Intrinsic::nvvm_min_ull;
-  }
-
-  SDLoc DL(N);
-  return DCI.DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, VT,
-                         DCI.DAG.getConstant(IntrinsicId, DL, VT), LHS, RHS);
 }
 
 static SDValue PerformREMCombine(SDNode *N,
@@ -4358,8 +4427,6 @@ SDValue NVPTXTargetLowering::PerformDAGCombine(SDNode *N,
       return PerformSHLCombine(N, DCI, OptLevel);
     case ISD::AND:
       return PerformANDCombine(N, DCI);
-    case ISD::SELECT:
-      return PerformSELECTCombine(N, DCI);
     case ISD::UREM:
     case ISD::SREM:
       return PerformREMCombine(N, DCI, OptLevel);
