@@ -573,6 +573,7 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   Options.DisableIntegratedAS = CodeGenOpts.DisableIntegratedAS;
   Options.CompressDebugSections = CodeGenOpts.CompressDebugSections;
   Options.RelaxELFRelocations = CodeGenOpts.RelaxELFRelocations;
+  Options.DebugInfoForProfiling = CodeGenOpts.DebugInfoForProfiling;
 
   // Set EABI version.
   Options.EABIVersion = llvm::StringSwitch<llvm::EABI>(TargetOpts.EABIVersion)
@@ -688,9 +689,11 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
     break;
 
   case Backend_EmitBC:
-    PerModulePasses.add(createBitcodeWriterPass(
-        *OS, CodeGenOpts.EmitLLVMUseLists, CodeGenOpts.EmitSummaryIndex,
-        CodeGenOpts.EmitSummaryIndex));
+    if (CodeGenOpts.EmitSummaryIndex)
+      PerModulePasses.add(createWriteThinLTOBitcodePass(*OS));
+    else
+      PerModulePasses.add(
+          createBitcodeWriterPass(*OS, CodeGenOpts.EmitLLVMUseLists));
     break;
 
   case Backend_EmitLL:
@@ -862,7 +865,8 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
 }
 
 static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
-                              std::unique_ptr<raw_pwrite_stream> OS) {
+                              std::unique_ptr<raw_pwrite_stream> OS,
+                              std::string SampleProfile) {
   StringMap<std::map<GlobalValue::GUID, GlobalValueSummary *>>
       ModuleToDefinedGVSummaries;
   CombinedIndex->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
@@ -930,6 +934,7 @@ static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
     return llvm::make_unique<lto::NativeObjectStream>(std::move(OS));
   };
   lto::Config Conf;
+  Conf.SampleProfile = SampleProfile;
   if (Error E = thinBackend(
           Conf, 0, AddStream, *M, *CombinedIndex, ImportList,
           ModuleToDefinedGVSummaries[M->getModuleIdentifier()], ModuleMap)) {
@@ -965,7 +970,8 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
     // of an error).
     bool DoThinLTOBackend = CombinedIndex != nullptr;
     if (DoThinLTOBackend) {
-      runThinLTOBackend(CombinedIndex.get(), M, std::move(OS));
+      runThinLTOBackend(CombinedIndex.get(), M, std::move(OS),
+                        CGOpts.SampleProfileFile);
       return;
     }
   }
@@ -996,6 +1002,7 @@ static const char* getSectionNameForBitcode(const Triple &T) {
     return "__LLVM,__bitcode";
   case Triple::COFF:
   case Triple::ELF:
+  case Triple::Wasm:
   case Triple::UnknownObjectFormat:
     return ".llvmbc";
   }
@@ -1008,6 +1015,7 @@ static const char* getSectionNameForCommandline(const Triple &T) {
     return "__LLVM,__cmdline";
   case Triple::COFF:
   case Triple::ELF:
+  case Triple::Wasm:
   case Triple::UnknownObjectFormat:
     return ".llvmcmd";
   }
