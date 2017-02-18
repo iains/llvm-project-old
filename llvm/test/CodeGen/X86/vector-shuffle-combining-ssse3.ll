@@ -552,6 +552,27 @@ define <16 x i8> @combine_unpckl_arg1_pshufb(<16 x i8> %a0, <16 x i8> %a1) {
   ret <16 x i8> %2
 }
 
+define <8 x i16> @shuffle_combine_unpack_insert(<8 x i16> %a0) {
+; SSE-LABEL: shuffle_combine_unpack_insert:
+; SSE:       # BB#0:
+; SSE-NEXT:    pshufb {{.*#+}} xmm0 = xmm0[4,5,4,5,4,5,8,9,8,9,8,9,10,11,10,11]
+; SSE-NEXT:    retq
+;
+; AVX-LABEL: shuffle_combine_unpack_insert:
+; AVX:       # BB#0:
+; AVX-NEXT:    vpshufb {{.*#+}} xmm0 = xmm0[4,5,4,5,4,5,8,9,8,9,8,9,10,11,10,11]
+; AVX-NEXT:    retq
+  %1 = extractelement <8 x i16> %a0, i32 2
+  %2 = extractelement <8 x i16> %a0, i32 4
+  %3 = insertelement <8 x i16> %a0, i16 %1, i32 4
+  %4 = insertelement <8 x i16> %a0, i16 %2, i32 2
+  %5 = shufflevector <8 x i16> %3, <8 x i16> %4, <8 x i32> <i32 0, i32 8, i32 1, i32 9, i32 2, i32 10, i32 3, i32 11>
+  %6 = shufflevector <8 x i16> %5, <8 x i16> %3, <8 x i32> <i32 4, i32 12, i32 5, i32 13, i32 undef, i32 undef, i32 undef, i32 undef>
+  %7 = shufflevector <8 x i16> %5, <8 x i16> %a0, <8 x i32> <i32 4, i32 12, i32 5, i32 13, i32 undef, i32 undef, i32 undef, i32 undef>
+  %8 = shufflevector <8 x i16> %6, <8 x i16> %7, <8 x i32> <i32 0, i32 8, i32 1, i32 9, i32 2, i32 10, i32 3, i32 11>
+  ret <8 x i16> %8
+}
+
 define <16 x i8> @constant_fold_pshufb() {
 ; SSE-LABEL: constant_fold_pshufb:
 ; SSE:       # BB#0:

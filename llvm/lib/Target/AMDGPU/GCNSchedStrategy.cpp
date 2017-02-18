@@ -35,7 +35,8 @@ static unsigned getMaxWaves(unsigned SGPRs, unsigned VGPRs,
   unsigned MinRegOccupancy = std::min(ST.getOccupancyWithNumSGPRs(SGPRs),
                                       ST.getOccupancyWithNumVGPRs(VGPRs));
   return std::min(MinRegOccupancy,
-                  ST.getOccupancyWithLocalMemSize(MFI->getLDSSize()));
+                  ST.getOccupancyWithLocalMemSize(MFI->getLDSSize(),
+                                                  *MF.getFunction()));
 }
 
 void GCNMaxOccupancySchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU,
@@ -103,7 +104,7 @@ void GCNMaxOccupancySchedStrategy::initCandidate(SchedCandidate &Cand, SUnit *SU
 
   if (ShouldTrackSGPRs && NewSGPRPressure >= SGPRExcessLimit) {
     Cand.RPDelta.Excess = PressureChange(SRI->getSGPRPressureSet());
-    Cand.RPDelta.Excess.setUnitInc(NewSGPRPressure = SGPRExcessLimit);
+    Cand.RPDelta.Excess.setUnitInc(NewSGPRPressure - SGPRExcessLimit);
   }
 
   // Register pressure is considered 'CRITICAL' if it is approaching a value
@@ -144,8 +145,8 @@ void GCNMaxOccupancySchedStrategy::pickNodeFromQueue(SchedBoundary &Zone,
   unsigned VGPRExcessLimit =
       Context->RegClassInfo->getNumAllocatableRegs(&AMDGPU::VGPR_32RegClass);
   unsigned MaxWaves = getMaxWaves(SGPRPressure, VGPRPressure, DAG->MF);
-  unsigned SGPRCriticalLimit = SRI->getMaxNumSGPRs(ST, MaxWaves, true);
-  unsigned VGPRCriticalLimit = SRI->getMaxNumVGPRs(MaxWaves);
+  unsigned SGPRCriticalLimit = ST.getMaxNumSGPRs(MaxWaves, true);
+  unsigned VGPRCriticalLimit = ST.getMaxNumVGPRs(MaxWaves);
 
   ReadyQueue &Q = Zone.Available;
   for (SUnit *SU : Q) {
@@ -224,9 +225,9 @@ SUnit *GCNMaxOccupancySchedStrategy::pickNodeBidirectional(bool &IsTopNode) {
   // Pick best from BotCand and TopCand.
   DEBUG(
     dbgs() << "Top Cand: ";
-    traceCandidate(BotCand);
-    dbgs() << "Bot Cand: ";
     traceCandidate(TopCand);
+    dbgs() << "Bot Cand: ";
+    traceCandidate(BotCand);
   );
   SchedCandidate Cand;
   if (TopCand.Reason == BotCand.Reason) {

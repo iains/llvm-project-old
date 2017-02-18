@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -203,7 +204,8 @@ bool AMDGPUPromoteAlloca::runOnFunction(Function &F) {
     }
   }
 
-  unsigned MaxOccupancy = ST.getOccupancyWithLocalMemSize(CurrentLocalMemUsage);
+  unsigned MaxOccupancy = ST.getOccupancyWithLocalMemSize(CurrentLocalMemUsage,
+                                                          F);
 
   // Restrict local memory usage so that we don't drastically reduce occupancy,
   // unless it is already significantly reduced.
@@ -224,7 +226,7 @@ bool AMDGPUPromoteAlloca::runOnFunction(Function &F) {
 
   // Round up to the next tier of usage.
   unsigned MaxSizeWithWaveCount
-    = ST.getMaxLocalMemSizeWithWaveCount(MaxOccupancy);
+    = ST.getMaxLocalMemSizeWithWaveCount(MaxOccupancy, F);
 
   // Program is possibly broken by using more local mem than available.
   if (CurrentLocalMemUsage > MaxSizeWithWaveCount)
@@ -608,6 +610,9 @@ bool AMDGPUPromoteAlloca::collectUsesWithPtrTypes(
     }
 
     if (UseInst->getOpcode() == Instruction::AddrSpaceCast) {
+      // Give up if the pointer may be captured.
+      if (PointerMayBeCaptured(UseInst, true, true))
+        return false;
       // Don't collect the users of this.
       WorkList.push_back(User);
       continue;
@@ -857,7 +862,7 @@ void AMDGPUPromoteAlloca::handleAlloca(AllocaInst &I) {
       continue;
     }
     default:
-      Intr->dump();
+      Intr->print(errs());
       llvm_unreachable("Don't know how to promote alloca intrinsic use.");
     }
   }

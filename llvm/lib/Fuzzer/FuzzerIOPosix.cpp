@@ -83,6 +83,10 @@ void DiscardOutput(int Fd) {
   fclose(Temp);
 }
 
+intptr_t GetHandleFromFd(int fd) {
+  return static_cast<intptr_t>(fd);
+}
+
 std::string DirName(const std::string &FileName) {
   char *Tmp = new char[FileName.size() + 1];
   memcpy(Tmp, FileName.c_str(), FileName.size() + 1);
@@ -107,6 +111,11 @@ bool IsInterestingCoverageFile(const std::string &FileName) {
   if (FileName == "<null>")
     return false;
   return true;
+}
+
+
+void RawPrint(const char *Str) {
+  write(2, Str, strlen(Str));
 }
 
 }  // namespace fuzzer

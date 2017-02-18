@@ -80,7 +80,6 @@ void MCContext::reset() {
   MCSubtargetAllocator.DestroyAll();
   UsedNames.clear();
   Symbols.clear();
-  SectionSymbols.clear();
   Allocator.Reset();
   Instances.clear();
   CompilationDir.clear();
@@ -122,18 +121,6 @@ MCSymbol *MCContext::getOrCreateSymbol(const Twine &Name) {
     Sym = createSymbol(NameRef, false, false);
 
   return Sym;
-}
-
-MCSymbolELF *MCContext::getOrCreateSectionSymbol(const MCSectionELF &Section) {
-  MCSymbol *&Sym = SectionSymbols[&Section];
-  if (Sym)
-    return cast<MCSymbolELF>(Sym);
-
-  StringRef Name = Section.getSectionName();
-  auto NameIter = UsedNames.insert(std::make_pair(Name, false)).first;
-  Sym = new (&*NameIter, *this) MCSymbolELF(&*NameIter, /*isTemporary*/ false);
-
-  return cast<MCSymbolELF>(Sym);
 }
 
 MCSymbol *MCContext::getOrCreateFrameAllocSymbol(StringRef FuncName,
@@ -316,6 +303,38 @@ void MCContext::renameELFSection(MCSectionELF *Section, StringRef Name) {
   const_cast<MCSectionELF *>(Section)->setSectionName(CachedName);
 }
 
+MCSectionELF *MCContext::createELFSectionImpl(StringRef Section, unsigned Type,
+                                              unsigned Flags, SectionKind K,
+                                              unsigned EntrySize,
+                                              const MCSymbolELF *Group,
+                                              unsigned UniqueID,
+                                              const MCSectionELF *Associated) {
+
+  MCSymbolELF *R;
+  MCSymbol *&Sym = Symbols[Section];
+  if (Sym && Sym->isUndefined()) {
+    R = cast<MCSymbolELF>(Sym);
+  } else {
+    auto NameIter = UsedNames.insert(std::make_pair(Section, false)).first;
+    R = new (&*NameIter, *this) MCSymbolELF(&*NameIter, /*isTemporary*/ false);
+    if (!Sym)
+      Sym = R;
+  }
+  R->setBinding(ELF::STB_LOCAL);
+  R->setType(ELF::STT_SECTION);
+  R->setRedefinable(true);
+
+  auto *Ret = new (ELFAllocator.Allocate()) MCSectionELF(
+      Section, Type, Flags, K, EntrySize, Group, UniqueID, R, Associated);
+
+  auto *F = new MCDataFragment();
+  Ret->getFragmentList().insert(Ret->begin(), F);
+  F->setParent(Ret);
+  R->setFragment(F);
+
+  return Ret;
+}
+
 MCSectionELF *MCContext::createELFRelSection(const Twine &Name, unsigned Type,
                                              unsigned Flags, unsigned EntrySize,
                                              const MCSymbolELF *Group,
@@ -325,9 +344,9 @@ MCSectionELF *MCContext::createELFRelSection(const Twine &Name, unsigned Type,
   std::tie(I, Inserted) =
       ELFRelSecNames.insert(std::make_pair(Name.str(), true));
 
-  return new (ELFAllocator.Allocate())
-      MCSectionELF(I->getKey(), Type, Flags, SectionKind::getReadOnly(),
-                   EntrySize, Group, true, nullptr, Associated);
+  return createELFSectionImpl(I->getKey(), Type, Flags,
+                              SectionKind::getReadOnly(), EntrySize, Group,
+                              true, Associated);
 }
 
 MCSectionELF *MCContext::getELFNamedSection(const Twine &Prefix,
@@ -340,20 +359,19 @@ MCSectionELF *MCContext::getELFNamedSection(const Twine &Prefix,
 MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
                                        unsigned Flags, unsigned EntrySize,
                                        const Twine &Group, unsigned UniqueID,
-                                       const char *BeginSymName) {
+                                       const MCSectionELF *Associated) {
   MCSymbolELF *GroupSym = nullptr;
   if (!Group.isTriviallyEmpty() && !Group.str().empty())
     GroupSym = cast<MCSymbolELF>(getOrCreateSymbol(Group));
 
   return getELFSection(Section, Type, Flags, EntrySize, GroupSym, UniqueID,
-                       BeginSymName, nullptr);
+                       Associated);
 }
 
 MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
                                        unsigned Flags, unsigned EntrySize,
                                        const MCSymbolELF *GroupSym,
                                        unsigned UniqueID,
-                                       const char *BeginSymName,
                                        const MCSectionELF *Associated) {
   StringRef Group = "";
   if (GroupSym)
@@ -375,22 +393,16 @@ MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
   else
     Kind = SectionKind::getReadOnly();
 
-  MCSymbol *Begin = nullptr;
-  if (BeginSymName)
-    Begin = createTempSymbol(BeginSymName, false);
-
-  MCSectionELF *Result = new (ELFAllocator.Allocate())
-      MCSectionELF(CachedName, Type, Flags, Kind, EntrySize, GroupSym, UniqueID,
-                   Begin, Associated);
+  MCSectionELF *Result = createELFSectionImpl(
+      CachedName, Type, Flags, Kind, EntrySize, GroupSym, UniqueID, Associated);
   Entry.second = Result;
   return Result;
 }
 
 MCSectionELF *MCContext::createELFGroupSection(const MCSymbolELF *Group) {
-  MCSectionELF *Result = new (ELFAllocator.Allocate())
-      MCSectionELF(".group", ELF::SHT_GROUP, 0, SectionKind::getReadOnly(), 4,
-                   Group, ~0, nullptr, nullptr);
-  return Result;
+  return createELFSectionImpl(".group", ELF::SHT_GROUP, 0,
+                              SectionKind::getReadOnly(), 4, Group, ~0,
+                              nullptr);
 }
 
 MCSectionCOFF *MCContext::getCOFFSection(StringRef Section,
@@ -510,13 +522,15 @@ CodeViewContext &MCContext::getCVContext() {
 void MCContext::reportError(SMLoc Loc, const Twine &Msg) {
   HadError = true;
 
-  // If we have a source manager use it. Otherwise just use the generic
-  // report_fatal_error().
-  if (!SrcMgr)
+  // If we have a source manager use it. Otherwise, try using the inline source
+  // manager.
+  // If that fails, use the generic report_fatal_error().
+  if (SrcMgr)
+    SrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
+  else if (InlineSrcMgr)
+    InlineSrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
+  else
     report_fatal_error(Msg, false);
-
-  // Use the source manager to print the message.
-  SrcMgr->PrintMessage(Loc, SourceMgr::DK_Error, Msg);
 }
 
 void MCContext::reportFatalError(SMLoc Loc, const Twine &Msg) {

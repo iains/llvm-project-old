@@ -145,6 +145,15 @@ private:
 };
 
 
+void freeVoidBool(bool B) {
+};
+
+TEST(DummyRPC, TestFreeFunctionHandler) {
+  Queue Q1, Q2;
+  DummyRPCEndpoint Server(Q2, Q1);
+  Server.addHandler<DummyRPCAPI::VoidBool>(freeVoidBool);
+};
+
 TEST(DummyRPC, TestAsyncVoidBool) {
   Queue Q1, Q2;
   DummyRPCEndpoint Client(Q1, Q2);
@@ -405,10 +414,11 @@ TEST(DummyRPC, TestParallelCallGroup) {
 
   {
     int A, B, C;
-    ParallelCallGroup<DummyRPCEndpoint> PCG(Client);
+    ParallelCallGroup PCG;
 
     {
-      auto Err = PCG.appendCall<DummyRPCAPI::IntInt>(
+      auto Err = PCG.call(
+        rpcAsyncDispatch<DummyRPCAPI::IntInt>(Client),
         [&A](Expected<int> Result) {
           EXPECT_TRUE(!!Result) << "Async int(int) response handler failed";
           A = *Result;
@@ -418,7 +428,8 @@ TEST(DummyRPC, TestParallelCallGroup) {
     }
 
     {
-      auto Err = PCG.appendCall<DummyRPCAPI::IntInt>(
+      auto Err = PCG.call(
+        rpcAsyncDispatch<DummyRPCAPI::IntInt>(Client),
         [&B](Expected<int> Result) {
           EXPECT_TRUE(!!Result) << "Async int(int) response handler failed";
           B = *Result;
@@ -428,7 +439,8 @@ TEST(DummyRPC, TestParallelCallGroup) {
     }
 
     {
-      auto Err = PCG.appendCall<DummyRPCAPI::IntInt>(
+      auto Err = PCG.call(
+        rpcAsyncDispatch<DummyRPCAPI::IntInt>(Client),
         [&C](Expected<int> Result) {
           EXPECT_TRUE(!!Result) << "Async int(int) response handler failed";
           C = *Result;
@@ -443,10 +455,7 @@ TEST(DummyRPC, TestParallelCallGroup) {
       EXPECT_FALSE(!!Err) << "Client failed to handle response from void(bool)";
     }
 
-    {
-      auto Err = PCG.wait();
-      EXPECT_FALSE(!!Err) << "Third parallel call failed for int(int)";
-    }
+    PCG.wait();
 
     EXPECT_EQ(A, 2) << "First parallel call returned bogus result";
     EXPECT_EQ(B, 4) << "Second parallel call returned bogus result";

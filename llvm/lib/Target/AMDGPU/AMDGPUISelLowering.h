@@ -85,6 +85,7 @@ protected:
                              SDValue RHS, DAGCombinerInfo &DCI) const;
   SDValue performSelectCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performFNegCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performFAbsCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
   static EVT getEquivalentMemType(LLVMContext &Context, EVT VT);
 
@@ -120,7 +121,7 @@ public:
   AMDGPUTargetLowering(const TargetMachine &TM, const AMDGPUSubtarget &STI);
 
   bool mayIgnoreSignedZero(SDValue Op) const {
-    if (getTargetMachine().Options.UnsafeFPMath) // FIXME: nsz only
+    if (getTargetMachine().Options.NoSignedZerosFPMath)
       return true;
 
     if (const auto *BO = dyn_cast<BinaryWithFlagsSDNode>(Op))
@@ -174,7 +175,7 @@ public:
                           SmallVectorImpl<SDValue> &Results,
                           SelectionDAG &DAG) const override;
 
-  SDValue CombineFMinMaxLegacy(const SDLoc &DL, EVT VT, SDValue LHS,
+  SDValue combineFMinMaxLegacy(const SDLoc &DL, EVT VT, SDValue LHS,
                                SDValue RHS, SDValue True, SDValue False,
                                SDValue CC, DAGCombinerInfo &DCI) const;
 

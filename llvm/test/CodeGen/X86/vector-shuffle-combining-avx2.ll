@@ -480,14 +480,12 @@ define <8 x float> @combine_permps_as_permpd(<8 x float> %a) {
 define <4 x i64> @combine_pshufb_as_zext(<32 x i8> %a0) {
 ; X32-LABEL: combine_pshufb_as_zext:
 ; X32:       # BB#0:
-; X32-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[1,0,0,1]
-; X32-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[8,9],zero,zero,zero,zero,zero,zero,ymm0[10,11],zero,zero,zero,zero,zero,zero,ymm0[20,21],zero,zero,zero,zero,zero,zero,ymm0[22,23],zero,zero,zero,zero,zero,zero
+; X32-NEXT:    vpmovzxwq {{.*#+}} ymm0 = xmm0[0],zero,zero,zero,xmm0[1],zero,zero,zero,xmm0[2],zero,zero,zero,xmm0[3],zero,zero,zero
 ; X32-NEXT:    retl
 ;
 ; X64-LABEL: combine_pshufb_as_zext:
 ; X64:       # BB#0:
-; X64-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[1,0,0,1]
-; X64-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[8,9],zero,zero,zero,zero,zero,zero,ymm0[10,11],zero,zero,zero,zero,zero,zero,ymm0[20,21],zero,zero,zero,zero,zero,zero,ymm0[22,23],zero,zero,zero,zero,zero,zero
+; X64-NEXT:    vpmovzxwq {{.*#+}} ymm0 = xmm0[0],zero,zero,zero,xmm0[1],zero,zero,zero,xmm0[2],zero,zero,zero,xmm0[3],zero,zero,zero
 ; X64-NEXT:    retq
   %1 = shufflevector <32 x i8> %a0, <32 x i8> undef, <32 x i32> <i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15>
   %2 = call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %1, <32 x i8> <i8 8, i8 9, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 10, i8 11, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 4, i8 5, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 6, i8 7, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1>)
@@ -710,6 +708,25 @@ define <32 x i8> @combine_psrlq_pshufb(<4 x i64> %a0) {
   %2 = bitcast <4 x i64> %1 to <32 x i8>
   %3 = tail call <32 x i8> @llvm.x86.avx2.pshuf.b(<32 x i8> %2, <32 x i8> <i8 7, i8 6, i8 5, i8 4, i8 3, i8 2, i8 1, i8 0, i8 15, i8 14, i8 13, i8 12, i8 11, i8 10, i8 9, i8 8, i8 23, i8 22, i8 21, i8 20, i8 19, i8 18, i8 17, i8 31, i8 30, i8 29, i8 28, i8 27, i8 26, i8 25, i8 24, i8 23>)
   ret <32 x i8> %3
+}
+
+define <32 x i8> @combine_unpack_unpack_pshufb(<32 x i8> %a0) {
+; X32-LABEL: combine_unpack_unpack_pshufb:
+; X32:       # BB#0:
+; X32-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[0,0,4,8,1,1,5,9,2,2,6,10,3,3,7,11,16,16,20,24,17,17,21,25,18,18,22,26,19,19,23,27]
+; X32-NEXT:    retl
+;
+; X64-LABEL: combine_unpack_unpack_pshufb:
+; X64:       # BB#0:
+; X64-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[0,0,4,8,1,1,5,9,2,2,6,10,3,3,7,11,16,16,20,24,17,17,21,25,18,18,22,26,19,19,23,27]
+; X64-NEXT:    retq
+  %1 = shufflevector <32 x i8> %a0, <32 x i8> undef, <32 x i32> <i32 0, i32 1, i32 2, i32 3, i32 0, i32 1, i32 2, i32 3, i32 0, i32 1, i32 2, i32 3, i32 0, i32 1, i32 2, i32 3, i32 16, i32 17, i32 18, i32 19, i32 16, i32 17, i32 18, i32 19, i32 16, i32 17, i32 18, i32 19, i32 16, i32 17, i32 18, i32 19>
+  %2 = shufflevector <32 x i8> %a0, <32 x i8> undef, <32 x i32> <i32 4, i32 5, i32 6, i32 7, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 20, i32 21, i32 22, i32 23, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  %3 = shufflevector <32 x i8> %a0, <32 x i8> undef, <32 x i32> <i32 8, i32 9, i32 10, i32 11, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 24, i32 25, i32 26, i32 27, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  %4 = shufflevector <32 x i8> %1, <32 x i8> %2, <32 x i32> <i32 0, i32 32, i32 1, i32 33, i32 2, i32 34, i32 3, i32 35, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 16, i32 48, i32 17, i32 49, i32 18, i32 50, i32 19, i32 51, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  %5 = shufflevector <32 x i8> %1, <32 x i8> %3, <32 x i32> <i32 0, i32 32, i32 1, i32 33, i32 2, i32 34, i32 3, i32 35, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 16, i32 48, i32 17, i32 49, i32 18, i32 50, i32 19, i32 51, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  %6 = shufflevector <32 x i8> %4, <32 x i8> %5, <32 x i32> <i32 0, i32 32, i32 1, i32 33, i32 2, i32 34, i32 3, i32 35, i32 4, i32 36, i32 5, i32 37, i32 6, i32 38, i32 7, i32 39, i32 16, i32 48, i32 17, i32 49, i32 18, i32 50, i32 19, i32 51, i32 20, i32 52, i32 21, i32 53, i32 22, i32 54, i32 23, i32 55>
+  ret <32 x i8> %6
 }
 
 define <8 x i32> @constant_fold_permd() {

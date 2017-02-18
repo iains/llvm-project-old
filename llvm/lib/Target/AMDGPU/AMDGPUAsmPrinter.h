@@ -69,13 +69,14 @@ private:
     uint16_t ReservedVGPRCount = 0;
 
     // Fixed SGPR number used to hold wave scratch offset for entire kernel
-    // execution, or uint16_t(-1) if the register is not used or not known.
+    // execution, or std::numeric_limits<uint16_t>::max() if the register is not
+    // used or not known.
     uint16_t DebuggerWavefrontPrivateSegmentOffsetSGPR =
         std::numeric_limits<uint16_t>::max();
 
     // Fixed SGPR number of the first 4 SGPRs used to hold scratch V# for entire
-    // kernel execution, or uint16_t(-1) if the register is not used or not
-    // known.
+    // kernel execution, or std::numeric_limits<uint16_t>::max() if the register
+    // is not used or not known.
     uint16_t DebuggerPrivateSegmentBufferSGPR =
         std::numeric_limits<uint16_t>::max();
 
@@ -109,6 +110,11 @@ public:
   /// \brief Wrapper for MCInstLowering.lowerOperand() for the tblgen'erated
   /// pseudo lowering.
   bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp) const;
+
+  /// \brief Lower the specified LLVM Constant to an MCExpr.
+  /// The AsmPrinter::lowerConstantof does not know how to lower
+  /// addrspacecast, therefore they should be lowered by this function.
+  const MCExpr *lowerConstant(const Constant *CV) override;
 
   /// \brief tblgen'erated driver function for lowering simple MI->MC pseudo
   /// instructions.

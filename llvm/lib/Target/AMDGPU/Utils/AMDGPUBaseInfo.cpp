@@ -9,9 +9,11 @@
 #include "AMDGPUBaseInfo.h"
 #include "AMDGPU.h"
 #include "SIDefines.h"
-#include "llvm/IR/LLVMContext.h"
+#include "llvm/CodeGen/MachineMemOperand.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
@@ -74,47 +76,203 @@ unsigned getLgkmcntBitShift() { return 8; }
 /// \returns Lgkmcnt bit width.
 unsigned getLgkmcntBitWidth() { return 4; }
 
-} // anonymous namespace
+} // namespace anonymous
 
 namespace llvm {
 namespace AMDGPU {
 
-IsaVersion getIsaVersion(const FeatureBitset &Features) {
+namespace IsaInfo {
 
+IsaVersion getIsaVersion(const FeatureBitset &Features) {
+  // CI.
   if (Features.test(FeatureISAVersion7_0_0))
     return {7, 0, 0};
-
   if (Features.test(FeatureISAVersion7_0_1))
     return {7, 0, 1};
-
   if (Features.test(FeatureISAVersion7_0_2))
     return {7, 0, 2};
 
+  // VI.
   if (Features.test(FeatureISAVersion8_0_0))
     return {8, 0, 0};
-
   if (Features.test(FeatureISAVersion8_0_1))
     return {8, 0, 1};
-
   if (Features.test(FeatureISAVersion8_0_2))
     return {8, 0, 2};
-
   if (Features.test(FeatureISAVersion8_0_3))
     return {8, 0, 3};
-
   if (Features.test(FeatureISAVersion8_0_4))
     return {8, 0, 4};
-
   if (Features.test(FeatureISAVersion8_1_0))
     return {8, 1, 0};
 
-  return {0, 0, 0};
+  if (!Features.test(FeatureGCN) || Features.test(FeatureSouthernIslands))
+    return {0, 0, 0};
+  return {7, 0, 0};
 }
+
+unsigned getWavefrontSize(const FeatureBitset &Features) {
+  if (Features.test(FeatureWavefrontSize16))
+    return 16;
+  if (Features.test(FeatureWavefrontSize32))
+    return 32;
+
+  return 64;
+}
+
+unsigned getLocalMemorySize(const FeatureBitset &Features) {
+  if (Features.test(FeatureLocalMemorySize32768))
+    return 32768;
+  if (Features.test(FeatureLocalMemorySize65536))
+    return 65536;
+
+  return 0;
+}
+
+unsigned getEUsPerCU(const FeatureBitset &Features) {
+  return 4;
+}
+
+unsigned getMaxWorkGroupsPerCU(const FeatureBitset &Features,
+                               unsigned FlatWorkGroupSize) {
+  if (!Features.test(FeatureGCN))
+    return 8;
+  return getWavesPerWorkGroup(Features, FlatWorkGroupSize) == 1 ? 40 : 16;
+}
+
+unsigned getMaxWavesPerCU(const FeatureBitset &Features) {
+  return getMaxWavesPerEU(Features) * getEUsPerCU(Features);
+}
+
+unsigned getMaxWavesPerCU(const FeatureBitset &Features,
+                          unsigned FlatWorkGroupSize) {
+  return getWavesPerWorkGroup(Features, FlatWorkGroupSize);
+}
+
+unsigned getMinWavesPerEU(const FeatureBitset &Features) {
+  return 1;
+}
+
+unsigned getMaxWavesPerEU(const FeatureBitset &Features) {
+  if (!Features.test(FeatureGCN))
+    return 8;
+  // FIXME: Need to take scratch memory into account.
+  return 10;
+}
+
+unsigned getMaxWavesPerEU(const FeatureBitset &Features,
+                          unsigned FlatWorkGroupSize) {
+  return alignTo(getMaxWavesPerCU(Features, FlatWorkGroupSize),
+                 getEUsPerCU(Features)) / getEUsPerCU(Features);
+}
+
+unsigned getMinFlatWorkGroupSize(const FeatureBitset &Features) {
+  return 1;
+}
+
+unsigned getMaxFlatWorkGroupSize(const FeatureBitset &Features) {
+  return 2048;
+}
+
+unsigned getWavesPerWorkGroup(const FeatureBitset &Features,
+                              unsigned FlatWorkGroupSize) {
+  return alignTo(FlatWorkGroupSize, getWavefrontSize(Features)) /
+                 getWavefrontSize(Features);
+}
+
+unsigned getSGPRAllocGranule(const FeatureBitset &Features) {
+  IsaVersion Version = getIsaVersion(Features);
+  if (Version.Major >= 8)
+    return 16;
+  return 8;
+}
+
+unsigned getSGPREncodingGranule(const FeatureBitset &Features) {
+  return 8;
+}
+
+unsigned getTotalNumSGPRs(const FeatureBitset &Features) {
+  IsaVersion Version = getIsaVersion(Features);
+  if (Version.Major >= 8)
+    return 800;
+  return 512;
+}
+
+unsigned getAddressableNumSGPRs(const FeatureBitset &Features) {
+  if (Features.test(FeatureSGPRInitBug))
+    return FIXED_NUM_SGPRS_FOR_INIT_BUG;
+
+  IsaVersion Version = getIsaVersion(Features);
+  if (Version.Major >= 8)
+    return 102;
+  return 104;
+}
+
+unsigned getMinNumSGPRs(const FeatureBitset &Features, unsigned WavesPerEU) {
+  assert(WavesPerEU != 0);
+
+  if (WavesPerEU >= getMaxWavesPerEU(Features))
+    return 0;
+  unsigned MinNumSGPRs =
+      alignDown(getTotalNumSGPRs(Features) / (WavesPerEU + 1),
+                getSGPRAllocGranule(Features)) + 1;
+  return std::min(MinNumSGPRs, getAddressableNumSGPRs(Features));
+}
+
+unsigned getMaxNumSGPRs(const FeatureBitset &Features, unsigned WavesPerEU,
+                        bool Addressable) {
+  assert(WavesPerEU != 0);
+
+  IsaVersion Version = getIsaVersion(Features);
+  unsigned MaxNumSGPRs = alignDown(getTotalNumSGPRs(Features) / WavesPerEU,
+                                   getSGPRAllocGranule(Features));
+  unsigned AddressableNumSGPRs = getAddressableNumSGPRs(Features);
+  if (Version.Major >= 8 && !Addressable)
+    AddressableNumSGPRs = 112;
+  return std::min(MaxNumSGPRs, AddressableNumSGPRs);
+}
+
+unsigned getVGPRAllocGranule(const FeatureBitset &Features) {
+  return 4;
+}
+
+unsigned getVGPREncodingGranule(const FeatureBitset &Features) {
+  return getVGPRAllocGranule(Features);
+}
+
+unsigned getTotalNumVGPRs(const FeatureBitset &Features) {
+  return 256;
+}
+
+unsigned getAddressableNumVGPRs(const FeatureBitset &Features) {
+  return getTotalNumVGPRs(Features);
+}
+
+unsigned getMinNumVGPRs(const FeatureBitset &Features, unsigned WavesPerEU) {
+  assert(WavesPerEU != 0);
+
+  if (WavesPerEU >= getMaxWavesPerEU(Features))
+    return 0;
+  unsigned MinNumVGPRs =
+      alignDown(getTotalNumVGPRs(Features) / (WavesPerEU + 1),
+                getVGPRAllocGranule(Features)) + 1;
+  return std::min(MinNumVGPRs, getAddressableNumVGPRs(Features));
+}
+
+unsigned getMaxNumVGPRs(const FeatureBitset &Features, unsigned WavesPerEU) {
+  assert(WavesPerEU != 0);
+
+  unsigned MaxNumVGPRs = alignDown(getTotalNumVGPRs(Features) / WavesPerEU,
+                                   getVGPRAllocGranule(Features));
+  unsigned AddressableNumVGPRs = getAddressableNumVGPRs(Features);
+  return std::min(MaxNumVGPRs, AddressableNumVGPRs);
+}
+
+} // namespace IsaInfo
 
 void initDefaultAMDKernelCodeT(amd_kernel_code_t &Header,
                                const FeatureBitset &Features) {
-
-  IsaVersion ISA = getIsaVersion(Features);
+  IsaInfo::IsaVersion ISA = IsaInfo::getIsaVersion(Features);
 
   memset(&Header, 0, sizeof(Header));
 
@@ -127,6 +285,11 @@ void initDefaultAMDKernelCodeT(amd_kernel_code_t &Header,
   Header.kernel_code_entry_byte_offset = sizeof(Header);
   // wavefront_size is specified as a power of 2: 2^6 = 64 threads.
   Header.wavefront_size = 6;
+
+  // If the code object does not support indirect functions, then the value must
+  // be 0xffffffff.
+  Header.call_convention = -1;
+
   // These alignment values are specified in powers of two, so alignment =
   // 2^n.  The minimum alignment is 2^4 = 16.
   Header.kernarg_segment_alignment = 4;
@@ -217,57 +380,60 @@ std::pair<int, int> getIntegerPairAttribute(const Function &F,
   return Ints;
 }
 
-unsigned getWaitcntBitMask(IsaVersion Version) {
+unsigned getVmcntBitMask(const IsaInfo::IsaVersion &Version) {
+  return (1 << getVmcntBitWidth()) - 1;
+}
+
+unsigned getExpcntBitMask(const IsaInfo::IsaVersion &Version) {
+  return (1 << getExpcntBitWidth()) - 1;
+}
+
+unsigned getLgkmcntBitMask(const IsaInfo::IsaVersion &Version) {
+  return (1 << getLgkmcntBitWidth()) - 1;
+}
+
+unsigned getWaitcntBitMask(const IsaInfo::IsaVersion &Version) {
   unsigned Vmcnt = getBitMask(getVmcntBitShift(), getVmcntBitWidth());
   unsigned Expcnt = getBitMask(getExpcntBitShift(), getExpcntBitWidth());
   unsigned Lgkmcnt = getBitMask(getLgkmcntBitShift(), getLgkmcntBitWidth());
   return Vmcnt | Expcnt | Lgkmcnt;
 }
 
-unsigned getVmcntBitMask(IsaVersion Version) {
-  return (1 << getVmcntBitWidth()) - 1;
-}
-
-unsigned getExpcntBitMask(IsaVersion Version) {
-  return (1 << getExpcntBitWidth()) - 1;
-}
-
-unsigned getLgkmcntBitMask(IsaVersion Version) {
-  return (1 << getLgkmcntBitWidth()) - 1;
-}
-
-unsigned decodeVmcnt(IsaVersion Version, unsigned Waitcnt) {
+unsigned decodeVmcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt) {
   return unpackBits(Waitcnt, getVmcntBitShift(), getVmcntBitWidth());
 }
 
-unsigned decodeExpcnt(IsaVersion Version, unsigned Waitcnt) {
+unsigned decodeExpcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt) {
   return unpackBits(Waitcnt, getExpcntBitShift(), getExpcntBitWidth());
 }
 
-unsigned decodeLgkmcnt(IsaVersion Version, unsigned Waitcnt) {
+unsigned decodeLgkmcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt) {
   return unpackBits(Waitcnt, getLgkmcntBitShift(), getLgkmcntBitWidth());
 }
 
-void decodeWaitcnt(IsaVersion Version, unsigned Waitcnt,
+void decodeWaitcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt,
                    unsigned &Vmcnt, unsigned &Expcnt, unsigned &Lgkmcnt) {
   Vmcnt = decodeVmcnt(Version, Waitcnt);
   Expcnt = decodeExpcnt(Version, Waitcnt);
   Lgkmcnt = decodeLgkmcnt(Version, Waitcnt);
 }
 
-unsigned encodeVmcnt(IsaVersion Version, unsigned Waitcnt, unsigned Vmcnt) {
+unsigned encodeVmcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt,
+                     unsigned Vmcnt) {
   return packBits(Vmcnt, Waitcnt, getVmcntBitShift(), getVmcntBitWidth());
 }
 
-unsigned encodeExpcnt(IsaVersion Version, unsigned Waitcnt, unsigned Expcnt) {
+unsigned encodeExpcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt,
+                      unsigned Expcnt) {
   return packBits(Expcnt, Waitcnt, getExpcntBitShift(), getExpcntBitWidth());
 }
 
-unsigned encodeLgkmcnt(IsaVersion Version, unsigned Waitcnt, unsigned Lgkmcnt) {
+unsigned encodeLgkmcnt(const IsaInfo::IsaVersion &Version, unsigned Waitcnt,
+                       unsigned Lgkmcnt) {
   return packBits(Lgkmcnt, Waitcnt, getLgkmcntBitShift(), getLgkmcntBitWidth());
 }
 
-unsigned encodeWaitcnt(IsaVersion Version,
+unsigned encodeWaitcnt(const IsaInfo::IsaVersion &Version,
                        unsigned Vmcnt, unsigned Expcnt, unsigned Lgkmcnt) {
   unsigned Waitcnt = getWaitcntBitMask(Version);
   Waitcnt = encodeVmcnt(Version, Waitcnt, Vmcnt);
@@ -328,12 +494,14 @@ unsigned getMCReg(unsigned Reg, const MCSubtargetInfo &STI) {
 }
 
 bool isSISrcOperand(const MCInstrDesc &Desc, unsigned OpNo) {
+  assert(OpNo < Desc.NumOperands);
   unsigned OpType = Desc.OpInfo[OpNo].OperandType;
   return OpType >= AMDGPU::OPERAND_SRC_FIRST &&
          OpType <= AMDGPU::OPERAND_SRC_LAST;
 }
 
 bool isSISrcFPOperand(const MCInstrDesc &Desc, unsigned OpNo) {
+  assert(OpNo < Desc.NumOperands);
   unsigned OpType = Desc.OpInfo[OpNo].OperandType;
   switch (OpType) {
   case AMDGPU::OPERAND_REG_IMM_FP32:
@@ -349,6 +517,7 @@ bool isSISrcFPOperand(const MCInstrDesc &Desc, unsigned OpNo) {
 }
 
 bool isSISrcInlinableOperand(const MCInstrDesc &Desc, unsigned OpNo) {
+  assert(OpNo < Desc.NumOperands);
   unsigned OpType = Desc.OpInfo[OpNo].OperandType;
   return OpType >= AMDGPU::OPERAND_REG_INLINE_C_FIRST &&
          OpType <= AMDGPU::OPERAND_REG_INLINE_C_LAST;
@@ -392,6 +561,7 @@ unsigned getRegBitWidth(const MCRegisterClass &RC) {
 
 unsigned getRegOperandSize(const MCRegisterInfo *MRI, const MCInstrDesc &Desc,
                            unsigned OpNo) {
+  assert(OpNo < Desc.NumOperands);
   unsigned RCID = Desc.OpInfo[OpNo].RegClass;
   return getRegBitWidth(MRI->getRegClass(RCID)) / 8;
 }
@@ -456,6 +626,33 @@ bool isInlinableLiteral16(int16_t Literal, bool HasInv2Pi) {
          Val == 0x4400 || // 4.0
          Val == 0xC400 || // -4.0
          Val == 0x3118;   // 1/2pi
+}
+
+bool isUniformMMO(const MachineMemOperand *MMO) {
+  const Value *Ptr = MMO->getValue();
+  // UndefValue means this is a load of a kernel input.  These are uniform.
+  // Sometimes LDS instructions have constant pointers.
+  // If Ptr is null, then that means this mem operand contains a
+  // PseudoSourceValue like GOT.
+  if (!Ptr || isa<UndefValue>(Ptr) || isa<Argument>(Ptr) ||
+      isa<Constant>(Ptr) || isa<GlobalValue>(Ptr))
+    return true;
+
+  const Instruction *I = dyn_cast<Instruction>(Ptr);
+  return I && I->getMetadata("amdgpu.uniform");
+}
+
+int64_t getSMRDEncodedOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
+  if (isSI(ST) || isCI(ST))
+    return ByteOffset >> 2;
+
+  return ByteOffset;
+}
+
+bool isLegalSMRDImmOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
+  int64_t EncodedOffset = getSMRDEncodedOffset(ST, ByteOffset);
+  return isSI(ST) || isCI(ST) ? isUInt<8>(EncodedOffset) :
+                                isUInt<20>(EncodedOffset);
 }
 
 } // End namespace AMDGPU

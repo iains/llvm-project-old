@@ -316,13 +316,6 @@ public:
 
   // Branch analysis.
   bool isUnpredicatedTerminator(const MachineInstr &MI) const override;
-  bool isUnconditionalTailCall(const MachineInstr &MI) const override;
-  bool canMakeTailCallConditional(SmallVectorImpl<MachineOperand> &Cond,
-                                  const MachineInstr &TailCall) const override;
-  void replaceBranchWithTailCall(MachineBasicBlock &MBB,
-                                 SmallVectorImpl<MachineOperand> &Cond,
-                                 const MachineInstr &TailCall) const override;
-
   bool analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                      MachineBasicBlock *&FBB,
                      SmallVectorImpl<MachineOperand> &Cond,
@@ -442,9 +435,6 @@ public:
   bool shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
                                int64_t Offset1, int64_t Offset2,
                                unsigned NumLoads) const override;
-
-  bool shouldScheduleAdjacent(const MachineInstr &First,
-                              const MachineInstr &Second) const override;
 
   void getNoopForMachoTarget(MCInst &NopInst) const override;
 

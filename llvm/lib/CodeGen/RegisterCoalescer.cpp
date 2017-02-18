@@ -1004,24 +1004,41 @@ bool RegisterCoalescer::removePartialRedundancy(const CoalescerPair &CP,
                                   .addReg(IntA.reg);
     SlotIndex NewCopyIdx =
         LIS->InsertMachineInstrInMaps(*NewCopyMI).getRegSlot();
-    VNInfo *VNI = IntB.getNextValue(NewCopyIdx, LIS->getVNInfoAllocator());
-    IntB.createDeadDef(VNI);
+    IntB.createDeadDef(NewCopyIdx, LIS->getVNInfoAllocator());
+    for (LiveInterval::SubRange &SR : IntB.subranges())
+      SR.createDeadDef(NewCopyIdx, LIS->getVNInfoAllocator());
   } else {
     DEBUG(dbgs() << "\tremovePartialRedundancy: Remove the copy from BB#"
                  << MBB.getNumber() << '\t' << CopyMI);
   }
 
   // Remove CopyMI.
-  SmallVector<SlotIndex, 8> EndPoints;
-  VNInfo *BValNo = IntB.Query(CopyIdx.getRegSlot()).valueOutOrDead();
-  LIS->pruneValue(IntB, CopyIdx.getRegSlot(), &EndPoints);
-  BValNo->markUnused();
+  // Note: This is fine to remove the copy before updating the live-ranges.
+  // While updating the live-ranges, we only look at slot indices and
+  // never go back to the instruction.
   LIS->RemoveMachineInstrFromMaps(CopyMI);
   CopyMI.eraseFromParent();
 
+  // Update the liveness.
+  SmallVector<SlotIndex, 8> EndPoints;
+  VNInfo *BValNo = IntB.Query(CopyIdx).valueOutOrDead();
+  LIS->pruneValue(*static_cast<LiveRange *>(&IntB), CopyIdx.getRegSlot(),
+                  &EndPoints);
+  BValNo->markUnused();
   // Extend IntB to the EndPoints of its original live interval.
   LIS->extendToIndices(IntB, EndPoints);
 
+  // Now, do the same for its subranges.
+  for (LiveInterval::SubRange &SR : IntB.subranges()) {
+    EndPoints.clear();
+    VNInfo *BValNo = SR.Query(CopyIdx).valueOutOrDead();
+    assert(BValNo && "All sublanes should be live");
+    LIS->pruneValue(SR, CopyIdx.getRegSlot(), &EndPoints);
+    BValNo->markUnused();
+    LIS->extendToIndices(SR, EndPoints);
+  }
+
+  // Finally, update the live-range of IntA.
   shrinkToUses(&IntA);
   return true;
 }
@@ -1455,7 +1472,7 @@ void RegisterCoalescer::updateRegDefsUses(unsigned SrcReg,
 
     // If SrcReg wasn't read, it may still be the case that DstReg is live-in
     // because SrcReg is a sub-register.
-    if (DstInt && !Reads && SubIdx)
+    if (DstInt && !Reads && SubIdx && !UseMI->isDebugValue())
       Reads = DstInt->liveAt(LIS->getInstructionIndex(*UseMI));
 
     // Replace SrcReg with DstReg in all UseMI operands.
@@ -1727,9 +1744,10 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
 
 bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
   unsigned DstReg = CP.getDstReg();
+  unsigned SrcReg = CP.getSrcReg();
   assert(CP.isPhys() && "Must be a physreg copy");
   assert(MRI->isReserved(DstReg) && "Not a reserved register");
-  LiveInterval &RHS = LIS->getInterval(CP.getSrcReg());
+  LiveInterval &RHS = LIS->getInterval(SrcReg);
   DEBUG(dbgs() << "\t\tRHS = " << RHS << '\n');
 
   assert(RHS.containsOneValue() && "Invalid join with reserved register");
@@ -1771,17 +1789,36 @@ bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
   // Delete the identity copy.
   MachineInstr *CopyMI;
   if (CP.isFlipped()) {
-    CopyMI = MRI->getVRegDef(RHS.reg);
+    // Physreg is copied into vreg
+    //   %vregY = COPY %X
+    //   ...  //< no other def of %X here
+    //   use %vregY
+    // =>
+    //   ...
+    //   use %X
+    CopyMI = MRI->getVRegDef(SrcReg);
   } else {
-    if (!MRI->hasOneNonDBGUse(RHS.reg)) {
+    // VReg is copied into physreg:
+    //   %vregX = def
+    //   ... //< no other def or use of %Y here
+    //   %Y = COPY %vregX
+    // =>
+    //   %Y = def
+    //   ...
+    if (!MRI->hasOneNonDBGUse(SrcReg)) {
       DEBUG(dbgs() << "\t\tMultiple vreg uses!\n");
       return false;
     }
 
-    MachineInstr *DestMI = MRI->getVRegDef(RHS.reg);
-    CopyMI = &*MRI->use_instr_nodbg_begin(RHS.reg);
-    const SlotIndex CopyRegIdx = LIS->getInstructionIndex(*CopyMI).getRegSlot();
-    const SlotIndex DestRegIdx = LIS->getInstructionIndex(*DestMI).getRegSlot();
+    if (!LIS->intervalIsInOneMBB(RHS)) {
+      DEBUG(dbgs() << "\t\tComplex control flow!\n");
+      return false;
+    }
+
+    MachineInstr &DestMI = *MRI->getVRegDef(SrcReg);
+    CopyMI = &*MRI->use_instr_nodbg_begin(SrcReg);
+    SlotIndex CopyRegIdx = LIS->getInstructionIndex(*CopyMI).getRegSlot();
+    SlotIndex DestRegIdx = LIS->getInstructionIndex(DestMI).getRegSlot();
 
     if (!MRI->isConstantPhysReg(DstReg)) {
       // We checked above that there are no interfering defs of the physical
@@ -1800,8 +1837,8 @@ bool RegisterCoalescer::joinReservedPhysReg(CoalescerPair &CP) {
 
     // We're going to remove the copy which defines a physical reserved
     // register, so remove its valno, etc.
-    DEBUG(dbgs() << "\t\tRemoving phys reg def of " << DstReg << " at "
-          << CopyRegIdx << "\n");
+    DEBUG(dbgs() << "\t\tRemoving phys reg def of " << PrintReg(DstReg, TRI)
+          << " at " << CopyRegIdx << "\n");
 
     LIS->removePhysRegDefAt(DstReg, CopyRegIdx);
     // Create a new dead def at the new def location.
