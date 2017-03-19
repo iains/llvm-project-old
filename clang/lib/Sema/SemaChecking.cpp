@@ -244,7 +244,7 @@ static bool SemaBuiltinSEHScopeCheck(Sema &SemaRef, CallExpr *TheCall,
   // Scopes aren't available during instantiation. Fortunately, builtin
   // functions cannot be template args so they cannot be formed through template
   // instantiation. Therefore checking once during the parse is sufficient.
-  if (!SemaRef.ActiveTemplateInstantiations.empty())
+  if (SemaRef.inTemplateInstantiation())
     return false;
 
   Scope *S = SemaRef.getCurScope();
@@ -408,10 +408,10 @@ static bool SemaOpenCLBuiltinEnqueueKernel(Sema &S, CallExpr *TheCall) {
   }
 
   // Third argument is always an ndrange_t type.
-  if (!Arg2->getType()->isNDRangeT()) {
+  if (Arg2->getType().getAsString() != "ndrange_t") {
     S.Diag(TheCall->getArg(2)->getLocStart(),
            diag::err_opencl_enqueue_kernel_expected_type)
-        << S.Context.OCLNDRangeTy;
+        << "'ndrange_t'";
     return true;
   }
 
@@ -1619,28 +1619,24 @@ bool Sema::CheckMipsBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   case Mips::BI__builtin_msa_copy_u_b:
   case Mips::BI__builtin_msa_insve_b:
   case Mips::BI__builtin_msa_splati_b: i = 1; l = 0; u = 15; break;
-  case Mips::BI__builtin_msa_sld_b:
   case Mips::BI__builtin_msa_sldi_b: i = 2; l = 0; u = 15; break;
   // These intrinsics take an unsigned 3 bit immediate.
   case Mips::BI__builtin_msa_copy_s_h:
   case Mips::BI__builtin_msa_copy_u_h:
   case Mips::BI__builtin_msa_insve_h:
   case Mips::BI__builtin_msa_splati_h: i = 1; l = 0; u = 7; break;
-  case Mips::BI__builtin_msa_sld_h:
   case Mips::BI__builtin_msa_sldi_h: i = 2; l = 0; u = 7; break;
   // These intrinsics take an unsigned 2 bit immediate.
   case Mips::BI__builtin_msa_copy_s_w:
   case Mips::BI__builtin_msa_copy_u_w:
   case Mips::BI__builtin_msa_insve_w:
   case Mips::BI__builtin_msa_splati_w: i = 1; l = 0; u = 3; break;
-  case Mips::BI__builtin_msa_sld_w:
   case Mips::BI__builtin_msa_sldi_w: i = 2; l = 0; u = 3; break;
   // These intrinsics take an unsigned 1 bit immediate.
   case Mips::BI__builtin_msa_copy_s_d:
   case Mips::BI__builtin_msa_copy_u_d:
   case Mips::BI__builtin_msa_insve_d:
   case Mips::BI__builtin_msa_splati_d: i = 1; l = 0; u = 1; break;
-  case Mips::BI__builtin_msa_sld_d:
   case Mips::BI__builtin_msa_sldi_d: i = 2; l = 0; u = 1; break;
   // Memory offsets and immediate loads.
   // These intrinsics take a signed 10 bit immediate.
@@ -6782,7 +6778,7 @@ void Sema::CheckMaxUnsignedZero(const CallExpr *Call,
   if (!Call || !FDecl) return;
 
   // Ignore template specializations and macros.
-  if (!ActiveTemplateInstantiations.empty()) return;
+  if (inTemplateInstantiation()) return;
   if (Call->getExprLoc().isMacroID()) return;
 
   // Only care about the one template argument, two function parameter std::max
@@ -8235,7 +8231,7 @@ bool HasEnumType(Expr *E) {
 
 void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
   // Disable warning in template instantiations.
-  if (!S.ActiveTemplateInstantiations.empty())
+  if (S.inTemplateInstantiation())
     return;
 
   BinaryOperatorKind op = E->getOpcode();
@@ -8265,7 +8261,7 @@ void DiagnoseOutOfRangeComparison(Sema &S, BinaryOperator *E, Expr *Constant,
                                   Expr *Other, const llvm::APSInt &Value,
                                   bool RhsConstant) {
   // Disable warning in template instantiations.
-  if (!S.ActiveTemplateInstantiations.empty())
+  if (S.inTemplateInstantiation())
     return;
 
   // TODO: Investigate using GetExprRange() to get tighter bounds
@@ -8703,7 +8699,7 @@ void DiagnoseFloatingImpCast(Sema &S, Expr *E, QualType T,
 
                              SourceLocation CContext) {
   const bool IsBool = T->isSpecificBuiltinType(BuiltinType::Bool);
-  const bool PruneWarnings = !S.ActiveTemplateInstantiations.empty();
+  const bool PruneWarnings = S.inTemplateInstantiation();
 
   Expr *InnerE = E->IgnoreParenImpCasts();
   // We also want to warn on, e.g., "int i = -1.234"
@@ -10609,6 +10605,12 @@ void Sema::CheckArrayAccess(const Expr *expr) {
           CheckArrayAccess(rhs);
         return;
       }
+      case Stmt::CXXOperatorCallExprClass: {
+        const auto *OCE = cast<CXXOperatorCallExpr>(expr);
+        for (const auto *Arg : OCE->arguments())
+          CheckArrayAccess(Arg);
+        return;
+      }
       default:
         return;
     }
@@ -11314,7 +11316,7 @@ void Sema::DiagnoseSelfMove(const Expr *LHSExpr, const Expr *RHSExpr,
   if (Diags.isIgnored(diag::warn_sizeof_pointer_expr_memaccess, OpLoc))
     return;
 
-  if (!ActiveTemplateInstantiations.empty())
+  if (inTemplateInstantiation())
     return;
 
   // Strip parens and casts away.

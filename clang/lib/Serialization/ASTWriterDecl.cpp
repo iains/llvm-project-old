@@ -86,6 +86,7 @@ namespace clang {
     void VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D);
     void VisitDeclaratorDecl(DeclaratorDecl *D);
     void VisitFunctionDecl(FunctionDecl *D);
+    void VisitCXXDeductionGuideDecl(CXXDeductionGuideDecl *D);
     void VisitCXXMethodDecl(CXXMethodDecl *D);
     void VisitCXXConstructorDecl(CXXConstructorDecl *D);
     void VisitCXXDestructorDecl(CXXDestructorDecl *D);
@@ -609,6 +610,11 @@ void ASTDeclWriter::VisitFunctionDecl(FunctionDecl *D) {
   Code = serialization::DECL_FUNCTION;
 }
 
+void ASTDeclWriter::VisitCXXDeductionGuideDecl(CXXDeductionGuideDecl *D) {
+  VisitFunctionDecl(D);
+  Code = serialization::DECL_CXX_DEDUCTION_GUIDE;
+}
+
 void ASTDeclWriter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   VisitNamedDecl(D);
   // FIXME: convert to LazyStmtPtr?
@@ -808,7 +814,6 @@ void ASTDeclWriter::VisitObjCImplDecl(ObjCImplDecl *D) {
 
 void ASTDeclWriter::VisitObjCCategoryImplDecl(ObjCCategoryImplDecl *D) {
   VisitObjCImplDecl(D);
-  Record.AddIdentifierRef(D->getIdentifier());
   Record.AddSourceLocation(D->getCategoryNameLoc());
   Code = serialization::DECL_OBJC_CATEGORY_IMPL;
 }

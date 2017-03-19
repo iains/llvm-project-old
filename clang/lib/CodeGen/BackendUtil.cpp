@@ -61,6 +61,9 @@ using namespace llvm;
 
 namespace {
 
+// Default filename used for profile generation.
+static constexpr StringLiteral DefaultProfileGenName = "default_%m.profraw";
+
 class EmitAssemblyHelper {
   DiagnosticsEngine &Diags;
   const HeaderSearchOptions &HSOpts;
@@ -336,8 +339,10 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (TM)
     TM->adjustPassManager(PMBuilder);
 
-  PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
-                         addAddDiscriminatorsPass);
+  if (CodeGenOpts.DebugInfoForProfiling ||
+      !CodeGenOpts.SampleProfileFile.empty())
+    PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
+                           addAddDiscriminatorsPass);
 
   // In ObjC ARC mode, add the main ARC optimization passes.
   if (LangOpts.ObjCAutoRefCount) {
@@ -448,7 +453,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     if (!CodeGenOpts.InstrProfileOutput.empty())
       PMBuilder.PGOInstrGen = CodeGenOpts.InstrProfileOutput;
     else
-      PMBuilder.PGOInstrGen = "default_%m.profraw";
+      PMBuilder.PGOInstrGen = DefaultProfileGenName;
   }
   if (CodeGenOpts.hasProfileIRUse())
     PMBuilder.PGOInstrUse = CodeGenOpts.ProfileInstrumentUsePath;
@@ -775,7 +780,24 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
     return;
   TheModule->setDataLayout(TM->createDataLayout());
 
-  PassBuilder PB(TM.get());
+  PGOOptions PGOOpt;
+
+  // -fprofile-generate.
+  PGOOpt.RunProfileGen = CodeGenOpts.hasProfileIRInstr();
+  if (PGOOpt.RunProfileGen)
+    PGOOpt.ProfileGenFile = CodeGenOpts.InstrProfileOutput.empty() ?
+      DefaultProfileGenName : CodeGenOpts.InstrProfileOutput;
+
+  // -fprofile-use.
+  if (CodeGenOpts.hasProfileIRUse())
+    PGOOpt.ProfileUseFile = CodeGenOpts.ProfileInstrumentUsePath;
+
+  // Only pass a PGO options struct if -fprofile-generate or
+  // -fprofile-use were passed on the cmdline.
+  PassBuilder PB(TM.get(),
+    (PGOOpt.RunProfileGen ||
+      !PGOOpt.ProfileUseFile.empty()) ?
+        Optional<PGOOptions>(PGOOpt) : None);
 
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
