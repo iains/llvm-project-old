@@ -172,18 +172,24 @@ void MachineBlockFrequencyInfo::getAnalysisUsage(AnalysisUsage &AU) const {
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
-bool MachineBlockFrequencyInfo::runOnMachineFunction(MachineFunction &F) {
-  MachineBranchProbabilityInfo &MBPI =
-      getAnalysis<MachineBranchProbabilityInfo>();
-  MachineLoopInfo &MLI = getAnalysis<MachineLoopInfo>();
+void MachineBlockFrequencyInfo::calculate(
+    const MachineFunction &F, const MachineBranchProbabilityInfo &MBPI,
+    const MachineLoopInfo &MLI) {
   if (!MBFI)
     MBFI.reset(new ImplType);
   MBFI->calculate(F, MBPI, MLI);
   if (ViewMachineBlockFreqPropagationDAG != GVDT_None &&
       (ViewBlockFreqFuncName.empty() ||
        F.getName().equals(ViewBlockFreqFuncName))) {
-    view();
+    view("MachineBlockFrequencyDAGS." + F.getName());
   }
+}
+
+bool MachineBlockFrequencyInfo::runOnMachineFunction(MachineFunction &F) {
+  MachineBranchProbabilityInfo &MBPI =
+      getAnalysis<MachineBranchProbabilityInfo>();
+  MachineLoopInfo &MLI = getAnalysis<MachineLoopInfo>();
+  calculate(F, MBPI, MLI);
   return false;
 }
 
@@ -191,10 +197,9 @@ void MachineBlockFrequencyInfo::releaseMemory() { MBFI.reset(); }
 
 /// Pop up a ghostview window with the current block frequency propagation
 /// rendered using dot.
-void MachineBlockFrequencyInfo::view(bool isSimple) const {
-// This code is only for debugging.
-  ViewGraph(const_cast<MachineBlockFrequencyInfo *>(this),
-            "MachineBlockFrequencyDAGs", isSimple);
+void MachineBlockFrequencyInfo::view(const Twine &Name, bool isSimple) const {
+  // This code is only for debugging.
+  ViewGraph(const_cast<MachineBlockFrequencyInfo *>(this), Name, isSimple);
 }
 
 BlockFrequency

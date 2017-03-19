@@ -229,6 +229,8 @@ HANDLE_TARGET_OPCODE(G_GLOBAL_VALUE)
 /// (typically a sub-register COPY after instruction selection).
 HANDLE_TARGET_OPCODE(G_EXTRACT)
 
+HANDLE_TARGET_OPCODE(G_UNMERGE_VALUES)
+
 /// Generic instruction to insert blocks of bits from the registers given into
 /// the source.
 HANDLE_TARGET_OPCODE(G_INSERT)
@@ -236,6 +238,8 @@ HANDLE_TARGET_OPCODE(G_INSERT)
 /// Generic instruction to paste a variable number of components together into a
 /// larger register.
 HANDLE_TARGET_OPCODE(G_SEQUENCE)
+
+HANDLE_TARGET_OPCODE(G_MERGE_VALUES)
 
 /// Generic pointer to int conversion.
 HANDLE_TARGET_OPCODE(G_PTRTOINT)
@@ -282,6 +286,9 @@ HANDLE_TARGET_OPCODE(G_FCONSTANT)
 
 /// Generic va_start instruction. Stores to its one pointer operand.
 HANDLE_TARGET_OPCODE(G_VASTART)
+
+/// Generic va_start instruction. Stores to its one pointer operand.
+HANDLE_TARGET_OPCODE(G_VAARG)
 
 // Generic sign extend
 HANDLE_TARGET_OPCODE(G_SEXT)
@@ -357,7 +364,10 @@ HANDLE_TARGET_OPCODE(G_FREM)
 /// Generic FP exponentiation.
 HANDLE_TARGET_OPCODE(G_FPOW)
 
-/// Generic float to signed-int conversion
+/// Generic FP negation.
+HANDLE_TARGET_OPCODE(G_FNEG)
+
+/// Generic FP extension.
 HANDLE_TARGET_OPCODE(G_FPEXT)
 
 /// Generic float to signed-int conversion
@@ -378,8 +388,18 @@ HANDLE_TARGET_OPCODE(G_UITOFP)
 /// Generic pointer offset
 HANDLE_TARGET_OPCODE(G_GEP)
 
+/// Clear the specified number of low bits in a pointer. This rounds the value
+/// *down* to the given alignment.
+HANDLE_TARGET_OPCODE(G_PTR_MASK)
+
 /// Generic BRANCH instruction. This is an unconditional branch.
 HANDLE_TARGET_OPCODE(G_BR)
+
+/// Generic insertelement.
+HANDLE_TARGET_OPCODE(G_INSERT_VECTOR_ELT)
+
+/// Generic extractelement.
+HANDLE_TARGET_OPCODE(G_EXTRACT_VECTOR_ELT)
 
 // TODO: Add more generic opcodes as we move along.
 

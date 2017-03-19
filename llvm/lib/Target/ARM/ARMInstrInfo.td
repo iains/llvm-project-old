@@ -51,6 +51,8 @@ def SDT_ARMAnd     : SDTypeProfile<1, 2,
                                     SDTCisVT<2, i32>]>;
 
 def SDT_ARMCmp     : SDTypeProfile<0, 2, [SDTCisSameAs<0, 1>]>;
+def SDT_ARMFCmp    : SDTypeProfile<0, 3, [SDTCisSameAs<0, 1>,
+                                          SDTCisVT<2, i32>]>;
 
 def SDT_ARMPICAdd  : SDTypeProfile<1, 2, [SDTCisSameAs<0, 1>,
                                           SDTCisPtrTy<1>, SDTCisVT<2, i32>]>;
@@ -247,9 +249,6 @@ def HasDivide        : Predicate<"Subtarget->hasDivide()">,
                                  AssemblerPredicate<"FeatureHWDiv", "divide in THUMB">;
 def HasDivideInARM   : Predicate<"Subtarget->hasDivideInARMMode()">,
                                  AssemblerPredicate<"FeatureHWDivARM", "divide in ARM">;
-def HasT2ExtractPack : Predicate<"Subtarget->hasT2ExtractPack()">,
-                                 AssemblerPredicate<"FeatureT2XtPk",
-                                                     "pack/extract">;
 def HasDSP           : Predicate<"Subtarget->hasDSP()">,
                                  AssemblerPredicate<"FeatureDSP", "dsp">;
 def HasDB            : Predicate<"Subtarget->hasDataBarrier()">,

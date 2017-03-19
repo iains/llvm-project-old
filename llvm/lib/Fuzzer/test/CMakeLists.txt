@@ -80,6 +80,7 @@ set(Tests
   BufferOverflowOnInput
   CallerCalleeTest
   CounterTest
+  CustomCrossOverAndMutateTest
   CustomCrossOverTest
   CustomMutatorTest
   CxxStringEqTest
@@ -90,6 +91,7 @@ set(Tests
   FourIndependentBranchesTest
   FullCoverageSetTest
   InitializeTest
+  Memcmp64BytesTest
   MemcmpTest
   LeakTest
   LeakTimeoutTest

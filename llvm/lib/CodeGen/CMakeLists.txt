@@ -4,6 +4,7 @@ add_llvm_library(LLVMCodeGen
   Analysis.cpp
   AtomicExpandPass.cpp
   BasicTargetTransformInfo.cpp
+  BranchCoalescing.cpp
   BranchFolding.cpp
   BranchRelaxation.cpp
   BuiltinGCs.cpp
@@ -37,6 +38,7 @@ add_llvm_library(LLVMCodeGen
   InterleavedAccessPass.cpp
   IntrinsicLowering.cpp
   LatencyPriorityQueue.cpp
+  LazyMachineBlockFrequencyInfo.cpp
   LexicalScopes.cpp
   LiveDebugValues.cpp
   LiveDebugVariables.cpp
@@ -73,6 +75,7 @@ add_llvm_library(LLVMCodeGen
   MachineModuleInfo.cpp
   MachineModuleInfoImpls.cpp
   MachineOptimizationRemarkEmitter.cpp
+  MachineOutliner.cpp
   MachinePassRegistry.cpp
   MachinePipeliner.cpp
   MachinePostDominators.cpp

@@ -707,6 +707,15 @@ let AdditionalPredicates = [NotInMicroMips] in {
   def : MipsInstAlias<"daddu $rs, $imm",
                       (DADDiu GPR64Opnd:$rs, GPR64Opnd:$rs, simm16_64:$imm),
                       0>, ISA_MIPS3;
+
+  defm : OneOrTwoOperandMacroImmediateAlias<"and", ANDi64, GPR64Opnd, imm64>,
+         GPR_64;
+
+  defm : OneOrTwoOperandMacroImmediateAlias<"or", ORi64, GPR64Opnd, imm64>,
+         GPR_64;
+
+  defm : OneOrTwoOperandMacroImmediateAlias<"xor", XORi64, GPR64Opnd, imm64>,
+         GPR_64;
 }
 def : MipsInstAlias<"dsll $rd, $rt, $rs",
                     (DSLLV GPR64Opnd:$rd, GPR64Opnd:$rt, GPR32Opnd:$rs), 0>,
@@ -835,3 +844,62 @@ def DMULMacro : MipsAsmPseudoInst<(outs), (ins GPR64Opnd:$rs, GPR64Opnd:$rt,
                                   "dmul\t$rs, $rt, $rd"> {
   let InsnPredicates = [HasMips3, NotMips64r6, NotCnMips];
 }
+
+let AdditionalPredicates = [NotInMicroMips] in {
+  def DSDivMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                     (ins GPR64Opnd:$rs, GPR64Opnd:$rt),
+                                     "ddiv\t$rd, $rs, $rt">,
+                   ISA_MIPS3_NOT_32R6_64R6;
+  def DSDivIMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                      (ins GPR64Opnd:$rs, imm64:$imm),
+                                      "ddiv\t$rd, $rs, $imm">,
+                    ISA_MIPS3_NOT_32R6_64R6;
+  def DUDivMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                     (ins GPR64Opnd:$rs, GPR64Opnd:$rt),
+                                     "ddivu\t$rd, $rs, $rt">,
+                   ISA_MIPS3_NOT_32R6_64R6;
+  def DUDivIMacro : MipsAsmPseudoInst<(outs GPR64Opnd:$rd),
+                                      (ins GPR64Opnd:$rs, imm64:$imm),
+                                      "ddivu\t$rd, $rs, $imm">,
+                    ISA_MIPS3_NOT_32R6_64R6;
+
+  // GAS expands 'div' and 'ddiv' differently when the destination
+  // register is $zero and the instruction is in the two operand
+  // form. 'ddiv' gets expanded, while 'div' is not expanded.
+
+  def : MipsInstAlias<"ddiv $rs, $rt", (DSDivMacro GPR64Opnd:$rs,
+                                               GPR64Opnd:$rs,
+                                               GPR64Opnd:$rt), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+  def : MipsInstAlias<"ddiv $rd, $imm", (DSDivIMacro GPR64Opnd:$rd,
+                                                     GPR64Opnd:$rd,
+                                                     imm64:$imm), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+
+  // GAS expands 'divu' and 'ddivu' differently when the destination
+  // register is $zero and the instruction is in the two operand
+  // form. 'ddivu' gets expanded, while 'divu' is not expanded.
+
+  def : MipsInstAlias<"ddivu $rt, $rs", (DUDivMacro GPR64Opnd:$rt,
+                                                    GPR64Opnd:$rt,
+                                                    GPR64Opnd:$rs), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+  def : MipsInstAlias<"ddivu $rd, $imm", (DUDivIMacro GPR64Opnd:$rd,
+                                                      GPR64Opnd:$rd,
+                                                      imm64:$imm), 0>,
+        ISA_MIPS3_NOT_32R6_64R6;
+}
+
+def NORImm64 : NORIMM_DESC_BASE<GPR64Opnd, imm64>, GPR_64;
+def : MipsInstAlias<"nor\t$rs, $imm", (NORImm64 GPR64Opnd:$rs, GPR64Opnd:$rs,
+                                                imm64:$imm)>, GPR_64;
+def SLTImm64 : MipsAsmPseudoInst<(outs GPR64Opnd:$rs),
+                                 (ins GPR64Opnd:$rt, imm64:$imm),
+                                 "slt\t$rs, $rt, $imm">, GPR_64;
+def : MipsInstAlias<"slt\t$rs, $imm", (SLTImm64 GPR64Opnd:$rs, GPR64Opnd:$rs,
+                                                imm64:$imm)>, GPR_64;
+def SLTUImm64 : MipsAsmPseudoInst<(outs GPR64Opnd:$rs),
+                                  (ins GPR64Opnd:$rt, imm64:$imm),
+                                  "sltu\t$rs, $rt, $imm">, GPR_64;
+def : MipsInstAlias<"sltu\t$rs, $imm", (SLTUImm64 GPR64Opnd:$rs, GPR64Opnd:$rs,
+                                                  imm64:$imm)>, GPR_64;

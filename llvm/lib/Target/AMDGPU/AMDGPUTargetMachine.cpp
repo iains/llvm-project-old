@@ -136,8 +136,7 @@ static ScheduleDAGInstrs *createSIMachineScheduler(MachineSchedContext *C) {
 static ScheduleDAGInstrs *
 createGCNMaxOccupancyMachineScheduler(MachineSchedContext *C) {
   ScheduleDAGMILive *DAG =
-      new ScheduleDAGMILive(C,
-                            llvm::make_unique<GCNMaxOccupancySchedStrategy>(C));
+    new GCNScheduleDAGMILive(C, make_unique<GCNMaxOccupancySchedStrategy>(C));
   DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
   DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
   return DAG;
@@ -599,7 +598,8 @@ bool GCNPassConfig::addPreISel() {
 
   // FIXME: We need to run a pass to propagate the attributes when calls are
   // supported.
-  addPass(&AMDGPUAnnotateKernelFeaturesID);
+  const AMDGPUTargetMachine &TM = getAMDGPUTargetMachine();
+  addPass(createAMDGPUAnnotateKernelFeaturesPass(&TM));
   addPass(createStructurizeCFGPass(true)); // true -> SkipUniformRegions
   addPass(createSinkingPass());
   addPass(createSITypeRewriter());

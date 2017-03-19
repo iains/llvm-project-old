@@ -634,8 +634,11 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
       // FIXME: Is going through int64_t always correct?
       ImmOp.ChangeToImmediate(
           ImmOp.getFPImm()->getValueAPF().bitcastToAPInt().getZExtValue());
-    } else {
+    } else if (I.getOperand(1).isCImm()) {
       uint64_t Val = I.getOperand(1).getCImm()->getZExtValue();
+      I.getOperand(1).ChangeToImmediate(Val);
+    } else if (I.getOperand(1).isImm()) {
+      uint64_t Val = I.getOperand(1).getImm();
       I.getOperand(1).ChangeToImmediate(Val);
     }
 
@@ -688,6 +691,12 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     if (PtrTy != LLT::pointer(0, 64)) {
       DEBUG(dbgs() << "Load/Store pointer has type: " << PtrTy
                    << ", expected: " << LLT::pointer(0, 64) << '\n');
+      return false;
+    }
+
+    auto &MemOp = **I.memoperands_begin();
+    if (MemOp.getOrdering() != AtomicOrdering::NotAtomic) {
+      DEBUG(dbgs() << "Atomic load/store not supported yet\n");
       return false;
     }
 
@@ -810,6 +819,17 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
   }
 
+  case TargetOpcode::G_PTR_MASK: {
+    uint64_t Align = I.getOperand(2).getImm();
+    if (Align >= 64 || Align == 0)
+      return false;
+
+    uint64_t Mask = ~((1ULL << Align) - 1);
+    I.setDesc(TII.get(AArch64::ANDXri));
+    I.getOperand(2).setImm(AArch64_AM::encodeLogicalImmediate(Mask, 64));
+
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  }
   case TargetOpcode::G_PTRTOINT:
   case TargetOpcode::G_TRUNC: {
     const LLT DstTy = MRI.getType(I.getOperand(0).getReg());

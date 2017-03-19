@@ -94,7 +94,7 @@ static cl::opt<std::string>
     OptRemarksOutput("pass-remarks-output",
                      cl::desc("YAML output file for optimization remarks"));
 
-static cl::opt<bool> OptRemarksWithsHotness(
+static cl::opt<bool> OptRemarksWithHotness(
     "pass-remarks-with-hotness",
     cl::desc("Whether to include hotness informations in the remarks.\n"
              "Has effect only if -pass-remarks-output is specified."));
@@ -157,9 +157,11 @@ int main(int argc, char **argv) {
         Res.FinalDefinitionInLinkageUnit = true;
       else if (C == 'x')
         Res.VisibleToRegularObj = true;
-      else
+      else {
         llvm::errs() << "invalid character " << C << " in resolution: " << R
                      << '\n';
+        return 1;
+      }
     }
     CommandLineResolutions[{FileName, SymbolName}].push_back(Res);
   }
@@ -187,7 +189,7 @@ int main(int argc, char **argv) {
 
   // Optimization remarks.
   Conf.RemarksFilename = OptRemarksOutput;
-  Conf.RemarksWithHotness = OptRemarksWithsHotness;
+  Conf.RemarksWithHotness = OptRemarksWithHotness;
 
   // Run a custom pipeline, if asked for.
   Conf.OptPipeline = OptPipeline;
@@ -211,6 +213,9 @@ int main(int argc, char **argv) {
     llvm::errs() << "invalid cg optimization level: " << CGOptLevel << '\n';
     return 1;
   }
+
+  if (FileType.getNumOccurrences())
+    Conf.CGFileType = FileType;
 
   Conf.OverrideTriple = OverrideTriple;
   Conf.DefaultTriple = DefaultTriple;
@@ -281,7 +286,7 @@ int main(int argc, char **argv) {
 
   NativeObjectCache Cache;
   if (!CacheDir.empty())
-    Cache = localCache(CacheDir, AddFile);
+    Cache = check(localCache(CacheDir, AddFile), "failed to create cache");
 
   check(Lto.run(AddStream, Cache), "LTO::run failed");
 }

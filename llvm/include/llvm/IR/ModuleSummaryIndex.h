@@ -370,6 +370,14 @@ public:
       return TIdInfo->TypeCheckedLoadConstVCalls;
     return {};
   }
+
+  /// Add a type test to the summary. This is used by WholeProgramDevirt if we
+  /// were unable to devirtualize a checked call.
+  void addTypeTest(GlobalValue::GUID Guid) {
+    if (!TIdInfo)
+      TIdInfo = llvm::make_unique<TypeIdInfo>();
+    TIdInfo->TypeTests.push_back(Guid);
+  }
 };
 
 template <> struct DenseMapInfo<FunctionSummary::VFuncId> {
@@ -439,8 +447,40 @@ struct TypeTestResolution {
   unsigned SizeM1BitWidth = 0;
 };
 
+struct WholeProgramDevirtResolution {
+  enum Kind {
+    Indir,      ///< Just do a regular virtual call
+    SingleImpl, ///< Single implementation devirtualization
+  } TheKind = Indir;
+
+  std::string SingleImplName;
+
+  struct ByArg {
+    enum Kind {
+      Indir,            ///< Just do a regular virtual call
+      UniformRetVal,    ///< Uniform return value optimization
+      UniqueRetVal,     ///< Unique return value optimization
+      VirtualConstProp, ///< Virtual constant propagation
+    } TheKind = Indir;
+
+    /// Additional information for the resolution:
+    /// - UniformRetVal: the uniform return value.
+    /// - UniqueRetVal: the return value associated with the unique vtable (0 or
+    ///   1).
+    uint64_t Info = 0;
+  };
+
+  /// Resolutions for calls with all constant integer arguments (excluding the
+  /// first argument, "this"), where the key is the argument vector.
+  std::map<std::vector<uint64_t>, ByArg> ResByArg;
+};
+
 struct TypeIdSummary {
   TypeTestResolution TTRes;
+
+  /// Mapping from byte offset to whole-program devirt resolution for that
+  /// (typeid, byte offset) pair.
+  std::map<uint64_t, WholeProgramDevirtResolution> WPDRes;
 };
 
 /// 160 bits SHA1
@@ -621,6 +661,10 @@ public:
   /// to have exported functions.
   bool hasExportedFunctions(const Module &M) const {
     return ModulePathStringTable.count(M.getModuleIdentifier());
+  }
+
+  const std::map<std::string, TypeIdSummary> &typeIds() const {
+    return TypeIdMap;
   }
 
   TypeIdSummary &getTypeIdSummary(StringRef TypeId) {
