@@ -222,6 +222,8 @@ public:
   areMemAccessesTriviallyDisjoint(MachineInstr &MIa, MachineInstr &MIb,
                                   AliasAnalysis *AA = nullptr) const override;
 
+  bool isFoldableCopy(const MachineInstr &MI) const;
+
   bool FoldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, unsigned Reg,
                      MachineRegisterInfo *MRI) const final;
 
@@ -767,6 +769,9 @@ namespace AMDGPU {
 
   LLVM_READONLY
   int getVOPe32(uint16_t Opcode);
+
+  LLVM_READONLY
+  int getSDWAOp(uint16_t Opcode);
 
   LLVM_READONLY
   int getCommuteRev(uint16_t Opcode);

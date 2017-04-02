@@ -200,22 +200,34 @@ class LLVM_NODISCARD APInt {
   APInt &AssignSlowCase(const APInt &RHS);
 
   /// out-of-line slow case for operator==
-  bool EqualSlowCase(const APInt &RHS) const;
+  bool EqualSlowCase(const APInt &RHS) const LLVM_READONLY;
 
   /// out-of-line slow case for operator==
-  bool EqualSlowCase(uint64_t Val) const;
+  bool EqualSlowCase(uint64_t Val) const LLVM_READONLY;
 
   /// out-of-line slow case for countLeadingZeros
-  unsigned countLeadingZerosSlowCase() const;
+  unsigned countLeadingZerosSlowCase() const LLVM_READONLY;
 
   /// out-of-line slow case for countTrailingOnes
-  unsigned countTrailingOnesSlowCase() const;
+  unsigned countTrailingOnesSlowCase() const LLVM_READONLY;
 
   /// out-of-line slow case for countPopulation
-  unsigned countPopulationSlowCase() const;
+  unsigned countPopulationSlowCase() const LLVM_READONLY;
 
   /// out-of-line slow case for setBits.
   void setBitsSlowCase(unsigned loBit, unsigned hiBit);
+
+  /// out-of-line slow case for flipAllBits.
+  void flipAllBitsSlowCase();
+
+  /// out-of-line slow case for operator&=.
+  APInt& AndAssignSlowCase(const APInt& RHS);
+
+  /// out-of-line slow case for operator|=.
+  APInt& OrAssignSlowCase(const APInt& RHS);
+
+  /// out-of-line slow case for operator^=.
+  APInt& XorAssignSlowCase(const APInt& RHS);
 
 public:
   /// \name Constructors
@@ -232,7 +244,7 @@ public:
   /// \param val the initial value of the APInt
   /// \param isSigned how to treat signedness of val
   APInt(unsigned numBits, uint64_t val, bool isSigned = false)
-      : BitWidth(numBits), VAL(0) {
+      : BitWidth(numBits) {
     assert(BitWidth && "bitwidth too small");
     if (isSingleWord()) {
       VAL = val;
@@ -275,7 +287,7 @@ public:
 
   /// Simply makes *this a copy of that.
   /// @brief Copy Constructor.
-  APInt(const APInt &that) : BitWidth(that.BitWidth), VAL(0) {
+  APInt(const APInt &that) : BitWidth(that.BitWidth) {
     if (isSingleWord())
       VAL = that.VAL;
     else
@@ -615,13 +627,7 @@ public:
   ///
   /// \returns true if *this is zero, false otherwise.
   bool operator!() const {
-    if (isSingleWord())
-      return !VAL;
-
-    for (unsigned i = 0; i != getNumWords(); ++i)
-      if (pVal[i])
-        return false;
-    return true;
+    return *this == 0;
   }
 
   /// @}
@@ -673,7 +679,16 @@ public:
   /// than 64, the value is zero filled in the unspecified high order bits.
   ///
   /// \returns *this after assignment of RHS value.
-  APInt &operator=(uint64_t RHS);
+  APInt &operator=(uint64_t RHS) {
+    if (isSingleWord()) {
+      VAL = RHS;
+      clearUnusedBits();
+    } else {
+      pVal[0] = RHS;
+      memset(pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
+    }
+    return *this;
+  }
 
   /// \brief Bitwise AND assignment operator.
   ///
@@ -681,14 +696,29 @@ public:
   /// assigned to *this.
   ///
   /// \returns *this after ANDing with RHS.
-  APInt &operator&=(const APInt &RHS);
+  APInt &operator&=(const APInt &RHS) {
+    assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    if (isSingleWord()) {
+      VAL &= RHS.VAL;
+      return *this;
+    }
+    return AndAssignSlowCase(RHS);
+  }
 
   /// \brief Bitwise AND assignment operator.
   ///
   /// Performs a bitwise AND operation on this APInt and RHS. RHS is
   /// logically zero-extended or truncated to match the bit-width of
   /// the LHS.
-  APInt &operator&=(uint64_t RHS);
+  APInt &operator&=(uint64_t RHS) {
+    if (isSingleWord()) {
+      VAL &= RHS;
+      return *this;
+    }
+    pVal[0] &= RHS;
+    memset(pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
+    return *this;
+  }
 
   /// \brief Bitwise OR assignment operator.
   ///
@@ -696,7 +726,14 @@ public:
   /// assigned *this;
   ///
   /// \returns *this after ORing with RHS.
-  APInt &operator|=(const APInt &RHS);
+  APInt &operator|=(const APInt &RHS) {
+    assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    if (isSingleWord()) {
+      VAL |= RHS.VAL;
+      return *this;
+    }
+    return OrAssignSlowCase(RHS);
+  }
 
   /// \brief Bitwise OR assignment operator.
   ///
@@ -719,7 +756,14 @@ public:
   /// assigned to *this.
   ///
   /// \returns *this after XORing with RHS.
-  APInt &operator^=(const APInt &RHS);
+  APInt &operator^=(const APInt &RHS) {
+    assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    if (isSingleWord()) {
+      VAL ^= RHS.VAL;
+      return *this;
+    }
+    return XorAssignSlowCase(RHS);
+  }
 
   /// \brief Bitwise XOR assignment operator.
   ///
@@ -966,7 +1010,7 @@ public:
   /// the validity of the less-than relationship.
   ///
   /// \returns true if *this < RHS when both are considered unsigned.
-  bool ult(const APInt &RHS) const;
+  bool ult(const APInt &RHS) const LLVM_READONLY;
 
   /// \brief Unsigned less than comparison
   ///
@@ -984,7 +1028,7 @@ public:
   /// validity of the less-than relationship.
   ///
   /// \returns true if *this < RHS when both are considered signed.
-  bool slt(const APInt &RHS) const;
+  bool slt(const APInt &RHS) const LLVM_READONLY;
 
   /// \brief Signed less than comparison
   ///
@@ -1161,11 +1205,9 @@ public:
   void setAllBits() {
     if (isSingleWord())
       VAL = UINT64_MAX;
-    else {
+    else
       // Set all the bits in all the words.
-      for (unsigned i = 0; i < getNumWords(); ++i)
-        pVal[i] = UINT64_MAX;
-    }
+      memset(pVal, -1, getNumWords() * APINT_WORD_SIZE);
     // Clear the unused ones
     clearUnusedBits();
   }
@@ -1233,13 +1275,12 @@ public:
 
   /// \brief Toggle every bit to its opposite value.
   void flipAllBits() {
-    if (isSingleWord())
+    if (isSingleWord()) {
       VAL ^= UINT64_MAX;
-    else {
-      for (unsigned i = 0; i < getNumWords(); ++i)
-        pVal[i] ^= UINT64_MAX;
+      clearUnusedBits();
+    } else {
+      flipAllBitsSlowCase();
     }
-    clearUnusedBits();
   }
 
   /// \brief Toggles a given bit to its opposite value.
@@ -1363,7 +1404,7 @@ public:
   ///
   /// \returns 0 if the high order bit is not set, otherwise returns the number
   /// of 1 bits from the most significant to the least
-  unsigned countLeadingOnes() const;
+  unsigned countLeadingOnes() const LLVM_READONLY;
 
   /// Computes the number of leading bits of this APInt that are equal to its
   /// sign bit.
@@ -1379,7 +1420,7 @@ public:
   ///
   /// \returns BitWidth if the value is zero, otherwise returns the number of
   /// zeros from the least significant bit to the first one bit.
-  unsigned countTrailingZeros() const;
+  unsigned countTrailingZeros() const LLVM_READONLY;
 
   /// \brief Count the number of trailing one bits.
   ///
@@ -1596,38 +1637,38 @@ public:
 
   /// Sets the least significant part of a bignum to the input value, and zeroes
   /// out higher parts.
-  static void tcSet(integerPart *, integerPart, unsigned int);
+  static void tcSet(integerPart *, integerPart, unsigned);
 
   /// Assign one bignum to another.
-  static void tcAssign(integerPart *, const integerPart *, unsigned int);
+  static void tcAssign(integerPart *, const integerPart *, unsigned);
 
   /// Returns true if a bignum is zero, false otherwise.
-  static bool tcIsZero(const integerPart *, unsigned int);
+  static bool tcIsZero(const integerPart *, unsigned);
 
   /// Extract the given bit of a bignum; returns 0 or 1.  Zero-based.
-  static int tcExtractBit(const integerPart *, unsigned int bit);
+  static int tcExtractBit(const integerPart *, unsigned bit);
 
   /// Copy the bit vector of width srcBITS from SRC, starting at bit srcLSB, to
   /// DST, of dstCOUNT parts, such that the bit srcLSB becomes the least
   /// significant bit of DST.  All high bits above srcBITS in DST are
   /// zero-filled.
-  static void tcExtract(integerPart *, unsigned int dstCount,
-                        const integerPart *, unsigned int srcBits,
-                        unsigned int srcLSB);
+  static void tcExtract(integerPart *, unsigned dstCount,
+                        const integerPart *, unsigned srcBits,
+                        unsigned srcLSB);
 
   /// Set the given bit of a bignum.  Zero-based.
-  static void tcSetBit(integerPart *, unsigned int bit);
+  static void tcSetBit(integerPart *, unsigned bit);
 
   /// Clear the given bit of a bignum.  Zero-based.
-  static void tcClearBit(integerPart *, unsigned int bit);
+  static void tcClearBit(integerPart *, unsigned bit);
 
   /// Returns the bit number of the least or most significant set bit of a
   /// number.  If the input number has no bits set -1U is returned.
-  static unsigned int tcLSB(const integerPart *, unsigned int);
-  static unsigned int tcMSB(const integerPart *parts, unsigned int n);
+  static unsigned tcLSB(const integerPart *, unsigned n);
+  static unsigned tcMSB(const integerPart *parts, unsigned n);
 
   /// Negate a bignum in-place.
-  static void tcNegate(integerPart *, unsigned int);
+  static void tcNegate(integerPart *, unsigned);
 
   /// DST += RHS + CARRY where CARRY is zero or one.  Returns the carry flag.
   static integerPart tcAdd(integerPart *, const integerPart *,
@@ -1649,7 +1690,7 @@ public:
   /// otherwise overflow occurred and return one.
   static int tcMultiplyPart(integerPart *dst, const integerPart *src,
                             integerPart multiplier, integerPart carry,
-                            unsigned int srcParts, unsigned int dstParts,
+                            unsigned srcParts, unsigned dstParts,
                             bool add);
 
   /// DST = LHS * RHS, where DST has the same width as the operands and is
@@ -1662,8 +1703,8 @@ public:
   /// DST = LHS * RHS, where DST has width the sum of the widths of the
   /// operands.  No overflow occurs.  DST must be disjoint from both
   /// operands. Returns the number of parts required to hold the result.
-  static unsigned int tcFullMultiply(integerPart *, const integerPart *,
-                                     const integerPart *, unsigned, unsigned);
+  static unsigned tcFullMultiply(integerPart *, const integerPart *,
+                                 const integerPart *, unsigned, unsigned);
 
   /// If RHS is zero LHS and REMAINDER are left unchanged, return one.
   /// Otherwise set LHS to LHS / RHS with the fractional part discarded, set
@@ -1676,36 +1717,33 @@ public:
   /// REMAINDER and SCRATCH must be distinct.
   static int tcDivide(integerPart *lhs, const integerPart *rhs,
                       integerPart *remainder, integerPart *scratch,
-                      unsigned int parts);
+                      unsigned parts);
 
   /// Shift a bignum left COUNT bits.  Shifted in bits are zero.  There are no
   /// restrictions on COUNT.
-  static void tcShiftLeft(integerPart *, unsigned int parts,
-                          unsigned int count);
+  static void tcShiftLeft(integerPart *, unsigned parts, unsigned count);
 
   /// Shift a bignum right COUNT bits.  Shifted in bits are zero.  There are no
   /// restrictions on COUNT.
-  static void tcShiftRight(integerPart *, unsigned int parts,
-                           unsigned int count);
+  static void tcShiftRight(integerPart *, unsigned parts, unsigned count);
 
   /// The obvious AND, OR and XOR and complement operations.
-  static void tcAnd(integerPart *, const integerPart *, unsigned int);
-  static void tcOr(integerPart *, const integerPart *, unsigned int);
-  static void tcXor(integerPart *, const integerPart *, unsigned int);
-  static void tcComplement(integerPart *, unsigned int);
+  static void tcAnd(integerPart *, const integerPart *, unsigned);
+  static void tcOr(integerPart *, const integerPart *, unsigned);
+  static void tcXor(integerPart *, const integerPart *, unsigned);
+  static void tcComplement(integerPart *, unsigned);
 
   /// Comparison (unsigned) of two bignums.
-  static int tcCompare(const integerPart *, const integerPart *, unsigned int);
+  static int tcCompare(const integerPart *, const integerPart *, unsigned);
 
   /// Increment a bignum in-place.  Return the carry flag.
-  static integerPart tcIncrement(integerPart *, unsigned int);
+  static integerPart tcIncrement(integerPart *, unsigned);
 
   /// Decrement a bignum in-place.  Return the borrow flag.
-  static integerPart tcDecrement(integerPart *, unsigned int);
+  static integerPart tcDecrement(integerPart *, unsigned);
 
   /// Set the least significant BITS and clear the rest.
-  static void tcSetLeastSignificantBits(integerPart *, unsigned int,
-                                        unsigned int bits);
+  static void tcSetLeastSignificantBits(integerPart *, unsigned, unsigned bits);
 
   /// \brief debug method
   void dump() const;
@@ -1874,14 +1912,6 @@ inline const APInt &umax(const APInt &A, const APInt &B) {
   return A.ugt(B) ? A : B;
 }
 
-/// \brief Check if the specified APInt has a N-bits unsigned integer value.
-inline bool isIntN(unsigned N, const APInt &APIVal) { return APIVal.isIntN(N); }
-
-/// \brief Check if the specified APInt has a N-bits signed integer value.
-inline bool isSignedIntN(unsigned N, const APInt &APIVal) {
-  return APIVal.isSignedIntN(N);
-}
-
 /// \returns true if the argument APInt value is a sequence of ones starting at
 /// the least significant bit with the remainder zero.
 inline bool isMask(unsigned numBits, const APInt &APIVal) {
@@ -1898,23 +1928,17 @@ inline bool isMask(const APInt &Value) {
 
 /// \brief Return true if the argument APInt value contains a sequence of ones
 /// with the remainder zero.
-inline bool isShiftedMask(unsigned numBits, const APInt &APIVal) {
-  return isMask(numBits, (APIVal - APInt(numBits, 1)) | APIVal);
+inline bool isShiftedMask(const APInt &APIVal) {
+  return (APIVal != 0) && isMask((APIVal - 1) | APIVal);
 }
-
-/// \brief Returns a byte-swapped representation of the specified APInt Value.
-inline APInt byteSwap(const APInt &APIVal) { return APIVal.byteSwap(); }
-
-/// \brief Returns the floor log base 2 of the specified APInt value.
-inline unsigned logBase2(const APInt &APIVal) { return APIVal.logBase2(); }
 
 /// \brief Compute GCD of two APInt values.
 ///
 /// This function returns the greatest common divisor of the two APInt values
 /// using Euclid's algorithm.
 ///
-/// \returns the greatest common divisor of Val1 and Val2
-APInt GreatestCommonDivisor(const APInt &Val1, const APInt &Val2);
+/// \returns the greatest common divisor of \param A and \param B.
+APInt GreatestCommonDivisor(APInt A, APInt B);
 
 /// \brief Converts the given APInt to a double value.
 ///
@@ -1953,52 +1977,6 @@ APInt RoundDoubleToAPInt(double Double, unsigned width);
 inline APInt RoundFloatToAPInt(float Float, unsigned width) {
   return RoundDoubleToAPInt(double(Float), width);
 }
-
-/// \brief Arithmetic right-shift function.
-///
-/// Arithmetic right-shift the APInt by shiftAmt.
-inline APInt ashr(const APInt &LHS, unsigned shiftAmt) {
-  return LHS.ashr(shiftAmt);
-}
-
-/// \brief Logical right-shift function.
-///
-/// Logical right-shift the APInt by shiftAmt.
-inline APInt lshr(const APInt &LHS, unsigned shiftAmt) {
-  return LHS.lshr(shiftAmt);
-}
-
-/// \brief Left-shift function.
-///
-/// Left-shift the APInt by shiftAmt.
-inline APInt shl(const APInt &LHS, unsigned shiftAmt) {
-  return LHS.shl(shiftAmt);
-}
-
-/// \brief Signed division function for APInt.
-///
-/// Signed divide APInt LHS by APInt RHS.
-inline APInt sdiv(const APInt &LHS, const APInt &RHS) { return LHS.sdiv(RHS); }
-
-/// \brief Unsigned division function for APInt.
-///
-/// Unsigned divide APInt LHS by APInt RHS.
-inline APInt udiv(const APInt &LHS, const APInt &RHS) { return LHS.udiv(RHS); }
-
-/// \brief Function for signed remainder operation.
-///
-/// Signed remainder operation on APInt.
-inline APInt srem(const APInt &LHS, const APInt &RHS) { return LHS.srem(RHS); }
-
-/// \brief Function for unsigned remainder operation.
-///
-/// Unsigned remainder operation on APInt.
-inline APInt urem(const APInt &LHS, const APInt &RHS) { return LHS.urem(RHS); }
-
-/// \brief Function for multiplication operation.
-///
-/// Performs multiplication on APInt values.
-inline APInt mul(const APInt &LHS, const APInt &RHS) { return LHS * RHS; }
 
 } // End of APIntOps namespace
 

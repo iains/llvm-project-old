@@ -792,7 +792,7 @@ EVT AArch64TargetLowering::getSetCCResultType(const DataLayout &, LLVMContext &,
 /// KnownZero/KnownOne bitsets.
 void AArch64TargetLowering::computeKnownBitsForTargetNode(
     const SDValue Op, APInt &KnownZero, APInt &KnownOne,
-    const SelectionDAG &DAG, unsigned Depth) const {
+    const APInt &DemandedElts, const SelectionDAG &DAG, unsigned Depth) const {
   switch (Op.getOpcode()) {
   default:
     break;
@@ -2231,19 +2231,13 @@ static SDValue skipExtensionForVectorMULL(SDNode *N, SelectionDAG &DAG) {
 }
 
 static bool isSignExtended(SDNode *N, SelectionDAG &DAG) {
-  if (N->getOpcode() == ISD::SIGN_EXTEND)
-    return true;
-  if (isExtendedBUILD_VECTOR(N, DAG, true))
-    return true;
-  return false;
+  return N->getOpcode() == ISD::SIGN_EXTEND ||
+         isExtendedBUILD_VECTOR(N, DAG, true);
 }
 
 static bool isZeroExtended(SDNode *N, SelectionDAG &DAG) {
-  if (N->getOpcode() == ISD::ZERO_EXTEND)
-    return true;
-  if (isExtendedBUILD_VECTOR(N, DAG, false))
-    return true;
-  return false;
+  return N->getOpcode() == ISD::ZERO_EXTEND ||
+         isExtendedBUILD_VECTOR(N, DAG, false);
 }
 
 static bool isAddSubSExt(SDNode *N, SelectionDAG &DAG) {
@@ -3679,7 +3673,7 @@ SDValue AArch64TargetLowering::LowerGlobalTLSAddress(SDValue Op,
                                                      SelectionDAG &DAG) const {
   if (Subtarget->isTargetDarwin())
     return LowerDarwinGlobalTLSAddress(Op, DAG);
-  else if (Subtarget->isTargetELF())
+  if (Subtarget->isTargetELF())
     return LowerELFGlobalTLSAddress(Op, DAG);
 
   llvm_unreachable("Unexpected platform trying to use TLS");
@@ -7762,7 +7756,7 @@ SDValue
 AArch64TargetLowering::BuildSDIVPow2(SDNode *N, const APInt &Divisor,
                                      SelectionDAG &DAG,
                                      std::vector<SDNode *> *Created) const {
-  AttributeSet Attr = DAG.getMachineFunction().getFunction()->getAttributes();
+  AttributeList Attr = DAG.getMachineFunction().getFunction()->getAttributes();
   if (isIntDivCheap(N->getValueType(0), Attr))
     return SDValue(N,0); // Lower SDIV as SDIV
 
@@ -10794,7 +10788,7 @@ void AArch64TargetLowering::insertCopiesSplitCSR(
   }
 }
 
-bool AArch64TargetLowering::isIntDivCheap(EVT VT, AttributeSet Attr) const {
+bool AArch64TargetLowering::isIntDivCheap(EVT VT, AttributeList Attr) const {
   // Integer division on AArch64 is expensive. However, when aggressively
   // optimizing for code size, we prefer to use a div instruction, as it is
   // usually smaller than the alternative sequence.
@@ -10803,7 +10797,7 @@ bool AArch64TargetLowering::isIntDivCheap(EVT VT, AttributeSet Attr) const {
   // size, because it will have to be scalarized, while the alternative code
   // sequence can be performed in vector form.
   bool OptSize =
-      Attr.hasAttribute(AttributeSet::FunctionIndex, Attribute::MinSize);
+      Attr.hasAttribute(AttributeList::FunctionIndex, Attribute::MinSize);
   return OptSize && !VT.isVector();
 }
 

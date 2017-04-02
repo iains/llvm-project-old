@@ -309,7 +309,7 @@ Value *InstCombiner::insertRangeTest(Value *V, const APInt &Lo, const APInt &Hi,
 static bool isRunOfOnes(ConstantInt *Val, uint32_t &MB, uint32_t &ME) {
   const APInt& V = Val->getValue();
   uint32_t BitWidth = Val->getType()->getBitWidth();
-  if (!APIntOps::isShiftedMask(BitWidth, V)) return false;
+  if (!APIntOps::isShiftedMask(V)) return false;
 
   // look for the first zero bit after the run of ones
   MB = BitWidth - ((V - 1) ^ V).countLeadingZeros();
@@ -1335,18 +1335,6 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
         if (AndRHSMask == 1 && match(Op0LHS, m_Zero()))
           return BinaryOperator::CreateAnd(Op0RHS, AndRHS);
 
-        // (A - N) & AndRHS -> -N & AndRHS iff A&AndRHS==0 and AndRHS
-        // has 1's for all bits that the subtraction with A might affect.
-        if (Op0I->hasOneUse() && !match(Op0LHS, m_Zero())) {
-          uint32_t BitWidth = AndRHSMask.getBitWidth();
-          uint32_t Zeros = AndRHSMask.countLeadingZeros();
-          APInt Mask = APInt::getLowBitsSet(BitWidth, BitWidth - Zeros);
-
-          if (MaskedValueIsZero(Op0LHS, Mask, 0, &I)) {
-            Value *NewNeg = Builder->CreateNeg(Op0RHS);
-            return BinaryOperator::CreateAnd(NewNeg, AndRHS);
-          }
-        }
         break;
 
       case Instruction::Shl:
