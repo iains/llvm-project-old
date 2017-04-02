@@ -12,10 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RAIIObjectsForParser.h"
 #include "clang/Basic/Attributes.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Parse/Parser.h"
+#include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/LoopHint.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
@@ -1179,7 +1179,8 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
   StmtResult ThenStmt;
   {
     EnterExpressionEvaluationContext PotentiallyDiscarded(
-        Actions, Sema::DiscardedStatement, nullptr, false,
+        Actions, Sema::ExpressionEvaluationContext::DiscardedStatement, nullptr,
+        false,
         /*ShouldEnter=*/ConstexprCondition && !*ConstexprCondition);
     ThenStmt = ParseStatement(&InnerStatementTrailingElseLoc);
   }
@@ -1212,7 +1213,8 @@ StmtResult Parser::ParseIfStatement(SourceLocation *TrailingElseLoc) {
                           Tok.is(tok::l_brace));
 
     EnterExpressionEvaluationContext PotentiallyDiscarded(
-        Actions, Sema::DiscardedStatement, nullptr, false,
+        Actions, Sema::ExpressionEvaluationContext::DiscardedStatement, nullptr,
+        false,
         /*ShouldEnter=*/ConstexprCondition && *ConstexprCondition);
     ElseStmt = ParseStatement();
 

@@ -681,7 +681,8 @@ public:
       : S(S), SavedContext(S, DC)
     {
       S.PushFunctionScope();
-      S.PushExpressionEvaluationContext(Sema::PotentiallyEvaluated);
+      S.PushExpressionEvaluationContext(
+          Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
     }
 
     ~SynthesizedFunctionScope() {
@@ -802,7 +803,7 @@ public:
 
   /// \brief Describes how the expressions currently being parsed are
   /// evaluated at run-time, if at all.
-  enum ExpressionEvaluationContext {
+  enum class ExpressionEvaluationContext {
     /// \brief The current expression and its subexpressions occur within an
     /// unevaluated operand (C++11 [expr]p7), such as the subexpression of
     /// \c sizeof, where the type of the expression may be significant but
@@ -908,8 +909,12 @@ public:
     MangleNumberingContext &getMangleNumberingContext(ASTContext &Ctx);
 
     bool isUnevaluated() const {
-      return Context == Unevaluated || Context == UnevaluatedAbstract ||
-             Context == UnevaluatedList;
+      return Context == ExpressionEvaluationContext::Unevaluated ||
+             Context == ExpressionEvaluationContext::UnevaluatedAbstract ||
+             Context == ExpressionEvaluationContext::UnevaluatedList;
+    }
+    bool isConstantEvaluated() const {
+      return Context == ExpressionEvaluationContext::ConstantEvaluated;
     }
   };
 
@@ -1065,14 +1070,12 @@ public:
   /// statements.
   class FPContractStateRAII {
   public:
-    FPContractStateRAII(Sema& S)
-      : S(S), OldFPContractState(S.FPFeatures.fp_contract) {}
-    ~FPContractStateRAII() {
-      S.FPFeatures.fp_contract = OldFPContractState;
-    }
+    FPContractStateRAII(Sema &S) : S(S), OldFPFeaturesState(S.FPFeatures) {}
+    ~FPContractStateRAII() { S.FPFeatures = OldFPFeaturesState; }
+
   private:
     Sema& S;
-    bool OldFPContractState : 1;
+    FPOptions OldFPFeaturesState;
   };
 
   void addImplicitTypedef(StringRef Name, QualType T);
@@ -1822,7 +1825,6 @@ public:
   void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit);
   void ActOnUninitializedDecl(Decl *dcl);
   void ActOnInitializerError(Decl *Dcl);
-  bool canInitializeWithParenthesizedList(QualType TargetType);
 
   void ActOnPureSpecifier(Decl *D, SourceLocation PureSpecLoc);
   void ActOnCXXForRangeDecl(Decl *D);
@@ -4987,7 +4989,7 @@ public:
                             ArrayRef<TypeSourceInfo *> Args,
                             SourceLocation RParenLoc);
 
-  /// ActOnArrayTypeTrait - Parsed one of the bianry type trait support
+  /// ActOnArrayTypeTrait - Parsed one of the binary type trait support
   /// pseudo-functions.
   ExprResult ActOnArrayTypeTrait(ArrayTypeTrait ATT,
                                  SourceLocation KWLoc,
@@ -7505,6 +7507,12 @@ public:
                         LateInstantiatedAttrVec *LateAttrs = nullptr,
                         LocalInstantiationScope *OuterMostScope = nullptr);
 
+  void
+  InstantiateAttrsForDecl(const MultiLevelTemplateArgumentList &TemplateArgs,
+                          const Decl *Pattern, Decl *Inst,
+                          LateInstantiatedAttrVec *LateAttrs = nullptr,
+                          LocalInstantiationScope *OuterMostScope = nullptr);
+
   bool
   InstantiateClassTemplateSpecialization(SourceLocation PointOfInstantiation,
                            ClassTemplateSpecializationDecl *ClassTemplateSpec,
@@ -7666,7 +7674,8 @@ public:
                                     Decl * const *ProtoRefs,
                                     unsigned NumProtoRefs,
                                     const SourceLocation *ProtoLocs,
-                                    SourceLocation EndProtoLoc);
+                                    SourceLocation EndProtoLoc,
+                                    AttributeList *AttrList);
 
   Decl *ActOnStartClassImplementation(
                     SourceLocation AtClassImplLoc,
@@ -8171,6 +8180,11 @@ public:
   /// declaration.
   void AddAssumeAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E, Expr *OE,
                             unsigned SpellingListIndex);
+
+  /// AddAllocAlignAttr - Adds an alloc_align attribute to a particular
+  /// declaration.
+  void AddAllocAlignAttr(SourceRange AttrRange, Decl *D, Expr *ParamExpr,
+                         unsigned SpellingListIndex);
 
   /// AddAlignValueAttr - Adds an align_value attribute to a particular
   /// declaration.
@@ -9342,14 +9356,14 @@ public:
   enum ARCConversionResult { ACR_okay, ACR_unbridged, ACR_error };
 
   /// \brief Checks for invalid conversions and casts between
-  /// retainable pointers and other pointer kinds.
-  ARCConversionResult CheckObjCARCConversion(SourceRange castRange,
-                                             QualType castType, Expr *&op,
-                                             CheckedConversionKind CCK,
-                                             bool Diagnose = true,
-                                             bool DiagnoseCFAudited = false,
-                                             BinaryOperatorKind Opc = BO_PtrMemD
-                                             );
+  /// retainable pointers and other pointer kinds for ARC and Weak.
+  ARCConversionResult CheckObjCConversion(SourceRange castRange,
+                                          QualType castType, Expr *&op,
+                                          CheckedConversionKind CCK,
+                                          bool Diagnose = true,
+                                          bool DiagnoseCFAudited = false,
+                                          BinaryOperatorKind Opc = BO_PtrMemD
+                                          );
 
   Expr *stripARCUnbridgedCast(Expr *e);
   void diagnoseARCUnbridgedCast(Expr *e);
@@ -10306,6 +10320,7 @@ class EnterExpressionEvaluationContext {
   bool Entered = true;
 
 public:
+
   EnterExpressionEvaluationContext(Sema &Actions,
                                    Sema::ExpressionEvaluationContext NewContext,
                                    Decl *LambdaContextDecl = nullptr,
@@ -10336,8 +10351,8 @@ public:
     // a context.
     if (ShouldEnter && Actions.isUnevaluatedContext() &&
         Actions.getLangOpts().CPlusPlus11) {
-      Actions.PushExpressionEvaluationContext(Sema::UnevaluatedList, nullptr,
-                                              false);
+      Actions.PushExpressionEvaluationContext(
+          Sema::ExpressionEvaluationContext::UnevaluatedList, nullptr, false);
       Entered = true;
     }
   }

@@ -131,7 +131,7 @@ ImplicitConversionRank clang::GetConversionRank(ImplicitConversionKind Kind) {
     ICR_Conversion,
     ICR_Conversion,
     ICR_Conversion,
-    ICR_Conversion,
+    ICR_OCL_Scalar_Widening,
     ICR_Complex_Real_Conversion,
     ICR_Conversion,
     ICR_Conversion,
@@ -5888,7 +5888,8 @@ Sema::AddOverloadCandidate(FunctionDecl *Function,
     return;
 
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   // Add this candidate
   OverloadCandidate &Candidate =
@@ -6307,30 +6308,45 @@ void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
   for (UnresolvedSetIterator F = Fns.begin(), E = Fns.end(); F != E; ++F) {
     NamedDecl *D = F.getDecl()->getUnderlyingDecl();
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-      if (isa<CXXMethodDecl>(FD) && !cast<CXXMethodDecl>(FD)->isStatic())
+      if (isa<CXXMethodDecl>(FD) && !cast<CXXMethodDecl>(FD)->isStatic()) {
+        QualType ObjectType;
+        Expr::Classification ObjectClassification;
+        if (Expr *E = Args[0]) {
+          // Use the explit base to restrict the lookup:
+          ObjectType = E->getType();
+          ObjectClassification = E->Classify(Context);
+        } // .. else there is an implit base.
         AddMethodCandidate(cast<CXXMethodDecl>(FD), F.getPair(),
-                           cast<CXXMethodDecl>(FD)->getParent(),
-                           Args[0]->getType(), Args[0]->Classify(Context),
-                           Args.slice(1), CandidateSet, SuppressUserConversions,
-                           PartialOverloading);
-      else
+                           cast<CXXMethodDecl>(FD)->getParent(), ObjectType,
+                           ObjectClassification, Args.slice(1), CandidateSet,
+                           SuppressUserConversions, PartialOverloading);
+      } else {
         AddOverloadCandidate(FD, F.getPair(), Args, CandidateSet,
                              SuppressUserConversions, PartialOverloading);
+      }
     } else {
       FunctionTemplateDecl *FunTmpl = cast<FunctionTemplateDecl>(D);
       if (isa<CXXMethodDecl>(FunTmpl->getTemplatedDecl()) &&
-          !cast<CXXMethodDecl>(FunTmpl->getTemplatedDecl())->isStatic())
+          !cast<CXXMethodDecl>(FunTmpl->getTemplatedDecl())->isStatic()) {
+        QualType ObjectType;
+        Expr::Classification ObjectClassification;
+        if (Expr *E = Args[0]) {
+          // Use the explit base to restrict the lookup:
+          ObjectType = E->getType();
+          ObjectClassification = E->Classify(Context);
+        } // .. else there is an implit base.
         AddMethodTemplateCandidate(
             FunTmpl, F.getPair(),
             cast<CXXRecordDecl>(FunTmpl->getDeclContext()),
-            ExplicitTemplateArgs, Args[0]->getType(),
-            Args[0]->Classify(Context), Args.slice(1), CandidateSet,
-            SuppressUserConversions, PartialOverloading);
-      else
+            ExplicitTemplateArgs, ObjectType, ObjectClassification,
+            Args.slice(1), CandidateSet, SuppressUserConversions,
+            PartialOverloading);
+      } else {
         AddTemplateOverloadCandidate(FunTmpl, F.getPair(),
                                      ExplicitTemplateArgs, Args,
                                      CandidateSet, SuppressUserConversions,
                                      PartialOverloading);
+      }
     }
   }
 }
@@ -6396,7 +6412,8 @@ Sema::AddMethodCandidate(CXXMethodDecl *Method, DeclAccessPair FoundDecl,
     return;
 
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   // Add this candidate
   OverloadCandidate &Candidate =
@@ -6652,7 +6669,8 @@ bool Sema::CheckNonDependentConversions(
       CandidateSet.allocateConversionSequences(ThisConversions + Args.size());
 
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   // For a method call, check the 'this' conversion here too. DR1391 doesn't
   // require that, but this check should never result in a hard error, and
@@ -6760,7 +6778,8 @@ Sema::AddConversionCandidate(CXXConversionDecl *Conversion,
     return;
 
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   // Add this candidate
   OverloadCandidate &Candidate = CandidateSet.addCandidate(1);
@@ -6951,7 +6970,8 @@ void Sema::AddSurrogateCandidate(CXXConversionDecl *Conversion,
     return;
 
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   OverloadCandidate &Candidate = CandidateSet.addCandidate(Args.size() + 1);
   Candidate.FoundDecl = FoundDecl;
@@ -7109,7 +7129,8 @@ void Sema::AddBuiltinCandidate(QualType ResultTy, QualType *ParamTys,
                                bool IsAssignmentOperator,
                                unsigned NumContextualBoolArguments) {
   // Overload resolution is always an unevaluated context.
-  EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+  EnterExpressionEvaluationContext Unevaluated(
+      *this, Sema::ExpressionEvaluationContext::Unevaluated);
 
   // Add this candidate
   OverloadCandidate &Candidate = CandidateSet.addCandidate(Args.size());
@@ -11963,7 +11984,7 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
                                      Fns.begin(), Fns.end());
     return new (Context)
         CXXOperatorCallExpr(Context, Op, Fn, ArgsArray, Context.DependentTy,
-                            VK_RValue, OpLoc, false);
+                            VK_RValue, OpLoc, FPOptions());
   }
 
   // Build an empty overload set.
@@ -12033,7 +12054,7 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
       Args[0] = Input;
       CallExpr *TheCall =
         new (Context) CXXOperatorCallExpr(Context, Op, FnExpr.get(), ArgsArray,
-                                          ResultTy, VK, OpLoc, false);
+                                          ResultTy, VK, OpLoc, FPOptions());
 
       if (CheckCallReturnType(FnDecl->getReturnType(), OpLoc, TheCall, FnDecl))
         return ExprError();
@@ -12131,12 +12152,12 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
       if (Opc <= BO_Assign || Opc > BO_OrAssign)
         return new (Context) BinaryOperator(
             Args[0], Args[1], Opc, Context.DependentTy, VK_RValue, OK_Ordinary,
-            OpLoc, FPFeatures.fp_contract);
+            OpLoc, FPFeatures);
 
       return new (Context) CompoundAssignOperator(
           Args[0], Args[1], Opc, Context.DependentTy, VK_LValue, OK_Ordinary,
           Context.DependentTy, Context.DependentTy, OpLoc,
-          FPFeatures.fp_contract);
+          FPFeatures);
     }
 
     // FIXME: save results of ADL from here?
@@ -12150,7 +12171,7 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
                                      Fns.begin(), Fns.end());
     return new (Context)
         CXXOperatorCallExpr(Context, Op, Fn, Args, Context.DependentTy,
-                            VK_RValue, OpLoc, FPFeatures.fp_contract);
+                            VK_RValue, OpLoc, FPFeatures);
   }
 
   // Always do placeholder-like conversions on the RHS.
@@ -12265,7 +12286,7 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
         CXXOperatorCallExpr *TheCall =
           new (Context) CXXOperatorCallExpr(Context, Op, FnExpr.get(),
                                             Args, ResultTy, VK, OpLoc,
-                                            FPFeatures.fp_contract);
+                                            FPFeatures);
 
         if (CheckCallReturnType(FnDecl->getReturnType(), OpLoc, TheCall,
                                 FnDecl))
@@ -12413,7 +12434,7 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
 
     return new (Context)
         CXXOperatorCallExpr(Context, OO_Subscript, Fn, Args,
-                            Context.DependentTy, VK_RValue, RLoc, false);
+                            Context.DependentTy, VK_RValue, RLoc, FPOptions());
   }
 
   // Handle placeholders on both operands.
@@ -12489,7 +12510,7 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
           new (Context) CXXOperatorCallExpr(Context, OO_Subscript,
                                             FnExpr.get(), Args,
                                             ResultTy, VK, RLoc,
-                                            false);
+                                            FPOptions());
 
         if (CheckCallReturnType(FnDecl->getReturnType(), LLoc, TheCall, FnDecl))
           return ExprError();
@@ -13052,7 +13073,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
 
   CXXOperatorCallExpr *TheCall = new (Context)
       CXXOperatorCallExpr(Context, OO_Call, NewFn.get(), MethodArgs, ResultTy,
-                          VK, RParenLoc, false);
+                          VK, RParenLoc, FPOptions());
 
   if (CheckCallReturnType(Method->getReturnType(), LParenLoc, TheCall, Method))
     return true;
@@ -13232,7 +13253,7 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc,
   ResultTy = ResultTy.getNonLValueExprType(Context);
   CXXOperatorCallExpr *TheCall =
     new (Context) CXXOperatorCallExpr(Context, OO_Arrow, FnExpr.get(),
-                                      Base, ResultTy, VK, OpLoc, false);
+                                      Base, ResultTy, VK, OpLoc, FPOptions());
 
   if (CheckCallReturnType(Method->getReturnType(), OpLoc, TheCall, Method))
     return ExprError();

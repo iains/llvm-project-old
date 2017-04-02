@@ -13,6 +13,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/FileManager.h"
+#include "clang/Basic/MemoryBufferCache.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Version.h"
@@ -55,9 +56,15 @@ using namespace clang;
 
 CompilerInstance::CompilerInstance(
     std::shared_ptr<PCHContainerOperations> PCHContainerOps,
-    bool BuildingModule)
-    : ModuleLoader(BuildingModule), Invocation(new CompilerInvocation()),
-      ThePCHContainerOperations(std::move(PCHContainerOps)) {}
+    MemoryBufferCache *SharedPCMCache)
+    : ModuleLoader(/* BuildingModule = */ SharedPCMCache),
+      Invocation(new CompilerInvocation()),
+      PCMCache(SharedPCMCache ? SharedPCMCache : new MemoryBufferCache),
+      ThePCHContainerOperations(std::move(PCHContainerOps)) {
+  // Don't allow this to invalidate buffers in use by others.
+  if (SharedPCMCache)
+    getPCMCache().finalizeCurrentBuffers();
+}
 
 CompilerInstance::~CompilerInstance() {
   assert(OutputFiles.empty() && "Still output files in flight?");
@@ -128,6 +135,8 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::getModuleManager() const {
   return ModuleManager;
 }
 void CompilerInstance::setModuleManager(IntrusiveRefCntPtr<ASTReader> Reader) {
+  assert(PCMCache.get() == &Reader->getModuleManager().getPCMCache() &&
+         "Expected ASTReader to use the same PCM cache");
   ModuleManager = std::move(Reader);
 }
 
@@ -370,7 +379,7 @@ void CompilerInstance::createPreprocessor(TranslationUnitKind TUKind) {
                        getDiagnostics(), getLangOpts(), &getTarget());
   PP = std::make_shared<Preprocessor>(
       Invocation->getPreprocessorOptsPtr(), getDiagnostics(), getLangOpts(),
-      getSourceManager(), *HeaderInfo, *this, PTHMgr,
+      getSourceManager(), getPCMCache(), *HeaderInfo, *this, PTHMgr,
       /*OwnsHeaderSearch=*/true, TUKind);
   PP->Initialize(getTarget(), getAuxTarget());
 
@@ -488,6 +497,8 @@ void CompilerInstance::createPCHExternalASTSource(
       AllowPCHWithCompilerErrors, getPreprocessor(), getASTContext(),
       getPCHContainerReader(),
       getFrontendOpts().ModuleFileExtensions,
+      TheDependencyFileGenerator.get(),
+      DependencyCollectors,
       DeserializationListener,
       OwnDeserializationListener, Preamble,
       getFrontendOpts().UseGlobalModuleIndex);
@@ -498,6 +509,8 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
     bool AllowPCHWithCompilerErrors, Preprocessor &PP, ASTContext &Context,
     const PCHContainerReader &PCHContainerRdr,
     ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
+    DependencyFileGenerator *DependencyFile,
+    ArrayRef<std::shared_ptr<DependencyCollector>> DependencyCollectors,
     void *DeserializationListener, bool OwnDeserializationListener,
     bool Preamble, bool UseGlobalModuleIndex) {
   HeaderSearchOptions &HSOpts = PP.getHeaderSearchInfo().getHeaderSearchOpts();
@@ -515,6 +528,12 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
   Reader->setDeserializationListener(
       static_cast<ASTDeserializationListener *>(DeserializationListener),
       /*TakeOwnership=*/OwnDeserializationListener);
+
+  if (DependencyFile)
+    DependencyFile->AttachToASTReader(*Reader);
+  for (auto &Listener : DependencyCollectors)
+    Listener->attachToASTReader(*Reader);
+
   switch (Reader->ReadAST(Path,
                           Preamble ? serialization::MK_Preamble
                                    : serialization::MK_PCH,
@@ -1073,9 +1092,11 @@ static bool compileModuleImpl(CompilerInstance &ImportingInstance,
          Invocation->getModuleHash() && "Module hash mismatch!");
   
   // Construct a compiler instance that will be used to actually create the
-  // module.
+  // module.  Since we're sharing a PCMCache,
+  // CompilerInstance::CompilerInstance is responsible for finalizing the
+  // buffers to prevent use-after-frees.
   CompilerInstance Instance(ImportingInstance.getPCHContainerOperations(),
-                            /*BuildingModule=*/true);
+                            &ImportingInstance.getPreprocessor().getPCMCache());
   auto &Inv = *Invocation;
   Instance.setInvocation(std::move(Invocation));
 
