@@ -134,7 +134,7 @@ struct ParseStatementInfo {
 
   SmallVectorImpl<AsmRewrite> *AsmRewrites = nullptr;
 
-  ParseStatementInfo() = default;
+  ParseStatementInfo() = delete;
   ParseStatementInfo(SmallVectorImpl<AsmRewrite> *rewrites)
     : AsmRewrites(rewrites) {}
 };
@@ -737,6 +737,7 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
 
   HadError = false;
   AsmCond StartingCondState = TheCondState;
+  SmallVector<AsmRewrite, 4> AsmStrRewrites;
 
   // If we are generating dwarf for assembly source files save the initial text
   // section and generate a .file directive.
@@ -756,7 +757,7 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
 
   // While we have input, parse each statement.
   while (Lexer.isNot(AsmToken::Eof)) {
-    ParseStatementInfo Info;
+    ParseStatementInfo Info(&AsmStrRewrites);
     if (!parseStatement(Info, nullptr))
       continue;
 
@@ -1650,7 +1651,7 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
     }
 
     // Emit the label.
-    if (!ParsingInlineAsm)
+    if (!getTargetParser().isParsingInlineAsm())
       Out.EmitLabel(Sym, IDLoc);
 
     // If we are generating dwarf for assembly source files then gather the
@@ -1755,8 +1756,8 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
     case DK_8BYTE:
       return parseDirectiveValue(IDVal, 8);
     case DK_DC_A:
-      return parseDirectiveValue(IDVal,
-                                 getContext().getAsmInfo()->getPointerSize());
+      return parseDirectiveValue(
+          IDVal, getContext().getAsmInfo()->getCodePointerSize());
     case DK_OCTA:
       return parseDirectiveOctaValue(IDVal);
     case DK_SINGLE:
@@ -1980,7 +1981,7 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
   if (ParsingInlineAsm && (IDVal == "align" || IDVal == "ALIGN"))
     return parseDirectiveMSAlign(IDLoc, Info);
 
-  if (ParsingInlineAsm && (IDVal == "even"))
+  if (ParsingInlineAsm && (IDVal == "even" || IDVal == "EVEN"))
     Info.AsmRewrites->emplace_back(AOK_EVEN, IDLoc, 4);
   if (checkForValidSection())
     return true;
@@ -2057,9 +2058,9 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
   // If parsing succeeded, match the instruction.
   if (!ParseHadError) {
     uint64_t ErrorInfo;
-    if (getTargetParser().MatchAndEmitInstruction(IDLoc, Info.Opcode,
-                                                  Info.ParsedOperands, Out,
-                                                  ErrorInfo, ParsingInlineAsm))
+    if (getTargetParser().MatchAndEmitInstruction(
+            IDLoc, Info.Opcode, Info.ParsedOperands, Out, ErrorInfo,
+            getTargetParser().isParsingInlineAsm()))
       return true;
   }
   return false;
@@ -3873,6 +3874,12 @@ bool AsmParser::parseDirectiveMacro(SMLoc DirectiveLoc) {
     MCAsmMacroParameter Parameter;
     if (parseIdentifier(Parameter.Name))
       return TokError("expected identifier in '.macro' directive");
+
+    // Emit an error if two (or more) named parameters share the same name
+    for (const MCAsmMacroParameter& CurrParam : Parameters)
+      if (CurrParam.Name.equals(Parameter.Name))
+        return TokError("macro '" + Name + "' has multiple parameters"
+                        " named '" + Parameter.Name + "'");
 
     if (Lexer.is(AsmToken::Colon)) {
       Lex();  // consume ':'

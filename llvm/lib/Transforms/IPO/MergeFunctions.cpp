@@ -211,7 +211,9 @@ private:
 
   /// Checks the rules of order relation introduced among functions set.
   /// Returns true, if sanity check has been passed, and false if failed.
+#ifndef NDEBUG
   bool doSanityCheck(std::vector<WeakVH> &Worklist);
+#endif
 
   /// Insert a ComparableFunction into the FnTree, or merge it away if it's
   /// equal to one that's already present.
@@ -283,6 +285,7 @@ ModulePass *llvm::createMergeFunctionsPass() {
   return new MergeFunctions();
 }
 
+#ifndef NDEBUG
 bool MergeFunctions::doSanityCheck(std::vector<WeakVH> &Worklist) {
   if (const unsigned Max = NumFunctionsForSanityCheck) {
     unsigned TripleNumber = 0;
@@ -351,6 +354,7 @@ bool MergeFunctions::doSanityCheck(std::vector<WeakVH> &Worklist) {
   }
   return true;
 }
+#endif
 
 bool MergeFunctions::runOnModule(Module &M) {
   if (skipModule(M))
@@ -432,19 +436,15 @@ void MergeFunctions::replaceDirectCallers(Function *Old, Function *New) {
       // Transferring other attributes may help other optimizations, but that
       // should be done uniformly and not in this ad-hoc way.
       auto &Context = New->getContext();
-      auto NewFuncAttrs = New->getAttributes();
-      auto CallSiteAttrs = CS.getAttributes();
-
-      CallSiteAttrs = CallSiteAttrs.addAttributes(
-          Context, AttributeList::ReturnIndex, NewFuncAttrs.getRetAttributes());
-
-      for (unsigned argIdx = 0; argIdx < CS.arg_size(); argIdx++) {
-        AttributeList Attrs = NewFuncAttrs.getParamAttributes(argIdx);
-        if (Attrs.getNumSlots())
-          CallSiteAttrs = CallSiteAttrs.addAttributes(Context, argIdx, Attrs);
-      }
-
-      CS.setAttributes(CallSiteAttrs);
+      auto NewPAL = New->getAttributes();
+      SmallVector<AttributeSet, 4> NewArgAttrs;
+      for (unsigned argIdx = 0; argIdx < CS.arg_size(); argIdx++)
+        NewArgAttrs.push_back(NewPAL.getParamAttributes(argIdx));
+      // Don't transfer attributes from the function to the callee. Function
+      // attributes typically aren't relevant to the calling convention or ABI.
+      CS.setAttributes(AttributeList::get(Context, /*FnAttrs=*/AttributeSet(),
+                                          NewPAL.getRetAttributes(),
+                                          NewArgAttrs));
 
       remove(CS.getInstruction()->getParent()->getParent());
       U->set(BitcastNew);

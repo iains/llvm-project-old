@@ -295,6 +295,11 @@ public:
     return getAttributes().hasAttribute(i, Kind);
   }
 
+  /// @brief check if an attributes is in the list of attributes.
+  bool hasParamAttribute(unsigned ArgNo, Attribute::AttrKind Kind) const {
+    return getAttributes().hasParamAttribute(ArgNo, Kind);
+  }
+
   Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const {
     return AttributeSets.getAttribute(i, Kind);
   }
@@ -311,18 +316,20 @@ public:
   void addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes);
 
   /// @brief Extract the alignment for a call or parameter (0=unknown).
-  unsigned getParamAlignment(unsigned i) const {
-    return AttributeSets.getParamAlignment(i);
+  unsigned getParamAlignment(unsigned ArgNo) const {
+    return AttributeSets.getParamAlignment(ArgNo);
   }
 
   /// @brief Extract the number of dereferenceable bytes for a call or
   /// parameter (0=unknown).
+  /// @param i AttributeList index, referring to a return value or argument.
   uint64_t getDereferenceableBytes(unsigned i) const {
     return AttributeSets.getDereferenceableBytes(i);
   }
 
   /// @brief Extract the number of dereferenceable_or_null bytes for a call or
   /// parameter (0=unknown).
+  /// @param i AttributeList index, referring to a return value or argument.
   uint64_t getDereferenceableOrNullBytes(unsigned i) const {
     return AttributeSets.getDereferenceableOrNullBytes(i);
   }
@@ -411,6 +418,14 @@ public:
     removeFnAttr(Attribute::Convergent);
   }
 
+  /// @brief Determine if the call has sideeffects.
+  bool isSpeculatable() const {
+    return hasFnAttribute(Attribute::Speculatable);
+  }
+  void setSpeculatable() {
+    addFnAttr(Attribute::Speculatable);
+  }
+
   /// Determine if the function is known not to recurse, directly or
   /// indirectly.
   bool doesNotRecurse() const {
@@ -435,10 +450,10 @@ public:
   }
 
   /// @brief Determine if the function returns a structure through first
-  /// pointer argument.
+  /// or second pointer argument.
   bool hasStructRetAttr() const {
-    return AttributeSets.hasAttribute(1, Attribute::StructRet) ||
-           AttributeSets.hasAttribute(2, Attribute::StructRet);
+    return AttributeSets.hasParamAttribute(0, Attribute::StructRet) ||
+           AttributeSets.hasParamAttribute(1, Attribute::StructRet);
   }
 
   /// @brief Determine if the parameter or return value is marked with NoAlias

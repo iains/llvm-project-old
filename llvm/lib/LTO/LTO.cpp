@@ -35,6 +35,7 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/Threading.h"
+#include "llvm/Support/VCSRevision.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -74,7 +75,7 @@ static void computeCacheKey(
 
   // Start with the compiler revision
   Hasher.update(LLVM_VERSION_STRING);
-#ifdef HAVE_LLVM_REVISION
+#ifdef LLVM_REVISION
   Hasher.update(LLVM_REVISION);
 #endif
 
@@ -350,6 +351,7 @@ Expected<std::unique_ptr<InputFile>> InputFile::create(MemoryBufferRef Object) {
 
   irsymtab::Reader R({Symtab.data(), Symtab.size()},
                      {File->Strtab.data(), File->Strtab.size()});
+  File->TargetTriple = R.getTargetTriple();
   File->SourceFileName = R.getSourceFileName();
   File->COFFLinkerOpts = R.getCOFFLinkerOpts();
   File->ComdatTable = R.getComdatTable();
@@ -413,7 +415,8 @@ void LTO::addSymbolToGlobalRes(const InputFile::Symbol &Sym,
   // Flag as visible outside of ThinLTO if visible from a regular object or
   // if this is a reference in the regular LTO partition.
   GlobalRes.VisibleOutsideThinLTO |=
-      (Res.VisibleToRegularObj || (Partition == GlobalResolution::RegularLTO));
+      (Res.VisibleToRegularObj || Sym.isUsed() ||
+       Partition == GlobalResolution::RegularLTO);
 }
 
 static void writeToResolutionFile(raw_ostream &OS, InputFile *Input,

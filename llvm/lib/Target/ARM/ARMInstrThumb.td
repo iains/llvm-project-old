@@ -19,7 +19,7 @@ def imm_sr_XFORM: SDNodeXForm<imm, [{
   unsigned Imm = N->getZExtValue();
   return CurDAG->getTargetConstant((Imm == 32 ? 0 : Imm), SDLoc(N), MVT::i32);
 }]>;
-def ThumbSRImmAsmOperand: AsmOperandClass { let Name = "ImmThumbSR"; }
+def ThumbSRImmAsmOperand: ImmAsmOperand<1,32> { let Name = "ImmThumbSR"; }
 def imm_sr : Operand<i32>, PatLeaf<(imm), [{
   uint64_t Imm = N->getZExtValue();
   return Imm > 0 && Imm <= 32;
@@ -53,9 +53,6 @@ def imm0_255_comp : PatLeaf<(i32 imm), [{
   return ~((uint32_t)N->getZExtValue()) < 256;
 }]>;
 
-def imm8_255 : ImmLeaf<i32, [{
-  return Imm >= 8 && Imm < 256;
-}]>;
 def imm8_255_neg : PatLeaf<(i32 imm), [{
   unsigned Val = -N->getZExtValue();
   return Val >= 8 && Val < 256;
@@ -956,7 +953,7 @@ let isAdd = 1 in {
   /// These opcodes will be converted to the real non-S opcodes by
   /// AdjustInstrPostInstrSelection after giving then an optional CPSR operand.
   let hasPostISelHook = 1, Defs = [CPSR] in {
-    let isCommutable = 1 in
+    let isCommutable = 1, Uses = [CPSR] in
     def tADCS : tPseudoInst<(outs tGPR:$Rdn), (ins tGPR:$Rn, tGPR:$Rm),
                             2, IIC_iALUr,
                             [(set tGPR:$Rdn, CPSR, (ARMadde tGPR:$Rn, tGPR:$Rm,
@@ -1295,6 +1292,7 @@ def tSUBrr :                    // A8.6.212
 /// These opcodes will be converted to the real non-S opcodes by
 /// AdjustInstrPostInstrSelection after giving then an optional CPSR operand.
 let hasPostISelHook = 1, Defs = [CPSR] in {
+  let Uses = [CPSR] in
   def tSBCS : tPseudoInst<(outs tGPR:$Rdn), (ins tGPR:$Rn, tGPR:$Rm),
                           2, IIC_iALUr,
                           [(set tGPR:$Rdn, CPSR, (ARMsube tGPR:$Rn, tGPR:$Rm,

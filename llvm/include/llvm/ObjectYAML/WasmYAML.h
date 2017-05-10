@@ -88,7 +88,7 @@ struct Relocation {
   RelocType Type;
   uint32_t Index;
   yaml::Hex32 Offset;
-  yaml::Hex32 Addend;
+  int32_t Addend;
 };
 
 struct DataSegment {
@@ -244,7 +244,7 @@ LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Global)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Function)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::LocalDecl)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Relocation)
-LLVM_YAML_IS_SEQUENCE_VECTOR(uint32_t)
+LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(uint32_t)
 
 namespace llvm {
 namespace yaml {

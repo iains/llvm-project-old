@@ -21,6 +21,7 @@
 #include "LegalizeTypes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
@@ -1525,11 +1526,11 @@ ExpandShiftWithKnownAmountBit(SDNode *N, SDValue &Lo, SDValue &Hi) {
   SDLoc dl(N);
 
   APInt HighBitMask = APInt::getHighBitsSet(ShBits, ShBits - Log2_32(NVTBits));
-  APInt KnownZero, KnownOne;
-  DAG.computeKnownBits(N->getOperand(1), KnownZero, KnownOne);
+  KnownBits Known;
+  DAG.computeKnownBits(N->getOperand(1), Known);
 
   // If we don't know anything about the high bits, exit.
-  if (((KnownZero|KnownOne) & HighBitMask) == 0)
+  if (((Known.Zero|Known.One) & HighBitMask) == 0)
     return false;
 
   // Get the incoming operand to be shifted.
@@ -1538,7 +1539,7 @@ ExpandShiftWithKnownAmountBit(SDNode *N, SDValue &Lo, SDValue &Hi) {
 
   // If we know that any of the high bits of the shift amount are one, then we
   // can do this as a couple of simple shifts.
-  if (KnownOne.intersects(HighBitMask)) {
+  if (Known.One.intersects(HighBitMask)) {
     // Mask out the high bit, which we know is set.
     Amt = DAG.getNode(ISD::AND, dl, ShTy, Amt,
                       DAG.getConstant(~HighBitMask, dl, ShTy));
@@ -1563,7 +1564,7 @@ ExpandShiftWithKnownAmountBit(SDNode *N, SDValue &Lo, SDValue &Hi) {
 
   // If we know that all of the high bits of the shift amount are zero, then we
   // can do this as a couple of simple shifts.
-  if ((KnownZero & HighBitMask) == HighBitMask) {
+  if (HighBitMask.isSubsetOf(Known.Zero)) {
     // Calculate 31-x. 31 is used instead of 32 to avoid creating an undefined
     // shift if x is zero.  We can use XOR here because x is known to be smaller
     // than 32.
@@ -3251,7 +3252,7 @@ SDValue DAGTypeLegalizer::PromoteIntRes_EXTRACT_SUBVECTOR(SDNode *N) {
     Ops.push_back(Op);
   }
 
-  return DAG.getNode(ISD::BUILD_VECTOR, dl, NOutVT, Ops);
+  return DAG.getBuildVector(NOutVT, dl, Ops);
 }
 
 
@@ -3294,7 +3295,7 @@ SDValue DAGTypeLegalizer::PromoteIntRes_BUILD_VECTOR(SDNode *N) {
     Ops.push_back(Op);
   }
 
-  return DAG.getNode(ISD::BUILD_VECTOR, dl, NOutVT, Ops);
+  return DAG.getBuildVector(NOutVT, dl, Ops);
 }
 
 SDValue DAGTypeLegalizer::PromoteIntRes_SCALAR_TO_VECTOR(SDNode *N) {
@@ -3342,7 +3343,7 @@ SDValue DAGTypeLegalizer::PromoteIntRes_CONCAT_VECTORS(SDNode *N) {
     }
   }
 
-  return DAG.getNode(ISD::BUILD_VECTOR, dl, NOutVT, Ops);
+  return DAG.getBuildVector(NOutVT, dl, Ops);
 }
 
 SDValue DAGTypeLegalizer::PromoteIntRes_EXTEND_VECTOR_INREG(SDNode *N) {
@@ -3445,5 +3446,5 @@ SDValue DAGTypeLegalizer::PromoteIntOp_CONCAT_VECTORS(SDNode *N) {
     }
   }
 
-  return DAG.getNode(ISD::BUILD_VECTOR, dl,  N->getValueType(0), NewOps);
+  return DAG.getBuildVector(N->getValueType(0), dl, NewOps);
 }

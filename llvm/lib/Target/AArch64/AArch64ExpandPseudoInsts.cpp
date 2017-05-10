@@ -892,8 +892,13 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   }
   case AArch64::MOVbaseTLS: {
     unsigned DstReg = MI.getOperand(0).getReg();
+    auto SysReg = AArch64SysReg::TPIDR_EL0;
+    MachineFunction *MF = MBB.getParent();
+    if (MF->getTarget().getTargetTriple().isOSFuchsia() &&
+        MF->getTarget().getCodeModel() == CodeModel::Kernel)
+      SysReg = AArch64SysReg::TPIDR_EL1;
     BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(AArch64::MRS), DstReg)
-        .addImm(AArch64SysReg::TPIDR_EL0);
+        .addImm(SysReg);
     MI.eraseFromParent();
     return true;
   }
@@ -937,6 +942,7 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
                           AArch64::XZR, NextMBBI);
   case AArch64::CMP_SWAP_128:
     return expandCMP_SWAP_128(MBB, MBBI, NextMBBI);
+
   }
   return false;
 }

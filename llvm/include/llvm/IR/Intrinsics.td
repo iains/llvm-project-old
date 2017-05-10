@@ -98,6 +98,18 @@ def IntrNoDuplicate : IntrinsicProperty;
 // Parallels the convergent attribute on LLVM IR functions.
 def IntrConvergent : IntrinsicProperty;
 
+// This property indicates that the intrinsic is safe to speculate.
+def IntrSpeculatable : IntrinsicProperty;
+
+// This property can be used to override the 'has no other side effects'
+// language of the IntrNoMem, IntrReadMem, IntrWriteMem, and IntrArgMemOnly
+// intrinsic properties.  By default, intrinsics are assumed to have side
+// effects, so this property is only necessary if you have defined one of
+// the memory properties listed above.
+// For this property, 'side effects' has the same meaning as 'side effects'
+// defined by the hasSideEffects property of the TableGen Instruction class.
+def IntrHasSideEffects : IntrinsicProperty;
+
 //===----------------------------------------------------------------------===//
 // Types used by intrinsics.
 //===----------------------------------------------------------------------===//
@@ -602,10 +614,10 @@ def int_umul_with_overflow : Intrinsic<[llvm_anyint_ty, llvm_i1_ty],
 //===------------------------- Memory Use Markers -------------------------===//
 //
 def int_lifetime_start  : Intrinsic<[],
-                                    [llvm_i64_ty, llvm_ptr_ty],
+                                    [llvm_i64_ty, llvm_anyptr_ty],
                                     [IntrArgMemOnly, NoCapture<1>]>;
 def int_lifetime_end    : Intrinsic<[],
-                                    [llvm_i64_ty, llvm_ptr_ty],
+                                    [llvm_i64_ty, llvm_anyptr_ty],
                                     [IntrArgMemOnly, NoCapture<1>]>;
 def int_invariant_start : Intrinsic<[llvm_descriptor_ty],
                                     [llvm_i64_ty, llvm_anyptr_ty],
@@ -615,9 +627,16 @@ def int_invariant_end   : Intrinsic<[],
                                      llvm_anyptr_ty],
                                     [IntrArgMemOnly, NoCapture<2>]>;
 
+// invariant.group.barrier can't be marked with 'readnone' (IntrNoMem),
+// because it would cause CSE of two barriers with the same argument.
+// Readonly and argmemonly says that barrier only reads its argument and
+// it can be CSE only if memory didn't change between 2 barriers call,
+// which is valid.
+// The argument also can't be marked with 'returned' attribute, because
+// it would remove barrier. 
 def int_invariant_group_barrier : Intrinsic<[llvm_ptr_ty],
                                             [llvm_ptr_ty],
-                                            [IntrNoMem]>;
+                                            [IntrReadMem, IntrArgMemOnly]>;
 
 //===------------------------ Stackmap Intrinsics -------------------------===//
 //
@@ -656,16 +675,16 @@ def int_experimental_gc_relocate : Intrinsic<[llvm_any_ty],
 
 // Coroutine Structure Intrinsics.
 
-def int_coro_id : Intrinsic<[llvm_token_ty], [llvm_i32_ty, llvm_ptr_ty, 
-                             llvm_ptr_ty, llvm_ptr_ty], 
-                            [IntrArgMemOnly, IntrReadMem, 
+def int_coro_id : Intrinsic<[llvm_token_ty], [llvm_i32_ty, llvm_ptr_ty,
+                             llvm_ptr_ty, llvm_ptr_ty],
+                            [IntrArgMemOnly, IntrReadMem,
                              ReadNone<1>, ReadOnly<2>, NoCapture<2>]>;
 def int_coro_alloc : Intrinsic<[llvm_i1_ty], [llvm_token_ty], []>;
 def int_coro_begin : Intrinsic<[llvm_ptr_ty], [llvm_token_ty, llvm_ptr_ty],
                                [WriteOnly<1>]>;
 
-def int_coro_free : Intrinsic<[llvm_ptr_ty], [llvm_token_ty, llvm_ptr_ty], 
-                              [IntrReadMem, IntrArgMemOnly, ReadOnly<1>, 
+def int_coro_free : Intrinsic<[llvm_ptr_ty], [llvm_token_ty, llvm_ptr_ty],
+                              [IntrReadMem, IntrArgMemOnly, ReadOnly<1>,
                                NoCapture<1>]>;
 def int_coro_end : Intrinsic<[llvm_i1_ty], [llvm_ptr_ty, llvm_i1_ty], []>;
 
