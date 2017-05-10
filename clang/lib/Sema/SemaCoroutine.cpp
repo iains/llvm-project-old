@@ -11,13 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Sema/SemaInternal.h"
+#include "CoroutineStmtBuilder.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Sema/SemaInternal.h"
+
 using namespace clang;
 using namespace sema;
 
@@ -452,7 +454,7 @@ static bool actOnCoroutineBodyStart(Sema &S, Scope *SC, SourceLocation KWLoc,
                                          /*IsImplicit*/ true);
     Suspend = S.ActOnFinishFullExpr(Suspend.get());
     if (Suspend.isInvalid()) {
-      S.Diag(Loc, diag::note_coroutine_promise_call_implicitly_required)
+      S.Diag(Loc, diag::note_coroutine_promise_suspend_implicitly_required)
           << ((Name == "initial_suspend") ? 0 : 1);
       S.Diag(KWLoc, diag::note_declared_coroutine_here) << Keyword;
       return StmtError();
@@ -658,6 +660,39 @@ StmtResult Sema::BuildCoreturnStmt(SourceLocation Loc, Expr *E,
   return Res;
 }
 
+/// Look up the std::nothrow object.
+static Expr *buildStdNoThrowDeclRef(Sema &S, SourceLocation Loc) {
+  NamespaceDecl *Std = S.getStdNamespace();
+  assert(Std && "Should already be diagnosed");
+
+  LookupResult Result(S, &S.PP.getIdentifierTable().get("nothrow"), Loc,
+                      Sema::LookupOrdinaryName);
+  if (!S.LookupQualifiedName(Result, Std)) {
+    // FIXME: <experimental/coroutine> should have been included already.
+    // If we require it to include <new> then this diagnostic is no longer
+    // needed.
+    S.Diag(Loc, diag::err_implicit_coroutine_std_nothrow_type_not_found);
+    return nullptr;
+  }
+
+  // FIXME: Mark the variable as ODR used. This currently does not work
+  // likely due to the scope at in which this function is called.
+  auto *VD = Result.getAsSingle<VarDecl>();
+  if (!VD) {
+    Result.suppressDiagnostics();
+    // We found something weird. Complain about the first thing we found.
+    NamedDecl *Found = *Result.begin();
+    S.Diag(Found->getLocation(), diag::err_malformed_std_nothrow);
+    return nullptr;
+  }
+
+  ExprResult DR = S.BuildDeclRefExpr(VD, VD->getType(), VK_LValue, Loc);
+  if (DR.isInvalid())
+    return nullptr;
+
+  return DR.get();
+}
+
 // Find an appropriate delete for the promise.
 static FunctionDecl *findDeleteForPromise(Sema &S, SourceLocation Loc,
                                           QualType PromiseType) {
@@ -683,47 +718,6 @@ static FunctionDecl *findDeleteForPromise(Sema &S, SourceLocation Loc,
   return OperatorDelete;
 }
 
-namespace {
-class SubStmtBuilder : public CoroutineBodyStmt::CtorArgs {
-  Sema &S;
-  FunctionDecl &FD;
-  FunctionScopeInfo &Fn;
-  bool IsValid;
-  SourceLocation Loc;
-  QualType RetType;
-  SmallVector<Stmt *, 4> ParamMovesVector;
-  const bool IsPromiseDependentType;
-  CXXRecordDecl *PromiseRecordDecl = nullptr;
-
-public:
-  SubStmtBuilder(Sema &S, FunctionDecl &FD, FunctionScopeInfo &Fn, Stmt *Body)
-      : S(S), FD(FD), Fn(Fn), Loc(FD.getLocation()),
-        IsPromiseDependentType(
-            !Fn.CoroutinePromise ||
-            Fn.CoroutinePromise->getType()->isDependentType()) {
-    this->Body = Body;
-    if (!IsPromiseDependentType) {
-      PromiseRecordDecl = Fn.CoroutinePromise->getType()->getAsCXXRecordDecl();
-      assert(PromiseRecordDecl && "Type should have already been checked");
-    }
-    this->IsValid = makePromiseStmt() && makeInitialAndFinalSuspend() &&
-                    makeOnException() && makeOnFallthrough() &&
-                    makeReturnOnAllocFailure() && makeNewAndDeleteExpr() &&
-                    makeReturnObject() && makeParamMoves();
-  }
-
-  bool isInvalid() const { return !this->IsValid; }
-
-  bool makePromiseStmt();
-  bool makeInitialAndFinalSuspend();
-  bool makeNewAndDeleteExpr();
-  bool makeOnFallthrough();
-  bool makeOnException();
-  bool makeReturnObject();
-  bool makeReturnOnAllocFailure();
-  bool makeParamMoves();
-};
-}
 
 void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
   FunctionScopeInfo *Fn = getCurFunction();
@@ -750,15 +744,47 @@ void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
     Diag(Fn->FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
             << Fn->getFirstCoroutineStmtKeyword();
   }
-  SubStmtBuilder Builder(*this, *FD, *Fn, Body);
-  if (Builder.isInvalid())
+  CoroutineStmtBuilder Builder(*this, *FD, *Fn, Body);
+  if (Builder.isInvalid() || !Builder.buildStatements())
     return FD->setInvalidDecl();
 
   // Build body for the coroutine wrapper statement.
   Body = CoroutineBodyStmt::Create(Context, Builder);
 }
 
-bool SubStmtBuilder::makePromiseStmt() {
+CoroutineStmtBuilder::CoroutineStmtBuilder(Sema &S, FunctionDecl &FD,
+                                           sema::FunctionScopeInfo &Fn,
+                                           Stmt *Body)
+    : S(S), FD(FD), Fn(Fn), Loc(FD.getLocation()),
+      IsPromiseDependentType(
+          !Fn.CoroutinePromise ||
+          Fn.CoroutinePromise->getType()->isDependentType()) {
+  this->Body = Body;
+  if (!IsPromiseDependentType) {
+    PromiseRecordDecl = Fn.CoroutinePromise->getType()->getAsCXXRecordDecl();
+    assert(PromiseRecordDecl && "Type should have already been checked");
+  }
+  this->IsValid = makePromiseStmt() && makeInitialAndFinalSuspend();
+}
+
+bool CoroutineStmtBuilder::buildStatements() {
+  assert(this->IsValid && "coroutine already invalid");
+  this->IsValid = makeReturnObject() && makeParamMoves();
+  if (this->IsValid && !IsPromiseDependentType)
+    buildDependentStatements();
+  return this->IsValid;
+}
+
+bool CoroutineStmtBuilder::buildDependentStatements() {
+  assert(this->IsValid && "coroutine already invalid");
+  assert(!this->IsPromiseDependentType &&
+         "coroutine cannot have a dependent promise type");
+  this->IsValid = makeOnException() && makeOnFallthrough() &&
+                  makeReturnOnAllocFailure() && makeNewAndDeleteExpr();
+  return this->IsValid;
+}
+
+bool CoroutineStmtBuilder::makePromiseStmt() {
   // Form a declaration statement for the promise declaration, so that AST
   // visitors can more easily find it.
   StmtResult PromiseStmt =
@@ -770,7 +796,7 @@ bool SubStmtBuilder::makePromiseStmt() {
   return true;
 }
 
-bool SubStmtBuilder::makeInitialAndFinalSuspend() {
+bool CoroutineStmtBuilder::makeInitialAndFinalSuspend() {
   if (Fn.hasInvalidCoroutineSuspends())
     return false;
   this->InitialSuspend = cast<Expr>(Fn.CoroutineSuspends.first);
@@ -801,8 +827,9 @@ static bool diagReturnOnAllocFailure(Sema &S, Expr *E,
   return false;
 }
 
-bool SubStmtBuilder::makeReturnOnAllocFailure() {
-  if (!PromiseRecordDecl) return true;
+bool CoroutineStmtBuilder::makeReturnOnAllocFailure() {
+  assert(!IsPromiseDependentType &&
+         "cannot make statement while the promise type is dependent");
 
   // [dcl.fct.def.coroutine]/8
   // The unqualified-id get_return_object_on_allocation_failure is looked up in
@@ -813,22 +840,22 @@ bool SubStmtBuilder::makeReturnOnAllocFailure() {
   DeclarationName DN =
       S.PP.getIdentifierInfo("get_return_object_on_allocation_failure");
   LookupResult Found(S, DN, Loc, Sema::LookupMemberName);
-  // Suppress diagnostics when a private member is selected. The same warnings
-  // will be produced again when building the call.
-  Found.suppressDiagnostics();
-  if (!S.LookupQualifiedName(Found, PromiseRecordDecl)) return true;
+  if (!S.LookupQualifiedName(Found, PromiseRecordDecl))
+    return true;
 
   CXXScopeSpec SS;
   ExprResult DeclNameExpr =
       S.BuildDeclarationNameExpr(SS, Found, /*NeedsADL=*/false);
-  if (DeclNameExpr.isInvalid()) return false;
+  if (DeclNameExpr.isInvalid())
+    return false;
 
   if (!diagReturnOnAllocFailure(S, DeclNameExpr.get(), PromiseRecordDecl, Fn))
     return false;
 
   ExprResult ReturnObjectOnAllocationFailure =
       S.ActOnCallExpr(nullptr, DeclNameExpr.get(), Loc, {}, Loc);
-  if (ReturnObjectOnAllocationFailure.isInvalid()) return false;
+  if (ReturnObjectOnAllocationFailure.isInvalid())
+    return false;
 
   // FIXME: ActOnReturnStmt expects a scope that is inside of the function, due
   //   to CheckJumpOutOfSEHFinally(*this, ReturnLoc, *CurScope->getFnParent());
@@ -837,38 +864,69 @@ bool SubStmtBuilder::makeReturnOnAllocFailure() {
   //   Use BuildReturnStmt here to unbreak sanitized tests. (Gor:3/27/2017)
   StmtResult ReturnStmt =
       S.BuildReturnStmt(Loc, ReturnObjectOnAllocationFailure.get());
-  if (ReturnStmt.isInvalid()) return false;
+  if (ReturnStmt.isInvalid())
+    return false;
 
   this->ReturnStmtOnAllocFailure = ReturnStmt.get();
   return true;
 }
 
-bool SubStmtBuilder::makeNewAndDeleteExpr() {
+bool CoroutineStmtBuilder::makeNewAndDeleteExpr() {
   // Form and check allocation and deallocation calls.
+  assert(!IsPromiseDependentType &&
+         "cannot make statement while the promise type is dependent");
   QualType PromiseType = Fn.CoroutinePromise->getType();
-  if (PromiseType->isDependentType())
-    return true;
 
   if (S.RequireCompleteType(Loc, PromiseType, diag::err_incomplete_type))
     return false;
 
-  // FIXME: Add nothrow_t placement arg for global alloc
-  //        if ReturnStmtOnAllocFailure != nullptr.
+  const bool RequiresNoThrowAlloc = ReturnStmtOnAllocFailure != nullptr;
+
   // FIXME: Add support for stateful allocators.
 
   FunctionDecl *OperatorNew = nullptr;
   FunctionDecl *OperatorDelete = nullptr;
   FunctionDecl *UnusedResult = nullptr;
   bool PassAlignment = false;
+  SmallVector<Expr *, 1> PlacementArgs;
 
   S.FindAllocationFunctions(Loc, SourceRange(),
                             /*UseGlobal*/ false, PromiseType,
-                            /*isArray*/ false, PassAlignment,
-                            /*PlacementArgs*/ None, OperatorNew, UnusedResult);
+                            /*isArray*/ false, PassAlignment, PlacementArgs,
+                            OperatorNew, UnusedResult);
 
-  OperatorDelete = findDeleteForPromise(S, Loc, PromiseType);
+  bool IsGlobalOverload =
+      OperatorNew && !isa<CXXRecordDecl>(OperatorNew->getDeclContext());
+  // If we didn't find a class-local new declaration and non-throwing new
+  // was is required then we need to lookup the non-throwing global operator
+  // instead.
+  if (RequiresNoThrowAlloc && (!OperatorNew || IsGlobalOverload)) {
+    auto *StdNoThrow = buildStdNoThrowDeclRef(S, Loc);
+    if (!StdNoThrow)
+      return false;
+    PlacementArgs = {StdNoThrow};
+    OperatorNew = nullptr;
+    S.FindAllocationFunctions(Loc, SourceRange(),
+                              /*UseGlobal*/ true, PromiseType,
+                              /*isArray*/ false, PassAlignment, PlacementArgs,
+                              OperatorNew, UnusedResult);
+  }
 
-  if (!OperatorDelete || !OperatorNew)
+  assert(OperatorNew && "expected definition of operator new to be found");
+
+  if (RequiresNoThrowAlloc) {
+    const auto *FT = OperatorNew->getType()->getAs<FunctionProtoType>();
+    if (!FT->isNothrow(S.Context, /*ResultIfDependent*/ false)) {
+      S.Diag(OperatorNew->getLocation(),
+             diag::err_coroutine_promise_new_requires_nothrow)
+          << OperatorNew;
+      S.Diag(Loc, diag::note_coroutine_promise_call_implicitly_required)
+          << OperatorNew;
+      return false;
+    }
+  }
+
+  if ((OperatorDelete = findDeleteForPromise(S, Loc, PromiseType)) == nullptr)
     return false;
 
   Expr *FramePtr =
@@ -884,8 +942,13 @@ bool SubStmtBuilder::makeNewAndDeleteExpr() {
   if (NewRef.isInvalid())
     return false;
 
+  SmallVector<Expr *, 2> NewArgs(1, FrameSize);
+  for (auto Arg : PlacementArgs)
+    NewArgs.push_back(Arg);
+
   ExprResult NewExpr =
-      S.ActOnCallExpr(S.getCurScope(), NewRef.get(), Loc, FrameSize, Loc);
+      S.ActOnCallExpr(S.getCurScope(), NewRef.get(), Loc, NewArgs, Loc);
+  NewExpr = S.ActOnFinishFullExpr(NewExpr.get());
   if (NewExpr.isInvalid())
     return false;
 
@@ -911,6 +974,7 @@ bool SubStmtBuilder::makeNewAndDeleteExpr() {
 
   ExprResult DeleteExpr =
       S.ActOnCallExpr(S.getCurScope(), DeleteRef.get(), Loc, DeleteArgs, Loc);
+  DeleteExpr = S.ActOnFinishFullExpr(DeleteExpr.get());
   if (DeleteExpr.isInvalid())
     return false;
 
@@ -920,9 +984,9 @@ bool SubStmtBuilder::makeNewAndDeleteExpr() {
   return true;
 }
 
-bool SubStmtBuilder::makeOnFallthrough() {
-  if (!PromiseRecordDecl)
-    return true;
+bool CoroutineStmtBuilder::makeOnFallthrough() {
+  assert(!IsPromiseDependentType &&
+         "cannot make statement while the promise type is dependent");
 
   // [dcl.fct.def.coroutine]/4
   // The unqualified-ids 'return_void' and 'return_value' are looked up in
@@ -951,11 +1015,10 @@ bool SubStmtBuilder::makeOnFallthrough() {
   return true;
 }
 
-bool SubStmtBuilder::makeOnException() {
+bool CoroutineStmtBuilder::makeOnException() {
   // Try to form 'p.unhandled_exception();'
-
-  if (!PromiseRecordDecl)
-    return true;
+  assert(!IsPromiseDependentType &&
+         "cannot make statement while the promise type is dependent");
 
   const bool RequireUnhandledException = S.getLangOpts().CXXExceptions;
 
@@ -983,7 +1046,7 @@ bool SubStmtBuilder::makeOnException() {
   return true;
 }
 
-bool SubStmtBuilder::makeReturnObject() {
+bool CoroutineStmtBuilder::makeReturnObject() {
 
   // Build implicit 'p.get_return_object()' expression and form initialization
   // of return type from it.
@@ -1008,7 +1071,7 @@ bool SubStmtBuilder::makeReturnObject() {
   return true;
 }
 
-bool SubStmtBuilder::makeParamMoves() {
+bool CoroutineStmtBuilder::makeParamMoves() {
   // FIXME: Perform move-initialization of parameters into frame-local copies.
   return true;
 }
