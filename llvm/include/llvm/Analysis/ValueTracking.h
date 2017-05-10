@@ -56,6 +56,11 @@ template <typename T> class ArrayRef;
                         const Instruction *CxtI = nullptr,
                         const DominatorTree *DT = nullptr,
                         OptimizationRemarkEmitter *ORE = nullptr);
+  /// Returns the known bits rather than passing by reference.
+  KnownBits computeKnownBits(const Value *V, const DataLayout &DL,
+                             unsigned Depth = 0, AssumptionCache *AC = nullptr,
+                             const Instruction *CxtI = nullptr,
+                             const DominatorTree *DT = nullptr);
   /// Compute known bits from the range metadata.
   /// \p KnownZero the set of bits that are known to be zero
   /// \p KnownOne the set of bits that are known to be one
@@ -417,7 +422,7 @@ template <typename T> class ArrayRef;
   ///
   /// Note that this currently only considers the basic block that is
   /// the parent of I.
-  bool isKnownNotFullPoison(const Instruction *PoisonI);
+  bool programUndefinedIfFullPoison(const Instruction *PoisonI);
 
   /// \brief Specific patterns of select instructions we can match.
   enum SelectPatternFlavor {

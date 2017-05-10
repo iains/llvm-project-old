@@ -1133,7 +1133,7 @@ bool MipsFastISel::processCallArgs(CallLoweringInfo &CLI,
   if (NumBytes < 16)
     NumBytes = 16;
 
-  emitInst(Mips::ADJCALLSTACKDOWN).addImm(16);
+  emitInst(Mips::ADJCALLSTACKDOWN).addImm(16).addImm(0);
   // Process the args.
   MVT firstMVT;
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
@@ -1263,7 +1263,8 @@ bool MipsFastISel::finishCall(CallLoweringInfo &CLI, MVT RetVT,
     MipsCCState CCInfo(CC, false, *FuncInfo.MF, RVLocs, *Context);
 
     CCInfo.AnalyzeCallResult(CLI.Ins, RetCC_Mips, CLI.RetTy,
-                             CLI.Symbol->getName().data());
+                             CLI.Symbol ? CLI.Symbol->getName().data()
+                                        : nullptr);
 
     // Only handle a single return value.
     if (RVLocs.size() != 1)

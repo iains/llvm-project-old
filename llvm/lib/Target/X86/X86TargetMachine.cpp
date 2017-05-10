@@ -87,7 +87,7 @@ static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
 
   if (TT.isOSFreeBSD())
     return llvm::make_unique<X86FreeBSDTargetObjectFile>();
-  if (TT.isOSLinux() || TT.isOSNaCl())
+  if (TT.isOSLinux() || TT.isOSNaCl() || TT.isOSIAMCU())
     return llvm::make_unique<X86LinuxNaClTargetObjectFile>();
   if (TT.isOSFuchsia())
     return llvm::make_unique<X86FuchsiaTargetObjectFile>();
@@ -268,6 +268,12 @@ X86TargetMachine::getSubtargetImpl(const Function &F) const {
 
   FS = Key.substr(CPU.size());
 
+  bool OptForSize = F.optForSize();
+  bool OptForMinSize = F.optForMinSize();
+
+  Key += std::string(OptForSize ? "+" : "-") + "optforsize";
+  Key += std::string(OptForMinSize ? "+" : "-") + "optforminsize";
+
   auto &I = SubtargetMap[Key];
   if (!I) {
     // This needs to be done before we create a new subtarget since any
@@ -275,7 +281,8 @@ X86TargetMachine::getSubtargetImpl(const Function &F) const {
     // function that reside in TargetOptions.
     resetTargetOptions(F);
     I = llvm::make_unique<X86Subtarget>(TargetTriple, CPU, FS, *this,
-                                        Options.StackAlignmentOverride);
+                                        Options.StackAlignmentOverride,
+                                        OptForSize, OptForMinSize);
 #ifndef LLVM_BUILD_GLOBAL_ISEL
     GISelAccessor *GISel = new GISelAccessor();
 #else
@@ -286,7 +293,8 @@ X86TargetMachine::getSubtargetImpl(const Function &F) const {
 
     auto *RBI = new X86RegisterBankInfo(*I->getRegisterInfo());
     GISel->RegBankInfo.reset(RBI);
-    GISel->InstSelector.reset(createX86InstructionSelector(*this, *I, *RBI));
+    GISel->InstSelector.reset(createX86InstructionSelector(
+        *this, *I, *RBI));
 #endif
     I->setGISelAccessor(*GISel);
   }

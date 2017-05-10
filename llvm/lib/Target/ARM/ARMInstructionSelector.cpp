@@ -27,32 +27,67 @@ using namespace llvm;
 #endif
 
 namespace {
+
+#define GET_GLOBALISEL_PREDICATE_BITSET
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_PREDICATE_BITSET
+
 class ARMInstructionSelector : public InstructionSelector {
 public:
-  ARMInstructionSelector(const ARMSubtarget &STI,
+  ARMInstructionSelector(const ARMBaseTargetMachine &TM, const ARMSubtarget &STI,
                          const ARMRegisterBankInfo &RBI);
 
   bool select(MachineInstr &I) const override;
 
 private:
+  bool selectImpl(MachineInstr &I) const;
+
   const ARMBaseInstrInfo &TII;
   const ARMBaseRegisterInfo &TRI;
+  const ARMBaseTargetMachine &TM;
   const ARMRegisterBankInfo &RBI;
+  const ARMSubtarget &STI;
+
+#define GET_GLOBALISEL_PREDICATES_DECL
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_PREDICATES_DECL
+
+// We declare the temporaries used by selectImpl() in the class to minimize the
+// cost of constructing placeholder values.
+#define GET_GLOBALISEL_TEMPORARIES_DECL
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_TEMPORARIES_DECL
 };
 } // end anonymous namespace
 
 namespace llvm {
 InstructionSelector *
-createARMInstructionSelector(const ARMSubtarget &STI,
+createARMInstructionSelector(const ARMBaseTargetMachine &TM,
+                             const ARMSubtarget &STI,
                              const ARMRegisterBankInfo &RBI) {
-  return new ARMInstructionSelector(STI, RBI);
+  return new ARMInstructionSelector(TM, STI, RBI);
 }
 }
 
-ARMInstructionSelector::ARMInstructionSelector(const ARMSubtarget &STI,
+unsigned zero_reg = 0;
+
+#define GET_GLOBALISEL_IMPL
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_IMPL
+
+ARMInstructionSelector::ARMInstructionSelector(const ARMBaseTargetMachine &TM,
+                                               const ARMSubtarget &STI,
                                                const ARMRegisterBankInfo &RBI)
     : InstructionSelector(), TII(*STI.getInstrInfo()),
-      TRI(*STI.getRegisterInfo()), RBI(RBI) {}
+      TRI(*STI.getRegisterInfo()), TM(TM), RBI(RBI), STI(STI),
+#define GET_GLOBALISEL_PREDICATES_INIT
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_PREDICATES_INIT
+#define GET_GLOBALISEL_TEMPORARIES_INIT
+#include "ARMGenGlobalISel.inc"
+#undef GET_GLOBALISEL_TEMPORARIES_INIT
+{
+}
 
 static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
                        MachineRegisterInfo &MRI, const TargetRegisterInfo &TRI,
@@ -97,28 +132,6 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
                  << " operand\n");
     return false;
   }
-  return true;
-}
-
-static bool selectFAdd(MachineInstrBuilder &MIB, const ARMBaseInstrInfo &TII,
-                       MachineRegisterInfo &MRI) {
-  assert(TII.getSubtarget().hasVFP2() && "Can't select fp add without vfp");
-
-  LLT Ty = MRI.getType(MIB->getOperand(0).getReg());
-  unsigned ValSize = Ty.getSizeInBits();
-
-  if (ValSize == 32) {
-    if (TII.getSubtarget().useNEONForSinglePrecisionFP())
-      return false;
-    MIB->setDesc(TII.get(ARM::VADDS));
-  } else {
-    assert(ValSize == 64 && "Unsupported size for floating point value");
-    if (TII.getSubtarget().isFPOnlySP())
-      return false;
-    MIB->setDesc(TII.get(ARM::VADDD));
-  }
-  MIB.add(predOps(ARMCC::AL));
-
   return true;
 }
 
@@ -255,6 +268,9 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     return true;
   }
 
+  if (selectImpl(I))
+    return true;
+
   MachineInstrBuilder MIB{MF, I};
   bool isSExt = false;
 
@@ -354,20 +370,6 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
       MIB->getOperand(0).setIsEarlyClobber(true);
     }
     MIB.add(predOps(ARMCC::AL)).add(condCodeOp());
-    break;
-  case G_SDIV:
-    assert(TII.getSubtarget().hasDivideInARMMode() && "Unsupported operation");
-    I.setDesc(TII.get(ARM::SDIV));
-    MIB.add(predOps(ARMCC::AL));
-    break;
-  case G_UDIV:
-    assert(TII.getSubtarget().hasDivideInARMMode() && "Unsupported operation");
-    I.setDesc(TII.get(ARM::UDIV));
-    MIB.add(predOps(ARMCC::AL));
-    break;
-  case G_FADD:
-    if (!selectFAdd(MIB, TII, MRI))
-      return false;
     break;
   case G_FRAME_INDEX:
     // Add 0 to the given frame index and hope it will eventually be folded into
