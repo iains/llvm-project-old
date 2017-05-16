@@ -6693,6 +6693,14 @@ MipsABIInfo::classifyArgumentType(QualType Ty, uint64_t &Offset) const {
       return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
     }
 
+    // Use indirect if the aggregate cannot fit into registers for
+    // passing arguments according to the ABI
+    unsigned Threshold = IsO32 ? 16 : 64;
+
+    if(getContext().getTypeSizeInChars(Ty) > CharUnits::fromQuantity(Threshold))
+      return ABIArgInfo::getIndirect(CharUnits::fromQuantity(Align), true,
+                                     getContext().getTypeAlign(Ty) / 8 > Align);
+
     // If we have reached here, aggregates are passed directly by coercing to
     // another structure type. Padding is inserted if the offset of the
     // aggregate is unaligned.
@@ -7035,12 +7043,12 @@ ABIArgInfo HexagonABIInfo::classifyArgumentType(QualType Ty) const {
             ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
   }
 
+  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
+    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
+
   // Ignore empty records.
   if (isEmptyRecord(getContext(), Ty, true))
     return ABIArgInfo::getIgnore();
-
-  if (CGCXXABI::RecordArgABI RAA = getRecordArgABI(Ty, getCXXABI()))
-    return getNaturalAlignIndirect(Ty, RAA == CGCXXABI::RAA_DirectInMemory);
 
   uint64_t Size = getContext().getTypeSize(Ty);
   if (Size > 64)

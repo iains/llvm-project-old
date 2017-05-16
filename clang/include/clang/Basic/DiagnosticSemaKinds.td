@@ -2465,6 +2465,9 @@ def err_attribute_invalid_size : Error<
   "vector size not an integral multiple of component size">;
 def err_attribute_zero_size : Error<"zero vector size">;
 def err_attribute_size_too_large : Error<"vector size too large">;
+def err_typecheck_vector_not_convertable_implict_truncation : Error<
+   "cannot convert between %select{scalar|vector}0 type %1 and vector type"
+   " %2 as implicit conversion would cause truncation">;
 def err_typecheck_vector_not_convertable : Error<
   "cannot convert between vector values of different size (%0 and %1)">;
 def err_typecheck_vector_not_convertable_non_scalar : Error<
@@ -4609,6 +4612,8 @@ def err_abi_tag_on_redeclaration : Error<
   "cannot add 'abi_tag' attribute in a redeclaration">;
 def err_new_abi_tag_on_redeclaration : Error<
   "'abi_tag' %0 missing in original declaration">;
+def note_use_ifdef_guards : Note<
+  "unguarded header; consider using #ifdef guards or #pragma once">;
 
 def note_deleted_dtor_no_operator_delete : Note<
   "virtual destructor requires an unambiguous, accessible 'operator delete'">;
@@ -5777,6 +5782,9 @@ def err_objc_object_assignment : Error<
   "cannot assign to class object (%0 invalid)">;
 def err_typecheck_invalid_operands : Error<
   "invalid operands to binary expression (%0 and %1)">;
+def err_typecheck_logical_vector_expr_gnu_cpp_restrict : Error<
+  "logical expression with vector %select{type %1 and non-vector type %2|types"
+  " %1 and %2}0 is only supported in C++">;
 def err_typecheck_sub_ptr_compatible : Error<
   "%diff{$ and $ are not pointers to compatible types|"
   "pointers to incompatible types}0,1">;
@@ -8188,7 +8196,9 @@ def err_undeclared_use_suggest : Error<
   "use of undeclared %0; did you mean %1?">;
 def err_undeclared_var_use_suggest : Error<
   "use of undeclared identifier %0; did you mean %1?">;
+def err_no_template : Error<"no template named %0">;
 def err_no_template_suggest : Error<"no template named %0; did you mean %1?">;
+def err_no_member_template : Error<"no template named %0 in %1">;
 def err_no_member_template_suggest : Error<
   "no template named %0 in %1; did you mean %select{|simply }2%3?">;
 def err_non_template_in_template_id : Error<
@@ -8886,6 +8896,13 @@ def ext_equivalent_internal_linkage_decl_in_modules : ExtWarn<
   InGroup<DiagGroup<"modules-ambiguous-internal-linkage">>;
 def note_equivalent_internal_linkage_decl : Note<
   "declared here%select{ in module '%1'|}0">;
+
+def note_redefinition_modules_same_file : Note<
+	"'%0' included multiple times, additional include site in header from module '%1'">;
+def note_redefinition_modules_same_file_modulemap : Note<
+	"consider adding '%0' as part of '%1' definition">;
+def note_redefinition_include_same_file : Note<
+	"'%0' included multiple times, additional include site here">;
 }
 
 let CategoryName = "Coroutines Issue" in {
