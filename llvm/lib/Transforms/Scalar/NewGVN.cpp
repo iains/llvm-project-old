@@ -317,6 +317,9 @@ public:
     --StoreCount;
   }
 
+  // True if this class has no memory members.
+  bool definesNoMemory() const { return StoreCount == 0 && memory_empty(); }
+
   // Return true if two congruence classes are equivalent to each other.  This
   // means
   // that every field but the ID number and the dead field are equivalent.
@@ -1043,9 +1046,8 @@ Value *NewGVN::lookupOperandLeader(Value *V) const {
 const MemoryAccess *NewGVN::lookupMemoryLeader(const MemoryAccess *MA) const {
   auto *CC = getMemoryClass(MA);
   assert(CC->getMemoryLeader() &&
-         "Every MemoryAccess should be mapped to a "
-         "congruence class with a represenative memory "
-         "access");
+         "Every MemoryAccess should be mapped to a congruence class with a "
+         "representative memory access");
   return CC->getMemoryLeader();
 }
 
@@ -1310,7 +1312,7 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
     return nullptr;
 
   if (CopyOf != Cmp->getOperand(0) && CopyOf != Cmp->getOperand(1)) {
-    DEBUG(dbgs() << "Copy is not of any condition operands!");
+    DEBUG(dbgs() << "Copy is not of any condition operands!\n");
     return nullptr;
   }
   Value *FirstOp = lookupOperandLeader(Cmp->getOperand(0));
@@ -1406,7 +1408,7 @@ bool NewGVN::setMemoryClass(const MemoryAccess *From,
         NewClass->memory_insert(MP);
         // This may have killed the class if it had no non-memory members
         if (OldClass->getMemoryLeader() == From) {
-          if (OldClass->memory_empty()) {
+          if (OldClass->definesNoMemory()) {
             OldClass->setMemoryLeader(nullptr);
           } else {
             OldClass->setMemoryLeader(getNextMemoryLeader(OldClass));
@@ -1850,8 +1852,7 @@ const MemoryAccess *NewGVN::getNextMemoryLeader(CongruenceClass *CC) const {
   // TODO: If this ends up to slow, we can maintain a next memory leader like we
   // do for regular leaders.
   // Make sure there will be a leader to find
-  assert((CC->getStoreCount() > 0 || !CC->memory_empty()) &&
-         "Can't get next leader if there is none");
+  assert(!CC->definesNoMemory() && "Can't get next leader if there is none");
   if (CC->getStoreCount() > 0) {
     if (auto *NL = dyn_cast_or_null<StoreInst>(CC->getNextLeader().first))
       return MSSA->getMemoryAccess(NL);
@@ -1923,7 +1924,7 @@ void NewGVN::moveMemoryToNewCongruenceClass(Instruction *I,
   setMemoryClass(InstMA, NewClass);
   // Now, fixup the old class if necessary
   if (OldClass->getMemoryLeader() == InstMA) {
-    if (OldClass->getStoreCount() != 0 || !OldClass->memory_empty()) {
+    if (!OldClass->definesNoMemory()) {
       OldClass->setMemoryLeader(getNextMemoryLeader(OldClass));
       DEBUG(dbgs() << "Memory class leader change for class "
                    << OldClass->getID() << " to "

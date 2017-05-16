@@ -1317,7 +1317,7 @@ static Value *SimplifyShift(Instruction::BinaryOps Opcode, Value *Op0,
   // If all valid bits in the shift amount are known zero, the first operand is
   // unchanged.
   unsigned NumValidShiftBits = Log2_32_Ceil(BitWidth);
-  if (Known.Zero.countTrailingOnes() >= NumValidShiftBits)
+  if (Known.countMinTrailingZeros() >= NumValidShiftBits)
     return Op0;
 
   return nullptr;
@@ -1868,6 +1868,24 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
   if (match(Op0, m_Xor(m_Value(A), m_Value(B))) &&
       (match(Op1, m_c_And(m_Specific(A), m_Not(m_Specific(B)))) ||
        match(Op1, m_c_And(m_Not(m_Specific(A)), m_Specific(B)))))
+    return Op0;
+
+  // (A & B) | (~A ^ B) -> (~A ^ B)
+  // (B & A) | (~A ^ B) -> (~A ^ B)
+  // (A & B) | (B ^ ~A) -> (B ^ ~A)
+  // (B & A) | (B ^ ~A) -> (B ^ ~A)
+  if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+      (match(Op1, m_c_Xor(m_Specific(A), m_Not(m_Specific(B)))) ||
+       match(Op1, m_c_Xor(m_Not(m_Specific(A)), m_Specific(B)))))
+    return Op1;
+
+  // (~A ^ B) | (A & B) -> (~A ^ B)
+  // (~A ^ B) | (B & A) -> (~A ^ B)
+  // (B ^ ~A) | (A & B) -> (B ^ ~A)
+  // (B ^ ~A) | (B & A) -> (B ^ ~A)
+  if (match(Op1, m_And(m_Value(A), m_Value(B))) &&
+      (match(Op0, m_c_Xor(m_Specific(A), m_Not(m_Specific(B)))) ||
+       match(Op0, m_c_Xor(m_Not(m_Specific(A)), m_Specific(B)))))
     return Op0;
 
   if (Value *V = simplifyAndOrOfICmps(Op0, Op1, false))
