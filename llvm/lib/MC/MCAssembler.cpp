@@ -83,7 +83,8 @@ MCAssembler::MCAssembler(MCContext &Context, MCAsmBackend &Backend,
                          MCCodeEmitter &Emitter, MCObjectWriter &Writer)
     : Context(Context), Backend(Backend), Emitter(Emitter), Writer(Writer),
       BundleAlignSize(0), RelaxAll(false), SubsectionsViaSymbols(false),
-      IncrementalLinkerCompatible(false), ELFHeaderEFlags(0) {
+      IncrementalLinkerCompatible(false), ELFHeaderEFlags(0),
+      MachOCpuSubTypeOverride(0)  {
   VersionMinInfo.Major = 0; // Major version == 0 for "none specified"
 }
 

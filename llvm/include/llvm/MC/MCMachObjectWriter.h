@@ -163,7 +163,8 @@ public:
   /// @}
 
   void writeHeader(MachO::HeaderFileType Type, unsigned NumLoadCommands,
-                   unsigned LoadCommandsSize, bool SubsectionsViaSymbols);
+                   unsigned LoadCommandsSize, bool SubsectionsViaSymbols,
+                   unsigned CPUSubTypeOverride);
 
   /// Write a segment load command.
   ///

@@ -147,6 +147,11 @@ private:
 
   VersionMinInfoType VersionMinInfo;
 
+  /// MachO cpusubtype override.
+  //  To be able to set this from assembler directives.
+  unsigned MachOCpuSubTypeOverride;
+
+private:
   /// Evaluate a fixup to a relocatable expression and the value which should be
   /// placed into the fixup.
   ///
@@ -249,6 +254,10 @@ public:
     VersionMinInfo.Minor = Minor;
     VersionMinInfo.Update = Update;
   }
+
+  /// MachO CPU subtype override.
+  unsigned getCPUSubType() const { return MachOCpuSubTypeOverride; }
+  void setCPUSubType(unsigned SubT) { MachOCpuSubTypeOverride = SubT; }
 
   /// Reuse an assembler instance
   ///

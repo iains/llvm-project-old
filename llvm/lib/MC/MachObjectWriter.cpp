@@ -132,8 +132,10 @@ uint64_t MachObjectWriter::getPaddingSize(const MCSection *Sec,
 void MachObjectWriter::writeHeader(MachO::HeaderFileType Type,
                                    unsigned NumLoadCommands,
                                    unsigned LoadCommandsSize,
-                                   bool SubsectionsViaSymbols) {
+                                   bool SubsectionsViaSymbols,
+                                   unsigned CPUSubTypeOverride) {
   uint32_t Flags = 0;
+  uint32_t SubType = TargetObjectWriter->getCPUSubtype();
 
   if (SubsectionsViaSymbols)
     Flags |= MachO::MH_SUBSECTIONS_VIA_SYMBOLS;
@@ -147,7 +149,12 @@ void MachObjectWriter::writeHeader(MachO::HeaderFileType Type,
   write32(is64Bit() ? MachO::MH_MAGIC_64 : MachO::MH_MAGIC);
 
   write32(TargetObjectWriter->getCPUType());
-  write32(TargetObjectWriter->getCPUSubtype());
+
+  // To match behaviour of cctools 'as' we allow a lower set CPU type in
+  // a .machine directive to trump the -arch set on the command line.
+  if (CPUSubTypeOverride)
+    SubType = (uint32_t) CPUSubTypeOverride;
+  write32(SubType);
 
   write32(Type);
   write32(NumLoadCommands);
@@ -731,6 +738,8 @@ void MachObjectWriter::writeObject(MCAssembler &Asm,
   const MCAssembler::VersionMinInfoType &VersionInfo =
     Layout.getAssembler().getVersionMinInfo();
 
+  unsigned CPUSubTypeOverride = Layout.getAssembler().getCPUSubType();
+
   // The section data starts after the header, the segment load command (and
   // section headers) and the symbol table.
   unsigned NumLoadCommands = 1;
@@ -804,7 +813,7 @@ void MachObjectWriter::writeObject(MCAssembler &Asm,
 
   // Write the prolog, starting with the header and load command...
   writeHeader(MachO::MH_OBJECT, NumLoadCommands, LoadCommandsSize,
-              Asm.getSubsectionsViaSymbols());
+              Asm.getSubsectionsViaSymbols(), CPUSubTypeOverride);
   uint32_t Prot =
       MachO::VM_PROT_READ | MachO::VM_PROT_WRITE | MachO::VM_PROT_EXECUTE;
   writeSegmentLoadCommand("", NumSections, 0, VMSize, SectionDataStart,
